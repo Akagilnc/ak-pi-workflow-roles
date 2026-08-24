@@ -13,8 +13,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
   CODER_OUTPUT_TOOL_NAME,
-  JISHIZHONG_OUTPUT_TOOL,
-  MENXIA_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
+  GATEKEEPER_OUTPUT_TOOL,
   NAVIGATOR_PREPARE_TOOL_NAME,
 } from "../../src/role-runtime.ts";
 
@@ -43,15 +43,15 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
         { stopReason: "toolUse" },
       );
     }
-    if (toolNames.includes(MENXIA_OUTPUT_TOOL)) {
+    if (toolNames.includes(GATEKEEPER_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
-        fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" }),
+        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }),
         { stopReason: "toolUse" },
       );
     }
-    if (toolNames.includes(JISHIZHONG_OUTPUT_TOOL)) {
+    if (toolNames.includes(INSPECTOR_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
-        fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
         { stopReason: "toolUse" },
       );
     }
@@ -70,7 +70,7 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
   };
   // Public process: Navigator prepare + Coder completed. Gate ① may bounce the first
   // completed (zero new commit) once; same payload resubmit is the confirm path, then
-  // Menxia dispatches to Jishizhong and Jishizhong passes.
+  // Gatekeeper dispatches to Inspector and Inspector passes.
   faux.setResponses([respond, respond, respond, respond, respond]);
 
   const model = faux.getModel();

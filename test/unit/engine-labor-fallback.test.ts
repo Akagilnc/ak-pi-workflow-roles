@@ -30,7 +30,7 @@ import {
   withEngineLaborFallbackField,
 } from "../../src/engine-labor-fallback.ts";
 import { createJudgeRoleRuntime, JUDGE_OUTPUT_TOOL_NAME } from "../../src/judge-role.ts";
-import { FUBAOLANG_OUTPUT_TOOL, MENXIA_OUTPUT_TOOL } from "../../src/menxia-role.ts";
+import { NOTARY_OUTPUT_TOOL, GATEKEEPER_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { selectNavigatorCandidate } from "../../src/navigator-attendance.ts";
 import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import {
@@ -40,18 +40,18 @@ import {
 import { extractJudgeRoleOutcome } from "../../src/public-cli/settlement.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 
-function withPassingMenxia(context: ExtensionContext): ExtensionContext {
-  const faux = fauxProvider({ provider: "passing-menxia", api: "passing-menxia" });
+function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
+  const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
   const model = faux.getModel();
   const responses = [
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "fubaolang" })),
-    fauxAssistantMessage(fauxToolCall(FUBAOLANG_OUTPUT_TOOL, { status: "pass", findings: [] })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" })),
+    fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] })),
   ];
   const provider = {
     ...faux.provider,
     stream() {
       const next = responses.shift();
-      if (next === undefined) throw new Error("unexpected Menxia provider request");
+      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => stream.end(next));
       return stream;
@@ -448,7 +448,7 @@ test("judge escalate deliveredOutput projects mechanical engineLaborFallback", a
       timestamp: Date.now(),
     } satisfies AssistantMessage;
     sessionManager.appendMessage(message);
-    const ctx = withPassingMenxia({ sessionManager, abort() {} } as unknown as ExtensionContext);
+    const ctx = withPassingGatekeeper({ sessionManager, abort() {} } as unknown as ExtensionContext);
 
     const result = await tool.execute(
       "j1",

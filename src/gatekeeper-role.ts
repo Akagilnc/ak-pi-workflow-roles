@@ -6,31 +6,31 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { executeAuditorChild, type AuditorCompletion, type AuditorDecisionTool } from "./evidence-child-executor.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
-export const MENXIA_OUTPUT_TOOL = "ak_menxia_output";
-export const JISHIZHONG_OUTPUT_TOOL = "ak_jishizhong_output";
-export const FUBAOLANG_OUTPUT_TOOL = "ak_fubaolang_output";
-const SUBJECT_TOOL = "ak_menxia_subject";
+export const GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
+export const INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
+export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
+const SUBJECT_TOOL = "ak_gatekeeper_subject";
 
-export type MenxiaSubject =
+export type GatekeeperSubject =
   | { readonly kind: "worker_completion"; readonly material: string }
   | { readonly kind: "judge_draft"; readonly material: string };
 
-export type MenxiaResult =
-  | { readonly status: "pass"; readonly officer: "jishizhong" | "fubaolang"; readonly findings: readonly string[] }
-  | { readonly status: "bounce"; readonly officer: "jishizhong" | "fubaolang"; readonly disposition: "rewrite"; readonly findings: readonly string[] }
-  | { readonly status: "incomplete"; readonly stage: "menxia" | "jishizhong" | "fubaolang"; readonly reason: string }
-  | { readonly status: "no_receipt"; readonly stage: "menxia" | "jishizhong" | "fubaolang"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
-  | { readonly status: "transport_failure"; readonly stage: "menxia" | "jishizhong" | "fubaolang"; readonly reason: string };
+export type GatekeeperResult =
+  | { readonly status: "pass"; readonly officer: "inspector" | "notary"; readonly findings: readonly string[] }
+  | { readonly status: "bounce"; readonly officer: "inspector" | "notary"; readonly disposition: "rewrite"; readonly findings: readonly string[] }
+  | { readonly status: "incomplete"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string }
+  | { readonly status: "no_receipt"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
+  | { readonly status: "transport_failure"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string };
 
-export type RunMenxiaOptions = {
+export type RunGatekeeperOptions = {
   readonly context: ExtensionContext;
-  readonly subject: MenxiaSubject;
+  readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
   readonly runCompletion?: AuditorCompletion;
-  readonly loadSoul?: (role: "menxia" | "jishizhong" | "fubaolang") => Promise<string>;
+  readonly loadSoul?: (role: "gatekeeper" | "inspector" | "notary") => Promise<string>;
 };
 
-export type MenxiaPassHostActions = {
+export type GatekeeperPassHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
@@ -49,7 +49,7 @@ function result(content: string, details: unknown) {
   return { content: [{ type: "text" as const, text: content }], details };
 }
 
-function subjectTool(subject: MenxiaSubject): AuditorDecisionTool {
+function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
   return {
     name: SUBJECT_TOOL,
     description: "Read the admitted subject. Collection only: this tool never judges or mutates it.",
@@ -67,19 +67,19 @@ function decisionTool(name: string): AuditorDecisionTool {
   };
 }
 
-function menxiaTool(): AuditorDecisionTool {
+function gatekeeperTool(): AuditorDecisionTool {
   return {
-    name: MENXIA_OUTPUT_TOOL,
+    name: GATEKEEPER_OUTPUT_TOOL,
     description: "Dispatch the admitted subject to one officer, or report incomplete.",
     parameters: Type.Union([
-      Type.Object({ status: Type.Literal("dispatch"), officer: Type.Union([Type.Literal("jishizhong"), Type.Literal("fubaolang")]) }, { additionalProperties: false }),
+      Type.Object({ status: Type.Literal("dispatch"), officer: Type.Union([Type.Literal("inspector"), Type.Literal("notary")]) }, { additionalProperties: false }),
       Type.Object({ status: Type.Literal("incomplete"), reason: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
     ]),
     async execute(_id, args) { return result(`accepted ${String(args.status)}`, args); },
   };
 }
 
-async function defaultLoadSoul(role: "menxia" | "jishizhong" | "fubaolang"): Promise<string> {
+async function defaultLoadSoul(role: "gatekeeper" | "inspector" | "notary"): Promise<string> {
   return readFile(fileURLToPath(new URL(`../souls/${role}.md`, import.meta.url)), "utf8");
 }
 
@@ -88,37 +88,37 @@ function failureReason(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-export async function runMenxia(options: RunMenxiaOptions): Promise<MenxiaResult> {
+export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
   const loadSoul = options.loadSoul ?? defaultLoadSoul;
   let provinceRun: Awaited<ReturnType<typeof executeAuditorChild>>;
   try {
     provinceRun = await executeAuditorChild({
       context: options.context,
-      roleLabel: "Menxia",
-      systemPrompt: `${await loadSoul("menxia")}\n\n${INVOCATION_OVERLAY}`,
-      prompt: "Read the admitted subject with ak_menxia_subject, then dispatch it or submit typed incomplete.",
-      tool: menxiaTool(),
+      roleLabel: "Gatekeeper",
+      systemPrompt: `${await loadSoul("gatekeeper")}\n\n${INVOCATION_OVERLAY}`,
+      prompt: "Read the admitted subject with ak_gatekeeper_subject, then dispatch it or submit typed incomplete.",
+      tool: gatekeeperTool(),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
     });
   } catch (error) {
-    return { status: "transport_failure", stage: "menxia", reason: failureReason(error) };
+    return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
   }
   if (provinceRun.noReceiptLifecycle !== undefined) {
-    return { status: "no_receipt", stage: "menxia", reason: "Menxia settled without an accepted receipt", facts: provinceRun.noReceiptLifecycle };
+    return { status: "no_receipt", stage: "gatekeeper", reason: "Gatekeeper settled without an accepted receipt", facts: provinceRun.noReceiptLifecycle };
   }
   const province: any = provinceRun.decision;
-  if (province?.status === "incomplete") return { status: "incomplete", stage: "menxia", reason: province.reason };
+  if (province?.status === "incomplete") return { status: "incomplete", stage: "gatekeeper", reason: province.reason };
 
-  const officer = province?.officer as "jishizhong" | "fubaolang";
+  const officer = province?.officer as "inspector" | "notary";
   try {
     const officerRun = await executeAuditorChild({
       context: options.context,
-      roleLabel: officer === "jishizhong" ? "Jishizhong" : "Fubaolang",
+      roleLabel: officer === "inspector" ? "Inspector" : "Notary",
       systemPrompt: `${await loadSoul(officer)}\n\n${INVOCATION_OVERLAY}`,
-      prompt: "Read the admitted subject with ak_menxia_subject, then submit one typed decision on only your assigned axes.",
-      tool: decisionTool(officer === "jishizhong" ? JISHIZHONG_OUTPUT_TOOL : FUBAOLANG_OUTPUT_TOOL),
+      prompt: "Read the admitted subject with ak_gatekeeper_subject, then submit one typed decision on only your assigned axes.",
+      tool: decisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
@@ -135,30 +135,30 @@ export async function runMenxia(options: RunMenxiaOptions): Promise<MenxiaResult
   }
 }
 
-/** Project MenxiaResult onto a submit path: transport→failInfrastructure; bounce/incomplete/no_receipt→throw; pass silent. */
-export async function requireMenxiaPass(options: {
+/** Project GatekeeperResult onto a submit path: transport→failInfrastructure; bounce/incomplete/no_receipt→throw; pass silent. */
+export async function requireGatekeeperPass(options: {
   readonly context: ExtensionContext;
-  readonly subject: MenxiaSubject;
+  readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  readonly hostActions: MenxiaPassHostActions;
+  readonly hostActions: GatekeeperPassHostActions;
   readonly toolCallId: string;
 }): Promise<void> {
-  const menxia = await runMenxia({
+  const gatekeeper = await runGatekeeper({
     context: options.context,
     subject: options.subject,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
-  if (menxia.status === "transport_failure") {
+  if (gatekeeper.status === "transport_failure") {
     options.hostActions.failInfrastructure(
-      new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
+      new Error(`Gatekeeper transport failure at ${gatekeeper.stage}: ${gatekeeper.reason}`),
       options.context,
       options.toolCallId,
     );
   }
-  if (menxia.status === "bounce") {
-    throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
+  if (gatekeeper.status === "bounce") {
+    throw new Error(`Gatekeeper requires rewrite: ${gatekeeper.findings.join("; ")}`);
   }
-  if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
-    throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
+  if (gatekeeper.status === "incomplete" || gatekeeper.status === "no_receipt") {
+    throw new Error(`Gatekeeper ${gatekeeper.status} at ${gatekeeper.stage}: ${gatekeeper.reason}; ${JSON.stringify(gatekeeper)}`);
   }
 }

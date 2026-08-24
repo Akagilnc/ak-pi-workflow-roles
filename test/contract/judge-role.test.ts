@@ -17,7 +17,7 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { FUBAOLANG_OUTPUT_TOOL, JISHIZHONG_OUTPUT_TOOL, MENXIA_OUTPUT_TOOL } from "../../src/menxia-role.ts";
+import { NOTARY_OUTPUT_TOOL, INSPECTOR_OUTPUT_TOOL, GATEKEEPER_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
@@ -165,18 +165,18 @@ function toolCallContext(
   return { sessionManager, abort } as unknown as ExtensionContext;
 }
 
-function withPassingMenxia(context: ExtensionContext): ExtensionContext {
-  const faux = fauxProvider({ provider: "passing-menxia", api: "passing-menxia" });
+function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
+  const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
   const model = faux.getModel();
   const responses = [
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
+    fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })),
   ];
   const provider = {
     ...faux.provider,
     stream() {
       const next = responses.shift();
-      if (next === undefined) throw new Error("unexpected Menxia provider request");
+      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => stream.end(next));
       return stream;
@@ -194,12 +194,12 @@ function withPassingMenxia(context: ExtensionContext): ExtensionContext {
   });
 }
 
-function workerCompletionMenxiaHarness(options: {
+function workerCompletionGatekeeperHarness(options: {
   execute: (id: string, output: unknown, context: ExtensionContext) => Promise<unknown>;
   toolName: string;
   output: unknown;
   incompleteReason: string;
-  officer?: "jishizhong" | "fubaolang";
+  officer?: "inspector" | "notary";
   officerIncompleteReason?: string;
   passingRuns?: number;
 }) {
@@ -208,31 +208,31 @@ function workerCompletionMenxiaHarness(options: {
     toolName,
     output,
     incompleteReason,
-    officer = "jishizhong",
+    officer = "inspector",
     officerIncompleteReason = `officer ${incompleteReason}`,
     passingRuns = 1,
   } = options;
-  const officerTool = officer === "jishizhong" ? JISHIZHONG_OUTPUT_TOOL : FUBAOLANG_OUTPUT_TOOL;
-  const faux = fauxProvider({ provider: "worker-menxia", api: "worker-menxia" });
+  const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
+  const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
   const model = faux.getModel();
   const responses: Array<AssistantMessage | Error> = [
     new Error("provider disconnected"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "incomplete", reason: incompleteReason })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "incomplete", reason: incompleteReason })),
     fauxAssistantMessage("not a receipt"),
     fauxAssistantMessage("still not a receipt"),
     fauxAssistantMessage("settled without a receipt"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     new Error("officer provider disconnected"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage(fauxToolCall(officerTool, { status: "incomplete", reason: officerIncompleteReason })),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage("officer did not submit a receipt"),
     fauxAssistantMessage("officer still did not submit a receipt"),
     fauxAssistantMessage("officer settled without a receipt"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage(fauxToolCall(officerTool, { status: "bounce", findings: ["add a focused regression"] })),
     ...Array.from({ length: passingRuns }, () => [
-      fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
+      fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
       fauxAssistantMessage(fauxToolCall(officerTool, { status: "pass", findings: [] })),
     ]).flat(),
   ];
@@ -242,7 +242,7 @@ function workerCompletionMenxiaHarness(options: {
     stream() {
       providerRequests += 1;
       const next = responses.shift();
-      if (next === undefined) throw new Error("unexpected Menxia provider request");
+      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
       if (next instanceof Error) throw next;
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => stream.end(next));
@@ -270,21 +270,21 @@ function workerCompletionMenxiaHarness(options: {
           return true;
         });
       };
-      await reject("transport", (error) => assert.equal(error.message, "Menxia transport failure at menxia: Error: provider disconnected"));
-      await reject("incomplete", (error) => assert.equal(error.message, `Menxia incomplete at menxia: ${incompleteReason}; {"status":"incomplete","stage":"menxia","reason":"${incompleteReason}"}`));
+      await reject("transport", (error) => assert.equal(error.message, "Gatekeeper transport failure at gatekeeper: Error: provider disconnected"));
+      await reject("incomplete", (error) => assert.equal(error.message, `Gatekeeper incomplete at gatekeeper: ${incompleteReason}; {"status":"incomplete","stage":"gatekeeper","reason":"${incompleteReason}"}`));
       await reject("no-receipt", (error) => {
-        assert.match(error.message, /^Menxia no_receipt at menxia: Menxia settled without an accepted receipt;/);
+        assert.match(error.message, /^Gatekeeper no_receipt at gatekeeper: Gatekeeper settled without an accepted receipt;/);
         assert.match(error.message, /"acceptedReceipt":false/);
         assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
       });
-      await reject(`${officer}-transport`, (error) => assert.equal(error.message, `Menxia transport failure at ${officer}: Error: officer provider disconnected`));
-      await reject(`${officer}-incomplete`, (error) => assert.equal(error.message, `Menxia incomplete at ${officer}: ${officerIncompleteReason}; {"status":"incomplete","stage":"${officer}","reason":"${officerIncompleteReason}"}`));
+      await reject(`${officer}-transport`, (error) => assert.equal(error.message, `Gatekeeper transport failure at ${officer}: Error: officer provider disconnected`));
+      await reject(`${officer}-incomplete`, (error) => assert.equal(error.message, `Gatekeeper incomplete at ${officer}: ${officerIncompleteReason}; {"status":"incomplete","stage":"${officer}","reason":"${officerIncompleteReason}"}`));
       await reject(`${officer}-no-receipt`, (error) => {
-        assert.match(error.message, new RegExp(`^Menxia no_receipt at ${officer}: ${officer} settled without an accepted receipt;`));
+        assert.match(error.message, new RegExp(`^Gatekeeper no_receipt at ${officer}: ${officer} settled without an accepted receipt;`));
         assert.match(error.message, /"acceptedReceipt":false/);
         assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
       });
-      await reject("bounce", (error) => assert.equal(error.message, "Menxia requires rewrite: add a focused regression"));
+      await reject("bounce", (error) => assert.equal(error.message, "Gatekeeper requires rewrite: add a focused regression"));
     },
     get providerRequests() { return providerRequests; },
     get remainingResponses() { return responses.length; },
@@ -694,7 +694,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       undefined,
       undefined,
       fixture.role === "fixer" || fixture.role === "judge"
-        ? withPassingMenxia(toolCallContext([{ id: "receipt", name: fixture.name }]))
+        ? withPassingGatekeeper(toolCallContext([{ id: "receipt", name: fixture.name }]))
         : toolCallContext([{ id: "receipt", name: fixture.name }]),
     );
     assert.equal(result.content[0].text, fixture.acceptedText);
@@ -742,7 +742,7 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
     verdict,
     undefined,
     undefined,
-    withPassingMenxia(toolCallContext([{ id: "call-1", arguments: verdict }])),
+    withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict }])),
   );
 
   // Zero hand-delivery: auditor is invoked with context only (no projected materials).
@@ -765,7 +765,7 @@ test("judge role returns revise as an ordinary errored tool result without abort
       verdict,
       undefined,
       undefined,
-      withPassingMenxia(toolCallContext([{ id: "call-2", arguments: verdict }], () => {
+      withPassingGatekeeper(toolCallContext([{ id: "call-2", arguments: verdict }], () => {
         abortCalls += 1;
       })),
     ),
@@ -787,7 +787,7 @@ test("judge aborts the active operation before rethrowing audit infrastructure f
       verdict,
       undefined,
       undefined,
-      withPassingMenxia(toolCallContext(
+      withPassingGatekeeper(toolCallContext(
         [{ id: "audit-failure", arguments: verdict }],
         () => {
           abortCalls += 1;
@@ -859,7 +859,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       assert.ok(tool);
       const verdict = { judgeStatus: "converged" };
       await assert.rejects(
-        tool.execute("failed-output", verdict, undefined, undefined, withPassingMenxia(toolCallContext([{ id: "failed-output", arguments: verdict }]))),
+        tool.execute("failed-output", verdict, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "failed-output", arguments: verdict }]))),
         /provider quota exhausted/,
       );
       const sibling = { toolName: "read", toolCallId: "sibling", isError: false, details: {} };
@@ -970,18 +970,18 @@ test("coder plan loads its task without construction skill and returns planned",
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const output = { status: "planned", report: "Plan the public seam first." };
-  let menxiaProviderRequests = 0;
+  let gatekeeperProviderRequests = 0;
   const result = await tool.execute(
     "coder",
     output,
     undefined,
     undefined,
     Object.assign(toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]), {
-      modelRegistry: { getProvider() { menxiaProviderRequests += 1; } },
+      modelRegistry: { getProvider() { gatekeeperProviderRequests += 1; } },
     }),
   );
   assert.deepEqual(result.details, output);
-  assert.equal(menxiaProviderRequests, 0);
+  assert.equal(gatekeeperProviderRequests, 0);
 });
 
 test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
@@ -1011,10 +1011,10 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     ...bare,
     reason: "prerequisite_missing: owner has not answered which adapter branch is in scope",
   };
-  let menxiaProviderRequests = 0;
+  let gatekeeperProviderRequests = 0;
   const nonCompletedContext = (id: string) => Object.assign(
     toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
-    { modelRegistry: { getProvider() { menxiaProviderRequests += 1; } } },
+    { modelRegistry: { getProvider() { gatekeeperProviderRequests += 1; } } },
   );
   // Positive: no reason → bounce → same-run reasoned resubmit accepted.
   await assert.rejects(
@@ -1072,10 +1072,10 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     (await tool2.execute("u3", bare, undefined, undefined, nonCompletedContext("u3"))).details,
     bare,
   );
-  assert.equal(menxiaProviderRequests, 0);
+  assert.equal(gatekeeperProviderRequests, 0);
 });
 
-test("coder completed submissions traverse the real Menxia provider gate until pass", async () => {
+test("coder completed submissions traverse the real Gatekeeper provider gate until pass", async () => {
   const request = "Apply the approved plan.";
   const harness = extensionHarness(undefined, {
     "ak-coder-task": "/materials/approved.md",
@@ -1099,7 +1099,7 @@ test("coder completed submissions traverse the real Menxia provider gate until p
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const completed = { status: "completed", report: "TDD and verification evidence" };
-  const tracer = workerCompletionMenxiaHarness({
+  const tracer = workerCompletionGatekeeperHarness({
     execute: (id, output, context) => tool.execute(id, output as typeof completed, undefined, undefined, context),
     toolName: CODER_OUTPUT_TOOL_NAME,
     output: completed,
@@ -1113,7 +1113,7 @@ test("coder completed submissions traverse the real Menxia provider gate until p
   assert.equal(tracer.remainingResponses, 0);
 });
 
-test("fixer completed-side submissions traverse the real Menxia provider gate while non-completions skip it", async () => {
+test("fixer completed-side submissions traverse the real Gatekeeper provider gate while non-completions skip it", async () => {
   const start = async (phase: "plan" | "apply") => {
     const harness = extensionHarness(undefined, {
       "ak-fix-packet": "/materials/fix.md",
@@ -1133,7 +1133,7 @@ test("fixer completed-side submissions traverse the real Menxia provider gate wh
     classResults: [{ name: "Gate", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }],
   };
   const completedTool = await start("apply");
-  const tracer = workerCompletionMenxiaHarness({
+  const tracer = workerCompletionGatekeeperHarness({
     execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
     toolName: FIXER_OUTPUT_TOOL_NAME,
     output: completed,
@@ -1172,7 +1172,7 @@ test("fixer completed-side submissions traverse the real Menxia provider gate wh
   assert.equal(tracer.remainingResponses, 0);
 });
 
-test("judge submissions traverse the real Menxia provider gate before Shenxingyuan", async () => {
+test("judge submissions traverse the real Gatekeeper provider gate before auditor", async () => {
   let auditCalls = 0;
   const { tool } = await startJudge(async () => {
     auditCalls += 1;
@@ -1184,15 +1184,15 @@ test("judge submissions traverse the real Menxia provider gate before Shenxingyu
     fix: { summary: "tighten the gate" },
     note: "ticket-review",
   };
-  const tracer = workerCompletionMenxiaHarness({
+  const tracer = workerCompletionGatekeeperHarness({
     execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
     toolName: JUDGE_OUTPUT_TOOL_NAME,
     output: continueVerdict,
     incompleteReason: "missing draft evidence",
-    officer: "fubaolang",
+    officer: "notary",
   });
   await tracer.assertRejectSequence();
-  assert.equal(auditCalls, 0, "Shenxingyuan must not start on Menxia non-pass");
+  assert.equal(auditCalls, 0, "auditor must not start on Gatekeeper non-pass");
   const accepted = await tool.execute(
     "continue-pass",
     continueVerdict,
@@ -1202,18 +1202,18 @@ test("judge submissions traverse the real Menxia provider gate before Shenxingyu
   );
   assert.equal(accepted.terminate, true);
   assert.deepEqual(accepted.details, continueVerdict);
-  assert.equal(auditCalls, 1, "Shenxingyuan runs only after Menxia pass");
+  assert.equal(auditCalls, 1, "auditor runs only after Gatekeeper pass");
   assert.equal(tracer.providerRequests, 17);
   assert.equal(tracer.remainingResponses, 0);
 
-  // Other judgeStatus: cheap same-gate assert — enters Menxia; non-pass keeps Shenxingyuan dark.
+  // Other judgeStatus: cheap same-gate assert — enters Gatekeeper; non-pass keeps auditor dark.
   const convergedVerdict = { judgeStatus: "converged" as const, note: "judgment" };
-  const secondGate = workerCompletionMenxiaHarness({
+  const secondGate = workerCompletionGatekeeperHarness({
     execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
     toolName: JUDGE_OUTPUT_TOOL_NAME,
     output: convergedVerdict,
     incompleteReason: "missing draft evidence",
-    officer: "fubaolang",
+    officer: "notary",
     passingRuns: 0,
   });
   await assert.rejects(
@@ -1226,11 +1226,11 @@ test("judge submissions traverse the real Menxia provider gate before Shenxingyu
     ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
-      assert.match(error.message, /^Menxia /);
+      assert.match(error.message, /^Gatekeeper /);
       return true;
     },
   );
-  assert.equal(auditCalls, 1, "Shenxingyuan must not start on Menxia non-pass for other judgeStatus");
+  assert.equal(auditCalls, 1, "auditor must not start on Gatekeeper non-pass for other judgeStatus");
   assert.equal(secondGate.providerRequests, 1);
 });
 
@@ -1250,7 +1250,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       "ak-coder-task": "/materials/approved.md",
       "ak-coder-phase": "apply",
     });
-    const faux = fauxProvider({ provider: "coder-binding-menxia", api: "coder-binding-menxia" });
+    const faux = fauxProvider({ provider: "coder-binding-gatekeeper", api: "coder-binding-gatekeeper" });
     const model = faux.getModel();
     let providerRequests = 0;
     const provider = {
@@ -1258,8 +1258,8 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       stream() {
         providerRequests += 1;
         const response = providerRequests % 2 === 1
-          ? fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" }))
-          : fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] }));
+          ? fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }))
+          : fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }));
         const stream = createAssistantMessageEventStream();
         queueMicrotask(() => stream.end(response));
         return stream;
@@ -1493,13 +1493,13 @@ test("undeclared prerequisite submissions are rejected; declared references acce
       ],
     };
     await assert.rejects(tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])), /未观察到 commit/);
-    const second = await tool.execute("partial2", partial, undefined, undefined, withPassingMenxia(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
+    const second = await tool.execute("partial2", partial, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.deepEqual(second.details, partial);
 
     const sharedCommit = "shared-commit";
     const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
     const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
-    const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, withPassingMenxia(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }])));
+    const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.equal(shared.terminate, true);
     assert.deepEqual(shared.details.classResults, [classA, classB]);
   });
@@ -1630,7 +1630,7 @@ test("fixer output must be the sole call in its assistant batch", async () => {
       output,
       undefined,
       undefined,
-      withPassingMenxia(toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
+      withPassingGatekeeper(toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
     );
     assert.deepEqual(accepted.details, output);
   });
@@ -2088,7 +2088,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           await plain.runtime.activate();
           const tool = plain.harness.tools.get(toolName);
           assert.ok(tool);
-          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, withPassingMenxia(outputContext(tool.name, `${role}-pass`)));
+          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, withPassingGatekeeper(outputContext(tool.name, `${role}-pass`)));
           assert.equal(accepted.terminate, true);
           assert.deepEqual(accepted.details, outputs[role]);
           assert.equal(plain.auditCalls, 0);
@@ -2111,7 +2111,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         assert.ok(tool);
         const submissionContext = (id: string) => {
           const bare = outputContext(tool.name, id, outputs[role] as Record<string, unknown>);
-          return role === "judge" ? withPassingMenxia(bare) : bare;
+          return role === "judge" ? withPassingGatekeeper(bare) : bare;
         };
         await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, submissionContext(`${role}-revise`)), /violation|violates its|closed contract/);
         retriable.setDecision(pass);
