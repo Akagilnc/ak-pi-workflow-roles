@@ -2,6 +2,9 @@
  * Session opening materials (#443): factory constitution + role soul + role-owned
  * extras, composed at the three existing loader seams. Missing files fail as
  * native readFile errors — no exists/hash/empty guards, no second loader.
+ *
+ * Auditor composition stays owned by loadAuditorSoul (blank-soul identity);
+ * main roles and gatekeeper family share joinPackageMaterials here.
  */
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -24,7 +27,7 @@ export async function joinPackageMaterials(
   return chunks.join("\n\n");
 }
 
-/** Seven public main roles + Navigator. */
+/** Seven public main roles + Navigator. Ticket #443 injection roster. */
 export const MAIN_ROLE_SESSION_MATERIALS = {
   judge: ["CLAUDE.md", "souls/judge.md", "souls/judge-output-guide.md"],
   fixer: [
@@ -67,19 +70,4 @@ export function loadGatekeeperSessionMaterials(
   role: GatekeeperSessionRole,
 ): Promise<string> {
   return joinPackageMaterials(GATEKEEPER_SESSION_MATERIALS[role]);
-}
-
-/** Active auditor seats (fixer-auditor retired). */
-export const AUDITOR_SESSION_MATERIALS = {
-  judge: ["CLAUDE.md", "souls/judge-auditor.md"],
-  reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md"],
-  doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
-} as const;
-
-export type AuditorSessionRole = keyof typeof AUDITOR_SESSION_MATERIALS;
-
-export function loadAuditorSessionMaterials(
-  role: AuditorSessionRole,
-): Promise<string> {
-  return joinPackageMaterials(AUDITOR_SESSION_MATERIALS[role]);
 }
