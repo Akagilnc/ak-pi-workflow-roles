@@ -22,6 +22,7 @@ import {
   INSPECTOR_OUTPUT_TOOL,
   GATEKEEPER_OUTPUT_TOOL,
   GatekeeperDecisionError,
+  requireGatekeeperPass,
 } from "../../src/gatekeeper-role.ts";
 import {
   createNavigatorAttendance,
@@ -1113,6 +1114,99 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     bare,
   );
   assert.equal(gatekeeperProviderRequests, 0);
+});
+
+test("Gatekeeper non-pass projects structured details through role-runtime tool_result", async () => {
+  // Real entry: createRoleRuntimeExtension registers tool_result; selectedRole must be set via session_start.
+  const harness = extensionHarness("judge");
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(harness.pi as ExtensionAPI);
+  await withActivationHome({ prefix: "ak-gatekeeper-tool-result-" }, async ({ home }) => {
+    const ctx = activationCtx(home);
+    await harness.handlers.get("session_start")?.({}, ctx);
+    const findings = ["add a focused regression"];
+    const toolCallId = "judge-gk-bounce";
+    const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
+    const model = faux.getModel();
+    const responses = [
+      fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
+      fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "bounce", findings })),
+    ];
+    const provider = {
+      ...faux.provider,
+      stream() {
+        const next = responses.shift();
+        if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => stream.end(next));
+        return stream;
+      },
+      streamSimple() { return this.stream(); },
+    };
+    const gateContext = Object.assign(ctx, {
+      cwd: process.cwd(),
+      model,
+      modelRegistry: {
+        getProvider(name: string) { return name === model.provider ? provider : undefined; },
+        async getProviderAuth() { return { auth: {} }; },
+        async getApiKeyAndHeaders() { return { ok: true }; },
+      },
+      thinkingLevel: "off",
+    });
+    await assert.rejects(
+      requireGatekeeperPass({
+        context: gateContext,
+        subject: { kind: "judge_draft", material: JSON.stringify({ judgeStatus: "converged" }) },
+        toolCallId,
+        hostActions: {
+          failInfrastructure(error: unknown): never {
+            throw error instanceof Error ? error : new Error(String(error));
+          },
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        // Model-visible throw surface (createErrorToolResult keeps message text).
+        assert.equal(error.message, "Gatekeeper requires rewrite: add a focused regression");
+        assert.deepEqual(error.result, {
+          status: "bounce",
+          officer: "inspector",
+          disposition: "rewrite",
+          findings,
+        });
+        return true;
+      },
+    );
+    // Real parent seam: role-runtime tool_result projects bound structured non-pass onto session details.
+    const projection = await harness.handlers.get("tool_result")?.({
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId,
+      isError: true,
+      content: [{ type: "text", text: "Gatekeeper requires rewrite: add a focused regression" }],
+      details: {},
+    }, ctx);
+    assert.deepEqual(projection, {
+      details: {
+        status: "bounce",
+        officer: "inspector",
+        disposition: "rewrite",
+        findings,
+      },
+      isError: true,
+    });
+    // Binding is single-consume; a second tool_result must not invent details.
+    const second = await harness.handlers.get("tool_result")?.({
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId,
+      isError: true,
+      content: [{ type: "text", text: "Gatekeeper requires rewrite: add a focused regression" }],
+      details: {},
+    }, ctx);
+    assert.equal(second, undefined);
+  });
 });
 
 test("coder completed submissions traverse the real Gatekeeper provider gate until pass", async () => {
