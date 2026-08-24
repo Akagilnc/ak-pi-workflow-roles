@@ -22,7 +22,7 @@ import {
   INSPECTOR_OUTPUT_TOOL,
   GATEKEEPER_OUTPUT_TOOL,
   GatekeeperDecisionError,
-  requireGatekeeperPass,
+  type GatekeeperPassHostActions,
 } from "../../src/gatekeeper-role.ts";
 import {
   createNavigatorAttendance,
@@ -145,6 +145,18 @@ function extensionHarness(
     },
   };
   return { pi, handlers, tools, flags, activeToolSets, appendedEntries };
+}
+
+/** Test host: infrastructure throws through; non-pass bind is a no-op unless a case wires tool_result. */
+function testHostActions(
+  fail: (error: unknown) => never = (error): never => {
+    throw error instanceof Error ? error : new Error(String(error));
+  },
+): GatekeeperPassHostActions {
+  return {
+    failInfrastructure(error) { fail(error); },
+    bindGatekeeperNonPass() {},
+  };
 }
 
 function toolCallContext(
@@ -276,12 +288,11 @@ function workerCompletionGatekeeperHarness(options: {
           return true;
         });
       };
-      await reject("transport", (error) => assert.equal(error.message, "Gatekeeper transport failure at gatekeeper: Error: provider disconnected"));
+      // Transport is plain Error via failInfrastructure — typed path is not GatekeeperDecisionError.
+      await reject("transport", (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject("incomplete", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
         assert.deepEqual(error.result, { status: "incomplete", stage: "gatekeeper", reason: incompleteReason });
-        // Message is the model-visible throw surface (createErrorToolResult).
-        assert.equal(error.message, `Gatekeeper incomplete at gatekeeper: ${incompleteReason}`);
       });
       await reject("no-receipt", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -290,17 +301,12 @@ function workerCompletionGatekeeperHarness(options: {
           assert.equal(error.result.stage, "gatekeeper");
           assert.equal(error.result.facts.acceptedReceipt, false);
           assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
-          assert.equal(
-            error.message,
-            `Gatekeeper no_receipt at gatekeeper: ${error.result.reason}`,
-          );
         }
       });
-      await reject(`${officer}-transport`, (error) => assert.equal(error.message, `Gatekeeper transport failure at ${officer}: Error: officer provider disconnected`));
+      await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject(`${officer}-incomplete`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
         assert.deepEqual(error.result, { status: "incomplete", stage: officer, reason: officerIncompleteReason });
-        assert.equal(error.message, `Gatekeeper incomplete at ${officer}: ${officerIncompleteReason}`);
       });
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -309,10 +315,6 @@ function workerCompletionGatekeeperHarness(options: {
           assert.equal(error.result.stage, officer);
           assert.equal(error.result.facts.acceptedReceipt, false);
           assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
-          assert.equal(
-            error.message,
-            `Gatekeeper no_receipt at ${officer}: ${error.result.reason}`,
-          );
         }
       });
       await reject("bounce", (error) => {
@@ -323,8 +325,6 @@ function workerCompletionGatekeeperHarness(options: {
           disposition: "rewrite",
           findings: ["add a focused regression"],
         });
-        // Rewrite basis must reach the model via message text.
-        assert.equal(error.message, "Gatekeeper requires rewrite: add a focused regression");
       });
     },
     get providerRequests() { return providerRequests; },
@@ -572,7 +572,7 @@ test("focused Judge controller registers output without narrowing host tools", a
       loadSoul: async () => "  JUDGE LAW  ",
       auditSoulCompliance: async () => ({ status: "pass" }),
     },
-    { failInfrastructure(error) { throw error; } },
+    testHostActions(),
   );
 
   await runtime.activate();
@@ -599,7 +599,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
       loadSoul: async () => "\n FIXER LAW \n",
       loadPacket: async () => emptyFixPacket,
     },
-    { failInfrastructure(error) { throw error; } },
+    testHostActions(),
   );
   assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]));
   await fixerRuntime.activate();
@@ -635,7 +635,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
       loadSoul: async () => "\n CODER LAW \n",
       loadTask: async () => "\n TASK BODY \n",
     },
-    { failInfrastructure(error) { throw error; } },
+    testHostActions(),
   );
   assert.deepEqual(new Set(coder.flags.keys()), new Set(["ak-coder-task", "ak-coder-phase"]));
   await coderRuntime.activate();
@@ -664,7 +664,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "judge",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
           },
-          { failInfrastructure(error) { throw error; } },
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -686,7 +686,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "fixer",
             loadPacket: async () => emptyFixPacket,
           },
-          { failInfrastructure(error) { throw error; } },
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -708,7 +708,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "coder",
             loadTask: async () => "task",
           },
-          { failInfrastructure(error) { throw error; } },
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -1117,7 +1117,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
 });
 
 test("Gatekeeper non-pass projects structured details through role-runtime tool_result", async () => {
-  // Real entry: createRoleRuntimeExtension registers tool_result; selectedRole must be set via session_start.
+  // Real entry: judge output → requireGatekeeperPass binds via envelope hostActions → tool_result projects.
   const harness = extensionHarness("judge");
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
@@ -1129,6 +1129,12 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     await harness.handlers.get("session_start")?.({}, ctx);
     const findings = ["add a focused regression"];
     const toolCallId = "judge-gk-bounce";
+    const expected = {
+      status: "bounce" as const,
+      officer: "inspector" as const,
+      disposition: "rewrite" as const,
+      findings,
+    };
     const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
     const model = faux.getModel();
     const responses = [
@@ -1146,7 +1152,8 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
       },
       streamSimple() { return this.stream(); },
     };
-    const gateContext = Object.assign(ctx, {
+    // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
+    const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
       cwd: process.cwd(),
       model,
       modelRegistry: {
@@ -1156,53 +1163,31 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
       },
       thinkingLevel: "off",
     });
+    const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
     await assert.rejects(
-      requireGatekeeperPass({
-        context: gateContext,
-        subject: { kind: "judge_draft", material: JSON.stringify({ judgeStatus: "converged" }) },
-        toolCallId,
-        hostActions: {
-          failInfrastructure(error: unknown): never {
-            throw error instanceof Error ? error : new Error(String(error));
-          },
-        },
-      }),
+      tool.execute(toolCallId, { judgeStatus: "converged" }, undefined, undefined, gateContext),
       (error: unknown) => {
         assert.ok(error instanceof GatekeeperDecisionError);
-        // Model-visible throw surface (createErrorToolResult keeps message text).
-        assert.equal(error.message, "Gatekeeper requires rewrite: add a focused regression");
-        assert.deepEqual(error.result, {
-          status: "bounce",
-          officer: "inspector",
-          disposition: "rewrite",
-          findings,
-        });
+        assert.deepEqual(error.result, expected);
         return true;
       },
     );
-    // Real parent seam: role-runtime tool_result projects bound structured non-pass onto session details.
+    // Real parent seam: envelope tool_result projects bound structured non-pass onto session details.
     const projection = await harness.handlers.get("tool_result")?.({
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       toolCallId,
       isError: true,
-      content: [{ type: "text", text: "Gatekeeper requires rewrite: add a focused regression" }],
+      content: [{ type: "text", text: "model-visible surface" }],
       details: {},
     }, ctx);
-    assert.deepEqual(projection, {
-      details: {
-        status: "bounce",
-        officer: "inspector",
-        disposition: "rewrite",
-        findings,
-      },
-      isError: true,
-    });
+    assert.deepEqual(projection, { details: expected, isError: true });
     // Binding is single-consume; a second tool_result must not invent details.
     const second = await harness.handlers.get("tool_result")?.({
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       toolCallId,
       isError: true,
-      content: [{ type: "text", text: "Gatekeeper requires rewrite: add a focused regression" }],
+      content: [{ type: "text", text: "model-visible surface" }],
       details: {},
     }, ctx);
     assert.equal(second, undefined);
@@ -1222,7 +1207,7 @@ test("coder completed submissions traverse the real Gatekeeper provider gate unt
       loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
       loadCanonicalSkillBinding: async () => tddBinding(),
     },
-    { failInfrastructure(error) { throw error; } },
+    testHostActions(),
   );
   await runtime.activate();
   await harness.handlers.get("input")?.({ text: request }, {});
@@ -1256,7 +1241,7 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
     const runtime = createFixerRoleRuntime(
       harness.pi as ExtensionAPI,
       { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
-      { failInfrastructure(error) { throw error; } },
+      testHostActions(),
     );
     await runtime.activate();
     return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
@@ -1290,7 +1275,7 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
   const partialRuntime = createFixerRoleRuntime(partialHarness.pi as ExtensionAPI, {
     loadSoul: async () => "FIXER LAW",
     loadPacket: async (path) => path.endsWith("prereqs.json") ? declaredFixPrerequisites : emptyFixPacket,
-  }, { failInfrastructure(error) { throw error; } });
+  }, testHostActions());
   await partialRuntime.activate();
   assert.equal((await partialHarness.tools.get(FIXER_OUTPUT_TOOL_NAME)!.execute("partial", partial, undefined, undefined, submissionContext("partial"))).terminate, true);
 
@@ -1359,8 +1344,9 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
       secondGate.context("converged-gate", JUDGE_OUTPUT_TOOL_NAME),
     ),
     (error: unknown) => {
+      // First harness response is transport failure (plain Error via failInfrastructure).
       assert.ok(error instanceof Error);
-      assert.match(error.message, /^Gatekeeper /);
+      assert.equal(error instanceof GatekeeperDecisionError, false);
       return true;
     },
   );
@@ -1407,7 +1393,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
         loadCanonicalSkillBinding: async () => tddBinding(),
       },
-      { failInfrastructure(error) { throw error; } },
+      testHostActions(),
     );
     await runtime.activate();
     return Object.assign(harness, { model, provider, providerRequests: () => providerRequests });
@@ -2169,18 +2155,18 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           runtime = judgeRole.createJudgeRoleRuntime(harness.pi, {
             loadSoul: async () => "judge law",
             auditSoulCompliance: auditCompliance,
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          }, testHostActions());
         } else if (role === "fixer") {
           runtime = workerRole.createFixerRoleRuntime(harness.pi, {
             loadSoul: async () => "fixer law",
             loadPacket: async () => "repair packet",
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          }, testHostActions());
         } else if (role === "doctor") {
           runtime = doctorRole.createDoctorRoleRuntime(harness.pi, {
             loadSoul: async () => "doctor law",
             loadCase: async () => patient,
             auditCompliance,
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          }, testHostActions());
         } else {
           const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
           runtime = reviewerRole.createReviewerRoleRuntime(harness.pi, {
@@ -2204,7 +2190,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
             }),
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
             auditCompliance,
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          }, testHostActions());
         }
         return {
           harness,

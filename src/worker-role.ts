@@ -30,7 +30,7 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
-import { requireGatekeeperPass } from "./gatekeeper-role.ts";
+import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -118,9 +118,7 @@ function isWorkerPhase(value: unknown): value is WorkerPhase {
   return typeof value === "string" && (FIXER_PHASES as readonly string[]).includes(value);
 }
 
-export type WorkerRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
-};
+export type WorkerRoleHostActions = GatekeeperPassHostActions;
 
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;

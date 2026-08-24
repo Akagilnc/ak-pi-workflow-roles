@@ -9,6 +9,7 @@ import {
   GATEKEEPER_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
+  MISSING_ARGUMENTS_SUBMISSION,
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
 } from "../../src/gatekeeper-role.ts";
@@ -256,6 +257,30 @@ test("malformed accepted officer submission is typed incomplete at officer stage
       reason: "malformed accepted submission",
       submission,
     });
+  });
+});
+
+test("missing arguments is one-shot incomplete with serializable typed observation", async () => {
+  await withParent(async (context) => {
+    let turns = 0;
+    const result = await runGatekeeper({
+      context,
+      subject: { kind: "worker_completion", material: "completion" },
+      runCompletion: async (model, ctx) => {
+        turns += 1;
+        if (turns > 1) throw new Error("must not retry after missing-arguments submission");
+        return completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: undefined }], [])(model, ctx);
+      },
+    });
+    assert.deepEqual(result, {
+      status: "incomplete",
+      stage: "gatekeeper",
+      reason: "malformed accepted submission",
+      submission: MISSING_ARGUMENTS_SUBMISSION,
+    });
+    // Typed observation must survive JSON session/tool_result projection.
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
+    assert.equal(turns, 1);
   });
 });
 

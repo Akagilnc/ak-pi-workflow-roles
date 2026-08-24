@@ -53,16 +53,6 @@ export class GatekeeperDecisionError extends Error {
   }
 }
 
-/** toolCallId → non-pass result until role-runtime tool_result projects it onto session details. */
-const pendingNonPassByToolCallId = new Map<string, GatekeeperNonPassResult>();
-
-/** Consume a pending non-pass for session details projection (sole owner: requireGatekeeperPass + role-runtime). */
-export function takeGatekeeperNonPassDetails(toolCallId: string): GatekeeperNonPassResult | undefined {
-  const result = pendingNonPassByToolCallId.get(toolCallId);
-  if (result !== undefined) pendingNonPassByToolCallId.delete(toolCallId);
-  return result;
-}
-
 export type RunGatekeeperOptions = {
   readonly context: ExtensionContext;
   readonly subject: GatekeeperSubject;
@@ -73,6 +63,8 @@ export type RunGatekeeperOptions = {
 
 export type GatekeeperPassHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
+  /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
+  bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
 };
 
 // Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
@@ -138,6 +130,9 @@ function asStringArray(value: unknown): readonly string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
+/** Serializable stand-in when the child tool call had no arguments object. */
+export const MISSING_ARGUMENTS_SUBMISSION = Object.freeze({ missing: "arguments" as const });
+
 function malformedIncomplete(
   stage: "gatekeeper" | "inspector" | "notary",
   submission: unknown,
@@ -146,7 +141,8 @@ function malformedIncomplete(
     status: "incomplete",
     stage,
     reason: MALFORMED_ACCEPTED_SUBMISSION,
-    submission,
+    // undefined must not be stored: JSON drops it and the missing-args fact vanishes.
+    submission: submission === undefined ? MISSING_ARGUMENTS_SUBMISSION : submission,
   };
 }
 
@@ -267,8 +263,7 @@ export async function requireGatekeeperPass(options: {
       options.toolCallId,
     );
   }
-  // Bind structured result to this output call so tool_result can project details
-  // (throw path alone only keeps error.message for the model).
-  pendingNonPassByToolCallId.set(options.toolCallId, gatekeeper);
+  // Envelope owns the execute→tool_result bridge; this module only projects + throws.
+  options.hostActions.bindGatekeeperNonPass(options.toolCallId, gatekeeper);
   throw new GatekeeperDecisionError(gatekeeper);
 }
