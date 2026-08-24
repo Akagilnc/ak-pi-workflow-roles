@@ -14,16 +14,16 @@
 
 ## 全局宪法（先读）
 
-本机全局规则在 `~/.claude/CLAUDE.md`（与 `~/.codex/AGENTS.md` byte-identical）。**pi session 默认不读全局 CLAUDE.md / AGENTS.md**——凡在本仓工作的 agent（含 pi 起的角色腿与驱动 session），视全局文件为本文件的一部分，开工先读。
+**个人全局规则在场即为法**（陛下 2026-08-24 拍）：用户的全局规则文件（本机为 `~/.claude/CLAUDE.md`，与 `~/.codex/AGENTS.md` byte-identical）在场即适用。**pi session 默认不读它们**——凡在本仓工作的 agent（含 pi 起的角色腿与驱动 session），视其为本文件的一部分，开工先读、主动去扫。本包是公开 npm 包，不得把任何用户本地文件当运行前提：不在场不报错，在场即法。
 
 
 ## 法源优先
 
 各 ADR 已落定的具体决策，在本仓优先于宪法的通用条文；其中违反宪法者，须绑陛下原话与 decision key。
 
-## Commit 前缀法（2026-08-10 陛下拍定）
+## Commit 前缀法（2026-08-10 陛下拍定；2026-08-24 陛下勘明两轨）
 
-提交标题一律冠 `ak-roles:` 在最前。
+前缀＝真实产者署名：**工厂腿**的提交一律冠 `ak-roles:` 在最前；**陛下直改通道／驱动 session** 的提交冠其真实平台前缀（如 `claude:`）。署非产者＝假 provenance，即缺陷。
 
 ## Soul 内容纪律
 
@@ -73,6 +73,10 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 ## Role invocation evidence
 
 调用角色时使用 `pi --session-dir ~/.ak-roles/books/<主仓目录名>/issues/<issue>/runs/<invocation>@<源树>/session`（session 直落机器账本之家，ADR 0048——仓工作树内不再落卷宗；#11 launcher 落地后此路径由机器自算。不用 `--no-session`），stdin **须**以 `</dev/null` 封死（pi 启动会将非 TTY stdin 读到 EOF 才干活，未封死的后台管道=永久停车，README 点火第 2 步 / upstream pi#2078），stdout **须**丢到 `/dev/null`（stdout 流是无上限副本面，session 才是正本——2026-08-03 一条 med 腿 stdout 膨胀 137GB 实证；仪表挂 `stderr.log` 与 session 文件），`stderr.log` 和 `invocation.json` 留在家中同次 `runs/` 目录。
+
+## 直通御前
+
+受审者提交 `escalate`（叫人），审核衙门只有两个选项——能解决就给出答案放其继续；解决不了就放行上呈。没有打回重叫这个选项（陛下 2026-08-24 拍定）。
 
 ## 锚定宪法
 
