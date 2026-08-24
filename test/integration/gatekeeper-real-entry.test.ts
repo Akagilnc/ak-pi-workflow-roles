@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { runGatekeeper, GATEKEEPER_OUTPUT_TOOL, INSPECTOR_OUTPUT_TOOL, NOTARY_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
-import { withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
 
 async function withParent(run: (context: any) => Promise<void>) {
@@ -18,6 +20,14 @@ async function withParent(run: (context: any) => Promise<void>) {
 }
 
 test("internal Gatekeeper dispatches worker completion to a real Inspector child and returns typed pass", async () => {
+  const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
+  const qualityLaw = await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8");
+  const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
+  const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
+  const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
+  const overlay =
+    "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
+
   await withParent(async (context) => {
     const seen: string[] = [];
     const result = await runGatekeeper({
@@ -30,10 +40,16 @@ test("internal Gatekeeper dispatches worker completion to a real Inspector child
     });
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
     assert.equal(seen.length, 2);
-    for (const prompt of seen) {
-      assert.match(prompt, /取证工具不受白名单限制/);
-      assert.match(prompt, /自行恢复/);
-    }
+    // #443: default load injects factory constitution; inspector also gets quality-law.
+    assert.equal(
+      seen[0],
+      [constitution, gatekeeperSoul, overlay].join("\n\n"),
+    );
+    assert.equal(
+      seen[1],
+      [constitution, inspectorSoul, qualityLaw, overlay].join("\n\n"),
+    );
+    assert.equal(seen[1]!.includes(notarySoul), false);
   });
 });
 
@@ -129,6 +145,27 @@ test("Gatekeeper child transport failure is loud and typed, never pass", async (
     if (result.status === "transport_failure") {
       assert.equal(result.stage, "gatekeeper");
       assert.match(result.reason, /provider disconnected/);
+    }
+  });
+});
+
+test("Gatekeeper loadSoul native failure projects as typed transport_failure", async () => {
+  await withParent(async (context) => {
+    const missing = Object.assign(
+      new Error("ENOENT: no such file or directory, open 'souls/__missing__.md'"),
+      { code: "ENOENT" },
+    );
+    const result = await runGatekeeper({
+      context,
+      subject: { kind: "judge_draft", material: "draft" },
+      loadSoul: async () => {
+        throw missing;
+      },
+    });
+    assert.equal(result.status, "transport_failure");
+    if (result.status === "transport_failure") {
+      assert.equal(result.stage, "gatekeeper");
+      assert.match(result.reason, /ENOENT/);
     }
   });
 });

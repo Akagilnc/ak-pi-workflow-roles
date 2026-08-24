@@ -135,6 +135,10 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)({ context }) },
         { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)({ context }) },
       ] as const;
+      // #443: auditor session = factory constitution + role auditor soul.
+      const installedConstitution = await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8");
+      const expectedAuditorPrompt = async (soulPath: string) =>
+        `${installedConstitution}\n\n${await readFile(soulPath, "utf8")}`;
       const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
         let prompt = "";
@@ -147,7 +151,11 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         };
         await role.run(completion);
         assert.equal(calls, 1, `${role.name} audit must make one decision call`);
-        assert.equal(prompt, await readFile(role.soulPath, "utf8"), `${role.name} must load its installed Soul on this call`);
+        assert.equal(
+          prompt,
+          await expectedAuditorPrompt(role.soulPath),
+          `${role.name} must load constitution + installed Soul on this call`,
+        );
         return prompt;
       };
 
@@ -159,11 +167,11 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       await writeFile(judgeSoul, editedSoul, "utf8");
       try {
         const edited = await run(roles[0]);
-        assert.equal(edited, editedSoul);
+        assert.equal(edited, `${installedConstitution}\n\n${editedSoul}`);
         for (const role of roles.slice(1)) {
           const unchanged = await run(role);
-          assert.equal(unchanged, await readFile(role.soulPath, "utf8"));
-          assert.notEqual(unchanged, editedSoul);
+          assert.equal(unchanged, await expectedAuditorPrompt(role.soulPath));
+          assert.equal(unchanged.includes(editedSoul), false);
         }
       } finally {
         await writeFile(judgeSoul, originalJudgeSoul, "utf8");
@@ -197,8 +205,12 @@ test("cold-installed package audits active auditor seats from editable Souls", a
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = await loadRawPackageManifest();
-  const judgeSoul =
-    (await readFile(resolve(packageRoot, "souls/judge.md"), "utf8")).trim();
+  // #443: judge session materials = constitution + soul + output guide (trim whole).
+  const judgeSoul = [
+    await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/judge.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/judge-output-guide.md"), "utf8"),
+  ].join("\n\n").trim();
   await withActivationHome(
     { prefix: "ak-role-integration-" },
     async ({ agentDir }) => {
@@ -548,8 +560,13 @@ test("packaged judge escalation emits one typed human decision", async () => {
 
 test("packaged coder apply proves canonical native tdd expansion including colliding prefix", async () => {
   const manifest = await loadRawPackageManifest();
-  const coderSoul =
-    (await readFile(resolve(packageRoot, "souls/coder.md"), "utf8")).trim();
+  // #443: coder session materials = constitution + soul + quality-law + guide (trim whole).
+  const coderSoul = [
+    await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/coder.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/coder-output-guide.md"), "utf8"),
+  ].join("\n\n").trim();
   const rows = [
     {
       prompt: "/skill:tdd",
