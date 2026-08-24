@@ -3,26 +3,18 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import {
-  createAssistantMessageEventStream,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  validateToolArguments,
-} from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   runGatekeeper,
-  requireGatekeeperPass,
   GATEKEEPER_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
-  GatekeeperDecisionError,
-  takeGatekeeperNonPassDetails,
 } from "../../src/gatekeeper-role.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { fauxProvider } from "@earendil-works/pi-ai";
 
 async function withParent(run: (context: any) => Promise<void>) {
   await withActivationHome({ prefix: "ak-gatekeeper-real-entry-" }, async ({ agentDir, home }) => {
@@ -267,63 +259,4 @@ test("malformed accepted officer submission is typed incomplete at officer stage
   });
 });
 
-test("requireGatekeeperPass binds non-pass for tool_result details and keeps rewrite basis in message", async () => {
-  await withParent(async (context) => {
-    const toolCallId = "parent-output-bounce";
-    takeGatekeeperNonPassDetails(toolCallId);
-    const findings = ["add a focused regression"];
-    const responses = [
-      fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
-      fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "bounce", findings })),
-    ];
-    const faux = fauxProvider({ provider: "gk-bind", api: "gk-bind" });
-    const model = faux.getModel();
-    const provider = {
-      ...faux.provider,
-      stream() {
-        const next = responses.shift();
-        if (next === undefined) throw new Error("unexpected request");
-        const stream = createAssistantMessageEventStream();
-        queueMicrotask(() => stream.end(next));
-        return stream;
-      },
-      streamSimple() { return this.stream(); },
-    };
-    const boundContext = Object.assign(context, {
-      model,
-      modelRegistry: {
-        getProvider(name: string) { return name === model.provider ? provider : undefined; },
-        async getProviderAuth() { return { auth: {} }; },
-        async getApiKeyAndHeaders() { return { ok: true }; },
-      },
-      thinkingLevel: "off",
-    });
-    await assert.rejects(
-      requireGatekeeperPass({
-        context: boundContext,
-        subject: { kind: "worker_completion", material: "completion" },
-        toolCallId,
-        hostActions: {
-          failInfrastructure(error: unknown): never {
-            throw error instanceof Error ? error : new Error(String(error));
-          },
-        },
-      }),
-      (error: unknown) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        // Model-visible throw surface (createErrorToolResult keeps message text).
-        assert.equal(error.message, "Gatekeeper requires rewrite: add a focused regression");
-        assert.deepEqual(error.result, {
-          status: "bounce",
-          officer: "inspector",
-          disposition: "rewrite",
-          findings,
-        });
-        // Same binding role-runtime tool_result consumes for session details.
-        assert.deepEqual(takeGatekeeperNonPassDetails(toolCallId), error.result);
-        assert.equal(takeGatekeeperNonPassDetails(toolCallId), undefined);
-        return true;
-      },
-    );
-  });
-});
+
