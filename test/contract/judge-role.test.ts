@@ -17,7 +17,12 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { NOTARY_OUTPUT_TOOL, INSPECTOR_OUTPUT_TOOL, GATEKEEPER_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
+import {
+  NOTARY_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
+  GATEKEEPER_OUTPUT_TOOL,
+  GatekeeperDecisionError,
+} from "../../src/gatekeeper-role.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
@@ -271,20 +276,42 @@ function workerCompletionGatekeeperHarness(options: {
         });
       };
       await reject("transport", (error) => assert.equal(error.message, "Gatekeeper transport failure at gatekeeper: Error: provider disconnected"));
-      await reject("incomplete", (error) => assert.equal(error.message, `Gatekeeper incomplete at gatekeeper: ${incompleteReason}; {"status":"incomplete","stage":"gatekeeper","reason":"${incompleteReason}"}`));
+      await reject("incomplete", (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.deepEqual(error.result, { status: "incomplete", stage: "gatekeeper", reason: incompleteReason });
+      });
       await reject("no-receipt", (error) => {
-        assert.match(error.message, /^Gatekeeper no_receipt at gatekeeper: Gatekeeper settled without an accepted receipt;/);
-        assert.match(error.message, /"acceptedReceipt":false/);
-        assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "no_receipt");
+        if (error.result.status === "no_receipt") {
+          assert.equal(error.result.stage, "gatekeeper");
+          assert.equal(error.result.facts.acceptedReceipt, false);
+          assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
+        }
       });
       await reject(`${officer}-transport`, (error) => assert.equal(error.message, `Gatekeeper transport failure at ${officer}: Error: officer provider disconnected`));
-      await reject(`${officer}-incomplete`, (error) => assert.equal(error.message, `Gatekeeper incomplete at ${officer}: ${officerIncompleteReason}; {"status":"incomplete","stage":"${officer}","reason":"${officerIncompleteReason}"}`));
-      await reject(`${officer}-no-receipt`, (error) => {
-        assert.match(error.message, new RegExp(`^Gatekeeper no_receipt at ${officer}: ${officer} settled without an accepted receipt;`));
-        assert.match(error.message, /"acceptedReceipt":false/);
-        assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
+      await reject(`${officer}-incomplete`, (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.deepEqual(error.result, { status: "incomplete", stage: officer, reason: officerIncompleteReason });
       });
-      await reject("bounce", (error) => assert.equal(error.message, "Gatekeeper requires rewrite: add a focused regression"));
+      await reject(`${officer}-no-receipt`, (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "no_receipt");
+        if (error.result.status === "no_receipt") {
+          assert.equal(error.result.stage, officer);
+          assert.equal(error.result.facts.acceptedReceipt, false);
+          assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
+        }
+      });
+      await reject("bounce", (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.deepEqual(error.result, {
+          status: "bounce",
+          officer,
+          disposition: "rewrite",
+          findings: ["add a focused regression"],
+        });
+      });
     },
     get providerRequests() { return providerRequests; },
     get remainingResponses() { return responses.length; },

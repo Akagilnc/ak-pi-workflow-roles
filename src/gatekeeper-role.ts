@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { executeAuditorChild, type AuditorCompletion, type AuditorDecisionTool } from "./evidence-child-executor.ts";
@@ -10,6 +10,8 @@ export const INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 const SUBJECT_TOOL = "ak_gatekeeper_subject";
 
+const MALFORMED_ACCEPTED_SUBMISSION = "malformed accepted submission";
+
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion"; readonly material: string }
   | { readonly kind: "judge_draft"; readonly material: string };
@@ -17,9 +19,33 @@ export type GatekeeperSubject =
 export type GatekeeperResult =
   | { readonly status: "pass"; readonly officer: "inspector" | "notary"; readonly findings: readonly string[] }
   | { readonly status: "bounce"; readonly officer: "inspector" | "notary"; readonly disposition: "rewrite"; readonly findings: readonly string[] }
-  | { readonly status: "incomplete"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string }
+  | {
+      readonly status: "incomplete";
+      readonly stage: "gatekeeper" | "inspector" | "notary";
+      readonly reason: string;
+      readonly submission?: unknown;
+    }
   | { readonly status: "no_receipt"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
   | { readonly status: "transport_failure"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string };
+
+export type GatekeeperNonPassResult = Extract<
+  GatekeeperResult,
+  { status: "bounce" | "incomplete" | "no_receipt" }
+>;
+
+/** Structured non-pass from Gatekeeper/officer; parent seam reads `.result`, not message text. */
+export class GatekeeperDecisionError extends Error {
+  readonly result: GatekeeperNonPassResult;
+  constructor(result: GatekeeperNonPassResult) {
+    super(
+      result.status === "bounce"
+        ? "Gatekeeper requires rewrite"
+        : `Gatekeeper ${result.status} at ${result.stage}`,
+    );
+    this.name = "GatekeeperDecisionError";
+    this.result = result;
+  }
+}
 
 export type RunGatekeeperOptions = {
   readonly context: ExtensionContext;
@@ -33,14 +59,29 @@ export type GatekeeperPassHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
-const decisionSchema = Type.Union([
-  Type.Object({ status: Type.Literal("pass"), findings: Type.Array(Type.String()) }, { additionalProperties: false }),
-  Type.Object({
-    status: Type.Literal("bounce", { description: "Return for rewrite; this is not a failure of the invocation." }),
-    findings: Type.Array(Type.String()),
-  }, { additionalProperties: false }),
-  Type.Object({ status: Type.Literal("incomplete"), reason: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-]);
+/** Open object-root transport: declarations guide; never schema-reject a submitted object. */
+function openDecisionTransport(fields: Record<string, TSchema>): TSchema {
+  const object = Type.Object(
+    Object.fromEntries(Object.entries(fields).map(([name, schema]) => [name, Type.Optional(schema)])),
+    { additionalProperties: true },
+  );
+  (object as unknown as { required: string[] }).required = [];
+  return object;
+}
+
+// Every declared field is Unknown so wrong types/spellings still reach projection
+// (ADR 0055/0057; 仓第 0 条). Descriptions remain guidance only.
+const officerDecisionSchema = openDecisionTransport({
+  status: Type.Unknown({ description: "pass | bounce | incomplete — guidance, not a schema gate." }),
+  findings: Type.Unknown({ description: "string[] findings retained with pass or bounce." }),
+  reason: Type.Unknown({ description: "Why the officer decision is incomplete." }),
+});
+
+const gatekeeperDecisionSchema = openDecisionTransport({
+  status: Type.Unknown({ description: "dispatch | incomplete — guidance, not a schema gate." }),
+  officer: Type.Unknown({ description: "inspector | notary when status is dispatch." }),
+  reason: Type.Unknown({ description: "Why Gatekeeper dispatch is incomplete." }),
+});
 
 const INVOCATION_OVERLAY = "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
 
@@ -57,24 +98,23 @@ function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
   };
 }
 
-function decisionTool(name: string): AuditorDecisionTool {
+/** Shared officer decision tool — open transport; projection owns legality. */
+export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
   return {
     name,
     description: "Submit one typed pass, bounce, or incomplete decision.",
-    parameters: decisionSchema,
-    async execute(_id, args) { return result(`accepted ${String(args.status)}`, args); },
+    parameters: officerDecisionSchema,
+    async execute(_id, args) { return result(`accepted ${String((args as { status?: unknown })?.status)}`, args); },
   };
 }
 
-function gatekeeperTool(): AuditorDecisionTool {
+/** Gatekeeper province decision tool — open transport; projection owns legality. */
+export function createGatekeeperOutputTool(): AuditorDecisionTool {
   return {
     name: GATEKEEPER_OUTPUT_TOOL,
     description: "Dispatch the admitted subject to one officer, or report incomplete.",
-    parameters: Type.Union([
-      Type.Object({ status: Type.Literal("dispatch"), officer: Type.Union([Type.Literal("inspector"), Type.Literal("notary")]) }, { additionalProperties: false }),
-      Type.Object({ status: Type.Literal("incomplete"), reason: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-    ]),
-    async execute(_id, args) { return result(`accepted ${String(args.status)}`, args); },
+    parameters: gatekeeperDecisionSchema,
+    async execute(_id, args) { return result(`accepted ${String((args as { status?: unknown })?.status)}`, args); },
   };
 }
 
@@ -87,6 +127,75 @@ function failureReason(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
+function asStringArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function malformedIncomplete(
+  stage: "gatekeeper" | "inspector" | "notary",
+  submission: unknown,
+): Extract<GatekeeperResult, { status: "incomplete" }> {
+  return {
+    status: "incomplete",
+    stage,
+    reason: MALFORMED_ACCEPTED_SUBMISSION,
+    submission,
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function projectProvinceDecision(decision: unknown): GatekeeperResult | { status: "dispatch"; officer: "inspector" | "notary" } {
+  const record = readRecord(decision);
+  if (record === undefined) return malformedIncomplete("gatekeeper", decision);
+  if (record.status === "incomplete") {
+    const reason = record.reason;
+    if (typeof reason === "string" && reason.trim() !== "") {
+      return { status: "incomplete", stage: "gatekeeper", reason };
+    }
+    return malformedIncomplete("gatekeeper", decision);
+  }
+  if (record.status === "dispatch" && (record.officer === "inspector" || record.officer === "notary")) {
+    return { status: "dispatch", officer: record.officer };
+  }
+  return malformedIncomplete("gatekeeper", decision);
+}
+
+function projectOfficerDecision(
+  officer: "inspector" | "notary",
+  decision: unknown,
+): GatekeeperResult {
+  const record = readRecord(decision);
+  if (record === undefined) return malformedIncomplete(officer, decision);
+  if (record.status === "incomplete") {
+    const reason = record.reason;
+    if (typeof reason === "string" && reason.trim() !== "") {
+      return { status: "incomplete", stage: officer, reason };
+    }
+    return malformedIncomplete(officer, decision);
+  }
+  if (record.status === "bounce") {
+    return {
+      status: "bounce",
+      officer,
+      disposition: "rewrite",
+      findings: asStringArray(record.findings),
+    };
+  }
+  if (record.status === "pass") {
+    return {
+      status: "pass",
+      officer,
+      findings: asStringArray(record.findings),
+    };
+  }
+  return malformedIncomplete(officer, decision);
+}
+
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
   const loadSoul = options.loadSoul ?? defaultLoadSoul;
   let provinceRun: Awaited<ReturnType<typeof executeAuditorChild>>;
@@ -96,7 +205,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       roleLabel: "Gatekeeper",
       systemPrompt: `${await loadSoul("gatekeeper")}\n\n${INVOCATION_OVERLAY}`,
       prompt: "Read the admitted subject with ak_gatekeeper_subject, then dispatch it or submit typed incomplete.",
-      tool: gatekeeperTool(),
+      tool: createGatekeeperOutputTool(),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
@@ -107,17 +216,17 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   if (provinceRun.noReceiptLifecycle !== undefined) {
     return { status: "no_receipt", stage: "gatekeeper", reason: "Gatekeeper settled without an accepted receipt", facts: provinceRun.noReceiptLifecycle };
   }
-  const province: any = provinceRun.decision;
-  if (province?.status === "incomplete") return { status: "incomplete", stage: "gatekeeper", reason: province.reason };
+  const province = projectProvinceDecision(provinceRun.decision);
+  if (province.status !== "dispatch") return province;
 
-  const officer = province?.officer as "inspector" | "notary";
+  const officer = province.officer;
   try {
     const officerRun = await executeAuditorChild({
       context: options.context,
       roleLabel: officer === "inspector" ? "Inspector" : "Notary",
       systemPrompt: `${await loadSoul(officer)}\n\n${INVOCATION_OVERLAY}`,
       prompt: "Read the admitted subject with ak_gatekeeper_subject, then submit one typed decision on only your assigned axes.",
-      tool: decisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
+      tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
@@ -125,16 +234,13 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     if (officerRun.noReceiptLifecycle !== undefined) {
       return { status: "no_receipt", stage: officer, reason: `${officer} settled without an accepted receipt`, facts: officerRun.noReceiptLifecycle };
     }
-    const judged: any = officerRun.decision;
-    if (judged?.status === "incomplete") return { status: "incomplete", stage: officer, reason: judged.reason };
-    if (judged?.status === "bounce") return { status: "bounce", officer, disposition: "rewrite", findings: judged.findings };
-    return { status: "pass", officer, findings: judged.findings };
+    return projectOfficerDecision(officer, officerRun.decision);
   } catch (error) {
     return { status: "transport_failure", stage: officer, reason: failureReason(error) };
   }
 }
 
-/** Project GatekeeperResult onto a submit path: transport→failInfrastructure; bounce/incomplete/no_receipt→throw; pass silent. */
+/** Project GatekeeperResult onto a submit path: transport→failInfrastructure; bounce/incomplete/no_receipt→typed throw; pass silent. */
 export async function requireGatekeeperPass(options: {
   readonly context: ExtensionContext;
   readonly subject: GatekeeperSubject;
@@ -147,6 +253,7 @@ export async function requireGatekeeperPass(options: {
     subject: options.subject,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
+  if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {
     options.hostActions.failInfrastructure(
       new Error(`Gatekeeper transport failure at ${gatekeeper.stage}: ${gatekeeper.reason}`),
@@ -154,10 +261,5 @@ export async function requireGatekeeperPass(options: {
       options.toolCallId,
     );
   }
-  if (gatekeeper.status === "bounce") {
-    throw new Error(`Gatekeeper requires rewrite: ${gatekeeper.findings.join("; ")}`);
-  }
-  if (gatekeeper.status === "incomplete" || gatekeeper.status === "no_receipt") {
-    throw new Error(`Gatekeeper ${gatekeeper.status} at ${gatekeeper.stage}: ${gatekeeper.reason}; ${JSON.stringify(gatekeeper)}`);
-  }
+  throw new GatekeeperDecisionError(gatekeeper);
 }
