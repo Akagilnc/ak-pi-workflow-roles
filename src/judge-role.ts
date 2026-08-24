@@ -12,6 +12,7 @@ import {
   readActivationEngineLaborFallbackField,
   withEngineLaborFallbackField,
 } from "./engine-labor-fallback.ts";
+import { runMenxia } from "./menxia-role.ts";
 
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -72,6 +73,33 @@ export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
 }
 
+async function requireJudgeDraftMenxiaPass(
+  verdict: JudgeVerdict,
+  signal: AbortSignal | undefined,
+  hostActions: JudgeRoleHostActions,
+  ctx: ExtensionContext,
+  toolCallId: string,
+): Promise<void> {
+  const menxia = await runMenxia({
+    context: ctx,
+    subject: { kind: "judge_draft", material: JSON.stringify(verdict) },
+    ...(signal === undefined ? {} : { signal }),
+  });
+  if (menxia.status === "transport_failure") {
+    hostActions.failInfrastructure(
+      new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
+      ctx,
+      toolCallId,
+    );
+  }
+  if (menxia.status === "bounce") {
+    throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
+  }
+  if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
+    throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
+  }
+}
+
 function requireSingletonSubmissionCall(
   toolCallId: string,
   ctx: ExtensionContext,
@@ -120,6 +148,8 @@ export function createJudgeRoleRuntime(
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
+            // Menxia runs after the draft is booked and before existing Shenxingyuan.
+            await requireJudgeDraftMenxiaPass(verdict, signal, hostActions, ctx, toolCallId);
             let audit: SoulAuditResult;
             try {
               audit = await dependencies.auditSoulCompliance(

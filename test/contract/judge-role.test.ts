@@ -17,7 +17,7 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { JISHIZHONG_OUTPUT_TOOL, MENXIA_OUTPUT_TOOL } from "../../src/menxia-role.ts";
+import { FUBAOLANG_OUTPUT_TOOL, JISHIZHONG_OUTPUT_TOOL, MENXIA_OUTPUT_TOOL } from "../../src/menxia-role.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
@@ -199,7 +199,9 @@ function workerCompletionMenxiaHarness(options: {
   toolName: string;
   output: unknown;
   incompleteReason: string;
+  officer?: "jishizhong" | "fubaolang";
   jishizhongIncompleteReason?: string;
+  officerIncompleteReason?: string;
   passingRuns?: number;
 }) {
   const {
@@ -207,9 +209,14 @@ function workerCompletionMenxiaHarness(options: {
     toolName,
     output,
     incompleteReason,
-    jishizhongIncompleteReason = `officer ${incompleteReason}`,
+    officer = "jishizhong",
     passingRuns = 1,
   } = options;
+  const officerIncompleteReason =
+    options.officerIncompleteReason ??
+    options.jishizhongIncompleteReason ??
+    `officer ${incompleteReason}`;
+  const officerTool = officer === "jishizhong" ? JISHIZHONG_OUTPUT_TOOL : FUBAOLANG_OUTPUT_TOOL;
   const faux = fauxProvider({ provider: "worker-menxia", api: "worker-menxia" });
   const model = faux.getModel();
   const responses: Array<AssistantMessage | Error> = [
@@ -218,19 +225,19 @@ function workerCompletionMenxiaHarness(options: {
     fauxAssistantMessage("not a receipt"),
     fauxAssistantMessage("still not a receipt"),
     fauxAssistantMessage("settled without a receipt"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
     new Error("officer provider disconnected"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "incomplete", reason: jishizhongIncompleteReason })),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(officerTool, { status: "incomplete", reason: officerIncompleteReason })),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage("officer did not submit a receipt"),
     fauxAssistantMessage("officer still did not submit a receipt"),
     fauxAssistantMessage("officer settled without a receipt"),
-    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-    fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "bounce", findings: ["add a focused regression"] })),
+    fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(officerTool, { status: "bounce", findings: ["add a focused regression"] })),
     ...Array.from({ length: passingRuns }, () => [
-      fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer: "jishizhong" })),
-      fauxAssistantMessage(fauxToolCall(JISHIZHONG_OUTPUT_TOOL, { status: "pass", findings: [] })),
+      fauxAssistantMessage(fauxToolCall(MENXIA_OUTPUT_TOOL, { status: "dispatch", officer })),
+      fauxAssistantMessage(fauxToolCall(officerTool, { status: "pass", findings: [] })),
     ]).flat(),
   ];
   let providerRequests = 0;
@@ -274,10 +281,10 @@ function workerCompletionMenxiaHarness(options: {
         assert.match(error.message, /"acceptedReceipt":false/);
         assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
       });
-      await reject("jishizhong-transport", (error) => assert.equal(error.message, "Menxia transport failure at jishizhong: Error: officer provider disconnected"));
-      await reject("jishizhong-incomplete", (error) => assert.equal(error.message, `Menxia incomplete at jishizhong: ${jishizhongIncompleteReason}; {"status":"incomplete","stage":"jishizhong","reason":"${jishizhongIncompleteReason}"}`));
-      await reject("jishizhong-no-receipt", (error) => {
-        assert.match(error.message, /^Menxia no_receipt at jishizhong: jishizhong settled without an accepted receipt;/);
+      await reject(`${officer}-transport`, (error) => assert.equal(error.message, `Menxia transport failure at ${officer}: Error: officer provider disconnected`));
+      await reject(`${officer}-incomplete`, (error) => assert.equal(error.message, `Menxia incomplete at ${officer}: ${officerIncompleteReason}; {"status":"incomplete","stage":"${officer}","reason":"${officerIncompleteReason}"}`));
+      await reject(`${officer}-no-receipt`, (error) => {
+        assert.match(error.message, new RegExp(`^Menxia no_receipt at ${officer}: ${officer} settled without an accepted receipt;`));
         assert.match(error.message, /"acceptedReceipt":false/);
         assert.match(error.message, /"sessionCompletion":"settled-without-accepted-receipt"/);
       });
@@ -690,7 +697,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       fixture.output,
       undefined,
       undefined,
-      fixture.role === "fixer"
+      fixture.role === "fixer" || fixture.role === "judge"
         ? withPassingMenxia(toolCallContext([{ id: "receipt", name: fixture.name }]))
         : toolCallContext([{ id: "receipt", name: fixture.name }]),
     );
@@ -739,7 +746,7 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
     verdict,
     undefined,
     undefined,
-    toolCallContext([{ id: "call-1", arguments: verdict }]),
+    withPassingMenxia(toolCallContext([{ id: "call-1", arguments: verdict }])),
   );
 
   // Zero hand-delivery: auditor is invoked with context only (no projected materials).
@@ -762,9 +769,9 @@ test("judge role returns revise as an ordinary errored tool result without abort
       verdict,
       undefined,
       undefined,
-      toolCallContext([{ id: "call-2", arguments: verdict }], () => {
+      withPassingMenxia(toolCallContext([{ id: "call-2", arguments: verdict }], () => {
         abortCalls += 1;
-      }),
+      })),
     ),
     /No authority clause was applied; Tests were not adjudicated/,
   );
@@ -784,12 +791,12 @@ test("judge aborts the active operation before rethrowing audit infrastructure f
       verdict,
       undefined,
       undefined,
-      toolCallContext(
+      withPassingMenxia(toolCallContext(
         [{ id: "audit-failure", arguments: verdict }],
         () => {
           abortCalls += 1;
         },
-      ),
+      )),
     ),
     /provider unavailable/,
   );
@@ -856,7 +863,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       assert.ok(tool);
       const verdict = { judgeStatus: "converged" };
       await assert.rejects(
-        tool.execute("failed-output", verdict, undefined, undefined, toolCallContext([{ id: "failed-output", arguments: verdict }])),
+        tool.execute("failed-output", verdict, undefined, undefined, withPassingMenxia(toolCallContext([{ id: "failed-output", arguments: verdict }]))),
         /provider quota exhausted/,
       );
       const sibling = { toolName: "read", toolCallId: "sibling", isError: false, details: {} };
@@ -1167,6 +1174,43 @@ test("fixer completed-side submissions traverse the real Menxia provider gate wh
   assert.equal(tracer.providerRequests, beforeSkipped);
   assert.equal(tracer.providerRequests, 19);
   assert.equal(tracer.remainingResponses, 0);
+});
+
+test("judge submissions traverse the real Menxia provider gate before Shenxingyuan", async () => {
+  let auditCalls = 0;
+  const { tool } = await startJudge(async () => {
+    auditCalls += 1;
+    return { status: "pass" };
+  });
+  const submissions = [
+    { judgeStatus: "continue" as const, fix: { summary: "tighten the gate" }, note: "ticket-review" },
+    { judgeStatus: "converged" as const, note: "judgment" },
+  ];
+  for (const verdict of submissions) {
+    const beforeAudit = auditCalls;
+    const tracer = workerCompletionMenxiaHarness({
+      execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      output: verdict,
+      incompleteReason: "missing draft evidence",
+      officer: "fubaolang",
+    });
+    await tracer.assertRejectSequence();
+    assert.equal(auditCalls, beforeAudit, "Shenxingyuan must not start on Menxia non-pass");
+    const accepted = await tool.execute(
+      `${verdict.judgeStatus}-pass`,
+      verdict,
+      undefined,
+      undefined,
+      tracer.context(`${verdict.judgeStatus}-pass`, JUDGE_OUTPUT_TOOL_NAME),
+    );
+    assert.equal(accepted.terminate, true);
+    assert.deepEqual(accepted.details, verdict);
+    assert.equal(auditCalls, beforeAudit + 1, "Shenxingyuan runs only after Menxia pass");
+    assert.equal(tracer.providerRequests, 17);
+    assert.equal(tracer.remainingResponses, 0);
+  }
+  assert.equal(auditCalls, 2);
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
@@ -2044,9 +2088,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         }
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
-        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`, outputs[role] as Record<string, unknown>)), /violation|violates its|closed contract/);
+        const submissionContext = (id: string) => {
+          const bare = outputContext(tool.name, id, outputs[role] as Record<string, unknown>);
+          return role === "judge" ? withPassingMenxia(bare) : bare;
+        };
+        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, submissionContext(`${role}-revise`)), /violation|violates its|closed contract/);
         retriable.setDecision(pass);
-        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`, outputs[role] as Record<string, unknown>));
+        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, submissionContext(`${role}-pass`));
         assert.equal(accepted.terminate, true);
         if (role === "judge") assert.equal(accepted.details.judgeStatus, outputs[role].judgeStatus);
         else assert.equal(accepted.details.status, outputs[role].status);
@@ -2060,7 +2108,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           await escalated.runtime.activate();
         }
         const escalationTool = escalated.harness.tools.get(tool.name);
-        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`, outputs[role] as Record<string, unknown>));
+        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, submissionContext(`${role}-escalate`));
         assert.equal(result.terminate, true);
         // Escalation face carries audit kind/conflicts/gate AND the seat's
         // already-delivered fields (ADR 0055). Old "exactly three keys" deepEqual
