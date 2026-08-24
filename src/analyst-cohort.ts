@@ -175,30 +175,43 @@ function finishRole(role: string, accum: RoleAccum): AnalystCohortRoleStats {
   };
 }
 
-type GateOfficerAccum = {
+/**
+ * Cross-page fold of page-level gateCycles.byOfficer numerators (#446).
+ * status→bounce/pass classification stays sole in gate-cycles family;
+ * cohort only merges already-projected counts (same ratio-merge nail as rework).
+ */
+type GateOfficerNumeratorAccum = {
   rounds: number;
   bounceCount: number;
   passCount: number;
+  /** Σ (meanOfficerWallMs × rounds) recovered from page summaries. */
   wallSum: number;
 };
 
-function emptyGateOfficerAccum(): GateOfficerAccum {
+function emptyGateOfficerNumeratorAccum(): GateOfficerNumeratorAccum {
   return { rounds: 0, bounceCount: 0, passCount: 0, wallSum: 0 };
 }
 
-function absorbGateRound(
-  accum: GateOfficerAccum,
-  round: { readonly status: string; readonly officerWallMs: number },
+function absorbGateOfficerSummary(
+  accum: GateOfficerNumeratorAccum,
+  summary: {
+    readonly rounds: number;
+    readonly bounceCount: number;
+    readonly passCount: number;
+    readonly meanOfficerWallMs: number | undefined;
+  },
 ): void {
-  accum.rounds += 1;
-  accum.wallSum += round.officerWallMs;
-  if (round.status === "bounce") accum.bounceCount += 1;
-  if (round.status === "pass") accum.passCount += 1;
+  accum.rounds += summary.rounds;
+  accum.bounceCount += summary.bounceCount;
+  accum.passCount += summary.passCount;
+  if (summary.meanOfficerWallMs !== undefined) {
+    accum.wallSum += summary.meanOfficerWallMs * summary.rounds;
+  }
 }
 
-function finishGateOfficer(
+function finishGateOfficerNumerators(
   officer: "inspector" | "notary",
-  accum: GateOfficerAccum,
+  accum: GateOfficerNumeratorAccum,
 ): AnalystCohortGateOfficerStats {
   return {
     officer,
@@ -218,7 +231,10 @@ async function aggregateGroup(
 ): Promise<AnalystCohortGroupResult> {
   const issueEntries: AnalystCohortIssueEntry[] = [];
   const roleAccums = new Map<string, RoleAccum>();
-  const gateOfficerAccums = new Map<"inspector" | "notary", GateOfficerAccum>();
+  const gateOfficerAccums = new Map<
+    "inspector" | "notary",
+    GateOfficerNumeratorAccum
+  >();
   let reworkWallMs = 0;
   let totalWallMs = 0;
   let hasReworkSample = false;
@@ -270,16 +286,15 @@ async function aggregateGroup(
       }
     }
 
-    // Gate-cycle fold: merge typed round samples from ensured pages (no rescan).
+    // Gate-cycle fold: merge page-projected byOfficer numerators (no rescan,
+    // no second status→bounce/pass classifier — sole owner is gate-cycles family).
     const gateCycles = page.gateCycles;
     if (gateCycles !== undefined) {
-      for (const leg of gateCycles.legs) {
-        for (const round of leg.rounds) {
-          const accum =
-            gateOfficerAccums.get(round.officer) ?? emptyGateOfficerAccum();
-          absorbGateRound(accum, round);
-          gateOfficerAccums.set(round.officer, accum);
-        }
+      for (const summary of gateCycles.byOfficer) {
+        const accum =
+          gateOfficerAccums.get(summary.officer) ?? emptyGateOfficerNumeratorAccum();
+        absorbGateOfficerSummary(accum, summary);
+        gateOfficerAccums.set(summary.officer, accum);
       }
     }
   }
@@ -290,7 +305,9 @@ async function aggregateGroup(
 
   const gateCyclesByOfficer = (["inspector", "notary"] as const)
     .filter((officer) => gateOfficerAccums.has(officer))
-    .map((officer) => finishGateOfficer(officer, gateOfficerAccums.get(officer)!));
+    .map((officer) =>
+      finishGateOfficerNumerators(officer, gateOfficerAccums.get(officer)!),
+    );
 
   return {
     groupLabel: input.groupLabel,
