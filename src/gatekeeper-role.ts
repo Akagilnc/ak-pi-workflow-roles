@@ -1,7 +1,8 @@
-import { Type, type TSchema } from "typebox";
+import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { executeAuditorChild, type AuditorCompletion, type AuditorDecisionTool } from "./evidence-child-executor.ts";
+import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
 
@@ -59,29 +60,19 @@ export type GatekeeperPassHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
-/** Open object-root transport: declarations guide; never schema-reject a submitted object. */
-function openDecisionTransport(fields: Record<string, TSchema>): TSchema {
-  const object = Type.Object(
-    Object.fromEntries(Object.entries(fields).map(([name, schema]) => [name, Type.Optional(schema)])),
-    { additionalProperties: true },
-  );
-  (object as unknown as { required: string[] }).required = [];
-  return object;
-}
-
-// Every declared field is Unknown so wrong types/spellings still reach projection
-// (ADR 0055/0057; 仓第 0 条). Descriptions remain guidance only.
-const officerDecisionSchema = openDecisionTransport({
+// Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
+// Opening goes through the sole openToolObject owner — no parallel transport helper.
+const officerDecisionSchema = openToolObject(Type.Object({
   status: Type.Unknown({ description: "pass | bounce | incomplete — guidance, not a schema gate." }),
   findings: Type.Unknown({ description: "string[] findings retained with pass or bounce." }),
   reason: Type.Unknown({ description: "Why the officer decision is incomplete." }),
-});
+}));
 
-const gatekeeperDecisionSchema = openDecisionTransport({
+const gatekeeperDecisionSchema = openToolObject(Type.Object({
   status: Type.Unknown({ description: "dispatch | incomplete — guidance, not a schema gate." }),
   officer: Type.Unknown({ description: "inspector | notary when status is dispatch." }),
   reason: Type.Unknown({ description: "Why Gatekeeper dispatch is incomplete." }),
-});
+}));
 
 const INVOCATION_OVERLAY = "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
 
