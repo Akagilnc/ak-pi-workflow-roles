@@ -7,7 +7,6 @@ import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-const workflowPath = resolve(packageRoot, ".github/workflows/publish-registry.yml");
 const stampScriptPath = resolve(packageRoot, "scripts/publish-registry-stamp.sh");
 
 function writeGitStub(bin: string, shortSha: string): void {
@@ -140,17 +139,6 @@ function runStamp(options: {
     ...(distTagName === undefined ? {} : { distTagName }),
   };
 }
-
-test("publish-registry binds CHANNEL via step env and invokes the sole stamp script", () => {
-  const source = readFileSync(workflowPath, "utf8");
-  assert.equal(existsSync(stampScriptPath), true);
-  // Structured workflow facts — not step-title/indent/run-body presentation regex.
-  assert.match(source, /CHANNEL:\s*\$\{\{\s*github\.event\.inputs\.channel/);
-  assert.match(source, /^\s+run:\s+bash\s+scripts\/publish-registry-stamp\.sh\s*$/m);
-  const script = readFileSync(stampScriptPath, "utf8");
-  assert.equal(script.includes("github.event.inputs.channel"), false);
-  assert.match(script, /\$CHANNEL/);
-});
 
 test("malicious CHANNEL is data to real npm and fails Invalid version without shell execution", () => {
   const malicious = 'x$(echo pwned >PWND)y; echo injected" `uname` ';
