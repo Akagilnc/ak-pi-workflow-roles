@@ -14,7 +14,7 @@
 
 ## 全局宪法（先读）
 
-本机全局规则在 `~/.claude/CLAUDE.md`（与 `~/.codex/AGENTS.md` byte-identical）。**pi session 默认不读全局 CLAUDE.md / AGENTS.md**——凡在本仓工作的 agent（含 pi 起的角色腿与驱动 session），视全局文件为本文件的一部分，开工先读。
+**个人全局规则在场即为法**（陛下 2026-08-24 拍）：用户的全局规则文件（本机为 `~/.claude/CLAUDE.md`，与 `~/.codex/AGENTS.md` byte-identical）在场即适用。**pi session 默认不读它们**——凡在本仓工作的 agent（含 pi 起的角色腿与驱动 session），视其为本文件的一部分，开工先读、主动去扫。本包是公开 npm 包，不得把任何用户本地文件当运行前提：不在场不报错，在场即法。
 
 
 ## 法源优先
