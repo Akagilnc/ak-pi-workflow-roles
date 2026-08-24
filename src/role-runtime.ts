@@ -279,12 +279,12 @@ export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } f
 export { executeAuditorChild } from "./evidence-child-executor.ts";
 export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
-  FUBAOLANG_OUTPUT_TOOL,
-  JISHIZHONG_OUTPUT_TOOL,
-  MENXIA_OUTPUT_TOOL,
-  runMenxia,
-} from "./menxia-role.ts";
-export type { MenxiaResult, MenxiaSubject, RunMenxiaOptions } from "./menxia-role.ts";
+  NOTARY_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
+  GATEKEEPER_OUTPUT_TOOL,
+  runGatekeeper,
+} from "./gatekeeper-role.ts";
+export type { GatekeeperResult, GatekeeperSubject, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,

@@ -12,7 +12,7 @@ import {
   readActivationEngineLaborFallbackField,
   withEngineLaborFallbackField,
 } from "./engine-labor-fallback.ts";
-import { requireMenxiaPass } from "./menxia-role.ts";
+import { requireGatekeeperPass } from "./gatekeeper-role.ts";
 
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -121,8 +121,8 @@ export function createJudgeRoleRuntime(
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
-            // Menxia runs after the draft is booked and before existing Shenxingyuan.
-            await requireMenxiaPass({
+            // Gatekeeper runs after the draft is booked and before existing auditor.
+            await requireGatekeeperPass({
               context: ctx,
               subject: { kind: "judge_draft", material: JSON.stringify(verdict) },
               ...(signal === undefined ? {} : { signal }),

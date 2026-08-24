@@ -30,7 +30,7 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
-import { requireMenxiaPass } from "./menxia-role.ts";
+import { requireGatekeeperPass } from "./gatekeeper-role.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -293,7 +293,7 @@ export function createFixerRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed" || output.status === "partially_completed") {
-              await requireMenxiaPass({
+              await requireGatekeeperPass({
                 context: ctx,
                 subject: { kind: "worker_completion", material: JSON.stringify(output) },
                 ...(_signal === undefined ? {} : { signal: _signal }),
@@ -446,7 +446,7 @@ export function createCoderRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed") {
-              await requireMenxiaPass({
+              await requireGatekeeperPass({
                 context: ctx,
                 subject: { kind: "worker_completion", material: JSON.stringify(output) },
                 ...(_signal === undefined ? {} : { signal: _signal }),

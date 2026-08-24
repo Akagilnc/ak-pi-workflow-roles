@@ -1,6 +1,6 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 
-export function menxiaChildCompletion(
+export function fauxGatekeeper(
   calls: Array<{ tool?: string; args?: object; text?: string }>,
   seen: string[],
 ) {
