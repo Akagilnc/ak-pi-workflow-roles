@@ -44,10 +44,9 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
       response.end("data: [DONE]\n\n");
       return;
     }
-    if (toolNames.includes("ak_notary_output") || toolNames.includes("ak_inspector_output")) {
-      const officerTool = toolNames.includes("ak_notary_output") ? "ak_notary_output" : "ak_inspector_output";
+    if (toolNames.includes("ak_notary_output")) {
       const args = { status: "pass", findings: [] };
-      const payload = { id: `chatcmpl-${requestCount}`, object: "chat.completion.chunk", created: 1, model: "faux-1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call-${requestCount}`, type: "function", function: { name: officerTool, arguments: JSON.stringify(args) } }] }, finish_reason: null }] };
+      const payload = { id: `chatcmpl-${requestCount}`, object: "chat.completion.chunk", created: 1, model: "faux-1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call-${requestCount}`, type: "function", function: { name: "ak_notary_output", arguments: JSON.stringify(args) } }] }, finish_reason: null }] };
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(`data: ${JSON.stringify(payload)}\n\n`);
       response.write(`data: ${JSON.stringify({ ...payload, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`);

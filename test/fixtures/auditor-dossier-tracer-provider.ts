@@ -5,7 +5,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
   GATEKEEPER_OUTPUT_TOOL,
-  INSPECTOR_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 
@@ -41,12 +40,6 @@ export default function auditorDossierTracerProvider(pi: ExtensionAPI): void {
     if (names.includes(NOTARY_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
-        { stopReason: "toolUse" },
-      );
-    }
-    if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
-      return fauxAssistantMessage(
-        fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
         { stopReason: "toolUse" },
       );
     }

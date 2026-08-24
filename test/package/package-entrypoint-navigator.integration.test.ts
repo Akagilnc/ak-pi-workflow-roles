@@ -36,7 +36,6 @@ import {
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
   GATEKEEPER_OUTPUT_TOOL,
-  INSPECTOR_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
@@ -89,12 +88,6 @@ function scriptJudgeProvincePass(names: readonly string[]) {
   if (names.includes(NOTARY_OUTPUT_TOOL)) {
     return fauxAssistantMessage(
       fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
-      { stopReason: "toolUse" },
-    );
-  }
-  if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
-    return fauxAssistantMessage(
-      fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
       { stopReason: "toolUse" },
     );
   }

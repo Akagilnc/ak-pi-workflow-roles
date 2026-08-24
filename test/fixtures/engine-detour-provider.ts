@@ -18,7 +18,6 @@ import {
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
-  INSPECTOR_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
@@ -41,12 +40,6 @@ export default function fixture(pi: ExtensionAPI): void {
     if (names.includes(NOTARY_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
-        { stopReason: "toolUse" },
-      );
-    }
-    if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
-      return fauxAssistantMessage(
-        fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
         { stopReason: "toolUse" },
       );
     }
