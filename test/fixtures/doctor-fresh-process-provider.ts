@@ -1,7 +1,9 @@
+import { writeFileSync } from "node:fs";
 import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
+  type Context,
   type Provider,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -15,21 +17,31 @@ export default function doctorFreshProcessProvider(pi: ExtensionAPI): void {
   if (typeof runsPath !== "string" || !runsPath || !Number.isInteger(issueNumber)) {
     throw new Error("Doctor fresh-process fixture is missing its case identity");
   }
+  const capturePath = process.env.AK_DOCTOR_FRESH_CAPTURE_SYSTEM_PROMPT;
 
   const faux = fauxProvider({
     api: "ak-doctor-fresh",
     provider: "ak-doctor-fresh",
     tokenSize: { min: 1000, max: 1000 },
   });
+  let captured = false;
+  const capture = (context: Context) => {
+    if (captured || typeof capturePath !== "string" || capturePath.trim() === "") return;
+    captured = true;
+    writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
+  };
   faux.setResponses([
-    fauxAssistantMessage(
-      fauxToolCall(
-        DOCTOR_OUTPUT_TOOL_NAME,
-        { status: "completed", case: { issueNumber, runsPath }, findings: [] },
-        { id: "doctor-output" },
-      ),
-      { stopReason: "toolUse" },
-    ),
+    (context: Context) => {
+      capture(context);
+      return fauxAssistantMessage(
+        fauxToolCall(
+          DOCTOR_OUTPUT_TOOL_NAME,
+          { status: "completed", case: { issueNumber, runsPath }, findings: [] },
+          { id: "doctor-output" },
+        ),
+        { stopReason: "toolUse" },
+      );
+    },
     fauxAssistantMessage(
       fauxToolCall(
         DOCTOR_AUDIT_TOOL_NAME,

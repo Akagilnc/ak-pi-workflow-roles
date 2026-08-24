@@ -68,16 +68,35 @@ test("Gatekeeper accepts its typed officer choice instead of machine-rejecting d
 });
 
 test("internal Gatekeeper dispatches judge draft to Notary and bounce means rewrite", async () => {
+  const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
+  const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
+  const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
+  const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
+  const overlay =
+    "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
+
   await withParent(async (context) => {
+    const seen: string[] = [];
     const result = await runGatekeeper({
       context,
       subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
       runCompletion: completion([
         { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "notary" } },
         { tool: NOTARY_OUTPUT_TOOL, args: { status: "bounce", findings: ["quote has no source"] } },
-      ], []),
+      ], seen),
     });
     assert.deepEqual(result, { status: "bounce", officer: "notary", disposition: "rewrite", findings: ["quote has no source"] });
+    assert.equal(seen.length, 2);
+    // #443: Notary real entry receives factory constitution + notary soul (not inspector).
+    assert.equal(
+      seen[0],
+      [constitution, gatekeeperSoul, overlay].join("\n\n"),
+    );
+    assert.equal(
+      seen[1],
+      [constitution, notarySoul, overlay].join("\n\n"),
+    );
+    assert.equal(seen[1]!.includes(inspectorSoul), false);
   });
 });
 
