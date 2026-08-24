@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import test from "node:test";
 
-import { fauxAssistantMessage, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
 import {
   SessionManager,
   type ExtensionAPI,
@@ -17,6 +17,13 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
+import {
+  NOTARY_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
+  GATEKEEPER_OUTPUT_TOOL,
+  GatekeeperDecisionError,
+  type GatekeeperPassHostActions,
+} from "../../src/gatekeeper-role.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
@@ -140,6 +147,18 @@ function extensionHarness(
   return { pi, handlers, tools, flags, activeToolSets, appendedEntries };
 }
 
+/** Test host: infrastructure throws through; non-pass bind is a no-op unless a case wires tool_result. */
+function testHostActions(
+  fail: (error: unknown) => never = (error): never => {
+    throw error instanceof Error ? error : new Error(String(error));
+  },
+): GatekeeperPassHostActions {
+  return {
+    failInfrastructure(error) { fail(error); },
+    bindGatekeeperNonPass() {},
+  };
+}
+
 function toolCallContext(
   calls: Array<{ id: string; name?: string; arguments?: Record<string, unknown> }>,
   abort: () => void = () => {},
@@ -164,6 +183,168 @@ function toolCallContext(
   return { sessionManager, abort } as unknown as ExtensionContext;
 }
 
+function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
+  const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
+  const model = faux.getModel();
+  const responses = [
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
+    fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })),
+  ];
+  const provider = {
+    ...faux.provider,
+    stream() {
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => stream.end(next));
+      return stream;
+    },
+    streamSimple() { return this.stream(); },
+  };
+  return Object.assign(context, {
+    cwd: process.cwd(), model,
+    modelRegistry: {
+      getProvider(name: string) { return name === model.provider ? provider : undefined; },
+      async getProviderAuth() { return { auth: {} }; },
+      async getApiKeyAndHeaders() { return { ok: true }; },
+    },
+    thinkingLevel: "off",
+  });
+}
+
+function workerCompletionGatekeeperHarness(options: {
+  execute: (id: string, output: unknown, context: ExtensionContext) => Promise<unknown>;
+  toolName: string;
+  output: unknown;
+  incompleteReason: string;
+  officer?: "inspector" | "notary";
+  officerIncompleteReason?: string;
+  passingRuns?: number;
+}) {
+  const {
+    execute,
+    toolName,
+    output,
+    incompleteReason,
+    officer = "inspector",
+    officerIncompleteReason = `officer ${incompleteReason}`,
+    passingRuns = 1,
+  } = options;
+  const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
+  const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
+  const model = faux.getModel();
+  const responses: Array<AssistantMessage | Error> = [
+    new Error("provider disconnected"),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "incomplete", reason: incompleteReason })),
+    fauxAssistantMessage("not a receipt"),
+    fauxAssistantMessage("still not a receipt"),
+    fauxAssistantMessage("settled without a receipt"),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
+    new Error("officer provider disconnected"),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(officerTool, { status: "incomplete", reason: officerIncompleteReason })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage("officer did not submit a receipt"),
+    fauxAssistantMessage("officer still did not submit a receipt"),
+    fauxAssistantMessage("officer settled without a receipt"),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(officerTool, { status: "bounce", findings: ["add a focused regression"] })),
+    ...Array.from({ length: passingRuns }, () => [
+      fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
+      fauxAssistantMessage(fauxToolCall(officerTool, { status: "pass", findings: [] })),
+    ]).flat(),
+  ];
+  let providerRequests = 0;
+  const provider = {
+    ...faux.provider,
+    stream() {
+      providerRequests += 1;
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+      if (next instanceof Error) throw next;
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => stream.end(next));
+      return stream;
+    },
+    streamSimple() { return this.stream(); },
+  };
+  return {
+    context(id: string, toolName: string) {
+      return Object.assign(toolCallContext([{ id, name: toolName }]), {
+        cwd: process.cwd(), model,
+        modelRegistry: {
+          getProvider(name: string) { return name === model.provider ? provider : undefined; },
+          async getProviderAuth() { return { auth: {} }; },
+          async getApiKeyAndHeaders() { return { ok: true }; },
+        },
+        thinkingLevel: "off",
+      });
+    },
+    async assertRejectSequence() {
+      const reject = async (id: string, check: (error: Error) => void) => {
+        await assert.rejects(execute(id, output, this.context(id, toolName)), (error: unknown) => {
+          assert.ok(error instanceof Error);
+          check(error);
+          return true;
+        });
+      };
+      // Transport is plain Error via failInfrastructure — typed path is not GatekeeperDecisionError.
+      await reject("transport", (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
+      await reject("incomplete", (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "incomplete");
+        if (error.result.status === "incomplete") {
+          assert.equal(error.result.stage, "gatekeeper");
+          assert.equal(error.result.reason, incompleteReason);
+          assert.deepEqual(error.result.submission, { status: "incomplete", reason: incompleteReason });
+        }
+      });
+      await reject("no-receipt", (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "no_receipt");
+        if (error.result.status === "no_receipt") {
+          assert.equal(error.result.stage, "gatekeeper");
+          assert.equal(error.result.facts.acceptedReceipt, false);
+          assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
+        }
+      });
+      await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
+      await reject(`${officer}-incomplete`, (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "incomplete");
+        if (error.result.status === "incomplete") {
+          assert.equal(error.result.stage, officer);
+          assert.equal(error.result.reason, officerIncompleteReason);
+          assert.deepEqual(error.result.submission, { status: "incomplete", reason: officerIncompleteReason });
+        }
+      });
+      await reject(`${officer}-no-receipt`, (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "no_receipt");
+        if (error.result.status === "no_receipt") {
+          assert.equal(error.result.stage, officer);
+          assert.equal(error.result.facts.acceptedReceipt, false);
+          assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
+        }
+      });
+      await reject("bounce", (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "bounce");
+        if (error.result.status === "bounce") {
+          assert.equal(error.result.officer, officer);
+          assert.equal(error.result.disposition, "rewrite");
+          assert.deepEqual(error.result.findings, ["add a focused regression"]);
+          assert.deepEqual(error.result.submission, {
+            status: "bounce",
+            findings: ["add a focused regression"],
+          });
+        }
+      });
+    },
+    get providerRequests() { return providerRequests; },
+    get remainingResponses() { return responses.length; },
+  };
+}
 
 function activationCtx(home: string, extras: Record<string, unknown> = {}): ExtensionContext {
   // Durable session principal under the machine ledger book (ADR 0048).
@@ -405,7 +586,7 @@ test("focused Judge controller registers output without narrowing host tools", a
       loadSoul: async () => "  JUDGE LAW  ",
       auditSoulCompliance: async () => ({ status: "pass" }),
     },
-    { failInfrastructure(error) { throw error; } },
+    testHostActions(),
   );
 
   await runtime.activate();
@@ -432,7 +613,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
       loadSoul: async () => "\n FIXER LAW \n",
       loadPacket: async () => emptyFixPacket,
     },
-    { failInfrastructure(error) { throw error; } },
+    testHostActions(),
   );
   assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]));
   await fixerRuntime.activate();
@@ -468,7 +649,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
       loadSoul: async () => "\n CODER LAW \n",
       loadTask: async () => "\n TASK BODY \n",
     },
-    { failInfrastructure(error) { throw error; } },
+    testHostActions(),
   );
   assert.deepEqual(new Set(coder.flags.keys()), new Set(["ak-coder-task", "ak-coder-phase"]));
   await coderRuntime.activate();
@@ -497,7 +678,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "judge",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
           },
-          { failInfrastructure(error) { throw error; } },
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -519,7 +700,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "fixer",
             loadPacket: async () => emptyFixPacket,
           },
-          { failInfrastructure(error) { throw error; } },
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -541,7 +722,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "coder",
             loadTask: async () => "task",
           },
-          { failInfrastructure(error) { throw error; } },
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -567,7 +748,9 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       fixture.output,
       undefined,
       undefined,
-      toolCallContext([{ id: "receipt", name: fixture.name }]),
+      fixture.role === "fixer" || fixture.role === "judge"
+        ? withPassingGatekeeper(toolCallContext([{ id: "receipt", name: fixture.name }]))
+        : toolCallContext([{ id: "receipt", name: fixture.name }]),
     );
     assert.equal(result.content[0].text, fixture.acceptedText);
     assert.deepEqual(result.details, fixture.output);
@@ -614,7 +797,7 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
     verdict,
     undefined,
     undefined,
-    toolCallContext([{ id: "call-1", arguments: verdict }]),
+    withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict }])),
   );
 
   // Zero hand-delivery: auditor is invoked with context only (no projected materials).
@@ -637,9 +820,9 @@ test("judge role returns revise as an ordinary errored tool result without abort
       verdict,
       undefined,
       undefined,
-      toolCallContext([{ id: "call-2", arguments: verdict }], () => {
+      withPassingGatekeeper(toolCallContext([{ id: "call-2", arguments: verdict }], () => {
         abortCalls += 1;
-      }),
+      })),
     ),
     /No authority clause was applied; Tests were not adjudicated/,
   );
@@ -659,12 +842,12 @@ test("judge aborts the active operation before rethrowing audit infrastructure f
       verdict,
       undefined,
       undefined,
-      toolCallContext(
+      withPassingGatekeeper(toolCallContext(
         [{ id: "audit-failure", arguments: verdict }],
         () => {
           abortCalls += 1;
         },
-      ),
+      )),
     ),
     /provider unavailable/,
   );
@@ -731,7 +914,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       assert.ok(tool);
       const verdict = { judgeStatus: "converged" };
       await assert.rejects(
-        tool.execute("failed-output", verdict, undefined, undefined, toolCallContext([{ id: "failed-output", arguments: verdict }])),
+        tool.execute("failed-output", verdict, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "failed-output", arguments: verdict }]))),
         /provider quota exhausted/,
       );
       const sibling = { toolName: "read", toolCallId: "sibling", isError: false, details: {} };
@@ -842,14 +1025,18 @@ test("coder plan loads its task without construction skill and returns planned",
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const output = { status: "planned", report: "Plan the public seam first." };
+  let gatekeeperProviderRequests = 0;
   const result = await tool.execute(
     "coder",
     output,
     undefined,
     undefined,
-    toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]),
+    Object.assign(toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]), {
+      modelRegistry: { getProvider() { gatekeeperProviderRequests += 1; } },
+    }),
   );
   assert.deepEqual(result.details, output);
+  assert.equal(gatekeeperProviderRequests, 0);
 });
 
 test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
@@ -879,15 +1066,20 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     ...bare,
     reason: "prerequisite_missing: owner has not answered which adapter branch is in scope",
   };
+  let gatekeeperProviderRequests = 0;
+  const nonCompletedContext = (id: string) => Object.assign(
+    toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
+    { modelRegistry: { getProvider() { gatekeeperProviderRequests += 1; } } },
+  );
   // Positive: no reason → bounce → same-run reasoned resubmit accepted.
   await assert.rejects(
-    tool.execute("unfinished-bare", bare, undefined, undefined, toolCallContext([{ id: "unfinished-bare", name: CODER_OUTPUT_TOOL_NAME }])),
+    tool.execute("unfinished-bare", bare, undefined, undefined, nonCompletedContext("unfinished-bare")),
     (error: unknown) =>
       error instanceof Error &&
       error.message === "补理由（前置缺失/违宪之一）或继续施工",
   );
   assert.deepEqual(
-    (await tool.execute("unfinished-reasoned", reasoned, undefined, undefined, toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }]))).details,
+    (await tool.execute("unfinished-reasoned", reasoned, undefined, undefined, nonCompletedContext("unfinished-reasoned"))).details,
     reasoned,
   );
   const { extractCoderRoleOutcome } = await import("../../src/public-cli/settlement.ts");
@@ -924,17 +1116,258 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   await assert.rejects(
-    tool2.execute("u1", bare, undefined, undefined, toolCallContext([{ id: "u1", name: CODER_OUTPUT_TOOL_NAME }])),
+    tool2.execute("u1", bare, undefined, undefined, nonCompletedContext("u1")),
     /补理由（前置缺失\/违宪之一）或继续施工/,
   );
   await assert.rejects(
-    tool2.execute("u2", bare, undefined, undefined, toolCallContext([{ id: "u2", name: CODER_OUTPUT_TOOL_NAME }])),
+    tool2.execute("u2", bare, undefined, undefined, nonCompletedContext("u2")),
     /补理由（前置缺失\/违宪之一）或继续施工/,
   );
   assert.deepEqual(
-    (await tool2.execute("u3", bare, undefined, undefined, toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]))).details,
+    (await tool2.execute("u3", bare, undefined, undefined, nonCompletedContext("u3"))).details,
     bare,
   );
+  assert.equal(gatekeeperProviderRequests, 0);
+});
+
+test("Gatekeeper non-pass projects structured details through role-runtime tool_result", async () => {
+  // Real entry: judge output → requireGatekeeperPass binds via envelope hostActions → tool_result projects.
+  const harness = extensionHarness("judge");
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(harness.pi as ExtensionAPI);
+  await withActivationHome({ prefix: "ak-gatekeeper-tool-result-" }, async ({ home }) => {
+    const ctx = activationCtx(home);
+    await harness.handlers.get("session_start")?.({}, ctx);
+    const findings = ["add a focused regression"];
+    const toolCallId = "judge-gk-bounce";
+    const bounceSubmission = { status: "bounce", findings };
+    const expected = {
+      status: "bounce" as const,
+      officer: "inspector" as const,
+      disposition: "rewrite" as const,
+      findings,
+      submission: bounceSubmission,
+    };
+    const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
+    const model = faux.getModel();
+    const responses = [
+      fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
+      fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, bounceSubmission)),
+    ];
+    const provider = {
+      ...faux.provider,
+      stream() {
+        const next = responses.shift();
+        if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => stream.end(next));
+        return stream;
+      },
+      streamSimple() { return this.stream(); },
+    };
+    // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
+    const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
+      cwd: process.cwd(),
+      model,
+      modelRegistry: {
+        getProvider(name: string) { return name === model.provider ? provider : undefined; },
+        async getProviderAuth() { return { auth: {} }; },
+        async getApiKeyAndHeaders() { return { ok: true }; },
+      },
+      thinkingLevel: "off",
+    });
+    const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    await assert.rejects(
+      tool.execute(toolCallId, { judgeStatus: "converged" }, undefined, undefined, gateContext),
+      (error: unknown) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.deepEqual(error.result, expected);
+        return true;
+      },
+    );
+    // Real parent seam: envelope tool_result projects bound structured non-pass onto session details.
+    const projection = await harness.handlers.get("tool_result")?.({
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId,
+      isError: true,
+      content: [{ type: "text", text: "model-visible surface" }],
+      details: {},
+    }, ctx);
+    assert.deepEqual(projection, { details: expected, isError: true });
+    // Binding is single-consume; a second tool_result must not invent details.
+    const second = await harness.handlers.get("tool_result")?.({
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId,
+      isError: true,
+      content: [{ type: "text", text: "model-visible surface" }],
+      details: {},
+    }, ctx);
+    assert.equal(second, undefined);
+  });
+});
+
+test("coder completed submissions traverse the real Gatekeeper provider gate until pass", async () => {
+  const request = "Apply the approved plan.";
+  const harness = extensionHarness(undefined, {
+    "ak-coder-task": "/materials/approved.md",
+    "ak-coder-phase": "apply",
+  });
+  const runtime = createCoderRoleRuntime(
+    harness.pi as ExtensionAPI,
+    {
+      loadSoul: async () => "CODER LAW",
+      loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+      loadCanonicalSkillBinding: async () => tddBinding(),
+    },
+    testHostActions(),
+  );
+  await runtime.activate();
+  await harness.handlers.get("input")?.({ text: request }, {});
+  await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: expandedTdd(request) },
+    { abort() {}, mode: "tui" },
+  );
+  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  const completed = { status: "completed", report: "TDD and verification evidence" };
+  const tracer = workerCompletionGatekeeperHarness({
+    execute: (id, output, context) => tool.execute(id, output as typeof completed, undefined, undefined, context),
+    toolName: CODER_OUTPUT_TOOL_NAME,
+    output: completed,
+    incompleteReason: "missing completion evidence",
+  });
+  await tracer.assertRejectSequence();
+  const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
+
+  assert.equal(accepted.terminate, true);
+  assert.equal(tracer.providerRequests, 17);
+  assert.equal(tracer.remainingResponses, 0);
+});
+
+test("fixer completed-side submissions traverse the real Gatekeeper provider gate while non-completions skip it", async () => {
+  const start = async (phase: "plan" | "apply") => {
+    const harness = extensionHarness(undefined, {
+      "ak-fix-packet": "/materials/fix.md",
+      "ak-fixer-phase": phase,
+    });
+    const runtime = createFixerRoleRuntime(
+      harness.pi as ExtensionAPI,
+      { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
+      testHostActions(),
+    );
+    await runtime.activate();
+    return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
+  };
+  const completed = {
+    status: "completed" as const,
+    report: "repair complete",
+    classResults: [{ name: "Gate", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }],
+  };
+  const completedTool = await start("apply");
+  const tracer = workerCompletionGatekeeperHarness({
+    execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
+    toolName: FIXER_OUTPUT_TOOL_NAME,
+    output: completed,
+    incompleteReason: "missing repair evidence",
+    passingRuns: 2,
+  });
+  const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
+  await tracer.assertRejectSequence();
+  assert.equal((await completedTool.execute("pass", completed, undefined, undefined, submissionContext("pass"))).terminate, true);
+
+  const partial = {
+    status: "partially_completed" as const,
+    report: "mixed lawful settlement",
+    classResults: [
+      completed.classResults[0],
+      { name: "Blocked", disposition: "refused" as const, remainingScope: "owner choice", blocker: { kind: "missing_prerequisite" as const, prerequisiteId: "owner.choice", reason: "owner choice missing" } },
+    ],
+  };
+  const partialHarness = extensionHarness(undefined, { "ak-fix-packet": "/materials/fix.md", "ak-fixer-prerequisites": "/materials/prereqs.json", "ak-fixer-phase": "apply" });
+  const partialRuntime = createFixerRoleRuntime(partialHarness.pi as ExtensionAPI, {
+    loadSoul: async () => "FIXER LAW",
+    loadPacket: async (path) => path.endsWith("prereqs.json") ? declaredFixPrerequisites : emptyFixPacket,
+  }, testHostActions());
+  await partialRuntime.activate();
+  assert.equal((await partialHarness.tools.get(FIXER_OUTPUT_TOOL_NAME)!.execute("partial", partial, undefined, undefined, submissionContext("partial"))).terminate, true);
+
+  const beforeSkipped = tracer.providerRequests;
+  const planTool = await start("plan");
+  await planTool.execute("planned", { status: "planned", report: "plan" }, undefined, undefined, submissionContext("planned"));
+  await planTool.execute("plan-refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }, undefined, undefined, submissionContext("plan-refused"));
+  const applyTool = await start("apply");
+  await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"));
+  await applyTool.execute("unfinished", { status: "unfinished", report: "handover", remainingScope: "owner answer", reason: "prerequisite_missing: owner answer" }, undefined, undefined, submissionContext("unfinished"));
+  assert.equal(tracer.providerRequests, beforeSkipped);
+  assert.equal(tracer.providerRequests, 19);
+  assert.equal(tracer.remainingResponses, 0);
+});
+
+test("judge submissions traverse the real Gatekeeper provider gate before auditor", async () => {
+  let auditCalls = 0;
+  const { tool } = await startJudge(async () => {
+    auditCalls += 1;
+    return { status: "pass" };
+  });
+  // Full 8-reject+pass matrix once; production does not branch on judgeStatus.
+  const continueVerdict = {
+    judgeStatus: "continue" as const,
+    fix: { summary: "tighten the gate" },
+    note: "ticket-review",
+  };
+  const tracer = workerCompletionGatekeeperHarness({
+    execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
+    toolName: JUDGE_OUTPUT_TOOL_NAME,
+    output: continueVerdict,
+    incompleteReason: "missing draft evidence",
+    officer: "notary",
+  });
+  await tracer.assertRejectSequence();
+  assert.equal(auditCalls, 0, "auditor must not start on Gatekeeper non-pass");
+  const accepted = await tool.execute(
+    "continue-pass",
+    continueVerdict,
+    undefined,
+    undefined,
+    tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME),
+  );
+  assert.equal(accepted.terminate, true);
+  assert.deepEqual(accepted.details, continueVerdict);
+  assert.equal(auditCalls, 1, "auditor runs only after Gatekeeper pass");
+  assert.equal(tracer.providerRequests, 17);
+  assert.equal(tracer.remainingResponses, 0);
+
+  // Other judgeStatus: cheap same-gate assert — enters Gatekeeper; non-pass keeps auditor dark.
+  const convergedVerdict = { judgeStatus: "converged" as const, note: "judgment" };
+  const secondGate = workerCompletionGatekeeperHarness({
+    execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
+    toolName: JUDGE_OUTPUT_TOOL_NAME,
+    output: convergedVerdict,
+    incompleteReason: "missing draft evidence",
+    officer: "notary",
+    passingRuns: 0,
+  });
+  await assert.rejects(
+    tool.execute(
+      "converged-gate",
+      convergedVerdict,
+      undefined,
+      undefined,
+      secondGate.context("converged-gate", JUDGE_OUTPUT_TOOL_NAME),
+    ),
+    (error: unknown) => {
+      // First harness response is transport failure (plain Error via failInfrastructure).
+      assert.ok(error instanceof Error);
+      assert.equal(error instanceof GatekeeperDecisionError, false);
+      return true;
+    },
+  );
+  assert.equal(auditCalls, 1, "auditor must not start on Gatekeeper non-pass for other judgeStatus");
+  assert.equal(secondGate.providerRequests, 1);
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
@@ -953,6 +1386,22 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       "ak-coder-task": "/materials/approved.md",
       "ak-coder-phase": "apply",
     });
+    const faux = fauxProvider({ provider: "coder-binding-gatekeeper", api: "coder-binding-gatekeeper" });
+    const model = faux.getModel();
+    let providerRequests = 0;
+    const provider = {
+      ...faux.provider,
+      stream() {
+        providerRequests += 1;
+        const response = providerRequests % 2 === 1
+          ? fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }))
+          : fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }));
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => stream.end(response));
+        return stream;
+      },
+      streamSimple() { return this.stream(); },
+    };
     const runtime = createCoderRoleRuntime(
       harness.pi as ExtensionAPI,
       {
@@ -960,10 +1409,10 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
         loadCanonicalSkillBinding: async () => tddBinding(),
       },
-      { failInfrastructure(error) { throw error; } },
+      testHostActions(),
     );
     await runtime.activate();
-    return harness;
+    return Object.assign(harness, { model, provider, providerRequests: () => providerRequests });
   };
   const submitCompleted = async (
     harness: Awaited<ReturnType<typeof start>>,
@@ -976,7 +1425,16 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       completed,
       undefined,
       undefined,
-      toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
+      Object.assign(toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]), {
+        cwd: process.cwd(),
+        model: harness.model,
+        modelRegistry: {
+          getProvider: () => harness.provider,
+          async getProviderAuth() { return { auth: {} }; },
+          async getApiKeyAndHeaders() { return { ok: true }; },
+        },
+        thinkingLevel: "off",
+      }),
     );
   };
 
@@ -1098,6 +1556,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     };
     const refusalTool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(refusalTool);
+    const requestsBeforeRefusal = harness.providerRequests();
     assert.deepEqual((await refusalTool.execute(
       "coder-refused",
       refused,
@@ -1105,6 +1564,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       undefined,
       toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]),
     )).details, refused);
+    assert.equal(harness.providerRequests(), requestsBeforeRefusal);
     await assert.rejects(
       refusalTool.execute(
         "coder-mixed",
@@ -1169,13 +1629,13 @@ test("undeclared prerequisite submissions are rejected; declared references acce
       ],
     };
     await assert.rejects(tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])), /未观察到 commit/);
-    const second = await tool.execute("partial2", partial, undefined, undefined, toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }]));
+    const second = await tool.execute("partial2", partial, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.deepEqual(second.details, partial);
 
     const sharedCommit = "shared-commit";
     const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
     const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
-    const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }]));
+    const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.equal(shared.terminate, true);
     assert.deepEqual(shared.details.classResults, [classA, classB]);
   });
@@ -1306,7 +1766,7 @@ test("fixer output must be the sole call in its assistant batch", async () => {
       output,
       undefined,
       undefined,
-      toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }]),
+      withPassingGatekeeper(toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
     );
     assert.deepEqual(accepted.details, output);
   });
@@ -1711,18 +2171,18 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           runtime = judgeRole.createJudgeRoleRuntime(harness.pi, {
             loadSoul: async () => "judge law",
             auditSoulCompliance: auditCompliance,
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          }, testHostActions());
         } else if (role === "fixer") {
           runtime = workerRole.createFixerRoleRuntime(harness.pi, {
             loadSoul: async () => "fixer law",
             loadPacket: async () => "repair packet",
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          }, testHostActions());
         } else if (role === "doctor") {
           runtime = doctorRole.createDoctorRoleRuntime(harness.pi, {
             loadSoul: async () => "doctor law",
             loadCase: async () => patient,
             auditCompliance,
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          }, testHostActions());
         } else {
           const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
           runtime = reviewerRole.createReviewerRoleRuntime(harness.pi, {
@@ -1746,7 +2206,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
             }),
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
             auditCompliance,
-          }, { failInfrastructure(error: unknown) { throw error; } });
+          }, testHostActions());
         }
         return {
           harness,
@@ -1764,7 +2224,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           await plain.runtime.activate();
           const tool = plain.harness.tools.get(toolName);
           assert.ok(tool);
-          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`));
+          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, withPassingGatekeeper(outputContext(tool.name, `${role}-pass`)));
           assert.equal(accepted.terminate, true);
           assert.deepEqual(accepted.details, outputs[role]);
           assert.equal(plain.auditCalls, 0);
@@ -1785,9 +2245,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         }
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
-        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`, outputs[role] as Record<string, unknown>)), /violation|violates its|closed contract/);
+        const submissionContext = (id: string) => {
+          const bare = outputContext(tool.name, id, outputs[role] as Record<string, unknown>);
+          return role === "judge" ? withPassingGatekeeper(bare) : bare;
+        };
+        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, submissionContext(`${role}-revise`)), /violation|violates its|closed contract/);
         retriable.setDecision(pass);
-        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`, outputs[role] as Record<string, unknown>));
+        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, submissionContext(`${role}-pass`));
         assert.equal(accepted.terminate, true);
         if (role === "judge") assert.equal(accepted.details.judgeStatus, outputs[role].judgeStatus);
         else assert.equal(accepted.details.status, outputs[role].status);
@@ -1801,7 +2265,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           await escalated.runtime.activate();
         }
         const escalationTool = escalated.harness.tools.get(tool.name);
-        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`, outputs[role] as Record<string, unknown>));
+        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, submissionContext(`${role}-escalate`));
         assert.equal(result.terminate, true);
         // Escalation face carries audit kind/conflicts/gate AND the seat's
         // already-delivered fields (ADR 0055). Old "exactly three keys" deepEqual

@@ -14,8 +14,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
   ENGINE_DETOUR_TOOL_NAME,
+  GATEKEEPER_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
+  NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
@@ -28,6 +30,19 @@ export default function fixture(pi: ExtensionAPI): void {
   let detourIssued = false;
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
+    // Scripted Gatekeeper → Notary pass before auditor (officer choice is fixture, not oracle).
+    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(NOTARY_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        { stopReason: "toolUse" },
+      );
+    }
     if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
       return fauxAssistantMessage(
         fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {

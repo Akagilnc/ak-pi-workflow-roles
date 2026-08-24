@@ -84,12 +84,14 @@ export const packageRoot = dirname(
 export const piCli = resolve(packageRoot, "node_modules/.bin/pi");
 
 /**
- * Tracked package inputs eligible for private materialization.
+ * Git-visible package inputs eligible for private materialization.
  */
 export function trackedPackageInputPaths(): string[] {
-  const raw = execFileSync("git", ["-C", packageRoot, "ls-files", "-z"], {
-    encoding: "buffer",
-  }).toString("utf8");
+  const raw = execFileSync(
+    "git",
+    ["-C", packageRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { encoding: "buffer" },
+  ).toString("utf8");
   return raw
     .split("\0")
     .filter(Boolean);
@@ -226,7 +228,7 @@ export function constructionProvenance(): ConstructionProvenance {
   }).trim();
   const status = execFileSync(
     "git",
-    ["-C", packageRoot, "status", "--porcelain=v1", "-z"],
+    ["-C", packageRoot, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
     { encoding: "buffer" },
   ).toString("utf8");
   const hash = createHash("sha256").update(head).update("\0");
@@ -749,7 +751,7 @@ export async function withHermeticHome<T>(
   return await withProcessGlobalLock(async () => {
     // Prefer /tmp over os.tmpdir(): Linux CI tmpdir is /tmp already; macOS
     // os.tmpdir() is deeper under /var/folders and can hide shallow-path
-    // footguns (host-pi-runtime / taishi bundle layout). Same pin as those tests.
+    // footguns (host-pi-runtime / analyst bundle layout). Same pin as those tests.
     const home = await mkdtemp(
       resolve("/tmp", options.prefix ?? "ak-pi-test-"),
     );

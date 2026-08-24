@@ -1,5 +1,0 @@
-{"type":"session","version":3,"id":"s-a1","timestamp":"2026-08-01T00:00:00.000Z","cwd":"/taishi-fixture/issue-demo"}
-{"type":"message","id":"m1","parentId":null,"timestamp":"2026-08-01T00:00:10.000Z","message":{"role":"assistant","timestamp":"2026-08-01T00:00:10.000Z","content":[{"type":"toolCall","id":"call_bash_a","name":"bash","arguments":{"command":"echo hi"}}]}}
-{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-08-01T00:00:40.000Z","message":{"role":"toolResult","toolCallId":"call_bash_a","toolName":"bash","timestamp":"2026-08-01T00:00:40.000Z","isError":false,"content":[{"type":"text","text":"hi"}]}}
-{"type":"message","id":"m3","parentId":"m2","timestamp":"2026-08-01T00:00:55.000Z","message":{"role":"assistant","timestamp":"2026-08-01T00:00:55.000Z","content":[{"type":"toolCall","id":"call_out_a","name":"ak_coder_output","arguments":{}}]}}
-{"type":"message","id":"m4","parentId":"m3","timestamp":"2026-08-01T00:01:00.000Z","message":{"role":"toolResult","toolCallId":"call_out_a","toolName":"ak_coder_output","timestamp":"2026-08-01T00:01:00.000Z","isError":false,"content":[{"type":"text","text":"ok"}],"details":{"status":"completed"}}}

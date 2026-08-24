@@ -3,8 +3,9 @@
 # stays a fresh distribution channel. Auth is npm Trusted Publishing (OIDC):
 # no long-lived token — the registry trusts this repository + workflow file
 # via the package's Trusted Publisher configuration. The version is stamped
-# at publish time as 0.1.<commit-count> — monotonic per merge, no write-back
-# commit, no version-line conflicts between parallel PRs.
+# at publish time as 0.1.<commit-count> on main, or
+# 0.1.<commit-count>-<channel>.<shortsha> for branch prereleases — monotonic
+# per merge on main, unique per commit on channels, no write-back commit.
 # Requires npm CLI >= 11.5.1 (Node 24 bundles it).
 name: publish-registry
 
@@ -12,6 +13,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      channel:
+        description: "npm dist-tag channel (latest on main; e.g. dogfood for branch prereleases)"
+        required: false
+        default: latest
 
 permissions:
   contents: read
@@ -32,9 +38,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Stamp version and publish (OIDC)
-        run: |
-          npm --version
-          VERSION="0.1.$(git rev-list --count HEAD)"
-          npm version "$VERSION" --no-git-tag-version
-          npm publish --access public
-          echo "Published @akagilnc/pi-workflow-roles@$VERSION" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          # Expression → env value only; shell reads $CHANNEL (never expands inputs into source).
+          CHANNEL: ${{ github.event.inputs.channel || 'latest' }}
+        run: bash scripts/publish-registry-stamp.sh

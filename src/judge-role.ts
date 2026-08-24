@@ -12,6 +12,7 @@ import {
   readActivationEngineLaborFallbackField,
   withEngineLaborFallbackField,
 } from "./engine-labor-fallback.ts";
+import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
 
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -64,9 +65,7 @@ export type JudgeRoleDependencies = {
   ): Promise<SoulAuditResult>;
 };
 
-export type JudgeRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
-};
+export type JudgeRoleHostActions = GatekeeperPassHostActions;
 
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
@@ -120,6 +119,14 @@ export function createJudgeRoleRuntime(
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
+            // Gatekeeper runs after the draft is booked and before existing auditor.
+            await requireGatekeeperPass({
+              context: ctx,
+              subject: { kind: "judge_draft", material: JSON.stringify(verdict) },
+              ...(signal === undefined ? {} : { signal }),
+              hostActions,
+              toolCallId,
+            });
             let audit: SoulAuditResult;
             try {
               audit = await dependencies.auditSoulCompliance(

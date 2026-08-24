@@ -23,6 +23,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import test from "node:test";
 
 import {
@@ -84,16 +85,7 @@ const PACKAGED_METHOD_TREES = [
   },
 ] as const;
 
-const REQUIRED_SOULS = [
-  "souls/judge.md",
-  "souls/fixer.md",
-  "souls/coder.md",
-  "souls/reviewer.md",
-  "souls/collector.md",
-  "souls/doctor.md",
-  "souls/merger.md",
-  "souls/navigator.md",
-] as const;
+const REQUIRED_SOULS = RELEASE_SOUL_INVENTORY;
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });

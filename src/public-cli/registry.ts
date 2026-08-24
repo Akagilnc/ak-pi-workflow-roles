@@ -99,7 +99,7 @@ export function publicStartupCandidates(
 }
 
 /** Deterministic public commands — discoverable, never LLM-configurable seats. */
-export const PUBLIC_DETERMINISTIC_COMMANDS = ["taishi"] as const;
+export const PUBLIC_DETERMINISTIC_COMMANDS = ["analyst"] as const;
 
 export type PublicDeterministicCommand =
   (typeof PUBLIC_DETERMINISTIC_COMMANDS)[number];
@@ -123,7 +123,7 @@ export type HelpCapability =
 /**
  * Typed help surface. Presentation formats these facts; tests must not assert
  * exact help prose or layout (锚定宪法 / ADR 0016 / #105 AC).
- * taishi is a deterministic analysis command on the public CLI — not an LLM seat.
+ * analyst is a deterministic analysis command on the public CLI — not an LLM seat.
  */
 export function listHelpCapabilities(): readonly HelpCapability[] {
   const support: HelpCapability[] = PUBLIC_CLI_SUPPORT_COMMANDS.map((name) => ({

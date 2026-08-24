@@ -1,6 +1,6 @@
 /**
  * Canonical ledger session JSONL read primitives (shared owner).
- * Consumers (ticket-trajectory, taishi, …) must import here — no second parse kernel.
+ * Consumers (ticket-trajectory, analyst, …) must import here — no second parse kernel.
  */
 import { readFile } from "node:fs/promises";
 

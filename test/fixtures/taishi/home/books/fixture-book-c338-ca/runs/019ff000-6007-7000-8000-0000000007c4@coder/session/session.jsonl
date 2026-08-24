@@ -1,3 +1,0 @@
-{"type":"session","version":3,"id":"s-c338-ca-sibling","timestamp":"2026-08-04T04:00:00.000Z","cwd":"/taishi-fixture/c338-cohort-a-sibling"}
-{"type":"message","id":"m1","parentId":null,"timestamp":"2026-08-04T04:00:00.000Z","message":{"role":"assistant","model":"sol-low","timestamp":"2026-08-04T04:00:00.000Z","content":[]}}
-{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-08-04T04:01:30.000Z","message":{"role":"assistant","model":"sol-low","timestamp":"2026-08-04T04:01:30.000Z","content":[]}}

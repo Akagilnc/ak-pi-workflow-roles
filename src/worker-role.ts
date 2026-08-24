@@ -30,6 +30,7 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
+import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -84,7 +85,6 @@ const coderOutputVariants = Type.Union([
   }, { additionalProperties: false }),
 ]);
 const coderOutputSchema = openToolObjectFromUnion(coderOutputVariants);
-type WorkerOutputParameters = CoderOutput | FixerOutput;
 export type { FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {
   packet: {
@@ -118,9 +118,7 @@ function isWorkerPhase(value: unknown): value is WorkerPhase {
   return typeof value === "string" && (FIXER_PHASES as readonly string[]).includes(value);
 }
 
-export type WorkerRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
-};
+export type WorkerRoleHostActions = GatekeeperPassHostActions;
 
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
@@ -137,7 +135,7 @@ export type CoderRoleDependencies = {
 
 export type WorkerRoleRuntime = {
   activate(ctx?: ExtensionContext): Promise<void>;
-  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds sitian durability. */
+  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds archivist durability. */
   armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
 };
 
@@ -292,6 +290,15 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
+            if (output.status === "completed" || output.status === "partially_completed") {
+              await requireGatekeeperPass({
+                context: ctx,
+                subject: { kind: "worker_completion", material: JSON.stringify(output) },
+                ...(_signal === undefined ? {} : { signal: _signal }),
+                hostActions,
+                toolCallId,
+              });
+            }
             // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
             const acceptedDetails = withEngineLaborFallbackField(
               output,
@@ -436,6 +443,15 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
+            if (output.status === "completed") {
+              await requireGatekeeperPass({
+                context: ctx,
+                subject: { kind: "worker_completion", material: JSON.stringify(output) },
+                ...(_signal === undefined ? {} : { signal: _signal }),
+                hostActions,
+                toolCallId,
+              });
+            }
             // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
             const acceptedDetails = withEngineLaborFallbackField(
               output,

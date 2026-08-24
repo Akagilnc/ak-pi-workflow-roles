@@ -192,7 +192,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     mkdirSync(dirPrincipal, { recursive: true });
     await rejectSessionClass("directory principal", dirPrincipal);
 
-    // Relative path rejected (must be absolute — placement under the book is sitian's job).
+    // Relative path rejected (must be absolute — placement under the book is archivist's job).
     await rejectSessionClass("relative path", "relative/session.jsonl");
 
     // Outside-home /tmp pointer with no file: still rejected (cannot materialize outside home).

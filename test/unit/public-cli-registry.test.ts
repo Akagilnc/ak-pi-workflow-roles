@@ -24,7 +24,7 @@ test("public registry exposes seven callable roles plus automatic Navigator only
     PUBLIC_CONFIGURABLE_SEATS.includes("navigator" as never),
     true,
   );
-  for (const forbidden of ["auditor", "soul-audit", "reviewer-cmr", "sitian", "assisted"]) {
+  for (const forbidden of ["auditor", "soul-audit", "reviewer-cmr", "archivist", "assisted"]) {
     assert.equal(
       (PUBLIC_CONFIGURABLE_SEATS as readonly string[]).includes(forbidden),
       false,
@@ -57,12 +57,12 @@ test("help capabilities derive from typed public registry facts", () => {
   assert.ok(fixerCap && fixerCap.kind === "role");
   assert.deepEqual(fixerCap.phases, ["plan", "apply"]);
   assert.equal(fixerCap.defaultPhase, "apply");
-  const taishiCap = capabilities.find((cap) => cap.name === "taishi");
-  assert.equal(taishiCap?.kind, "deterministic");
+  const analystCap = capabilities.find((cap) => cap.name === "analyst");
+  assert.equal(analystCap?.kind, "deterministic");
   assert.equal(
-    (PUBLIC_CALLABLE_ROLES as readonly string[]).includes("taishi"),
+    (PUBLIC_CALLABLE_ROLES as readonly string[]).includes("analyst"),
     false,
-    "taishi is deterministic, not an LLM-configurable seat",
+    "analyst is deterministic, not an LLM-configurable seat",
   );
 });
 

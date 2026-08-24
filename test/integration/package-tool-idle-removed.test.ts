@@ -20,7 +20,11 @@ import {
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
 import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-executor.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import {
+  createRoleRuntimeExtension,
+  GATEKEEPER_OUTPUT_TOOL,
+  NOTARY_OUTPUT_TOOL,
+} from "../../src/role-runtime.ts";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS } from "../../src/stream-idle-guard.ts";
 import {
   flushEventLoopTurns,
@@ -220,18 +224,34 @@ test(
             }),
           ],
         }, async ({ session }) => {
-          faux.setResponses([
-            () =>
-              fauxAssistantMessage(
+          // Judge output → scripted Gatekeeper → Notary → injected silent compliance child.
+          const respond = (context: { tools?: Array<{ name: string }> }) => {
+            const names = context.tools?.map((tool) => tool.name) ?? [];
+            if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+              return fauxAssistantMessage(
+                fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
+                { stopReason: "toolUse" },
+              );
+            }
+            if (names.includes(NOTARY_OUTPUT_TOOL)) {
+              return fauxAssistantMessage(
+                fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+                { stopReason: "toolUse" },
+              );
+            }
+            if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
+              return fauxAssistantMessage(
                 fauxToolCall(
                   JUDGE_OUTPUT_TOOL_NAME,
                   { judgeStatus: "converged" },
                   { id: callId },
                 ),
                 { stopReason: "toolUse" },
-              ),
-            () => fauxAssistantMessage("continuation after compliance idle exhaustion"),
-          ]);
+              );
+            }
+            return fauxAssistantMessage("continuation after compliance idle exhaustion");
+          };
+          faux.setResponses(Array.from({ length: 6 }, () => respond));
 
           const promptDone = session.prompt("adjudicate with silent compliance child");
           void promptDone.then(

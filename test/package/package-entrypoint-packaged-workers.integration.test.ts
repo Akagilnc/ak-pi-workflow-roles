@@ -30,8 +30,11 @@ import { Type } from "typebox";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
+  GATEKEEPER_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
+  NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   toolExecutionObservationRecordSchema,
@@ -40,7 +43,6 @@ import {
 import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
-import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
 import {
   getSharedIsolatedPack,
@@ -63,6 +65,30 @@ import {
   textOf,
   packageEntrypoint,
 } from "../helpers/package-entrypoint-fixtures.ts";
+import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+
+/** In-file province scripting (officer is fixture choice, not subject→officer oracle). */
+function scriptProvincePass(names: readonly string[], officer: "notary" | "inspector") {
+  if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer }),
+      { stopReason: "toolUse" },
+    );
+  }
+  if (names.includes(NOTARY_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+      { stopReason: "toolUse" },
+    );
+  }
+  if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
+      { stopReason: "toolUse" },
+    );
+  }
+  return undefined;
+}
 
 
 test("cold-installed package audits active auditor seats from editable Souls", async () => {
@@ -109,6 +135,10 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)({ context }) },
         { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)({ context }) },
       ] as const;
+      // #443: auditor session = factory constitution + role auditor soul.
+      const installedConstitution = await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8");
+      const expectedAuditorPrompt = async (soulPath: string) =>
+        `${installedConstitution}\n\n${await readFile(soulPath, "utf8")}`;
       const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
         let prompt = "";
@@ -121,7 +151,11 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         };
         await role.run(completion);
         assert.equal(calls, 1, `${role.name} audit must make one decision call`);
-        assert.equal(prompt, await readFile(role.soulPath, "utf8"), `${role.name} must load its installed Soul on this call`);
+        assert.equal(
+          prompt,
+          await expectedAuditorPrompt(role.soulPath),
+          `${role.name} must load constitution + installed Soul on this call`,
+        );
         return prompt;
       };
 
@@ -133,11 +167,11 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       await writeFile(judgeSoul, editedSoul, "utf8");
       try {
         const edited = await run(roles[0]);
-        assert.equal(edited, editedSoul);
+        assert.equal(edited, `${installedConstitution}\n\n${editedSoul}`);
         for (const role of roles.slice(1)) {
           const unchanged = await run(role);
-          assert.equal(unchanged, await readFile(role.soulPath, "utf8"));
-          assert.notEqual(unchanged, editedSoul);
+          assert.equal(unchanged, await expectedAuditorPrompt(role.soulPath));
+          assert.equal(unchanged.includes(editedSoul), false);
         }
       } finally {
         await writeFile(judgeSoul, originalJudgeSoul, "utf8");
@@ -171,8 +205,12 @@ test("cold-installed package audits active auditor seats from editable Souls", a
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = await loadRawPackageManifest();
-  const judgeSoul =
-    (await readFile(resolve(packageRoot, "souls/judge.md"), "utf8")).trim();
+  // #443: judge session materials = constitution + soul + output guide (trim whole).
+  const judgeSoul = [
+    await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/judge.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/judge-output-guide.md"), "utf8"),
+  ].join("\n\n").trim();
   await withActivationHome(
     { prefix: "ak-role-integration-" },
     async ({ agentDir }) => {
@@ -264,6 +302,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         const developerPrompt = "Exercise audited terminating acceptance.";
         const response = (context: Context, requestOptions?: unknown, _state?: unknown, requestModel?: { baseUrl?: string }) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
+          const province = scriptProvincePass(names, "notary");
+          if (province !== undefined) return province;
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             // Developer exact-session v1 shape: direction-only next is enough.
             // Full route/matches/command must not be required for recommendation.
@@ -306,7 +346,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
             { stopReason: "toolUse" },
           );
         };
-        faux.setResponses([response, response, response, response, response]);
+        faux.setResponses(Array.from({ length: 8 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
@@ -448,32 +488,38 @@ test("packaged judge escalation emits one typed human decision", async () => {
         flags: { "ak-role": "judge" },
         noTools: "builtin",
       }, async ({ session, sessionManager }) => {
-        faux.setResponses([
-          fauxAssistantMessage(
+        const escalateRespond = (context: Context) => {
+          const names = context.tools?.map((tool) => tool.name) ?? [];
+          const province = scriptProvincePass(names, "notary");
+          if (province !== undefined) return province;
+          if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+            return fauxAssistantMessage(
+              fauxToolCall(
+                SOUL_AUDIT_TOOL_NAME,
+                {
+                  status: "escalate",
+                  violations: [],
+                  conflicts: ["Soul authority conflicts with controlling authority"],
+                  decisionGate: {
+                    question: "Which authority governs this verdict?",
+                    options: ["Soul", "Controlling authority"],
+                  },
+                },
+                { id: "audit-escalation" },
+              ),
+              { stopReason: "toolUse" },
+            );
+          }
+          return fauxAssistantMessage(
             fauxToolCall(
               JUDGE_OUTPUT_TOOL_NAME,
               { judgeStatus: "converged" },
               { id: "escalating-judge" },
             ),
             { stopReason: "toolUse" },
-          ),
-          fauxAssistantMessage(
-            fauxToolCall(
-              SOUL_AUDIT_TOOL_NAME,
-              {
-                status: "escalate",
-                violations: [],
-                conflicts: ["Soul authority conflicts with controlling authority"],
-                decisionGate: {
-                  question: "Which authority governs this verdict?",
-                  options: ["Soul", "Controlling authority"],
-                },
-              },
-              { id: "audit-escalation" },
-            ),
-            { stopReason: "toolUse" },
-          ),
-        ]);
+          );
+        };
+        faux.setResponses(Array.from({ length: 6 }, () => escalateRespond));
         await session.prompt("Exercise packaged audit escalation.");
 
         const result = sessionManager
@@ -514,8 +560,13 @@ test("packaged judge escalation emits one typed human decision", async () => {
 
 test("packaged coder apply proves canonical native tdd expansion including colliding prefix", async () => {
   const manifest = await loadRawPackageManifest();
-  const coderSoul =
-    (await readFile(resolve(packageRoot, "souls/coder.md"), "utf8")).trim();
+  // #443: coder session materials = constitution + soul + quality-law + guide (trim whole).
+  const coderSoul = [
+    await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/coder.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/coder-output-guide.md"), "utf8"),
+  ].join("\n\n").trim();
   const rows = [
     {
       prompt: "/skill:tdd",
@@ -596,10 +647,11 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           const firstCallId = row.output.status === "completed"
             ? `${row.callId}-bounce`
             : row.callId;
+          // completed: bounce once then confirm + scripted province pass; unfinished: single call.
           faux.setResponses(
             row.output.status === "completed"
               ? [
-                (context) => {
+                (context: Context) => {
                   coderContext = context;
                   return fauxAssistantMessage(
                     fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
@@ -608,16 +660,37 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                     { stopReason: "toolUse" },
                   );
                 },
-                () =>
-                  fauxAssistantMessage(
+                (context: Context) => {
+                  const names = context.tools?.map((tool) => tool.name) ?? [];
+                  const province = scriptProvincePass(names, "inspector");
+                  if (province !== undefined) return province;
+                  return fauxAssistantMessage(
                     fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
                       id: row.callId,
                     }),
                     { stopReason: "toolUse" },
-                  ),
+                  );
+                },
+                (context: Context) => {
+                  const names = context.tools?.map((tool) => tool.name) ?? [];
+                  const province = scriptProvincePass(names, "inspector");
+                  if (province !== undefined) return province;
+                  return fauxAssistantMessage(
+                    fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
+                      id: row.callId,
+                    }),
+                    { stopReason: "toolUse" },
+                  );
+                },
+                (context: Context) => {
+                  const names = context.tools?.map((tool) => tool.name) ?? [];
+                  const province = scriptProvincePass(names, "inspector");
+                  if (province !== undefined) return province;
+                  return fauxAssistantMessage("coder fixture idle");
+                },
               ]
               : [
-                (context) => {
+                (context: Context) => {
                   coderContext = context;
                   return fauxAssistantMessage(
                     fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
@@ -703,6 +776,13 @@ test("packaged coder apply proves canonical native tdd expansion including colli
 
 test("packaged fixer applies its both-phase bash seatbelt, retains its tool surface, and enforces singleton output", async () => {
   const manifest = await loadRawPackageManifest();
+  // #443: fixer session materials via production role-runtime wiring.
+  const fixerSoul = [
+    await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/fixer.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/fixer-output-guide.md"), "utf8"),
+  ].join("\n\n").trim();
   const forbiddenLiterals = [
     "rm -rf",
     "git reset --hard",
@@ -778,26 +858,40 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               ),
             };
           });
+          let fixerContext: Context | undefined;
           faux.setResponses([
-            fauxAssistantMessage(
-              [
-                ...forbiddenCalls.map((item) => item.call),
-                fauxToolCall(
-                  "bash",
-                  {
-                    command:
-                      `printf 'control-ok' > ${JSON.stringify(controlMarker)}`,
-                  },
-                  { id: `fixer-${phase}-control` },
-                ),
-              ],
-              { stopReason: "toolUse" },
-            ),
+            (context: Context) => {
+              fixerContext = context;
+              return fauxAssistantMessage(
+                [
+                  ...forbiddenCalls.map((item) => item.call),
+                  fauxToolCall(
+                    "bash",
+                    {
+                      command:
+                        `printf 'control-ok' > ${JSON.stringify(controlMarker)}`,
+                    },
+                    { id: `fixer-${phase}-control` },
+                  ),
+                ],
+                { stopReason: "toolUse" },
+              );
+            },
             fauxAssistantMessage(`seatbelt matrix observed for ${phase}`),
           ]);
           await session.prompt(
             `Exercise Fixer bash seatbelt in ${phase} phase.`,
           );
+          // Production role-runtime default load: constitution + quality-law + guide.
+          if (phase === "plan") {
+            assert.ok(fixerContext);
+            assert.ok(
+              fixerContext.systemPrompt?.includes(
+                `<fixer_soul>\n${fixerSoul}\n</fixer_soul>`,
+              ),
+              "the provider receives constitution + quality-law + fixer guide",
+            );
+          }
 
           for (const item of forbiddenCalls) {
             const blocked = sessionManager.getEntries().find(

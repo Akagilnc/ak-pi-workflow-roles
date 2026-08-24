@@ -11,7 +11,12 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { CODER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/role-runtime.ts";
+import {
+  CODER_OUTPUT_TOOL_NAME,
+  INSPECTOR_OUTPUT_TOOL,
+  GATEKEEPER_OUTPUT_TOOL,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+} from "../../src/role-runtime.ts";
 
 export default function coderSuccessProvider(pi: ExtensionAPI): void {
   const faux = fauxProvider({
@@ -38,6 +43,18 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
         { stopReason: "toolUse" },
       );
     }
+    if (toolNames.includes(GATEKEEPER_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (toolNames.includes(INSPECTOR_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        { stopReason: "toolUse" },
+      );
+    }
     return fauxAssistantMessage(
       fauxToolCall(
         CODER_OUTPUT_TOOL_NAME,
@@ -52,9 +69,9 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
     );
   };
   // Public process: Navigator prepare + Coder completed. Gate ① may bounce the first
-  // completed (zero new commit) once; same payload resubmit is the confirm path — keep
-  // enough identical steps for bounce→confirm without exhausting the faux queue.
-  faux.setResponses([respond, respond, respond, respond]);
+  // completed (zero new commit) once; same payload resubmit is the confirm path, then
+  // scripted Gatekeeper → Inspector pass (officer choice is fixture, not oracle).
+  faux.setResponses([respond, respond, respond, respond, respond]);
 
   const model = faux.getModel();
   const provider: Provider = {

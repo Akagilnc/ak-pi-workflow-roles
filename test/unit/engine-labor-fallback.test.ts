@@ -4,7 +4,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type AssistantMessage,
+} from "@earendil-works/pi-ai";
 import {
   SessionManager,
   type ExtensionAPI,
@@ -24,6 +30,7 @@ import {
   withEngineLaborFallbackField,
 } from "../../src/engine-labor-fallback.ts";
 import { createJudgeRoleRuntime, JUDGE_OUTPUT_TOOL_NAME } from "../../src/judge-role.ts";
+import { NOTARY_OUTPUT_TOOL, GATEKEEPER_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { selectNavigatorCandidate } from "../../src/navigator-attendance.ts";
 import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import {
@@ -32,6 +39,36 @@ import {
 } from "../../src/package-contracts/terminating-tools.ts";
 import { extractJudgeRoleOutcome } from "../../src/public-cli/settlement.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
+
+function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
+  const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
+  const model = faux.getModel();
+  const responses = [
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" })),
+    fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] })),
+  ];
+  const provider = {
+    ...faux.provider,
+    stream() {
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => stream.end(next));
+      return stream;
+    },
+    streamSimple() { return this.stream(); },
+  };
+  return Object.assign(context, {
+    cwd: process.cwd(),
+    model,
+    modelRegistry: {
+      getProvider(name: string) { return name === model.provider ? provider : undefined; },
+      async getProviderAuth() { return { auth: {} }; },
+      async getApiKeyAndHeaders() { return { ok: true }; },
+    },
+    thinkingLevel: "off",
+  });
+}
 
 test("recordEngineLaborFallback is first-wins for both retain and return", () => {
   const latch = createEngineLaborFallbackLatch();
@@ -379,7 +416,10 @@ test("judge escalate deliveredOutput projects mechanical engineLaborFallback", a
           decisionGate: { question: "Q?", options: ["A"] },
         }),
       },
-      { failInfrastructure(error) { throw error; } },
+      {
+        failInfrastructure(error: unknown): never { throw error instanceof Error ? error : new Error(String(error)); },
+        bindGatekeeperNonPass() {},
+      },
     );
     await runtime.activate();
     const tool = tools.get(JUDGE_OUTPUT_TOOL_NAME);
@@ -411,7 +451,7 @@ test("judge escalate deliveredOutput projects mechanical engineLaborFallback", a
       timestamp: Date.now(),
     } satisfies AssistantMessage;
     sessionManager.appendMessage(message);
-    const ctx = { sessionManager, abort() {} } as unknown as ExtensionContext;
+    const ctx = withPassingGatekeeper({ sessionManager, abort() {} } as unknown as ExtensionContext);
 
     const result = await tool.execute(
       "j1",

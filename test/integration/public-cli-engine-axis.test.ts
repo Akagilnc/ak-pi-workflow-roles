@@ -1288,7 +1288,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
   },
 );
 
-test("#391 E4 negative table: navigator / taishi / resume / illegal / model-before-engine / disk navigator",
+test("#391 E4 negative table: navigator / analyst / resume / illegal / model-before-engine / disk navigator",
   async () => {
     await withTempHome(async (home) => {
       // navigator set-engine refused with independent-activation reason.
@@ -1374,17 +1374,17 @@ test("#391 E4 negative table: navigator / taishi / resume / illegal / model-befo
         "utf8",
       );
 
-      // taishi --engine structural refuse.
+      // analyst --engine structural refuse.
       {
         const { io, stderr } = captureIo();
         const result = await runAkRole(
-          ["taishi", "--engine", "opus", "--issue", "1"],
+          ["analyst", "--engine", "opus", "--issue", "1"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 2);
         assert.match(
           stderr.join(""),
-          /engine axis is role commands only; refused command taishi/,
+          /engine axis is role commands only; refused command analyst/,
         );
       }
 

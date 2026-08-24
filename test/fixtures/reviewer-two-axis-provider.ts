@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -122,7 +123,7 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
     const label = i === 0 ? "child prompt" : `child prompt #${i + 1}`;
     responses.push((context) => childResponse(context, label));
   }
-  responses.push(() => {
+  responses.push((context: Context) => {
     for (const axis of expectedAxes) {
       if (!axisSeen.has(axis)) {
         throw new Error(`expected axes [${[...expectedAxes].join(",")}] before output; saw ${[...axisSeen].join(",")}`);
@@ -130,6 +131,11 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
     }
     if (axisSeen.size !== expectedAxes.size) {
       throw new Error(`expected axes [${[...expectedAxes].join(",")}] before output; saw ${[...axisSeen].join(",")}`);
+    }
+    // #443 optional capture: parent session systemPrompt at the real output call.
+    const capturePath = process.env.AK_REVIEW_CAPTURE_SYSTEM_PROMPT;
+    if (typeof capturePath === "string" && capturePath.trim() !== "") {
+      writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
     }
     return fauxAssistantMessage(
       fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, { status: "completed" }, { id: "output" }),

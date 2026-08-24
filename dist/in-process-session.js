@@ -5,7 +5,7 @@
  * does not statically reach @earendil-works/pi-coding-agent.
  */
 import { createAgentSession, DefaultResourceLoader, SettingsManager, } from "@earendil-works/pi-coding-agent";
-import { createRecordSession } from "./sitian-record-entry.js";
+import { createRecordSession } from "./archivist-record-entry.js";
 function resolveSessionManager(options) {
     if (options.sessionManager !== undefined)
         return options.sessionManager;
