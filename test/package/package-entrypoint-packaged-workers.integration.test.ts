@@ -776,6 +776,13 @@ test("packaged coder apply proves canonical native tdd expansion including colli
 
 test("packaged fixer applies its both-phase bash seatbelt, retains its tool surface, and enforces singleton output", async () => {
   const manifest = await loadRawPackageManifest();
+  // #443: fixer session materials via production role-runtime wiring.
+  const fixerSoul = [
+    await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/fixer.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/fixer-output-guide.md"), "utf8"),
+  ].join("\n\n").trim();
   const forbiddenLiterals = [
     "rm -rf",
     "git reset --hard",
@@ -851,26 +858,40 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               ),
             };
           });
+          let fixerContext: Context | undefined;
           faux.setResponses([
-            fauxAssistantMessage(
-              [
-                ...forbiddenCalls.map((item) => item.call),
-                fauxToolCall(
-                  "bash",
-                  {
-                    command:
-                      `printf 'control-ok' > ${JSON.stringify(controlMarker)}`,
-                  },
-                  { id: `fixer-${phase}-control` },
-                ),
-              ],
-              { stopReason: "toolUse" },
-            ),
+            (context: Context) => {
+              fixerContext = context;
+              return fauxAssistantMessage(
+                [
+                  ...forbiddenCalls.map((item) => item.call),
+                  fauxToolCall(
+                    "bash",
+                    {
+                      command:
+                        `printf 'control-ok' > ${JSON.stringify(controlMarker)}`,
+                    },
+                    { id: `fixer-${phase}-control` },
+                  ),
+                ],
+                { stopReason: "toolUse" },
+              );
+            },
             fauxAssistantMessage(`seatbelt matrix observed for ${phase}`),
           ]);
           await session.prompt(
             `Exercise Fixer bash seatbelt in ${phase} phase.`,
           );
+          // Production role-runtime default load: constitution + quality-law + guide.
+          if (phase === "plan") {
+            assert.ok(fixerContext);
+            assert.ok(
+              fixerContext.systemPrompt?.includes(
+                `<fixer_soul>\n${fixerSoul}\n</fixer_soul>`,
+              ),
+              "the provider receives constitution + quality-law + fixer guide",
+            );
+          }
 
           for (const item of forbiddenCalls) {
             const blocked = sessionManager.getEntries().find(
