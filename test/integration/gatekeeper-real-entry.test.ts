@@ -4,7 +4,15 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { runGatekeeper, GATEKEEPER_OUTPUT_TOOL, INSPECTOR_OUTPUT_TOOL, NOTARY_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
+import {
+  runGatekeeper,
+  GATEKEEPER_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
+  NOTARY_OUTPUT_TOOL,
+  createGatekeeperOutputTool,
+  createOfficerDecisionTool,
+} from "../../src/gatekeeper-role.ts";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
@@ -190,5 +198,64 @@ test("Gatekeeper loadSoul native failure projects as typed transport_failure", a
       assert.equal(result.stage, "gatekeeper");
       assert.match(result.reason, /ENOENT/);
     }
+  });
+});
+
+test("Gatekeeper and shared officer decision tools accept malformed object submissions once", () => {
+  const malformed = { status: "not-a-legal-status", extra: true, findings: "not-array" };
+  const province = createGatekeeperOutputTool();
+  const officer = createOfficerDecisionTool(INSPECTOR_OUTPUT_TOOL);
+  assert.deepEqual(
+    validateToolArguments(province as never, {
+      id: "province-malformed",
+      name: province.name,
+      arguments: structuredClone(malformed),
+    } as never),
+    malformed,
+  );
+  assert.deepEqual(
+    validateToolArguments(officer as never, {
+      id: "officer-malformed",
+      name: officer.name,
+      arguments: structuredClone(malformed),
+    } as never),
+    malformed,
+  );
+});
+
+test("malformed accepted province submission is typed incomplete, never dispatch or pass", async () => {
+  await withParent(async (context) => {
+    const submission = { status: "pass", findings: [] };
+    const result = await runGatekeeper({
+      context,
+      subject: { kind: "worker_completion", material: "completion" },
+      runCompletion: completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: submission }], []),
+    });
+    assert.deepEqual(result, {
+      status: "incomplete",
+      stage: "gatekeeper",
+      reason: "malformed accepted submission",
+      submission,
+    });
+  });
+});
+
+test("malformed accepted officer submission is typed incomplete at officer stage, never default pass", async () => {
+  await withParent(async (context) => {
+    const submission = { status: "ok-enough" };
+    const result = await runGatekeeper({
+      context,
+      subject: { kind: "worker_completion", material: "completion" },
+      runCompletion: completion([
+        { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
+        { tool: INSPECTOR_OUTPUT_TOOL, args: submission },
+      ], []),
+    });
+    assert.deepEqual(result, {
+      status: "incomplete",
+      stage: "inspector",
+      reason: "malformed accepted submission",
+      submission,
+    });
   });
 });

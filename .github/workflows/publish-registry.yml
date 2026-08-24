@@ -3,8 +3,9 @@
 # stays a fresh distribution channel. Auth is npm Trusted Publishing (OIDC):
 # no long-lived token — the registry trusts this repository + workflow file
 # via the package's Trusted Publisher configuration. The version is stamped
-# at publish time as 0.1.<commit-count> — monotonic per merge, no write-back
-# commit, no version-line conflicts between parallel PRs.
+# at publish time as 0.1.<commit-count> on main, or
+# 0.1.<commit-count>-<channel>.<shortsha> for branch prereleases — monotonic
+# per merge on main, unique per commit on channels, no write-back commit.
 # Requires npm CLI >= 11.5.1 (Node 24 bundles it).
 name: publish-registry
 
@@ -37,17 +38,26 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Stamp version and publish (OIDC)
+        env:
+          # Expression → env value only; shell reads $CHANNEL (never expands inputs into source).
+          CHANNEL: ${{ github.event.inputs.channel || 'latest' }}
         run: |
           npm --version
-          CHANNEL="${{ github.event.inputs.channel || 'latest' }}"
           if [ "$GITHUB_REF_NAME" != "main" ] && [ "$CHANNEL" = "latest" ]; then
             echo "refuse: non-main ref must name a non-latest channel" >&2
             exit 1
           fi
           VERSION="0.1.$(git rev-list --count HEAD)"
           if [ "$CHANNEL" != "latest" ]; then
-            VERSION="$VERSION-$CHANNEL.0"
+            VERSION="$VERSION-$CHANNEL.$(git rev-parse --short=7 HEAD)"
           fi
           npm version "$VERSION" --no-git-tag-version
-          npm publish --access public --tag "$CHANNEL"
-          echo "Published @akagilnc/pi-workflow-roles@$VERSION ($CHANNEL)" >> "$GITHUB_STEP_SUMMARY"
+          PACKAGE_NAME="$(node -p 'require("./package.json").name')"
+          if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+            # Same commit re-dispatch (or recovered publish): move dist-tag only.
+            npm dist-tag add "$PACKAGE_NAME@$VERSION" "$CHANNEL"
+            echo "Dist-tag $CHANNEL → $PACKAGE_NAME@$VERSION (version already on registry)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            npm publish --access public --tag "$CHANNEL"
+            echo "Published $PACKAGE_NAME@$VERSION ($CHANNEL)" >> "$GITHUB_STEP_SUMMARY"
+          fi

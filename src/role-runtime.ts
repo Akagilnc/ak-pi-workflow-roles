@@ -282,9 +282,12 @@ export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GATEKEEPER_OUTPUT_TOOL,
+  GatekeeperDecisionError,
+  createGatekeeperOutputTool,
+  createOfficerDecisionTool,
   runGatekeeper,
 } from "./gatekeeper-role.ts";
-export type { GatekeeperResult, GatekeeperSubject, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
