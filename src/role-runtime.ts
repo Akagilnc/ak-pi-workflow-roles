@@ -75,6 +75,7 @@ import {
   REVIEWER_VERIFICATION_BOUNDARY,
   type ReviewerSpecDisposition,
 } from "./reviewer-construction.ts";
+import { takeGatekeeperNonPassDetails } from "./gatekeeper-role.ts";
 
 /**
  * Private transport flag names/definitions for Reviewer admitted inputs.
@@ -286,6 +287,7 @@ export {
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
   runGatekeeper,
+  takeGatekeeperNonPassDetails,
 } from "./gatekeeper-role.ts";
 export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 
@@ -773,6 +775,12 @@ export function createRoleRuntimeExtension(
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
         return { details: infrastructureDetails, isError: true };
+      }
+      // Gatekeeper non-pass: throw only kept message text for the model; project the
+      // bound structured result onto session details at this real tool_result seam.
+      const gatekeeperNonPass = takeGatekeeperNonPassDetails(event.toolCallId);
+      if (gatekeeperNonPass !== undefined) {
+        return { details: gatekeeperNonPass, isError: true };
       }
       // Recommendation rides the accepted settlement record's content so the one
       // mandatory last-ak_*_output extraction surfaces route/next/reason without

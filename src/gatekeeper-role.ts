@@ -34,18 +34,33 @@ export type GatekeeperNonPassResult = Extract<
   { status: "bounce" | "incomplete" | "no_receipt" }
 >;
 
-/** Structured non-pass from Gatekeeper/officer; parent seam reads `.result`, not message text. */
+function nonPassMessage(result: GatekeeperNonPassResult): string {
+  // Message text is what pi-agent-core createErrorToolResult exposes to the model.
+  if (result.status === "bounce") {
+    const findings = result.findings.length === 0 ? "(no findings)" : result.findings.join("; ");
+    return `Gatekeeper requires rewrite: ${findings}`;
+  }
+  return `Gatekeeper ${result.status} at ${result.stage}: ${result.reason}`;
+}
+
+/** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
 export class GatekeeperDecisionError extends Error {
   readonly result: GatekeeperNonPassResult;
   constructor(result: GatekeeperNonPassResult) {
-    super(
-      result.status === "bounce"
-        ? "Gatekeeper requires rewrite"
-        : `Gatekeeper ${result.status} at ${result.stage}`,
-    );
+    super(nonPassMessage(result));
     this.name = "GatekeeperDecisionError";
     this.result = result;
   }
+}
+
+/** toolCallId → non-pass result until role-runtime tool_result projects it onto session details. */
+const pendingNonPassByToolCallId = new Map<string, GatekeeperNonPassResult>();
+
+/** Consume a pending non-pass for session details projection (sole owner: requireGatekeeperPass + role-runtime). */
+export function takeGatekeeperNonPassDetails(toolCallId: string): GatekeeperNonPassResult | undefined {
+  const result = pendingNonPassByToolCallId.get(toolCallId);
+  if (result !== undefined) pendingNonPassByToolCallId.delete(toolCallId);
+  return result;
 }
 
 export type RunGatekeeperOptions = {
@@ -252,5 +267,8 @@ export async function requireGatekeeperPass(options: {
       options.toolCallId,
     );
   }
+  // Bind structured result to this output call so tool_result can project details
+  // (throw path alone only keeps error.message for the model).
+  pendingNonPassByToolCallId.set(options.toolCallId, gatekeeper);
   throw new GatekeeperDecisionError(gatekeeper);
 }
