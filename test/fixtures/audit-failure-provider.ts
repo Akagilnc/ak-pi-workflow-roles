@@ -12,7 +12,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-import { JUDGE_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/role-runtime.ts";
+import {
+  GATEKEEPER_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
+  JUDGE_OUTPUT_TOOL_NAME,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  NOTARY_OUTPUT_TOOL,
+} from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 export default function auditFailureProvider(pi: ExtensionAPI): void {
@@ -62,6 +68,25 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   let inputReleasedAt = "";
   const response = async (context: Context, options?: { timeoutMs?: number }) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
+    // Judge draft province gate runs before auditor; script pass so MALFORMED stays on auditor.
+    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(NOTARY_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        { stopReason: "toolUse" },
+      );
+    }
     if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
       if (deliveryMode === "unavailable") {
         navigatorCalls += 1;
@@ -127,7 +152,11 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
         }), { stopReason: "toolUse" });
       }
       if (roleScripted) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-      return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
+      // Healthy Navigator keeps typed no-receipt (malformed prose). The default
+      // fatal path must still abort as infrastructure after Gatekeeper passes:
+      // prose alone is no-receipt (exit 0), not infrastructure failure.
+      if (healthyNavigator) return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
+      throw new Error("MALFORMED AUDITOR OUTPUT");
     }
     if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
       if (deliveryMode === "silence") {
@@ -139,18 +168,10 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  faux.setResponses(healthyNavigator || roleScripted || deliveryMode === "unavailable" || process.env.AK_AUDIT_TIMEOUT_FAILURE === "1" ? [response, response, response, response, response] : [
-    fauxAssistantMessage(
-      fauxToolCall(
-        JUDGE_OUTPUT_TOOL_NAME,
-        { judgeStatus: "converged" },
-        { id: "fatal-judge" },
-      ),
-      { stopReason: "toolUse" },
-    ),
-    fauxAssistantMessage("MALFORMED AUDITOR OUTPUT"),
-    fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE"),
-  ]);
+  // Route by active tool surface so Gatekeeper/Notary pass before auditor legs.
+  // Fatal path used a fixed 3-slot queue; province children need two more turns
+  // or MALFORMED is spent on Gatekeeper instead of auditor.
+  faux.setResponses(Array.from({ length: 8 }, () => response));
 
   const model = faux.getModel();
   const provider: Provider = {
