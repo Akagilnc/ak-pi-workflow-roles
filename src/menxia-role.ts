@@ -30,6 +30,10 @@ export type RunMenxiaOptions = {
   readonly loadSoul?: (role: "menxia" | "jishizhong" | "fubaolang") => Promise<string>;
 };
 
+export type MenxiaPassHostActions = {
+  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
+};
+
 const decisionSchema = Type.Union([
   Type.Object({ status: Type.Literal("pass"), findings: Type.Array(Type.String()) }, { additionalProperties: false }),
   Type.Object({
@@ -128,5 +132,33 @@ export async function runMenxia(options: RunMenxiaOptions): Promise<MenxiaResult
     return { status: "pass", officer, findings: judged.findings };
   } catch (error) {
     return { status: "transport_failure", stage: officer, reason: failureReason(error) };
+  }
+}
+
+/** Project MenxiaResult onto a submit path: transport→failInfrastructure; bounce/incomplete/no_receipt→throw; pass silent. */
+export async function requireMenxiaPass(options: {
+  readonly context: ExtensionContext;
+  readonly subject: MenxiaSubject;
+  readonly signal?: AbortSignal;
+  readonly hostActions: MenxiaPassHostActions;
+  readonly toolCallId: string;
+}): Promise<void> {
+  const menxia = await runMenxia({
+    context: options.context,
+    subject: options.subject,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
+  if (menxia.status === "transport_failure") {
+    options.hostActions.failInfrastructure(
+      new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
+      options.context,
+      options.toolCallId,
+    );
+  }
+  if (menxia.status === "bounce") {
+    throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
+  }
+  if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
+    throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
   }
 }

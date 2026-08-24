@@ -200,7 +200,6 @@ function workerCompletionMenxiaHarness(options: {
   output: unknown;
   incompleteReason: string;
   officer?: "jishizhong" | "fubaolang";
-  jishizhongIncompleteReason?: string;
   officerIncompleteReason?: string;
   passingRuns?: number;
 }) {
@@ -210,12 +209,9 @@ function workerCompletionMenxiaHarness(options: {
     output,
     incompleteReason,
     officer = "jishizhong",
+    officerIncompleteReason = `officer ${incompleteReason}`,
     passingRuns = 1,
   } = options;
-  const officerIncompleteReason =
-    options.officerIncompleteReason ??
-    options.jishizhongIncompleteReason ??
-    `officer ${incompleteReason}`;
   const officerTool = officer === "jishizhong" ? JISHIZHONG_OUTPUT_TOOL : FUBAOLANG_OUTPUT_TOOL;
   const faux = fauxProvider({ provider: "worker-menxia", api: "worker-menxia" });
   const model = faux.getModel();
@@ -1182,35 +1178,60 @@ test("judge submissions traverse the real Menxia provider gate before Shenxingyu
     auditCalls += 1;
     return { status: "pass" };
   });
-  const submissions = [
-    { judgeStatus: "continue" as const, fix: { summary: "tighten the gate" }, note: "ticket-review" },
-    { judgeStatus: "converged" as const, note: "judgment" },
-  ];
-  for (const verdict of submissions) {
-    const beforeAudit = auditCalls;
-    const tracer = workerCompletionMenxiaHarness({
-      execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      output: verdict,
-      incompleteReason: "missing draft evidence",
-      officer: "fubaolang",
-    });
-    await tracer.assertRejectSequence();
-    assert.equal(auditCalls, beforeAudit, "Shenxingyuan must not start on Menxia non-pass");
-    const accepted = await tool.execute(
-      `${verdict.judgeStatus}-pass`,
-      verdict,
+  // Full 8-reject+pass matrix once; production does not branch on judgeStatus.
+  const continueVerdict = {
+    judgeStatus: "continue" as const,
+    fix: { summary: "tighten the gate" },
+    note: "ticket-review",
+  };
+  const tracer = workerCompletionMenxiaHarness({
+    execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
+    toolName: JUDGE_OUTPUT_TOOL_NAME,
+    output: continueVerdict,
+    incompleteReason: "missing draft evidence",
+    officer: "fubaolang",
+  });
+  await tracer.assertRejectSequence();
+  assert.equal(auditCalls, 0, "Shenxingyuan must not start on Menxia non-pass");
+  const accepted = await tool.execute(
+    "continue-pass",
+    continueVerdict,
+    undefined,
+    undefined,
+    tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME),
+  );
+  assert.equal(accepted.terminate, true);
+  assert.deepEqual(accepted.details, continueVerdict);
+  assert.equal(auditCalls, 1, "Shenxingyuan runs only after Menxia pass");
+  assert.equal(tracer.providerRequests, 17);
+  assert.equal(tracer.remainingResponses, 0);
+
+  // Other judgeStatus: cheap same-gate assert — enters Menxia; non-pass keeps Shenxingyuan dark.
+  const convergedVerdict = { judgeStatus: "converged" as const, note: "judgment" };
+  const secondGate = workerCompletionMenxiaHarness({
+    execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
+    toolName: JUDGE_OUTPUT_TOOL_NAME,
+    output: convergedVerdict,
+    incompleteReason: "missing draft evidence",
+    officer: "fubaolang",
+    passingRuns: 0,
+  });
+  await assert.rejects(
+    tool.execute(
+      "converged-gate",
+      convergedVerdict,
       undefined,
       undefined,
-      tracer.context(`${verdict.judgeStatus}-pass`, JUDGE_OUTPUT_TOOL_NAME),
-    );
-    assert.equal(accepted.terminate, true);
-    assert.deepEqual(accepted.details, verdict);
-    assert.equal(auditCalls, beforeAudit + 1, "Shenxingyuan runs only after Menxia pass");
-    assert.equal(tracer.providerRequests, 17);
-    assert.equal(tracer.remainingResponses, 0);
-  }
-  assert.equal(auditCalls, 2);
+      secondGate.context("converged-gate", JUDGE_OUTPUT_TOOL_NAME),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /^Menxia /);
+      return true;
+    },
+  );
+  assert.equal(auditCalls, 1, "Shenxingyuan must not start on Menxia non-pass for other judgeStatus");
+  assert.equal(secondGate.providerRequests, 1);
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {

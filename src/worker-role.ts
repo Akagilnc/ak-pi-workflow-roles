@@ -30,7 +30,7 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
-import { runMenxia } from "./menxia-role.ts";
+import { requireMenxiaPass } from "./menxia-role.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -85,7 +85,6 @@ const coderOutputVariants = Type.Union([
   }, { additionalProperties: false }),
 ]);
 const coderOutputSchema = openToolObjectFromUnion(coderOutputVariants);
-type WorkerOutputParameters = CoderOutput | FixerOutput;
 export type { FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {
   packet: {
@@ -122,33 +121,6 @@ function isWorkerPhase(value: unknown): value is WorkerPhase {
 export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
-
-async function requireWorkerCompletionMenxiaPass(
-  output: WorkerOutputParameters,
-  signal: AbortSignal | undefined,
-  hostActions: WorkerRoleHostActions,
-  ctx: ExtensionContext,
-  toolCallId: string,
-): Promise<void> {
-  const menxia = await runMenxia({
-    context: ctx,
-    subject: { kind: "worker_completion", material: JSON.stringify(output) },
-    ...(signal === undefined ? {} : { signal }),
-  });
-  if (menxia.status === "transport_failure") {
-    hostActions.failInfrastructure(
-      new Error(`Menxia transport failure at ${menxia.stage}: ${menxia.reason}`),
-      ctx,
-      toolCallId,
-    );
-  }
-  if (menxia.status === "bounce") {
-    throw new Error(`Menxia requires rewrite: ${menxia.findings.join("; ")}`);
-  }
-  if (menxia.status === "incomplete" || menxia.status === "no_receipt") {
-    throw new Error(`Menxia ${menxia.status} at ${menxia.stage}: ${menxia.reason}; ${JSON.stringify(menxia)}`);
-  }
-}
 
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
@@ -321,7 +293,13 @@ export function createFixerRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed" || output.status === "partially_completed") {
-              await requireWorkerCompletionMenxiaPass(output, _signal, hostActions, ctx, toolCallId);
+              await requireMenxiaPass({
+                context: ctx,
+                subject: { kind: "worker_completion", material: JSON.stringify(output) },
+                ...(_signal === undefined ? {} : { signal: _signal }),
+                hostActions,
+                toolCallId,
+              });
             }
             // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
             const acceptedDetails = withEngineLaborFallbackField(
@@ -468,7 +446,13 @@ export function createCoderRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed") {
-              await requireWorkerCompletionMenxiaPass(output, _signal, hostActions, ctx, toolCallId);
+              await requireMenxiaPass({
+                context: ctx,
+                subject: { kind: "worker_completion", material: JSON.stringify(output) },
+                ...(_signal === undefined ? {} : { signal: _signal }),
+                hostActions,
+                toolCallId,
+              });
             }
             // #391: attach sole-built engineLaborFallback when detour fell back to seat labor.
             const acceptedDetails = withEngineLaborFallbackField(
