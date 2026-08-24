@@ -62,6 +62,12 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         execFileSync("git", ["init", "-b", "main"], { cwd: fixture, stdio: "ignore" });
         const caseIdentityPath = ".ak-roles/books/demo-book/issues/58/runs";
         assert.notEqual(installedRoot, packageRoot);
+        // #443: capture provider-visible systemPrompt from the installed entrypoint run.
+        const promptCapturePath = resolve(home, "doctor-system-prompt.txt");
+        const doctorSoul = [
+          await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8"),
+          await readFile(resolve(installedRoot, "souls/doctor.md"), "utf8"),
+        ].join("\n\n").trim();
         const result = await runPiSubprocess(
           [
             "--no-extensions",
@@ -99,6 +105,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
               AK_CORRELATION_ID: "doctor-fresh-corr",
               AK_DOCTOR_FRESH_CASE_PATH: caseIdentityPath,
               AK_DOCTOR_FRESH_ISSUE: "58",
+              AK_DOCTOR_FRESH_CAPTURE_SYSTEM_PROMPT: promptCapturePath,
             },
           },
         );
@@ -106,6 +113,11 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         assert.equal(result.localTimeout, false, result.stderr);
         assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
         assert.match(result.stderr, /DOCTOR_FRESH_PROVIDER_CALLS=2/);
+        const capturedPrompt = await readFile(promptCapturePath, "utf8");
+        assert.ok(
+          capturedPrompt.includes(`<doctor_soul>\n${doctorSoul}\n</doctor_soul>`),
+          "installed Doctor provider prompt carries constitution + doctor soul",
+        );
 
         const events = result.stdout
           .split("\n")

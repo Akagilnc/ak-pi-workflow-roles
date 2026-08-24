@@ -55,6 +55,12 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       const stdout: string[] = [];
       const stderr: string[] = [];
       const discoveredRefs = ["docs/feature-login.md"];
+      // #443: capture parent systemPrompt at the real packaged Reviewer output call.
+      const promptCapturePath = resolve(home, "reviewer-system-prompt.txt");
+      const reviewerSoul = [
+        await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8"),
+        await readFile(resolve(installedRoot, "souls/reviewer.md"), "utf8"),
+      ].join("\n\n").trim();
 
       // #236 no-caller-instruction path: fixed base alone launches real two-axis when
       // unique discovery finds durable local Spec material (not bare commit #N).
@@ -94,6 +100,7 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
                 ...options.env,
                 PI_OFFLINE: "1",
                 AK_REVIEW_EXPECT_AUTHORITY_REFS_JSON: JSON.stringify(discoveredRefs),
+                AK_REVIEW_CAPTURE_SYSTEM_PROMPT: promptCapturePath,
               },
               timeoutMs: options.timeoutMs ?? 120_000,
             });
@@ -109,6 +116,11 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       );
 
       assert.equal(reviewer.exitCode, 0, stderr.join("") || JSON.stringify(reviewer.terminal) || "public reviewer failed");
+      const capturedPrompt = await readFile(promptCapturePath, "utf8");
+      assert.ok(
+        capturedPrompt.includes(`<reviewer_soul>\n${reviewerSoul}\n</reviewer_soul>`),
+        "installed Reviewer provider prompt carries constitution + reviewer soul",
+      );
       assert.ok(reviewer.terminal);
       assert.equal(reviewer.terminal?.roleOutcome.kind, "accepted", JSON.stringify(reviewer.terminal));
       if (reviewer.terminal?.roleOutcome.kind === "accepted") {

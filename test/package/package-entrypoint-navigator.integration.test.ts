@@ -141,11 +141,17 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
+      // #443: Navigator session materials via pack default wiring (user prompt face).
+      const navigatorSoul = [
+        await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
+        await readFile(resolve(packageRoot, "souls/navigator.md"), "utf8"),
+      ].join("\n\n").trim();
       let navigatorCalls = 0;
       let roleModelCalls = 0;
       let invalidJudge = true;
       let revisedRoute = false;
       let preparedAt = 0;
+      let navigatorPrompt = "";
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
         const province = scriptJudgeProvincePass(names);
@@ -153,6 +159,18 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
           preparedAt = performance.now();
+          // Navigator injects soul into the provider-visible user prompt, not systemPrompt.
+          const userTexts = (context.messages ?? [])
+            .filter((message) => message.role === "user")
+            .map((message) =>
+              typeof message.content === "string"
+                ? message.content
+                : message.content
+                  .filter((part) => part.type === "text")
+                  .map((part) => part.text)
+                  .join("\n"),
+            );
+          navigatorPrompt = [context.systemPrompt ?? "", ...userTexts].join("\n");
           const route = revisedRoute
             ? [{ role: "judge" as const, phase: null }, { role: "fixer" as const, phase: "apply" as const }, { role: "reviewer" as const, phase: null }]
             : [{ role: "judge" as const, phase: null }, { role: "reviewer" as const, phase: null }];
@@ -223,6 +241,13 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           });
           assert.equal(navigatorCalls, 1, "a correctable role-output error must reuse one Navigator model call");
           void preparedAt;
+          // #443: first presentation sample is enough to lock pack default wiring bytes.
+          if (sample === 0) {
+            assert.ok(
+              navigatorPrompt.includes(`<navigator_soul>\n${navigatorSoul}\n</navigator_soul>`),
+              "Navigator provider prompt carries constitution + navigator soul from pack wiring",
+            );
+          }
         }
         revisedRoute = true;
         navigatorCalls = 0;
