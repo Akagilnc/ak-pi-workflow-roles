@@ -161,7 +161,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  // Route by active tool surface so Gatekeeper/Notary pass before auditor legs.
+  // Route by active tool surface so scripted province pass runs before auditor legs.
   // Fatal path used a fixed 3-slot queue; province children need two more turns
   // or MALFORMED is spent on Gatekeeper instead of auditor.
   faux.setResponses(Array.from({ length: 8 }, () => response));

@@ -30,7 +30,7 @@ export default function auditorDossierTracerProvider(pi: ExtensionAPI): void {
 
   const response = (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
-    // Judge draft → Gatekeeper → Notary before auditor dossier work.
+    // Scripted Gatekeeper → Notary pass before auditor dossier work.
     if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
@@ -76,7 +76,7 @@ export default function auditorDossierTracerProvider(pi: ExtensionAPI): void {
     }
     return fauxAssistantMessage("unexpected tracer request");
   };
-  // +2 slots for Gatekeeper dispatch + Notary pass ahead of auditor dossier turns.
+  // +2 slots for scripted Gatekeeper dispatch + officer pass ahead of auditor dossier turns.
   faux.setResponses(Array.from({ length: 14 }, () => response));
   const model = faux.getModel();
   pi.registerProvider({

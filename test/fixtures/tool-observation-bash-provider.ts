@@ -83,7 +83,7 @@ export default function fixture(pi: ExtensionAPI): void {
     }
     return fauxAssistantMessage("observation fixture idle");
   };
-  // bash + judge + Gatekeeper + Notary + auditor (+ navigator) need headroom.
+  // bash + judge + scripted province + auditor (+ navigator) need headroom.
   faux.setResponses(Array.from({ length: 10 }, () => response));
   const model = faux.getModel();
   const provider: Provider = {

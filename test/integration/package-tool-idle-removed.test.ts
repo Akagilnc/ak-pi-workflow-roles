@@ -224,7 +224,7 @@ test(
             }),
           ],
         }, async ({ session }) => {
-          // Judge output → Gatekeeper → Notary → injected silent compliance child.
+          // Judge output → scripted Gatekeeper → Notary → injected silent compliance child.
           const respond = (context: { tools?: Array<{ name: string }> }) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
