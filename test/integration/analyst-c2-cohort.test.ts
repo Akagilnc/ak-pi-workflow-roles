@@ -267,6 +267,8 @@ test("analyst C2 cohort: side-by-side group metrics join index by issueNumber; v
 
       assert.deepEqual(before.reworkRatio, present(0.25));
       assert.deepEqual(before.medianWallMs, present(25_000));
+      // C2 fixtures carry no auditor-roles — gate-cycle fold stays empty (not absent-as-0).
+      assert.deepEqual(before.gateCyclesByOfficer, []);
 
       // ---- after group hand values (204 vacant, does not contribute) ----
       const afterCoder = roleStats(after, "coder");
@@ -285,6 +287,7 @@ test("analyst C2 cohort: side-by-side group metrics join index by issueNumber; v
 
       assert.deepEqual(after.reworkRatio, present(0));
       assert.deepEqual(after.medianWallMs, present(24_000));
+      assert.deepEqual(after.gateCyclesByOfficer, []);
 
       // Cohort is a query product — no second parse of runs, no page rewrite.
       // Re-run yields identical typed output (pure read of persisted pages/index).
@@ -330,6 +333,7 @@ test("analyst C2 cohort: all-absent group yields typed vacancy aggregates (no 0/
       assert.deepEqual(left.byRole, []);
       assert.deepEqual(left.reworkRatio, ABSENT);
       assert.deepEqual(left.medianWallMs, ABSENT);
+      assert.deepEqual(left.gateCyclesByOfficer, []);
 
       assert.equal(right.groupLabel, "right");
       assert.deepEqual(right.issues, [
@@ -338,6 +342,7 @@ test("analyst C2 cohort: all-absent group yields typed vacancy aggregates (no 0/
       assert.deepEqual(right.byRole, []);
       assert.deepEqual(right.reworkRatio, ABSENT);
       assert.deepEqual(right.medianWallMs, ABSENT);
+      assert.deepEqual(right.gateCyclesByOfficer, []);
     });
   });
 });

@@ -25,7 +25,13 @@ export type AnalystMissingSource =
   | "tool-association"
   | "terminal-artifact"
   /** Model-groups mode: leg has no usable session model identity. */
-  | "session-model";
+  | "session-model"
+  /**
+   * Nested session/auditor-roles volume was discovered but failed canonical
+   * read/parse (#446). Missing auditor-roles directory is lawful zero rounds,
+   * not this face.
+   */
+  | "auditor-roles";
 
 /**
  * First usable session timestamp retained for an unreadable run when the
