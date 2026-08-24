@@ -1,10 +1,9 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { executeAuditorChild, type AuditorCompletion, type AuditorDecisionTool } from "./evidence-child-executor.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
+import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
 
 export const GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
 export const INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
@@ -80,7 +79,7 @@ function gatekeeperTool(): AuditorDecisionTool {
 }
 
 async function defaultLoadSoul(role: "gatekeeper" | "inspector" | "notary"): Promise<string> {
-  return readFile(fileURLToPath(new URL(`../souls/${role}.md`, import.meta.url)), "utf8");
+  return loadGatekeeperSessionMaterials(role);
 }
 
 function failureReason(error: unknown): string {

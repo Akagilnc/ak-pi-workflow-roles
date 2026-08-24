@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+import { readPackageMaterial } from "./session-opening-materials.ts";
+
 /** Active auditor seats. Fixer LLM auditor retired by #242; souls/fixer-auditor.md retained on disk for possible re-enable. */
 export const AUDITOR_SOUL_ROLES = [
   "judge",
@@ -18,11 +20,13 @@ const auditorSoulPaths: Readonly<Record<AuditorSoulRole, string>> = Object.freez
   doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url)),
 });
 
-/** Load one complete auditor Soul afresh for each audit invocation. */
+/** Load one complete auditor session (constitution + soul) afresh for each audit invocation. */
 export async function loadAuditorSoul(role: AuditorSoulRole): Promise<string> {
+  // Blank-soul identity stays on the role soul alone before composition.
   const soul = await readFile(auditorSoulPaths[role], "utf8");
   if (soul.trim().length === 0) {
     throw new Error(`The ${role} auditor Soul is blank`);
   }
-  return soul;
+  const constitution = await readPackageMaterial("CLAUDE.md");
+  return `${constitution}\n\n${soul}`;
 }
