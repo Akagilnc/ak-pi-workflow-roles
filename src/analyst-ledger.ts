@@ -39,6 +39,12 @@ import type {
   AnalystScopeConflict,
   AnalystUnreadableRun,
 } from "./analyst-page.ts";
+import {
+  readAnalystGateCyclesFromAuditorRoles,
+  type AnalystGateCycleRound,
+} from "./analyst-gate-cycles-read.ts";
+
+export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
 
 function isMissingPathError(error: unknown): boolean {
   return (
@@ -233,6 +239,11 @@ export type AnalystReadableRunFacts = {
    * Model-groups mode lists empty as typed session-model vacancy, never as "".
    */
   readonly models: readonly string[];
+  /**
+   * Paired gate-cycle rounds from session/auditor-roles/ (#446).
+   * Missing directory → empty (lawful zero rounds); never a leg unreadable cause.
+   */
+  readonly gateCycles: readonly AnalystGateCycleRound[];
 };
 
 export type AnalystScopedRunScan = {
@@ -384,6 +395,12 @@ async function classifyScopedRun(input: {
     );
   }
 
+  // Optional enrichment: nested auditor-roles gate pairs (missing → []).
+  // Stays inside the sole scan — families must not readdir this tree again.
+  const gateCycles = await readAnalystGateCyclesFromAuditorRoles(
+    join(input.runDirectory, "session", "auditor-roles"),
+  );
+
   return {
     kind: "readable",
     facts: {
@@ -394,6 +411,7 @@ async function classifyScopedRun(input: {
       toolIntervals,
       terminal,
       models,
+      gateCycles,
     },
   };
 }

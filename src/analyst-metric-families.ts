@@ -11,6 +11,7 @@
 import type { AnalystMetricFamilyModule } from "./analyst-metric-family.ts";
 import acceptanceSuccessReworkFamily from "./analyst-metric-families/acceptance-success-rework.ts";
 import b2FrameBucketsActionsFamily from "./analyst-metric-families/b2-frame-buckets-actions.ts";
+import gateCyclesFamily from "./analyst-metric-families/gate-cycles.ts";
 import legWallClockFamily from "./analyst-metric-families/leg-wall-clock.ts";
 import roundTimelineFamily from "./analyst-metric-families/round-timeline.ts";
 
@@ -21,6 +22,7 @@ import roundTimelineFamily from "./analyst-metric-families/round-timeline.ts";
 const ISSUE_METRIC_FAMILIES: readonly AnalystMetricFamilyModule[] = [
   acceptanceSuccessReworkFamily,
   b2FrameBucketsActionsFamily,
+  gateCyclesFamily,
   legWallClockFamily,
   roundTimelineFamily,
 ].sort((a, b) => a.id.localeCompare(b.id));
