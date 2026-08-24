@@ -19609,24 +19609,26 @@ var init_terminal = __esm({
   }
 });
 
+// src/session-opening-materials.ts
+var packageRootUrl;
+var init_session_opening_materials = __esm({
+  "src/session-opening-materials.ts"() {
+    "use strict";
+    packageRootUrl = new URL("..", import.meta.url);
+  }
+});
+
 // src/auditor-soul.ts
-import { fileURLToPath } from "node:url";
-var AUDITOR_SOUL_ROLES, auditorSoulPaths;
+var AUDITOR_SOUL_ROLES;
 var init_auditor_soul = __esm({
   "src/auditor-soul.ts"() {
     "use strict";
+    init_session_opening_materials();
     AUDITOR_SOUL_ROLES = [
       "judge",
       "reviewer",
       "doctor"
     ];
-    auditorSoulPaths = Object.freeze({
-      judge: fileURLToPath(new URL("../souls/judge-auditor.md", import.meta.url)),
-      reviewer: fileURLToPath(
-        new URL("../souls/reviewer-auditor.md", import.meta.url)
-      ),
-      doctor: fileURLToPath(new URL("../souls/doctor-auditor.md", import.meta.url))
-    });
   }
 });
 
@@ -28671,7 +28673,7 @@ var init_cli = __esm({
 // src/public-cli/main.ts
 import { existsSync as existsSync3 } from "node:fs";
 import { dirname as dirname11, join as join26 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { fileURLToPath } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
@@ -28757,7 +28759,7 @@ function linkPackage(packageRoot2, name, targetDir) {
 }
 
 // src/public-cli/main.ts
-var here = dirname11(fileURLToPath2(import.meta.url));
+var here = dirname11(fileURLToPath(import.meta.url));
 function resolvePackageRoot(binDir) {
   const canonical = join26(binDir, "..", "..");
   if (existsSync3(join26(canonical, "package.json"))) {
