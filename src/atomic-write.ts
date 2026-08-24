@@ -1,6 +1,6 @@
 /**
  * Same-directory temp + rename atomic file replace.
- * Shared primitive for ledger-adjacent typed pages (taishi metrics, etc.).
+ * Shared primitive for ledger-adjacent typed pages (analyst metrics, etc.).
  * Does not open/truncate an existing destination inode, so hard-linked twins
  * keep prior bytes until the directory entry is swapped.
  * Parent directory must already exist — callers that write under the package

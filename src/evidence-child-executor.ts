@@ -572,7 +572,7 @@ export async function executeEvidenceChild(
     },
     async (childConfigDir) => {
       const { openInProcessAgentSession } = await import("./in-process-session.ts");
-      const { createRecordSession } = await import("./sitian-record-entry.ts");
+      const { createRecordSession } = await import("./archivist-record-entry.ts");
       let inherited: InheritedRuntime;
       try {
         inherited = await createInheritedRuntime({
@@ -722,12 +722,12 @@ export type AuditorRoleOptions = {
  * Auditor lifecycle via the shared in-process helper.
  * Adapter keeps role label / soul / decision tool / result projection only.
  * No tools allowlist (ADR 0064). Provider-stream idle-only retry (ADR 0059).
- * Durable child session via ADR 0065 sitian entry.
+ * Durable child session via ADR 0065 archivist entry.
  */
 export async function executeAuditorChild(
   options: AuditorRoleOptions,
 ): Promise<{ decision: unknown; response: AssistantMessage; noReceiptLifecycle?: NoReceiptLifecycleFacts }> {
-  const { createRecordSession } = await import("./sitian-record-entry.ts");
+  const { createRecordSession } = await import("./archivist-record-entry.ts");
 
   return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
     const inherited = await createInheritedRuntime({

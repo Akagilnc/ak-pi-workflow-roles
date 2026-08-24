@@ -8,7 +8,7 @@ import {
   createRecordSession,
   type RecordSessionParent,
   WORKER_SUBMISSION_GATE_KIND,
-} from "./sitian-record-entry.ts";
+} from "./archivist-record-entry.ts";
 
 export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";

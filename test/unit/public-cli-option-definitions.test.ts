@@ -6,7 +6,7 @@
  * 2. required:true → real parser missing reject + shared-seam flip
  * 3. phase + repeatable → real production parsers
  * 4. rejected spellings bidirectional (surfaces + parser refuse)
- * 5. taishi conditional contracts → parseTaishiArgv pos/neg matrix
+ * 5. analyst conditional contracts → parseAnalystArgv pos/neg matrix
  * 6. public dashed options admitted (forward scan)
  * 7. README EN/ZH generated regions zero-diff
  * 8. installed-bin loud smoke (non-empty only)
@@ -33,7 +33,7 @@ import {
   PUBLIC_ROLE_OPTION_OWNERS,
   PUBLIC_CLI_OPTIONS_README_MARKERS,
   REJECTED_PUBLIC_SPELLINGS,
-  TAISHI_REQUIRE_ANY_OF,
+  ANALYST_REQUIRE_ANY_OF,
   allRejectedSpellingTokens,
   applyReadmeOptionsSection,
   createTypedOptionConsumer,
@@ -53,7 +53,7 @@ import {
   parseJudgeArgv,
   parseMergerArgv,
   parseReviewerArgv,
-  parseTaishiArgv,
+  parseAnalystArgv,
 } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -110,7 +110,7 @@ test("table→helpDocument: per-command structured option semantics are equivale
       doc.kind,
       owner === "global"
         ? "global"
-        : owner === "taishi"
+        : owner === "analyst"
           ? "deterministic"
           : "role",
     );
@@ -222,8 +222,8 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
       flag: "--project",
     },
     {
-      name: "taishi/--ticket",
-      parse: parseTaishiArgv,
+      name: "analyst/--ticket",
+      parse: parseAnalystArgv,
       argv: ["--ticket", "1", "--ticket", "2"],
       flag: "--ticket",
     },
@@ -256,7 +256,7 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
     ["https://example.test/a", "https://example.test/b"],
   );
   assert.throws(
-    () => parseTaishiArgv(["--model-groups"]),
+    () => parseAnalystArgv(["--model-groups"]),
     (e: unknown) =>
       isUsage(e)
       && e instanceof Error
@@ -264,7 +264,7 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
       && /disabled|redesign|multi-issue|follow-up/i.test(e.message),
   );
   assert.throws(
-    () => parseTaishiArgv(["--project-root", "/a"]),
+    () => parseAnalystArgv(["--project-root", "/a"]),
     (e: unknown) =>
       isUsage(e)
       && e instanceof Error
@@ -273,7 +273,7 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
   );
 
   assert.throws(
-    () => parseTaishiArgv(["sweep", "sweep", "--attach", "/x"]),
+    () => parseAnalystArgv(["sweep", "sweep", "--attach", "/x"]),
     (e: unknown) =>
       isUsage(e)
       && e instanceof Error
@@ -324,24 +324,24 @@ test("rejected spellings: absent from public surfaces; parsers refuse them", () 
               || e.message.includes("merger")),
         );
       }
-      if (entry.owner === "taishi") {
+      if (entry.owner === "analyst") {
         const argv =
           spelling === "--project-root" ? [spelling, "/tmp/p"] : [spelling];
         assert.throws(
-          () => parseTaishiArgv(argv),
+          () => parseAnalystArgv(argv),
           (e: unknown) =>
             e instanceof Error
             && e.message.includes(spelling.slice(2))
-            && !e.message.includes("unknown taishi option"),
+            && !e.message.includes("unknown analyst option"),
         );
       }
     }
   }
 });
 
-test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", () => {
+test("analyst structured mode contracts drive parseAnalystArgv (pos/neg matrix)", () => {
   const byId = new Map(
-    optionsForOwner("taishi").map((opt) => [opt.id, opt] as const),
+    optionsForOwner("analyst").map((opt) => [opt.id, opt] as const),
   );
   assert.ok(byId.get("ticket")?.modes?.includes("issue"));
   assert.equal(byId.has("project-root"), false);
@@ -361,7 +361,7 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
     assert.deepEqual(byId.get(id)?.requiredInModes, ["cohort"]);
     assert.deepEqual(byId.get(id)?.modes, ["cohort"]);
   }
-  assert.deepEqual([...TAISHI_REQUIRE_ANY_OF], []);
+  assert.deepEqual([...ANALYST_REQUIRE_ANY_OF], []);
   const rejected = allRejectedSpellingTokens();
   assert.ok(rejected.includes("--project-root"));
   assert.ok(rejected.includes("--model-groups"));
@@ -495,11 +495,11 @@ test("taishi structured mode contracts drive parseTaishiArgv (pos/neg matrix)", 
   for (const s of cases) {
     covered.add(s.rule);
     if (s.expect.ok) {
-      assert.equal(parseTaishiArgv(s.argv).query, s.expect.query, s.name);
+      assert.equal(parseAnalystArgv(s.argv).query, s.expect.query, s.name);
     } else {
       const expectedRe = s.expect.re;
       assert.throws(
-        () => parseTaishiArgv(s.argv),
+        () => parseAnalystArgv(s.argv),
         (e: unknown) => {
           assert.ok(e instanceof Error, s.name);
           assert.match(e.message, expectedRe, `${s.name}: ${e.message}`);
@@ -604,7 +604,7 @@ test("public dashed options admitted; shared project/attach owner-binding preser
   }
   assert.ok(ok >= 10);
 
-  for (const opt of optionsForOwner("taishi")) {
+  for (const opt of optionsForOwner("analyst")) {
     if (opt.form !== "option") continue;
     const face =
       opt.modes?.[0] === "cohort"
@@ -626,18 +626,18 @@ test("public dashed options admitted; shared project/attach owner-binding preser
                 sampleValue(opt.valueMetavar ?? "path", opt.id),
               ];
     try {
-      parseTaishiArgv(face);
+      parseAnalystArgv(face);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       assert.equal(
-        /unknown taishi option/.test(msg),
+        /unknown analyst option/.test(msg),
         false,
-        `taishi ${opt.canonical}: ${msg}`,
+        `analyst ${opt.canonical}: ${msg}`,
       );
     }
   }
 
-  // Shared project semantics (owner-binding only); merger/taishi/reviewer differ.
+  // Shared project semantics (owner-binding only); merger/analyst/reviewer differ.
   const judgeProject = optionsForOwner("judge").find((o) => o.id === "project")!;
   const canon = structured(projectOwnerOptions("judge").find((o) => o.id === "project")!);
   for (const owner of [
@@ -657,9 +657,9 @@ test("public dashed options admitted; shared project/attach owner-binding preser
     judgeProject.description.en,
   );
   assert.equal(optionsForOwner("reviewer").some((o) => o.id === "attach"), false);
-  const taishiAttach = optionsForOwner("taishi").find((o) => o.id === "attach")!;
-  assert.deepEqual(taishiAttach.modes, ["sweep"]);
-  assert.equal(taishiAttach.selectsMode, "sweep");
+  const analystAttach = optionsForOwner("analyst").find((o) => o.id === "attach")!;
+  assert.deepEqual(analystAttach.modes, ["sweep"]);
+  assert.equal(analystAttach.selectsMode, "sweep");
 });
 
 function sampleValue(metavar: string, id: string): string {

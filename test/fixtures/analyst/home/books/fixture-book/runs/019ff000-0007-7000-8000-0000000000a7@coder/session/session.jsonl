@@ -1,0 +1,3 @@
+{"type":"session","version":3,"id":"s-00a7","timestamp":"2026-08-01T00:04:00.000Z","cwd":"/analyst-fixture/issue-demo"}
+{"type":"message","id":"m1","parentId":null,"timestamp":"2026-08-01T00:04:00.000Z","message":{"role":"assistant","timestamp":"2026-08-01T00:04:00.000Z","content":[]}}
+{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-08-01T00:04:20.000Z","message":{"role":"assistant","timestamp":"2026-08-01T00:04:20.000Z","content":[]}}

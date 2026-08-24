@@ -20,7 +20,7 @@ import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NAVIGA
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
-import { createRecordSession } from "../../src/sitian-record-entry.ts";
+import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
   withTempHome,
   captureIo,
@@ -692,7 +692,7 @@ test("#307 navigator raw: onResponse status reaches durable session + run typed 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runDir = join(home, "run");
-    // Work identity for the sitian navigator nest (same relation production factory uses).
+    // Work identity for the archivist navigator nest (same relation production factory uses).
     const subject = join(project, "session-nav-raw");
     await mkdir(runDir, { recursive: true });
     try {
@@ -752,14 +752,14 @@ test("#307 navigator raw: onResponse status reaches durable session + run typed 
       await session.setModel?.(`${model.provider}/${model.id}`, "off");
       await session.prompt("navigator raw");
       session.dispose();
-      // Real disk path via sitian entry only — same kind/subject/cwd identity production uses.
+      // Real disk path via archivist entry only — same kind/subject/cwd identity production uses.
       // Do not bypass createRecordSession with continueRecent/self-computed sessionDir.
       const diskFile = createRecordSession({
         cwd: project,
         kind: "navigator",
         subject,
       }).getSessionFile();
-      assert.ok(diskFile, "navigator session must persist a session file via sitian entry");
+      assert.ok(diskFile, "navigator session must persist a session file via archivist entry");
       const diskEntries = (await readFile(diskFile, "utf8"))
         .trim()
         .split("\n")

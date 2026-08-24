@@ -123,7 +123,7 @@
 | 43 | `test/contract/canonical-skill-binding.test.ts` | ordinary | 3 | 356ms | 250ms | 102ms | 254ms | 真行为契约 | 🔒 |
 | 44 | `test/unit/public-cli-collector.test.ts` | ordinary | 2 | 337ms | 335ms | 72ms | 266ms | 真行为契约 |  |
 | 45 | `test/unit/judge-auditor-dossier.test.ts` | ordinary | 4 | 201ms | 159ms | 150ms | 51ms | 真行为契约 | 🔒 |
-| 46 | `test/unit/sitian-record-entry.test.ts` | ordinary | 1 | 191ms | 191ms | 80ms | 110ms | 真行为契约 | 🔒 |
+| 46 | `test/unit/archivist-record-entry.test.ts` | ordinary | 1 | 191ms | 191ms | 80ms | 110ms | 真行为契约 | 🔒 |
 | 47 | `test/contract/collector-identity.test.ts` | ordinary | 11 | 162ms | 91ms | 56ms | 106ms | 真行为契约 |  |
 | 48 | `test/unit/package-method-skill.test.ts` | ordinary | 7 | 129ms | 48ms | 65ms | 64ms | 真行为契约 | 🔒 |
 | 49 | `test/contract/activation-reconciliation.test.ts` | ordinary | 4 | 118ms | 115ms | 69ms | 49ms | 真行为契约 | 🔒 |

@@ -66,6 +66,7 @@ Status: accepted
 - **三法司是职责分立的类比，不是流程链。** `御史台`、`大理寺`、`审刑院` 是不同席位；审刑院依 [ADR 0062](0062-auditor-is-an-independent-substantive-role.md) 自行取证并判断「该有的有没有」与「有的对不对」。**本 ADR 不规定任何调用顺序，也不设必经链**——组合、顺序、重复次数仍归调用者（ADR 0010）。
 - **`审刑院` 是独立的实质审计角色。** 它不再是仅复核程序的共享内部接缝；现行职责以 [ADR 0062](0062-auditor-is-an-independent-substantive-role.md) 为准。
 - **只改称谓，不动任何机器可消费的键。** `--ak-role <name>` 的标识符、CLI 参数、工具名（`ak_<role>_output`）、schema 字段一律不变，永远是英文旧名。中文名属**呈现**，标识符属**契约**——按锚定宪法「机器只咬契约，不咬呈现」，改呈现不触发任何迁移，也不需要施工票。既有调用方零改动。
+  - **2026-08-24 改记（#445，decision key `adr-0051-machine-keys-override`）：** 御批「深改」覆盖本条对太史／司天台 live 机器面的冻结——公开命令、typed kind、机器错误码与落盘目录随定名 `analyst`／`archivist` 全量改名，不留历史合同与兼容别名。本改记只动本断言在该射程内的效力；ADR 其余正文不动。绑定原话：「可以。这两个名字没问题」「深改。」；decision keys：`analyst-archivist-names-ratified`、`pinyin-zero-deep-machine-face`、`adr-0051-machine-keys-override`。
 - **`司天台`／`兰台` 只是 [#67](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/67) 已有两席的取名，不扩该票范围。** 且 `司天台` 的席位形态尚未成立——[ADR 0047](0047-sitian-phase-one-mechanism-not-role.md) 已拍定司天第一期是零 LLM 的双面对账机制、**不设 LLM 角色**；本 ADR 只为将来若成席时备名，不推翻 0047。
 - **`考功司` 不属 #67。** 该票明示两席，把第三席塞进去是无 authority 的范围扩张。考功司另列为未来留档，需要时单独立票。
 - **`弘文馆`（拟给医生）挂起**：医生现有的「病人／症状／方子」医学隐喻仍在使用且好用，为换名而拆掉一套在用的思维工具不划算。名字留档，待医生本身需要修订时再议。

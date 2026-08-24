@@ -78,7 +78,7 @@ function materializeDeferredSessionFile(
  * causes are retained.
  *
  * Record-placement (session must live under the ledger book) is NOT enforced here —
- * that check lives on the sitian record entry (createRecordSession). Activation only
+ * that check lives on the archivist record entry (createRecordSession). Activation only
  * binds the durable principal identity for the role run.
  *
  * Upstream Pi defers exclusive create until the first assistant message. When the path
