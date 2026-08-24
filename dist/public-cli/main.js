@@ -25815,16 +25815,18 @@ function finishRole(role, accum) {
     successRate: rateMetric(accum.successCount, accum.successEligibleCount)
   };
 }
-function emptyGateOfficerAccum() {
+function emptyGateOfficerNumeratorAccum() {
   return { rounds: 0, bounceCount: 0, passCount: 0, wallSum: 0 };
 }
-function absorbGateRound(accum, round) {
-  accum.rounds += 1;
-  accum.wallSum += round.officerWallMs;
-  if (round.status === "bounce") accum.bounceCount += 1;
-  if (round.status === "pass") accum.passCount += 1;
+function absorbGateOfficerSummary(accum, summary) {
+  accum.rounds += summary.rounds;
+  accum.bounceCount += summary.bounceCount;
+  accum.passCount += summary.passCount;
+  if (summary.meanOfficerWallMs !== void 0) {
+    accum.wallSum += summary.meanOfficerWallMs * summary.rounds;
+  }
 }
-function finishGateOfficer(officer, accum) {
+function finishGateOfficerNumerators(officer, accum) {
   return {
     officer,
     rounds: accum.rounds,
@@ -25879,17 +25881,17 @@ async function aggregateGroup(index, input, ensureIssuePage) {
     }
     const gateCycles = page.gateCycles;
     if (gateCycles !== void 0) {
-      for (const leg of gateCycles.legs) {
-        for (const round of leg.rounds) {
-          const accum = gateOfficerAccums.get(round.officer) ?? emptyGateOfficerAccum();
-          absorbGateRound(accum, round);
-          gateOfficerAccums.set(round.officer, accum);
-        }
+      for (const summary of gateCycles.byOfficer) {
+        const accum = gateOfficerAccums.get(summary.officer) ?? emptyGateOfficerNumeratorAccum();
+        absorbGateOfficerSummary(accum, summary);
+        gateOfficerAccums.set(summary.officer, accum);
       }
     }
   }
   const byRole = [...roleAccums.keys()].sort((a, b) => a.localeCompare(b)).map((role) => finishRole(role, roleAccums.get(role)));
-  const gateCyclesByOfficer = ["inspector", "notary"].filter((officer) => gateOfficerAccums.has(officer)).map((officer) => finishGateOfficer(officer, gateOfficerAccums.get(officer)));
+  const gateCyclesByOfficer = ["inspector", "notary"].filter((officer) => gateOfficerAccums.has(officer)).map(
+    (officer) => finishGateOfficerNumerators(officer, gateOfficerAccums.get(officer))
+  );
   return {
     groupLabel: input.groupLabel,
     issues: issueEntries,
