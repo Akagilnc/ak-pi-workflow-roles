@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
-import { createRecordSession } from "./sitian-record-entry.ts";
+import { createRecordSession } from "./archivist-record-entry.ts";
 
 type OpenInProcessAgentSessionBase = {
   readonly cwd: string;
@@ -33,7 +33,7 @@ type OpenInProcessAgentSessionBase = {
 /**
  * Shared open admits exactly one session source:
  * - pre-built sessionManager, or
- * - kind/subject/parent identity relations (Sitian obtains the manager).
+ * - kind/subject/parent identity relations (Archivist obtains the manager).
  * Encoded as a type relation — no runtime missing-arg guard.
  */
 export type OpenInProcessAgentSessionOptions =
@@ -45,7 +45,7 @@ export type OpenInProcessAgentSessionOptions =
     })
   | (OpenInProcessAgentSessionBase & {
       readonly sessionManager?: undefined;
-      /** Record kind for the Sitian entry. */
+      /** Record kind for the Archivist entry. */
       readonly kind: string;
       /** Stable work identity for book-level records which continue across role runs. */
       readonly subject?: string;

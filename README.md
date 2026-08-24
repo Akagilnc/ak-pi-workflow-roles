@@ -161,7 +161,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | `--project` | — | `path` | no | no | option | — | Project root with one ordinary in-progress merge (defaults to cwd). |
 | `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
 
-### `taishi`
+### `analyst`
 
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |

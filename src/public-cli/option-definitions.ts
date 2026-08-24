@@ -13,8 +13,8 @@
 
 import { CliUsageError } from "./cli-errors.ts";
 
-/** Taishi public query faces (#336/#337/#338/#399). model-groups CLI face disabled (library kernel retained). */
-export type TaishiMode = "issue" | "sweep" | "cohort";
+/** Analyst public query faces (#336/#337/#338/#399). model-groups CLI face disabled (library kernel retained). */
+export type AnalystMode = "issue" | "sweep" | "cohort";
 
 /** Coder/Fixer public phase tokens. */
 export type RolePhase = "plan" | "apply";
@@ -28,7 +28,7 @@ export type OptionOwner =
   | "collector"
   | "doctor"
   | "merger"
-  | "taishi";
+  | "analyst";
 
 /**
  * One public option (or positional mode/phase token) identity.
@@ -57,72 +57,72 @@ export type PublicOptionDefinition = {
   readonly form: "option" | "positional";
   /** When set, only these coder/fixer phases admit the option. */
   readonly phases?: readonly RolePhase[];
-  /** When set, only these taishi modes admit the option. */
-  readonly modes?: readonly TaishiMode[];
-  /** Modes in which this option is required (taishi conditional requiredness). */
-  readonly requiredInModes?: readonly TaishiMode[];
+  /** When set, only these analyst modes admit the option. */
+  readonly modes?: readonly AnalystMode[];
+  /** Modes in which this option is required (analyst conditional requiredness). */
+  readonly requiredInModes?: readonly AnalystMode[];
   /**
    * Other option ids on the same owner that cannot co-occur.
    */
   readonly exclusiveWith?: readonly string[];
   /** Per-mode maximum occurrences. */
-  readonly maxCountByMode?: Readonly<Partial<Record<TaishiMode, number>>>;
+  readonly maxCountByMode?: Readonly<Partial<Record<AnalystMode, number>>>;
   /**
    * When this option (or positional) is present it activates this mode.
    * Mode resolution consumes only this field — parsers must not restate selectors.
    */
-  readonly selectsMode?: TaishiMode;
+  readonly selectsMode?: AnalystMode;
   readonly description: { readonly en: string; readonly zh: string };
 };
 
 /**
- * Cross-field at-least-one rules for taishi modes (cannot hang on one option row).
+ * Cross-field at-least-one rules for analyst modes (cannot hang on one option row).
  * Parser-consumed sole source together with per-option modes/required/exclusive/max (#342).
  */
-export type TaishiRequireAnyOfRule = {
-  readonly mode: TaishiMode;
+export type AnalystRequireAnyOfRule = {
+  readonly mode: AnalystMode;
   readonly optionIds: readonly string[];
 };
 
 /**
- * Cross-field at-least-one rules for taishi modes.
+ * Cross-field at-least-one rules for analyst modes.
  * #399: issue bare call is lawful (whole book from cwd) — no require-any-of on issue.
  */
-export const TAISHI_REQUIRE_ANY_OF: readonly TaishiRequireAnyOfRule[] = [];
+export const ANALYST_REQUIRE_ANY_OF: readonly AnalystRequireAnyOfRule[] = [];
 
-/** Residual taishi mode when no `selectsMode` option is present. */
-export const TAISHI_DEFAULT_MODE: TaishiMode = "issue";
+/** Residual analyst mode when no `selectsMode` option is present. */
+export const ANALYST_DEFAULT_MODE: AnalystMode = "issue";
 
 /**
- * Resolve taishi mode from collected option ids via `selectsMode` on the table.
+ * Resolve analyst mode from collected option ids via `selectsMode` on the table.
  * Deterministic preference when multiple selectors co-occur; exclusiveWith then rejects.
  */
-export function resolveTaishiMode(
+export function resolveAnalystMode(
   presentOptionIds: ReadonlySet<string>,
-): TaishiMode {
-  const selected = new Set<TaishiMode>();
-  for (const def of optionsForOwner("taishi")) {
+): AnalystMode {
+  const selected = new Set<AnalystMode>();
+  for (const def of optionsForOwner("analyst")) {
     if (def.selectsMode === undefined) continue;
     if (presentOptionIds.has(def.id)) selected.add(def.selectsMode);
   }
-  if (selected.size === 0) return TAISHI_DEFAULT_MODE;
+  if (selected.size === 0) return ANALYST_DEFAULT_MODE;
   if (selected.has("cohort")) return "cohort";
   if (selected.has("sweep")) return "sweep";
   if (selected.has("issue")) return "issue";
-  return TAISHI_DEFAULT_MODE;
+  return ANALYST_DEFAULT_MODE;
 }
 
-export type TaishiOptionCounts = ReadonlyMap<string, number>;
+export type AnalystOptionCounts = ReadonlyMap<string, number>;
 
 /**
- * Evaluate taishi cross-field / cross-mode structured contracts from the sole typed table.
- * Covers: modes admission, requiredInModes, exclusiveWith, maxCountByMode, TAISHI_REQUIRE_ANY_OF.
+ * Evaluate analyst cross-field / cross-mode structured contracts from the sole typed table.
+ * Covers: modes admission, requiredInModes, exclusiveWith, maxCountByMode, ANALYST_REQUIRE_ANY_OF.
  */
-export function evaluateTaishiModeOptionContract(
-  mode: TaishiMode,
-  counts: TaishiOptionCounts,
+export function evaluateAnalystModeOptionContract(
+  mode: AnalystMode,
+  counts: AnalystOptionCounts,
 ): { ok: true } | { ok: false; message: string } {
-  const definitions = optionsForOwner("taishi");
+  const definitions = optionsForOwner("analyst");
   const byId = new Map(definitions.map((def) => [def.id, def] as const));
 
   for (const def of definitions) {
@@ -133,7 +133,7 @@ export function evaluateTaishiModeOptionContract(
       const other = byId.get(otherId);
       return {
         ok: false,
-        message: `taishi accepts only one of ${def.canonical} / ${other?.canonical ?? otherId}`,
+        message: `analyst accepts only one of ${def.canonical} / ${other?.canonical ?? otherId}`,
       };
     }
   }
@@ -146,12 +146,12 @@ export function evaluateTaishiModeOptionContract(
       if (mode === "sweep") {
         return {
           ok: false,
-          message: `taishi sweep --attach cannot combine with ${def.canonical}`,
+          message: `analyst sweep --attach cannot combine with ${def.canonical}`,
         };
       }
       return {
         ok: false,
-        message: `taishi ${mode} does not accept ${def.canonical}`,
+        message: `analyst ${mode} does not accept ${def.canonical}`,
       };
     }
     const max = def.maxCountByMode?.[mode];
@@ -160,8 +160,8 @@ export function evaluateTaishiModeOptionContract(
         ok: false,
         message:
           max === 1
-            ? `taishi ${mode} accepts at most one ${def.canonical}`
-            : `taishi ${mode} accepts at most ${max} ${def.canonical}`,
+            ? `analyst ${mode} accepts at most one ${def.canonical}`
+            : `analyst ${mode} accepts at most ${max} ${def.canonical}`,
       };
     }
   }
@@ -177,18 +177,18 @@ export function evaluateTaishiModeOptionContract(
       return {
         ok: false,
         message:
-          "usage: ak-role taishi --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>",
+          "usage: ak-role analyst --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>",
       };
     }
     return {
       ok: false,
-      message: `usage: ak-role taishi ${mode} requires ${missingRequired
+      message: `usage: ak-role analyst ${mode} requires ${missingRequired
         .map((def) => def.canonical)
         .join(" ")}`,
     };
   }
 
-  for (const rule of TAISHI_REQUIRE_ANY_OF) {
+  for (const rule of ANALYST_REQUIRE_ANY_OF) {
     if (rule.mode !== mode) continue;
     const hit = rule.optionIds.some((id) => (counts.get(id) ?? 0) > 0);
     if (hit) continue;
@@ -197,7 +197,7 @@ export function evaluateTaishiModeOptionContract(
       return {
         ok: false,
         message:
-          "usage: ak-role taishi ([--ticket <N>] | [sweep] --attach <sweep.json> | --cohort ...)",
+          "usage: ak-role analyst ([--ticket <N>] | [sweep] --attach <sweep.json> | --cohort ...)",
       };
     }
     const flags = rule.optionIds
@@ -205,7 +205,7 @@ export function evaluateTaishiModeOptionContract(
       .join(" | ");
     return {
       ok: false,
-      message: `usage: ak-role taishi ${mode} requires one of ${flags}`,
+      message: `usage: ak-role analyst ${mode} requires one of ${flags}`,
     };
   }
 
@@ -240,15 +240,15 @@ export const REJECTED_PUBLIC_SPELLINGS = [
     },
   },
   {
-    owner: "taishi",
+    owner: "analyst",
     spellings: ["--project-root"],
     reason: {
-      en: "Deleted (#399). taishi no longer accepts --project-root; use bare call for whole book or --ticket N (cwd git common-dir selects the book).",
-      zh: "已删除（#399）。taishi 不再接受 --project-root；裸调用=整簿，或 --ticket N（cwd git common-dir 定簿）。",
+      en: "Deleted (#399). analyst no longer accepts --project-root; use bare call for whole book or --ticket N (cwd git common-dir selects the book).",
+      zh: "已删除（#399）。analyst 不再接受 --project-root；裸调用=整簿，或 --ticket N（cwd git common-dir 定簿）。",
     },
   },
   {
-    owner: "taishi",
+    owner: "analyst",
     spellings: ["--model-groups"],
     reason: {
       en: "Public CLI face disabled (#399). Input face is being redesigned for multi-issue comparison (see follow-up ticket). Library kernel retained.",
@@ -320,7 +320,7 @@ const GLOBAL_OPTIONS = [
  * Immutable shared semantics for the common ledger `--project` face.
  * Role rows bind owner only — do not copy these fields per role.
  * Role-specific project faces (merger merge-root) stay explicit below and
- * must not use this binding. taishi `--project-root` is deleted (#399).
+ * must not use this binding. analyst `--project-root` is deleted (#399).
  */
 const SHARED_PROJECT_SEMANTICS = {
   id: "project",
@@ -338,7 +338,7 @@ const SHARED_PROJECT_SEMANTICS = {
 
 /**
  * Immutable shared semantics for the common frozen-file `--attach` face.
- * Role rows bind owner only. Reviewer has no attach face; taishi sweep attach
+ * Role rows bind owner only. Reviewer has no attach face; analyst sweep attach
  * keeps its own modes/selectsMode/description and must not use this binding.
  */
 const SHARED_ATTACH_SEMANTICS = {
@@ -556,10 +556,10 @@ const MERGER_OPTIONS = [
   bindOwner("merger", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
-const TAISHI_OPTIONS = [
+const ANALYST_OPTIONS = [
   {
     id: "sweep",
-    owner: "taishi",
+    owner: "analyst",
     canonical: "sweep",
     aliases: [],
     valueMetavar: null,
@@ -575,7 +575,7 @@ const TAISHI_OPTIONS = [
   },
   {
     id: "ticket",
-    owner: "taishi",
+    owner: "analyst",
     canonical: "--ticket",
     aliases: [],
     valueMetavar: "number",
@@ -590,7 +590,7 @@ const TAISHI_OPTIONS = [
   },
   {
     id: "attach",
-    owner: "taishi",
+    owner: "analyst",
     canonical: "--attach",
     aliases: [],
     valueMetavar: "path",
@@ -608,7 +608,7 @@ const TAISHI_OPTIONS = [
   },
   {
     id: "cohort",
-    owner: "taishi",
+    owner: "analyst",
     canonical: "--cohort",
     aliases: [],
     valueMetavar: null,
@@ -624,7 +624,7 @@ const TAISHI_OPTIONS = [
   },
   {
     id: "group-a-label",
-    owner: "taishi",
+    owner: "analyst",
     canonical: "--group-a-label",
     aliases: [],
     valueMetavar: "label",
@@ -640,7 +640,7 @@ const TAISHI_OPTIONS = [
   },
   {
     id: "group-a-issues",
-    owner: "taishi",
+    owner: "analyst",
     canonical: "--group-a-issues",
     aliases: [],
     valueMetavar: "N|book:N[,...]",
@@ -656,7 +656,7 @@ const TAISHI_OPTIONS = [
   },
   {
     id: "group-b-label",
-    owner: "taishi",
+    owner: "analyst",
     canonical: "--group-b-label",
     aliases: [],
     valueMetavar: "label",
@@ -672,7 +672,7 @@ const TAISHI_OPTIONS = [
   },
   {
     id: "group-b-issues",
-    owner: "taishi",
+    owner: "analyst",
     canonical: "--group-b-issues",
     aliases: [],
     valueMetavar: "N|book:N[,...]",
@@ -701,7 +701,7 @@ export const PUBLIC_OPTION_TABLE = {
   collector: COLLECTOR_OPTIONS,
   doctor: DOCTOR_OPTIONS,
   merger: MERGER_OPTIONS,
-  taishi: TAISHI_OPTIONS,
+  analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
 export type PublicRoleOptionOwner = Exclude<OptionOwner, "global">;
@@ -715,7 +715,7 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "collector",
   "doctor",
   "merger",
-  "taishi",
+  "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
 export function optionsForOwner(
@@ -924,11 +924,11 @@ export type StructuredOptionProjection = {
   readonly defaultValue?: string;
   readonly form: "option" | "positional";
   readonly phases?: readonly RolePhase[];
-  readonly modes?: readonly TaishiMode[];
-  readonly requiredInModes?: readonly TaishiMode[];
+  readonly modes?: readonly AnalystMode[];
+  readonly requiredInModes?: readonly AnalystMode[];
   readonly exclusiveWith?: readonly string[];
-  readonly maxCountByMode?: Readonly<Partial<Record<TaishiMode, number>>>;
-  readonly selectsMode?: TaishiMode;
+  readonly maxCountByMode?: Readonly<Partial<Record<AnalystMode, number>>>;
+  readonly selectsMode?: AnalystMode;
   readonly description: { readonly en: string; readonly zh: string };
 };
 
@@ -1068,18 +1068,18 @@ const ROLE_COMMAND_HELP = {
       'ak-role merger --project /path/to/worktree "Reconcile the active merge."',
     ],
   },
-  taishi: {
-    command: "taishi",
+  analyst: {
+    command: "analyst",
     summary: "Deterministic analysis seat (issue / sweep / cohort).",
     usage: [
-      "ak-role taishi [--ticket <N>]",
-      "ak-role taishi [sweep] --attach <path>",
-      "ak-role taishi --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>",
+      "ak-role analyst [--ticket <N>]",
+      "ak-role analyst [sweep] --attach <path>",
+      "ak-role analyst --cohort --group-a-label <L> --group-a-issues <N|book:N[,...]> --group-b-label <L> --group-b-issues <N|book:N[,...]>",
     ],
     examples: [
-      "ak-role taishi",
-      "ak-role taishi --ticket 125",
-      "ak-role taishi sweep --attach ./sweep.json",
+      "ak-role analyst",
+      "ak-role analyst --ticket 125",
+      "ak-role analyst sweep --attach ./sweep.json",
     ],
   },
 } as const satisfies Record<PublicRoleOptionOwner, PublicCommandHelpFacts>;

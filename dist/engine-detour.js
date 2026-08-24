@@ -110,15 +110,25 @@ export function isEngineDetourFailure(result) {
     return result.code !== 0 || result.stdout.trim() === "";
 }
 /**
- * Diagnostic string for shared settlement / Terminal Error Artifact.
- * Prefer engine stderr 原样; whitespace-only/empty stderr is absent → stable fallback.
+ * Diagnostic string for shared settlement / Terminal Error Artifact (#395).
+ * Prefer engine stderr 原样; whitespace-only/empty stderr with stdout body must
+ * carry the child's last result/error row verbatim (e.g. a 529 API Error row) —
+ * never swallow the cause behind an exit code. Fully-empty output → stable fallback.
  */
 export function engineDetourFailureDiagnostic(result) {
     if (result.stderr.trim().length > 0)
         return result.stderr;
     if (result.stdout.trim() === "")
         return ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC;
-    return `engine detour exited with code ${result.code}`;
+    const rows = result.stdout.split("\n");
+    let lastRow = "";
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+        if (rows[index].trim() !== "") {
+            lastRow = rows[index];
+            break;
+        }
+    }
+    return `engine detour exited with code ${result.code}: ${lastRow}`;
 }
 /** Non-empty trimmed engine name from process.env, else undefined. */
 export function engineNameFromEnv() {

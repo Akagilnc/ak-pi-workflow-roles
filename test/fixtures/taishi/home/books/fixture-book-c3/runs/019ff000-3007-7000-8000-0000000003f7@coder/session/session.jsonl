@@ -1,3 +1,0 @@
-{"type":"session","version":3,"id":"s-c3-f7","timestamp":"2026-08-03T01:00:00.000Z","cwd":"/taishi-fixture/c3-models"}
-{"type":"message","id":"m1","parentId":null,"timestamp":"2026-08-03T01:00:00.000Z","message":{"role":"assistant","model":"grok-4.5","timestamp":"2026-08-03T01:00:00.000Z","content":[]}}
-{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-08-03T01:01:10.000Z","message":{"role":"assistant","model":"grok-4.5","timestamp":"2026-08-03T01:01:10.000Z","content":[]}}

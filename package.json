@@ -36,7 +36,8 @@
     "resources",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "CLAUDE.md"
   ],
   "scripts": {
     "build": "tsx scripts/generate-tool-execution-observation-schema.ts && tsc -p tsconfig.build.json && node scripts/build-package.mjs",

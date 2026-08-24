@@ -1033,7 +1033,7 @@ test("ledger append rejects every symlink escape vector without writing outside"
 
     // Session path lexically under book but final realpath escapes.
     // ADR 0065 / #221: activation no longer polices record placement — admit the
-    // existing regular-file principal; sitian createRecordSession owns that lock.
+    // existing regular-file principal; archivist createRecordSession owns that lock.
     rmSync(join(ledgerHome, "books"), { force: true });
     const sessionFile = persistActivationSessionFile({ home, bookKey, cwd: home });
     const realSession = resolve(sessionFile);

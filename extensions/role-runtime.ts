@@ -44,17 +44,10 @@ import {
   packagedRoleMetadata,
 } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
+import { loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
-const judgeSoulPath = fileURLToPath(new URL("../souls/judge.md", import.meta.url));
-const fixerSoulPath = fileURLToPath(new URL("../souls/fixer.md", import.meta.url));
-const coderSoulPath = fileURLToPath(new URL("../souls/coder.md", import.meta.url));
-const reviewerSoulPath = fileURLToPath(new URL("../souls/reviewer.md", import.meta.url));
-const collectorSoulPath = fileURLToPath(new URL("../souls/collector.md", import.meta.url));
-const doctorSoulPath = fileURLToPath(new URL("../souls/doctor.md", import.meta.url));
-const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.meta.url));
 const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
-const mergerSoulPath = fileURLToPath(new URL("../souls/merger.md", import.meta.url));
 
 function navigatorInputReference(pi: ExtensionAPI, role: string): string | undefined {
   const name = packagedRoleInputFlag(role);
@@ -250,18 +243,18 @@ export default function roleRuntime(pi: ExtensionAPI): void {
   const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
   createRoleRuntimeExtension({
     oauthKeepalive: { providers: oauthKeepaliveProviders },
-    loadJudgeSoul: () => readFile(judgeSoulPath, "utf8"),
-    loadFixerSoul: () => readFile(fixerSoulPath, "utf8"),
+    loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
+    loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
-    loadCoderSoul: () => readFile(coderSoulPath, "utf8"),
+    loadCoderSoul: () => loadMainRoleSessionMaterials("coder"),
     loadCoderTask: (path) => readFile(path, "utf8"),
-    loadReviewerSoul: () => readFile(reviewerSoulPath, "utf8"),
+    loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
-    loadCollectorSoul: () => readFile(collectorSoulPath, "utf8"),
+    loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
     collectorPackageExtensionPath: extensionPath,
-    loadDoctorSoul: () => readFile(doctorSoulPath, "utf8"),
+    loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
@@ -274,7 +267,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         subject: options.subject,
         authority: options.authority,
         invocationId: options.invocationId,
-        loadSoul: () => readFile(navigatorSoulPath, "utf8"),
+        loadSoul: () => loadMainRoleSessionMaterials("navigator"),
         loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
         // In-process help: subprocess pi --help is reserved for cold-install proofs.
         // N child pi processes cannot fit the accepted 3s post-role grace under CI load.
@@ -284,7 +277,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         onEvent: options.onEvent,
       });
     },
-    loadMergerSoul: () => readFile(mergerSoulPath, "utf8"),
+    loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     createMergerGitState: (repositoryRoot) =>
       createProductionMergerGitState(repositoryRoot),

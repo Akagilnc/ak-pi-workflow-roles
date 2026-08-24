@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
 import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { activationExtensionContext, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { activationExtensionContext, packageRoot, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -82,13 +82,29 @@ test("production extension observes session repository B, not ambient repository
     const inputPath = resolve(repositoryB, "input.json"); await writeFile(inputPath, JSON.stringify(realInput));
     await writeFile(resolve(repositoryB, ".git/info/exclude"), "input.json\nexpected-index\n");
     await withHermeticHome({ prefix: "ak-merger-production-extension-" }, async ({ agentDir }) => {
+      // #443: merger session materials via production role-runtime wiring.
+      const mergerSoul = [
+        await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
+        await readFile(resolve(packageRoot, "souls/merger.md"), "utf8"),
+      ].join("\n\n").trim();
       const faux = fauxProvider({ api: "merger-session-cwd", provider: "merger-session-cwd" });
+      let mergerContext: Context | undefined;
       faux.setResponses([
-        fauxAssistantMessage(fauxToolCall("bash", { command: `git reset --hard ${mergeCommitId}` }, { id: "resolve" }), { stopReason: "toolUse" }),
+        (context: Context) => {
+          mergerContext = context;
+          return fauxAssistantMessage(fauxToolCall("bash", { command: `git reset --hard ${mergeCommitId}` }, { id: "resolve" }), { stopReason: "toolUse" });
+        },
         fauxAssistantMessage(fauxToolCall(MERGER_OUTPUT_TOOL_NAME, { status: "completed", attemptId: "attempt", report: "resolved", mergeCommitId }, { id: "out" }), { stopReason: "toolUse" }),
       ]);
       await withInProcessPi({ activationLedgerSession: true, cwd: repositoryB, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-role": "merger", "ak-merger-input": inputPath }, additionalExtensionPaths: [fileURLToPath(new URL("../../extensions/role-runtime.ts", import.meta.url))] }, async ({ session, sessionManager }) => {
         await session.prompt("Resolve and settle.");
+        assert.ok(mergerContext);
+        assert.ok(
+          mergerContext.systemPrompt?.includes(
+            `<merger_soul>\n${mergerSoul}\n</merger_soul>`,
+          ),
+          "provider receives constitution + merger soul from production role-runtime",
+        );
         const result = sessionManager.getEntries().find(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === MERGER_OUTPUT_TOOL_NAME) as any;
         assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content)); assert.equal(result?.message.details.mergeCommitId, mergeCommitId);
       });

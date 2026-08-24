@@ -7,7 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
-import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
+import { roleRunSessionCoordinates } from "../archivist-role-run-coordinates.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {

@@ -1294,7 +1294,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     }
     let opened: Awaited<ReturnType<typeof openInProcessAgentSession>>;
     try {
-      // Shared in-process session open (#233) — Sitian SessionManager from identity relations.
+      // Shared in-process session open (#233) — Archivist SessionManager from identity relations.
       opened = await openInProcessAgentSession({
         cwd: context.cwd,
         kind: "navigator",

@@ -39,7 +39,7 @@ import {
   parseJudgeArgv,
   parseMergerArgv,
   parseReviewerArgv,
-  parseTaishiArgv,
+  parseAnalystArgv,
 } from "./invocation.ts";
 import {
   createTypedOptionConsumer,
@@ -58,7 +58,7 @@ import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
-import { runPublicTaishi } from "./taishi-run.ts";
+import { runPublicAnalyst } from "./analyst-run.ts";
 import { AUTO_RESUME_LIMIT, peekRoleRunRole } from "./run-lifecycle.ts";
 import {
   AUTOMATIC_NAVIGATOR_SEAT,
@@ -96,7 +96,7 @@ export const PUBLIC_ROLE_ARGV = {
   merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
-  taishi: { parse: parseTaishiArgv, options: optionsForOwner("taishi") },
+  analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
 } as const;
 
 /** Global public options — same typed table as role rows (#342). */
@@ -408,7 +408,7 @@ export function helpDocumentForCommand(command: string) {
     const owner = command as keyof typeof PUBLIC_ROLE_ARGV;
     return {
       command: owner,
-      kind: owner === "taishi" ? ("deterministic" as const) : ("role" as const),
+      kind: owner === "analyst" ? ("deterministic" as const) : ("role" as const),
       options: projectOwnerOptions(owner),
     };
   }
@@ -1251,14 +1251,14 @@ export async function runAkRole(
       };
     }
 
-    // Taishi public run path: deterministic analysis seat (#336 issue / #337 sweep).
+    // Analyst public run path: deterministic analysis seat (#336 issue / #337 sweep).
     // Not an LLM PUBLIC_CALLABLE_ROLE — registered only on PUBLIC_ROLE_ARGV (#176).
-    if (parsed.command === "taishi") {
-      const result = await runPublicTaishi(
+    if (parsed.command === "analyst") {
+      const result = await runPublicAnalyst(
         parsed.args,
         { home },
         io,
-        PUBLIC_ROLE_ARGV.taishi.parse,
+        PUBLIC_ROLE_ARGV.analyst.parse,
       );
       return { exitCode: result.exitCode };
     }

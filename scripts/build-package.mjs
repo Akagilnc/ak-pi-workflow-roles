@@ -14,8 +14,8 @@ const entries = [
   "activation-ledger-git",
   "activation-ledger-topology",
   "activation-reconciliation",
-  "sitian-role-run-coordinates",
-  "sitian-record-entry",
+  "archivist-role-run-coordinates",
+  "archivist-record-entry",
   "typed-provider-http",
   "upstream-error-testimony",
 ];

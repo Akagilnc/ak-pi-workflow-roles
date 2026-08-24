@@ -42,7 +42,7 @@ function presentTerminal(terminal: TerminalResult, io: CliIo): void {
 
 /**
  * Best-effort finalization of the durable run state before an exception-path
- * synthetic failure terminal is returned (#426 review: taishi-ledger classifies
+ * synthetic failure terminal is returned (#426 review: analyst-ledger classifies
  * running runs as live — an exhausted invocation must not remain live
  * indefinitely). Finalization failure must not mask the real cause.
  */

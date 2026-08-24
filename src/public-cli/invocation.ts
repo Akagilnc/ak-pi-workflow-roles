@@ -19,7 +19,7 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import { roleRunSessionCoordinates } from "../sitian-role-run-coordinates.ts";
+import { roleRunSessionCoordinates } from "../archivist-role-run-coordinates.ts";
 import { resolveTicketNumberFromAttachmentBodies } from "../ticket-frontmatter.ts";
 import {
   loadDoctorCase,
@@ -55,9 +55,9 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   REJECTED_PUBLIC_SPELLINGS,
   createTypedOptionConsumer,
-  evaluateTaishiModeOptionContract,
+  evaluateAnalystModeOptionContract,
   optionsForOwner,
-  resolveTaishiMode,
+  resolveAnalystMode,
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
@@ -412,20 +412,20 @@ export type ParseMergerArgvResult = {
 };
 
 /**
- * #336/#337/#338/#399 taishi public argv — three live faces on one registration seam.
+ * #336/#337/#338/#399 analyst public argv — three live faces on one registration seam.
  * - issue (default): bare whole-book or --ticket N (cwd git common-dir)
  * - sweep (#337): optional positional `sweep` and/or --attach paths;
  *   sweep payload rides exactly one typed JSON attachment (not argv/stdin)
  * - cohort: two labeled issue-number groups
  * --project-root deleted; --model-groups public face disabled (library kernel retained).
  */
-export type ParseTaishiIssueArgv = {
+export type ParseAnalystIssueArgv = {
   readonly query: "issue";
   /** Caller ticket / issue number face (#176 numbering space). */
   readonly ticket?: number;
 };
 
-export type ParseTaishiSweepArgv = {
+export type ParseAnalystSweepArgv = {
   readonly query: "sweep";
   /**
    * Public CLI attachment paths (--attach). Sweep mode only (#337).
@@ -434,25 +434,25 @@ export type ParseTaishiSweepArgv = {
   readonly attachmentPaths: readonly string[];
 };
 
-export type ParseTaishiCohortArgv = {
+export type ParseAnalystCohortArgv = {
   readonly query: "cohort";
   /** Tokens before cwd-book stamping; bare N resolves at run (#412). */
   readonly groups: readonly [
     {
       readonly groupLabel: string;
-      readonly issues: readonly TaishiCohortIssueToken[];
+      readonly issues: readonly AnalystCohortIssueToken[];
     },
     {
       readonly groupLabel: string;
-      readonly issues: readonly TaishiCohortIssueToken[];
+      readonly issues: readonly AnalystCohortIssueToken[];
     },
   ];
 };
 
-export type ParseTaishiArgvResult =
-  | ParseTaishiIssueArgv
-  | ParseTaishiSweepArgv
-  | ParseTaishiCohortArgv;
+export type ParseAnalystArgvResult =
+  | ParseAnalystIssueArgv
+  | ParseAnalystSweepArgv
+  | ParseAnalystCohortArgv;
 
 /** Honest activation-class failure while deriving the active-merge envelope. */
 export class MergerEnvelopeDerivationError extends Error {
@@ -2178,28 +2178,28 @@ export function buildMergerTransportPrompt(
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
-const TAISHI_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
+const ANALYST_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
 
 /**
- * Parse a positive ticket / issue number for public taishi admission.
+ * Parse a positive ticket / issue number for public analyst admission.
  * Leading zeros and non-integers are structural rejects (same face as #176).
  * `flag` names the actual argv face in diagnostics (cohort group lists reuse this).
  */
-export function parseTaishiTicketNumber(
+export function parseAnalystTicketNumber(
   raw: string,
   flag: string = "--ticket",
 ): number {
   const trimmed = raw.trim();
-  if (!TAISHI_TICKET_NUMBER_PATTERN.test(trimmed)) {
+  if (!ANALYST_TICKET_NUMBER_PATTERN.test(trimmed)) {
     throw new CliUsageError(
-      `taishi ${flag} must be a positive integer, got ${raw}`,
+      `analyst ${flag} must be a positive integer, got ${raw}`,
     );
   }
   const value = Number(trimmed);
   // Digit-only strings beyond MAX_SAFE_INTEGER round or become Infinity — reject.
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new CliUsageError(
-      `taishi ${flag} must be a positive integer, got ${raw}`,
+      `analyst ${flag} must be a positive integer, got ${raw}`,
     );
   }
   return value;
@@ -2210,7 +2210,7 @@ export function parseTaishiTicketNumber(
  * - bare N → join cwd book at run time (#412 / #399 ticket口径)
  * - book:N → explicit cross-book join (last ":" + positive integer RHS)
  */
-export type TaishiCohortIssueToken =
+export type AnalystCohortIssueToken =
   | { readonly kind: "bare"; readonly issueNumber: number }
   | {
       readonly kind: "book-qualified";
@@ -2223,10 +2223,10 @@ export type TaishiCohortIssueToken =
  * Book keys may contain ":" (e.g. synthetic `root:<path>`) — split on the last
  * colon only when the RHS is a positive integer token.
  */
-export function parseTaishiCohortIssueToken(
+export function parseAnalystCohortIssueToken(
   raw: string,
   flag: string,
-): TaishiCohortIssueToken {
+): AnalystCohortIssueToken {
   const trimmed = raw.trim();
   if (trimmed === "") {
     throw new CliUsageError(
@@ -2236,7 +2236,7 @@ export function parseTaishiCohortIssueToken(
   const sep = trimmed.lastIndexOf(":");
   if (sep > 0) {
     const rhs = trimmed.slice(sep + 1);
-    if (TAISHI_TICKET_NUMBER_PATTERN.test(rhs)) {
+    if (ANALYST_TICKET_NUMBER_PATTERN.test(rhs)) {
       const bookKey = trimmed.slice(0, sep);
       if (bookKey.trim() === "") {
         throw new CliUsageError(
@@ -2246,13 +2246,13 @@ export function parseTaishiCohortIssueToken(
       return {
         kind: "book-qualified",
         bookKey,
-        issueNumber: parseTaishiTicketNumber(rhs, flag),
+        issueNumber: parseAnalystTicketNumber(rhs, flag),
       };
     }
   }
   return {
     kind: "bare",
-    issueNumber: parseTaishiTicketNumber(trimmed, flag),
+    issueNumber: parseAnalystTicketNumber(trimmed, flag),
   };
 }
 
@@ -2263,7 +2263,7 @@ export function parseTaishiCohortIssueToken(
  * pre-existing unescaped input never changes meaning. Colons remain owned by
  * the token's lastIndexOf(':') rule.
  */
-function splitTaishiCohortIssueListParts(raw: string): string[] {
+function splitAnalystCohortIssueListParts(raw: string): string[] {
   const parts: string[] = [];
   let current = "";
   let escaped = false;
@@ -2288,17 +2288,17 @@ function splitTaishiCohortIssueListParts(raw: string): string[] {
   return parts;
 }
 
-function parseTaishiCohortIssueTokenList(
+function parseAnalystCohortIssueTokenList(
   raw: string,
   flag: string,
-): TaishiCohortIssueToken[] {
+): AnalystCohortIssueToken[] {
   const trimmed = raw.trim();
   if (trimmed === "") {
     throw new CliUsageError(
       `${flag} requires a comma-separated list of N or book:N`,
     );
   }
-  const parts = splitTaishiCohortIssueListParts(trimmed).map((part) =>
+  const parts = splitAnalystCohortIssueListParts(trimmed).map((part) =>
     part.trim(),
   );
   if (parts.some((part) => part === "")) {
@@ -2306,7 +2306,7 @@ function parseTaishiCohortIssueTokenList(
       `${flag} requires a comma-separated list of N or book:N`,
     );
   }
-  return parts.map((part) => parseTaishiCohortIssueToken(part, flag));
+  return parts.map((part) => parseAnalystCohortIssueToken(part, flag));
 }
 
 function requireOptionValue(
@@ -2321,16 +2321,16 @@ function requireOptionValue(
 }
 
 /**
- * Parse taishi-specific argv after the `taishi` token (#336/#337/#338).
- * Spellings + mode relation contracts from PUBLIC_OPTION_TABLE.taishi / TAISHI_* (#342).
+ * Parse analyst-specific argv after the `analyst` token (#336/#337/#338).
+ * Spellings + mode relation contracts from PUBLIC_OPTION_TABLE.analyst / ANALYST_* (#342).
  * Mode exclusion, conditional requiredness, cardinality, and at-least-one are
  * table-driven — do not restate them as parallel handwritten branches here.
  * Unconditional required:true also goes through the shared consumer.
  */
-export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult {
+export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResult {
   const valueLists = new Map<string, string[]>();
   const tokens = [...args];
-  const definitions = roleOptions("taishi");
+  const definitions = roleOptions("analyst");
   // Shared typed consumer: dashed + positional take, repeatable, required (#342).
   const options = createTypedOptionConsumer(definitions);
 
@@ -2344,7 +2344,7 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     if (tokens[0] === "--") {
       tokens.shift();
       if (tokens.length > 0) {
-        throw new CliUsageError(`unexpected taishi argument: ${tokens[0]}`);
+        throw new CliUsageError(`unexpected analyst argument: ${tokens[0]}`);
       }
       break;
     }
@@ -2356,7 +2356,7 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       }
       if (taken.def.id === "ticket") {
         if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("taishi --ticket requires a positive integer");
+          throw new CliUsageError("analyst --ticket requires a positive integer");
         }
         pushValue("ticket", taken.value);
         continue;
@@ -2388,25 +2388,25 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
         );
         continue;
       }
-      throw new CliUsageError(`unknown taishi option: ${taken.def.canonical}`);
+      throw new CliUsageError(`unknown analyst option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
     // #399: deleted --project-root; disabled --model-groups public face.
-    if (isRejectedPublicSpelling("taishi", token)) {
+    if (isRejectedPublicSpelling("analyst", token)) {
       if (token === "--project-root" || token.startsWith("--project-root=")) {
         throw new CliUsageError(
-          "taishi no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)",
+          "analyst no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)",
         );
       }
       if (token === "--model-groups" || token.startsWith("--model-groups=")) {
         throw new CliUsageError(
-          "taishi --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)",
+          "analyst --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)",
         );
       }
-      throw new CliUsageError(`unknown taishi option: ${token}`);
+      throw new CliUsageError(`unknown analyst option: ${token}`);
     }
     if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown taishi option: ${token}`);
+      throw new CliUsageError(`unknown analyst option: ${token}`);
     }
     // Positional selectors (e.g. sweep) via shared typed consumer — not a parallel list.
     const positional = options.takePositional(token);
@@ -2414,7 +2414,7 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       pushValue(positional.id, "");
       continue;
     }
-    throw new CliUsageError(`unexpected taishi argument: ${token}`);
+    throw new CliUsageError(`unexpected analyst argument: ${token}`);
   }
 
   const counts = new Map<string, number>();
@@ -2422,8 +2422,8 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     counts.set(id, values.length);
   }
   options.assertRequired();
-  const mode = resolveTaishiMode(new Set(counts.keys()));
-  const verdict = evaluateTaishiModeOptionContract(mode, counts);
+  const mode = resolveAnalystMode(new Set(counts.keys()));
+  const verdict = evaluateAnalystModeOptionContract(mode, counts);
   if (!verdict.ok) {
     throw new CliUsageError(verdict.message);
   }
@@ -2438,14 +2438,14 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
       groups: [
         {
           groupLabel: groupALabel,
-          issues: parseTaishiCohortIssueTokenList(
+          issues: parseAnalystCohortIssueTokenList(
             groupAIssuesRaw,
             "--group-a-issues",
           ),
         },
         {
           groupLabel: groupBLabel,
-          issues: parseTaishiCohortIssueTokenList(
+          issues: parseAnalystCohortIssueTokenList(
             groupBIssuesRaw,
             "--group-b-issues",
           ),
@@ -2466,6 +2466,6 @@ export function parseTaishiArgv(args: readonly string[]): ParseTaishiArgvResult 
     query: "issue",
     ...(ticketRaw === undefined
       ? {}
-      : { ticket: parseTaishiTicketNumber(ticketRaw) }),
+      : { ticket: parseAnalystTicketNumber(ticketRaw) }),
   };
 }

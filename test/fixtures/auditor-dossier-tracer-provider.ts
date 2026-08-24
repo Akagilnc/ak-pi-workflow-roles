@@ -3,6 +3,11 @@ import { appendFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import {
+  GATEKEEPER_OUTPUT_TOOL,
+  NOTARY_OUTPUT_TOOL,
+} from "../../src/role-runtime.ts";
+
 const DOSSIER = "ak_get_run_dossier";
 const JUDGE = "ak_judge_output";
 const AUDIT = "ak_soul_audit_decision";
@@ -25,6 +30,19 @@ export default function auditorDossierTracerProvider(pi: ExtensionAPI): void {
 
   const response = (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
+    // Scripted Gatekeeper → Notary pass before auditor dossier work.
+    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(NOTARY_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        { stopReason: "toolUse" },
+      );
+    }
     if (names.includes(NAVIGATOR)) {
       return fauxAssistantMessage(fauxToolCall(NAVIGATOR, { candidates: [{ next: { role: "reviewer", phase: null }, reason: "tracer route" }] }), { stopReason: "toolUse" });
     }
@@ -58,7 +76,8 @@ export default function auditorDossierTracerProvider(pi: ExtensionAPI): void {
     }
     return fauxAssistantMessage("unexpected tracer request");
   };
-  faux.setResponses(Array.from({ length: 12 }, () => response));
+  // +2 slots for scripted Gatekeeper dispatch + officer pass ahead of auditor dossier turns.
+  faux.setResponses(Array.from({ length: 14 }, () => response));
   const model = faux.getModel();
   pi.registerProvider({
     ...faux.provider,

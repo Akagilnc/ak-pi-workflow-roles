@@ -35,8 +35,10 @@ import {
   fixerPrerequisitesSchema,
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
+  GATEKEEPER_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
+  NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
   MERGER_INPUT_FLAG,
   MERGER_OUTPUT_TOOL_NAME,
@@ -255,6 +257,18 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const invoke = async (label: string) => {
           const response = (context: Context, _options: unknown, _state: unknown, requestModel: { provider: string; id: string }) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
+            if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+              return fauxAssistantMessage(
+                fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
+                { stopReason: "toolUse" },
+              );
+            }
+            if (names.includes(NOTARY_OUTPUT_TOOL)) {
+              return fauxAssistantMessage(
+                fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+                { stopReason: "toolUse" },
+              );
+            }
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
               modelRequests.push(`${requestModel.provider}/${requestModel.id}`);
               return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
@@ -271,7 +285,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
             if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          luna.setResponses([response, response, response]);
+          luna.setResponses(Array.from({ length: 8 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           await withInProcessPi({
