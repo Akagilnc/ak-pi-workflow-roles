@@ -12,7 +12,7 @@ import {
   readActivationEngineLaborFallbackField,
   withEngineLaborFallbackField,
 } from "./engine-labor-fallback.ts";
-import { requireGatekeeperPass } from "./gatekeeper-role.ts";
+import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
 
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -65,9 +65,7 @@ export type JudgeRoleDependencies = {
   ): Promise<SoulAuditResult>;
 };
 
-export type JudgeRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
-};
+export type JudgeRoleHostActions = GatekeeperPassHostActions;
 
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);

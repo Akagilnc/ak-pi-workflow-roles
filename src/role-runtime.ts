@@ -75,7 +75,7 @@ import {
   REVIEWER_VERIFICATION_BOUNDARY,
   type ReviewerSpecDisposition,
 } from "./reviewer-construction.ts";
-import { takeGatekeeperNonPassDetails } from "./gatekeeper-role.ts";
+import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 /**
  * Private transport flag names/definitions for Reviewer admitted inputs.
@@ -287,7 +287,6 @@ export {
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
   runGatekeeper,
-  takeGatekeeperNonPassDetails,
 } from "./gatekeeper-role.ts";
 export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 
@@ -613,6 +612,8 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
+    // Envelope-owned execute→tool_result bridge for Gatekeeper non-pass (ADR 0018).
+    const pendingGatekeeperNonPassByToolCallId = new Map<string, GatekeeperNonPassResult>();
     // #357 T2 / #378 / #380 / #391: engine detour once-latch + seat-fallback latch (any role+engine).
     let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
     let engineLaborFallbackLatch = createEngineLaborFallbackLatch();
@@ -776,10 +777,11 @@ export function createRoleRuntimeExtension(
       if (infrastructureDetails !== undefined) {
         return { details: infrastructureDetails, isError: true };
       }
-      // Gatekeeper non-pass: throw only kept message text for the model; project the
-      // bound structured result onto session details at this real tool_result seam.
-      const gatekeeperNonPass = takeGatekeeperNonPassDetails(event.toolCallId);
+      // Gatekeeper non-pass: throw kept message text for the model; project the
+      // envelope-bound structured result onto session details at this tool_result seam.
+      const gatekeeperNonPass = pendingGatekeeperNonPassByToolCallId.get(event.toolCallId);
       if (gatekeeperNonPass !== undefined) {
+        pendingGatekeeperNonPassByToolCallId.delete(event.toolCallId);
         return { details: gatekeeperNonPass, isError: true };
       }
       // Recommendation rides the accepted settlement record's content so the one
@@ -872,6 +874,7 @@ export function createRoleRuntimeExtension(
       navigatorAttendance = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
+      pendingGatekeeperNonPassByToolCallId.clear();
       observationFace.reset();
     });
 
@@ -881,6 +884,9 @@ export function createRoleRuntimeExtension(
           pendingInfrastructureToolCallIds.add(toolCallId);
         }
         failInfrastructure(error, ctx);
+      },
+      bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void {
+        pendingGatekeeperNonPassByToolCallId.set(toolCallId, result);
       },
     };
     const judge = createJudgeRoleRuntime(
@@ -1085,6 +1091,7 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
+      pendingGatekeeperNonPassByToolCallId.clear();
       engineLaborFallbackLatch = createEngineLaborFallbackLatch();
       // #380 resume: restore sole-built fallback from durable same-session detour results.
       const sessionEntries =

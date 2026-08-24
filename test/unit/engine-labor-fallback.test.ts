@@ -416,7 +416,10 @@ test("judge escalate deliveredOutput projects mechanical engineLaborFallback", a
           decisionGate: { question: "Q?", options: ["A"] },
         }),
       },
-      { failInfrastructure(error) { throw error; } },
+      {
+        failInfrastructure(error: unknown): never { throw error instanceof Error ? error : new Error(String(error)); },
+        bindGatekeeperNonPass() {},
+      },
     );
     await runtime.activate();
     const tool = tools.get(JUDGE_OUTPUT_TOOL_NAME);
