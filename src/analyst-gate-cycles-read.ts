@@ -81,18 +81,40 @@ type TerminatingCall = {
 };
 
 /**
- * Last terminating gate toolCall on a nested volume (dispatch or officer).
- * Soul-audit and other tools are ignored so they never form gate pairs.
+ * toolCallIds whose paired toolResult is an accepted receipt (`isError === false`).
+ * Receipt is the sole lawful role product — rejected / missing results never qualify.
+ */
+function acceptedGateReceiptIds(
+  rows: readonly LedgerSessionRow[],
+): ReadonlySet<string> {
+  const accepted = new Set<string>();
+  for (const row of rows) {
+    const message = isRecord(row.message) ? row.message : undefined;
+    if (message?.role !== "toolResult") continue;
+    if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) continue;
+    if (message.isError === false) accepted.add(message.toolCallId);
+  }
+  return accepted;
+}
+
+/**
+ * Last accepted gate terminating call on a nested volume (dispatch or officer).
+ * Only toolCalls with a same-id non-error toolResult count; soul-audit and other
+ * tools are ignored so they never form gate pairs.
  */
 function extractLastGateTerminatingCall(
   rows: readonly LedgerSessionRow[],
 ): TerminatingCall | undefined {
+  const acceptedIds = acceptedGateReceiptIds(rows);
   let last: TerminatingCall | undefined;
   for (const row of rows) {
     const message = isRecord(row.message) ? row.message : undefined;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
       if (!isRecord(part) || part.type !== "toolCall") continue;
+      // Unpaired / rejected calls have no lawful receipt — skip before reading args.
+      if (typeof part.id !== "string" || part.id.length === 0) continue;
+      if (!acceptedIds.has(part.id)) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
       const toolName = part.name;
       const isDispatch = DISPATCH_TOOLS.has(toolName);

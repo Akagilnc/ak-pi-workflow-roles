@@ -26231,13 +26231,26 @@ function normalizeOfficerArg(raw) {
   if (typeof raw !== "string") return void 0;
   return OFFICER_ARG_ALIASES[raw.trim()];
 }
+function acceptedGateReceiptIds(rows) {
+  const accepted = /* @__PURE__ */ new Set();
+  for (const row of rows) {
+    const message = isRecord8(row.message) ? row.message : void 0;
+    if (message?.role !== "toolResult") continue;
+    if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) continue;
+    if (message.isError === false) accepted.add(message.toolCallId);
+  }
+  return accepted;
+}
 function extractLastGateTerminatingCall(rows) {
+  const acceptedIds = acceptedGateReceiptIds(rows);
   let last;
   for (const row of rows) {
     const message = isRecord8(row.message) ? row.message : void 0;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
       if (!isRecord8(part) || part.type !== "toolCall") continue;
+      if (typeof part.id !== "string" || part.id.length === 0) continue;
+      if (!acceptedIds.has(part.id)) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
       const toolName = part.name;
       const isDispatch = DISPATCH_TOOLS.has(toolName);

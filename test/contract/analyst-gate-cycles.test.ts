@@ -1,14 +1,13 @@
 /**
- * #446 analyst gate-cycle metric family.
+ * #446 analyst gate-cycle metric family — real-entry tracers only.
  *
- * Seams:
- * - readAnalystGateCyclesFromAuditorRoles (sole nested-volume reader)
- * - runAnalyst issue page → gateCycles section (A2 family composition)
+ * Seams proved here:
+ * - runAnalyst issue page → gateCycles (historical + current officer faces,
+ *   zero-round siblings, rejected/missing terminal receipt, damaged JSONL)
  * - runAnalyst cohort → gateCyclesByOfficer fold from ensured pages
- * - damaged nested JSONL → loud reader failure / page-local unreadable
  *
  * Oracles are hand values from fixture volumes (typed status / span / findings
- * length only) — never findings prose.
+ * length only) — never findings prose. No permanent internal-reader parallel.
  */
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -18,9 +17,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
-import { readAnalystGateCyclesFromAuditorRoles } from "../../src/analyst-gate-cycles-read.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
-import { LedgerSessionJsonlError } from "../../src/ledger-session-read.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 
@@ -60,7 +57,10 @@ function sessionLines(input: {
   readonly endedAt: string;
   readonly toolName: string;
   readonly args: Record<string, unknown>;
+  /** Default accepted receipt. `true` = rejected; `omit` = no toolResult row. */
+  readonly receipt?: "accepted" | "rejected" | "omit";
 }): string {
+  const receipt = input.receipt ?? "accepted";
   const header = {
     type: "session",
     version: 3,
@@ -86,8 +86,21 @@ function sessionLines(input: {
       ],
     },
   };
-  // Keep a trailing timestamp row at endedAt so span ends there even if call
-  // timestamp equals endedAt (extract uses first/last row timestamps).
+  if (receipt === "omit") {
+    // Tail keeps span endedAt without a toolResult — unpaired call is not a receipt.
+    const tail = {
+      type: "message",
+      id: `${input.id}-tail`,
+      parentId: `${input.id}-call`,
+      timestamp: input.endedAt,
+      message: {
+        role: "user",
+        timestamp: input.endedAt,
+        content: [{ type: "text", text: "no-result" }],
+      },
+    };
+    return [header, call, tail].map((row) => JSON.stringify(row)).join("\n") + "\n";
+  }
   const tail = {
     type: "message",
     id: `${input.id}-tail`,
@@ -98,11 +111,10 @@ function sessionLines(input: {
       toolCallId: `call_${input.id}`,
       toolName: input.toolName,
       timestamp: input.endedAt,
-      isError: false,
-      content: [{ type: "text", text: "ok" }],
+      isError: receipt === "rejected",
+      content: [{ type: "text", text: receipt === "rejected" ? "rejected" : "ok" }],
     },
   };
-  // Ensure startedAt is first row timestamp:
   return [header, call, tail].map((row) => JSON.stringify(row)).join("\n") + "\n";
 }
 
@@ -196,6 +208,82 @@ async function writeCurrentNameSingleRound(auditorDir: string): Promise<void> {
   );
 }
 
+/** One lawful accepted round + rejected / no-result terminals that must not pair. */
+async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
+  await mkdir(auditorDir, { recursive: true });
+  // Lawful round 1 (current English faces)
+  await writeFile(
+    join(auditorDir, "d01_gatekeeper.jsonl"),
+    sessionLines({
+      id: "disp-ok",
+      startedAt: iso(0),
+      endedAt: iso(1_000),
+      toolName: "ak_gatekeeper_output",
+      args: { status: "dispatch", officer: "inspector" },
+    }),
+    "utf8",
+  );
+  await writeFile(
+    join(auditorDir, "o02_inspector.jsonl"),
+    sessionLines({
+      id: "off-ok",
+      startedAt: iso(1_000),
+      endedAt: iso(11_000),
+      toolName: "ak_inspector_output",
+      args: { status: "pass", findings: [] },
+    }),
+    "utf8",
+  );
+  // Rejected dispatch — must not open a round even with a later officer
+  await writeFile(
+    join(auditorDir, "d03_gatekeeper_rejected.jsonl"),
+    sessionLines({
+      id: "disp-rej",
+      startedAt: iso(20_000),
+      endedAt: iso(21_000),
+      toolName: "ak_gatekeeper_output",
+      args: { status: "dispatch", officer: "inspector" },
+      receipt: "rejected",
+    }),
+    "utf8",
+  );
+  await writeFile(
+    join(auditorDir, "o04_inspector_after_rej.jsonl"),
+    sessionLines({
+      id: "off-after-rej",
+      startedAt: iso(21_000),
+      endedAt: iso(31_000),
+      toolName: "ak_inspector_output",
+      args: { status: "bounce", findings: ["z"] },
+    }),
+    "utf8",
+  );
+  // Accepted dispatch + officer toolCall with no toolResult — unpaired, not a round
+  await writeFile(
+    join(auditorDir, "d05_gatekeeper_orphan.jsonl"),
+    sessionLines({
+      id: "disp-orphan",
+      startedAt: iso(40_000),
+      endedAt: iso(41_000),
+      toolName: "ak_gatekeeper_output",
+      args: { status: "dispatch", officer: "notary" },
+    }),
+    "utf8",
+  );
+  await writeFile(
+    join(auditorDir, "o06_notary_no_result.jsonl"),
+    sessionLines({
+      id: "off-no-result",
+      startedAt: iso(41_000),
+      endedAt: iso(51_000),
+      toolName: "ak_notary_output",
+      args: { status: "pass", findings: [] },
+      receipt: "omit",
+    }),
+    "utf8",
+  );
+}
+
 function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
   const bag = page as AnalystIssueMetricsPage & {
     readonly gateCycles?: AnalystGateCyclesSection;
@@ -218,73 +306,28 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   }
 }
 
-test("gate-cycle reader: missing auditor-roles directory → empty rounds", async () => {
-  const missing = join(tmpdir(), "analyst-gate-missing-", `${Date.now()}`);
-  const rounds = await readAnalystGateCyclesFromAuditorRoles(missing);
-  assert.deepEqual(rounds, []);
-});
+function judgeAuditorDir(home: string): string {
+  return join(
+    home,
+    ".ak-roles",
+    "books",
+    BOOK,
+    "runs",
+    GATE_JUDGE_DIR,
+    "session",
+    "auditor-roles",
+  );
+}
 
-test("gate-cycle reader: 7 historical menxia/fubaolang pairs + soul-audit noise", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "analyst-gate-seven-"));
-  try {
-    await writeSevenRoundHistoricalFixture(dir);
-    const rounds = await readAnalystGateCyclesFromAuditorRoles(dir);
-    assert.equal(rounds.length, 7);
-    assert.deepEqual(
-      rounds.map((r) => ({
-        roundIndex: r.roundIndex,
-        officer: r.officer,
-        status: r.status,
-        officerWallMs: r.officerWallMs,
-        findingsCount: r.findingsCount,
-      })),
-      EXPECTED_SEVEN_ROUNDS,
-    );
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("gate-cycle reader: current gatekeeper/inspector English face", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "analyst-gate-cur-"));
-  try {
-    await writeCurrentNameSingleRound(dir);
-    const rounds = await readAnalystGateCyclesFromAuditorRoles(dir);
-    assert.equal(rounds.length, 1);
-    assert.deepEqual(rounds[0], {
-      roundIndex: 1,
-      officer: "inspector",
-      status: "bounce",
-      officerWallMs: 10_000,
-      officerStartedAt: iso(1_000),
-      officerEndedAt: iso(11_000),
-      findingsCount: 2,
-    });
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("analyst gate-cycles via runAnalyst: 7-round leg + zero-round siblings", async () => {
+test("analyst gate-cycles via runAnalyst: historical 7-round + zero-round siblings", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      BOOK,
-      "runs",
-      GATE_JUDGE_DIR,
-      "session",
-      "auditor-roles",
-    );
-    await writeSevenRoundHistoricalFixture(auditorDir);
+    await writeSevenRoundHistoricalFixture(judgeAuditorDir(home));
 
     const result = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
     });
     const section = gateSection(result.page);
-    assert.equal(section.kind, "analyst-gate-cycles");
 
     const gateLeg = section.legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
     assert.ok(gateLeg, "judge leg with auditor-roles must appear");
@@ -312,35 +355,61 @@ test("analyst gate-cycles via runAnalyst: 7-round leg + zero-round siblings", as
   });
 });
 
-test("gate-cycle reader: completed malformed nested JSONL fails loudly", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "analyst-gate-bad-"));
-  try {
-    await writeFile(join(dir, "bad.jsonl"), "{bad}\n", "utf8");
-    await assert.rejects(
-      () => readAnalystGateCyclesFromAuditorRoles(dir),
-      (error: unknown) => {
-        assert.ok(error instanceof LedgerSessionJsonlError);
-        assert.match(error.message, /malformed JSONL record/);
-        return true;
+test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-result terminals", async () => {
+  await withTempHome(async (home) => {
+    // Current-name single accepted round first.
+    await writeCurrentNameSingleRound(judgeAuditorDir(home));
+    const current = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_PROJECT_ROOT,
+    });
+    const currentLeg = gateSection(current.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
+    assert.ok(currentLeg);
+    assert.deepEqual(currentLeg.rounds, [
+      {
+        roundIndex: 1,
+        officer: "inspector",
+        status: "bounce",
+        officerWallMs: 10_000,
+        findingsCount: 2,
       },
-    );
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+    ]);
+
+    // Overlay rejected/no-result terminals: only the one accepted pair remains.
+    await rm(judgeAuditorDir(home), { recursive: true, force: true });
+    await writeRejectedTerminalFixture(judgeAuditorDir(home));
+    const rejected = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_PROJECT_ROOT,
+    });
+    const rejectedLeg = gateSection(rejected.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
+    assert.ok(rejectedLeg);
+    assert.equal(rejectedLeg.roundCount, 1, "rejected/no-result terminals must not form rounds");
+    assert.deepEqual(rejectedLeg.rounds, [
+      {
+        roundIndex: 1,
+        officer: "inspector",
+        status: "pass",
+        officerWallMs: 10_000,
+        findingsCount: 0,
+      },
+    ]);
+    assert.deepEqual(gateSection(rejected.page).byOfficer, [
+      {
+        officer: "inspector",
+        rounds: 1,
+        bounceCount: 0,
+        passCount: 1,
+        bounceRate: 0,
+        meanOfficerWallMs: 10_000,
+      },
+    ]);
+  });
 });
 
 test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable leg", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      BOOK,
-      "runs",
-      GATE_JUDGE_DIR,
-      "session",
-      "auditor-roles",
-    );
+    const auditorDir = judgeAuditorDir(home);
     await mkdir(auditorDir, { recursive: true });
     // Completed-by-terminator malformed line — canonical reader must not under-count.
     await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
@@ -367,17 +436,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
 
 test("analyst gate-cycles via runAnalyst cohort: merges byOfficer from ensured pages", async () => {
   await withTempHome(async (home) => {
-    const auditorDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      BOOK,
-      "runs",
-      GATE_JUDGE_DIR,
-      "session",
-      "auditor-roles",
-    );
-    await writeSevenRoundHistoricalFixture(auditorDir);
+    await writeSevenRoundHistoricalFixture(judgeAuditorDir(home));
 
     // Issue mode materializes page + library index row (cohort join key).
     const issue = await runAnalyst({
