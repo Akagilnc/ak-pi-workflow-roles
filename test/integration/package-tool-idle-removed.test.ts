@@ -23,7 +23,6 @@ import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-ex
 import {
   createRoleRuntimeExtension,
   GATEKEEPER_OUTPUT_TOOL,
-  INSPECTOR_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS } from "../../src/stream-idle-guard.ts";
@@ -237,12 +236,6 @@ test(
             if (names.includes(NOTARY_OUTPUT_TOOL)) {
               return fauxAssistantMessage(
                 fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
-                { stopReason: "toolUse" },
-              );
-            }
-            if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
-              return fauxAssistantMessage(
-                fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
                 { stopReason: "toolUse" },
               );
             }

@@ -14,7 +14,6 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL,
-  INSPECTOR_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
@@ -78,12 +77,6 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (names.includes(NOTARY_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
-        { stopReason: "toolUse" },
-      );
-    }
-    if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
-      return fauxAssistantMessage(
-        fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
         { stopReason: "toolUse" },
       );
     }
