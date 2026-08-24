@@ -19,17 +19,17 @@ async function withParent(run: (context: any) => Promise<void>) {
   });
 }
 
-test("internal Gatekeeper dispatches worker completion to a real Inspector child and returns typed pass", async () => {
+test("scripted Inspector pass projects typed receipt and loads Inspector session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
   const qualityLaw = await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
-  const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
   const overlay =
     "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
 
   await withParent(async (context) => {
     const seen: string[] = [];
+    // Subject kind is a fixture input only — officer choice is scripted, not an oracle on subject.
     const result = await runGatekeeper({
       context,
       subject: { kind: "worker_completion", material: "implementation and test evidence" },
@@ -38,6 +38,7 @@ test("internal Gatekeeper dispatches worker completion to a real Inspector child
         { tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
       ], seen),
     });
+    // Mechanical projection of the scripted officer receipt; session order Gatekeeper → officer.
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
     assert.equal(seen.length, 2);
     // #443: default load injects factory constitution; inspector also gets quality-law.
@@ -49,7 +50,6 @@ test("internal Gatekeeper dispatches worker completion to a real Inspector child
       seen[1],
       [constitution, inspectorSoul, qualityLaw, overlay].join("\n\n"),
     );
-    assert.equal(seen[1]!.includes(notarySoul), false);
   });
 });
 
@@ -67,16 +67,16 @@ test("Gatekeeper accepts its typed officer choice instead of machine-rejecting d
   });
 });
 
-test("internal Gatekeeper dispatches judge draft to Notary and bounce means rewrite", async () => {
+test("scripted officer bounce projects rewrite disposition and loads that officer's session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
-  const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
   const overlay =
     "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
 
   await withParent(async (context) => {
     const seen: string[] = [];
+    // Subject kind is a fixture input only — bounce→rewrite is the mechanical contract under test.
     const result = await runGatekeeper({
       context,
       subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
@@ -85,9 +85,14 @@ test("internal Gatekeeper dispatches judge draft to Notary and bounce means rewr
         { tool: NOTARY_OUTPUT_TOOL, args: { status: "bounce", findings: ["quote has no source"] } },
       ], seen),
     });
-    assert.deepEqual(result, { status: "bounce", officer: "notary", disposition: "rewrite", findings: ["quote has no source"] });
+    assert.deepEqual(result, {
+      status: "bounce",
+      officer: "notary",
+      disposition: "rewrite",
+      findings: ["quote has no source"],
+    });
     assert.equal(seen.length, 2);
-    // #443: Notary real entry receives factory constitution + notary soul (not inspector).
+    // #443: scripted Notary real entry receives factory constitution + notary soul.
     assert.equal(
       seen[0],
       [constitution, gatekeeperSoul, overlay].join("\n\n"),
@@ -96,7 +101,6 @@ test("internal Gatekeeper dispatches judge draft to Notary and bounce means rewr
       seen[1],
       [constitution, notarySoul, overlay].join("\n\n"),
     );
-    assert.equal(seen[1]!.includes(inspectorSoul), false);
   });
 });
 

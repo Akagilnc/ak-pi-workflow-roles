@@ -67,7 +67,7 @@ import {
 } from "../helpers/package-entrypoint-fixtures.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
-/** In-file province scripting for judge drafts / worker completions (not shared auto-pass). */
+/** In-file province scripting (officer is fixture choice, not subject→officer oracle). */
 function scriptProvincePass(names: readonly string[], officer: "notary" | "inspector") {
   if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
     return fauxAssistantMessage(
@@ -647,7 +647,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           const firstCallId = row.output.status === "completed"
             ? `${row.callId}-bounce`
             : row.callId;
-          // completed: bounce once then confirm + Gatekeeper/Inspector; unfinished: single call.
+          // completed: bounce once then confirm + scripted province pass; unfinished: single call.
           faux.setResponses(
             row.output.status === "completed"
               ? [

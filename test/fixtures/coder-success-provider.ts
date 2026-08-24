@@ -70,7 +70,7 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
   };
   // Public process: Navigator prepare + Coder completed. Gate ① may bounce the first
   // completed (zero new commit) once; same payload resubmit is the confirm path, then
-  // Gatekeeper dispatches to Inspector and Inspector passes.
+  // scripted Gatekeeper → Inspector pass (officer choice is fixture, not oracle).
   faux.setResponses([respond, respond, respond, respond, respond]);
 
   const model = faux.getModel();

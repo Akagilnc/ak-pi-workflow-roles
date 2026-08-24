@@ -30,7 +30,7 @@ export default function fixture(pi: ExtensionAPI): void {
   let detourIssued = false;
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
-    // Judge draft → Gatekeeper → Notary (soul: 大理寺拟判 → 符宝郎), then auditor.
+    // Scripted Gatekeeper → Notary pass before auditor (officer choice is fixture, not oracle).
     if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
