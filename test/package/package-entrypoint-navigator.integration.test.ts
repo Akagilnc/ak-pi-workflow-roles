@@ -35,8 +35,11 @@ import {
   fixerPrerequisitesSchema,
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
+  GATEKEEPER_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
+  NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
   MERGER_INPUT_FLAG,
   MERGER_OUTPUT_TOOL_NAME,
@@ -75,6 +78,28 @@ import {
   runOrdinaryNavigatorObservation,
 } from "../helpers/package-entrypoint-fixtures.ts";
 
+/** In-file judge-draft province scripting (not a shared auto-pass). */
+function scriptJudgeProvincePass(names: readonly string[]) {
+  if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
+      { stopReason: "toolUse" },
+    );
+  }
+  if (names.includes(NOTARY_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+      { stopReason: "toolUse" },
+    );
+  }
+  if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
+      { stopReason: "toolUse" },
+    );
+  }
+  return undefined;
+}
 
 test("ordinary Navigator attendance persists preparation, settlement, and visible ordering", async () => {
   const manifest = await loadRawPackageManifest();
@@ -130,6 +155,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       let preparedAt = 0;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
+        const province = scriptJudgeProvincePass(names);
+        if (province !== undefined) return province;
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
           preparedAt = performance.now();
@@ -174,7 +201,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           navigatorCalls = 0;
           roleModelCalls = 0;
           invalidJudge = true;
-          faux.setResponses([response, response, response, response]);
+          faux.setResponses(Array.from({ length: 10 }, () => response));
           await withInProcessPi({
             activationLedgerSession: true,
             cwd: issueRoot,
@@ -208,7 +235,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         navigatorCalls = 0;
         roleModelCalls = 0;
         invalidJudge = false;
-        faux.setResponses([response, response, response]);
+        faux.setResponses(Array.from({ length: 10 }, () => response));
         await withInProcessPi({
           activationLedgerSession: true,
           cwd: issueRoot,
@@ -283,6 +310,8 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
           let promptFinished = false;
           const response = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
+            const province = scriptJudgeProvincePass(names);
+            if (province !== undefined) return province;
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
               navigatorCalls += 1;
               navigatorStarted();
@@ -305,7 +334,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
             const verdict = outcome === "human_decision" ? { judgeStatus: "escalate", decisionGate: { question: "owner choice", options: ["owner"] } } : { judgeStatus: "converged" };
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, verdict), { stopReason: "toolUse" });
           };
-          faux.setResponses([response, response, response, response, response]);
+          faux.setResponses(Array.from({ length: 10 }, () => response));
           await withInProcessPi({
             activationLedgerSession: true,
             cwd: issueRoot,
@@ -378,6 +407,8 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
       let roleOutputs = 0;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
+        const province = scriptJudgeProvincePass(names);
+        if (province !== undefined) return province;
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
           firstNavigatorStarted();
@@ -403,7 +434,7 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         }
         return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
       };
-      faux.setResponses(Array.from({ length: 8 }, () => response));
+      faux.setResponses(Array.from({ length: 10 }, () => response));
       await withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, model, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: "PRE OUTPUT FAILURE", mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
         const first = session.prompt("first role turn fails before output");
         await navigatorStarted;
@@ -511,13 +542,15 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               : undefined;
             const response = (context: Context) => {
               const names = context.tools?.map((tool) => tool.name) ?? [];
+              const province = scriptJudgeProvincePass(names);
+              if (province !== undefined) return province;
               if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
                 return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
               }
               if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
               return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
             };
-            faux.setResponses([response, response, response]);
+            faux.setResponses(Array.from({ length: 10 }, () => response));
             await withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, ...(provider === undefined ? {} : { provider }), additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
               await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
               const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
@@ -573,6 +606,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
       let navigatorPreparation = 0;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
+        const province = scriptJudgeProvincePass(names);
+        if (province !== undefined) return province;
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           const fixer = navigatorPreparation++ === 1;
           const route = fixer
@@ -605,7 +640,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "typed plan" }), { stopReason: "toolUse" });
       };
 
-      faux.setResponses([response, response]);
+      faux.setResponses(Array.from({ length: 10 }, () => response));
       await withInProcessPi({
         activationLedgerSession: true,
         cwd: issueRoot,
@@ -627,7 +662,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         assert.equal(event.subjectKey, sharedSubjectKey);
       });
 
-      faux.setResponses([response, response, response]);
+      faux.setResponses(Array.from({ length: 10 }, () => response));
       await withInProcessPi({
         activationLedgerSession: true,
         cwd: issueRoot,
@@ -670,7 +705,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         { role: "fixer", phase: "plan", subjectKey: sharedSubjectKey },
       ]);
 
-      faux.setResponses([response, response, response]);
+      faux.setResponses(Array.from({ length: 10 }, () => response));
       await withInProcessPi({
         activationLedgerSession: true,
         cwd: otherRoot,
@@ -724,6 +759,8 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
         await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
         const response = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
+          const province = scriptJudgeProvincePass(names);
+          if (province !== undefined) return province;
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
               candidates: [{
@@ -738,7 +775,7 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
           }
           return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "outside-work plan" }), { stopReason: "toolUse" });
         };
-        faux.setResponses([response, response, response]);
+        faux.setResponses(Array.from({ length: 10 }, () => response));
         await withInProcessPi({
           activationLedgerSession: true,
           cwd: outsideRoot,

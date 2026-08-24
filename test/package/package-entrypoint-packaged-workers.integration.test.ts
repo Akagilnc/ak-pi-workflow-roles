@@ -30,8 +30,11 @@ import { Type } from "typebox";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
+  GATEKEEPER_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
+  NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   toolExecutionObservationRecordSchema,
@@ -40,7 +43,6 @@ import {
 import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
-import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
 import {
   getSharedIsolatedPack,
@@ -63,6 +65,30 @@ import {
   textOf,
   packageEntrypoint,
 } from "../helpers/package-entrypoint-fixtures.ts";
+import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+
+/** In-file province scripting for judge drafts / worker completions (not shared auto-pass). */
+function scriptProvincePass(names: readonly string[], officer: "notary" | "inspector") {
+  if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer }),
+      { stopReason: "toolUse" },
+    );
+  }
+  if (names.includes(NOTARY_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+      { stopReason: "toolUse" },
+    );
+  }
+  if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
+    return fauxAssistantMessage(
+      fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
+      { stopReason: "toolUse" },
+    );
+  }
+  return undefined;
+}
 
 
 test("cold-installed package audits active auditor seats from editable Souls", async () => {
@@ -264,6 +290,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         const developerPrompt = "Exercise audited terminating acceptance.";
         const response = (context: Context, requestOptions?: unknown, _state?: unknown, requestModel?: { baseUrl?: string }) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
+          const province = scriptProvincePass(names, "notary");
+          if (province !== undefined) return province;
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             // Developer exact-session v1 shape: direction-only next is enough.
             // Full route/matches/command must not be required for recommendation.
@@ -306,7 +334,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
             { stopReason: "toolUse" },
           );
         };
-        faux.setResponses([response, response, response, response, response]);
+        faux.setResponses(Array.from({ length: 8 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
@@ -448,32 +476,38 @@ test("packaged judge escalation emits one typed human decision", async () => {
         flags: { "ak-role": "judge" },
         noTools: "builtin",
       }, async ({ session, sessionManager }) => {
-        faux.setResponses([
-          fauxAssistantMessage(
+        const escalateRespond = (context: Context) => {
+          const names = context.tools?.map((tool) => tool.name) ?? [];
+          const province = scriptProvincePass(names, "notary");
+          if (province !== undefined) return province;
+          if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+            return fauxAssistantMessage(
+              fauxToolCall(
+                SOUL_AUDIT_TOOL_NAME,
+                {
+                  status: "escalate",
+                  violations: [],
+                  conflicts: ["Soul authority conflicts with controlling authority"],
+                  decisionGate: {
+                    question: "Which authority governs this verdict?",
+                    options: ["Soul", "Controlling authority"],
+                  },
+                },
+                { id: "audit-escalation" },
+              ),
+              { stopReason: "toolUse" },
+            );
+          }
+          return fauxAssistantMessage(
             fauxToolCall(
               JUDGE_OUTPUT_TOOL_NAME,
               { judgeStatus: "converged" },
               { id: "escalating-judge" },
             ),
             { stopReason: "toolUse" },
-          ),
-          fauxAssistantMessage(
-            fauxToolCall(
-              SOUL_AUDIT_TOOL_NAME,
-              {
-                status: "escalate",
-                violations: [],
-                conflicts: ["Soul authority conflicts with controlling authority"],
-                decisionGate: {
-                  question: "Which authority governs this verdict?",
-                  options: ["Soul", "Controlling authority"],
-                },
-              },
-              { id: "audit-escalation" },
-            ),
-            { stopReason: "toolUse" },
-          ),
-        ]);
+          );
+        };
+        faux.setResponses(Array.from({ length: 6 }, () => escalateRespond));
         await session.prompt("Exercise packaged audit escalation.");
 
         const result = sessionManager
@@ -596,10 +630,11 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           const firstCallId = row.output.status === "completed"
             ? `${row.callId}-bounce`
             : row.callId;
+          // completed: bounce once then confirm + Gatekeeper/Inspector; unfinished: single call.
           faux.setResponses(
             row.output.status === "completed"
               ? [
-                (context) => {
+                (context: Context) => {
                   coderContext = context;
                   return fauxAssistantMessage(
                     fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
@@ -608,16 +643,37 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                     { stopReason: "toolUse" },
                   );
                 },
-                () =>
-                  fauxAssistantMessage(
+                (context: Context) => {
+                  const names = context.tools?.map((tool) => tool.name) ?? [];
+                  const province = scriptProvincePass(names, "inspector");
+                  if (province !== undefined) return province;
+                  return fauxAssistantMessage(
                     fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
                       id: row.callId,
                     }),
                     { stopReason: "toolUse" },
-                  ),
+                  );
+                },
+                (context: Context) => {
+                  const names = context.tools?.map((tool) => tool.name) ?? [];
+                  const province = scriptProvincePass(names, "inspector");
+                  if (province !== undefined) return province;
+                  return fauxAssistantMessage(
+                    fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
+                      id: row.callId,
+                    }),
+                    { stopReason: "toolUse" },
+                  );
+                },
+                (context: Context) => {
+                  const names = context.tools?.map((tool) => tool.name) ?? [];
+                  const province = scriptProvincePass(names, "inspector");
+                  if (province !== undefined) return province;
+                  return fauxAssistantMessage("coder fixture idle");
+                },
               ]
               : [
-                (context) => {
+                (context: Context) => {
                   coderContext = context;
                   return fauxAssistantMessage(
                     fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {

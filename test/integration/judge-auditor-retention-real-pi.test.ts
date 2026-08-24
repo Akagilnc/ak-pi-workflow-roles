@@ -34,6 +34,26 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as any;
     requestCount += 1;
     const toolNames = (body.tools ?? []).map((tool: any) => tool.function?.name);
+    // Judge draft province gate runs before auditor; pass so retention still hits auditor stop.
+    if (toolNames.includes("ak_gatekeeper_output")) {
+      const args = { status: "dispatch", officer: "notary" };
+      const payload = { id: `chatcmpl-${requestCount}`, object: "chat.completion.chunk", created: 1, model: "faux-1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call-${requestCount}`, type: "function", function: { name: "ak_gatekeeper_output", arguments: JSON.stringify(args) } }] }, finish_reason: null }] };
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(`data: ${JSON.stringify(payload)}\n\n`);
+      response.write(`data: ${JSON.stringify({ ...payload, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`);
+      response.end("data: [DONE]\n\n");
+      return;
+    }
+    if (toolNames.includes("ak_notary_output") || toolNames.includes("ak_inspector_output")) {
+      const officerTool = toolNames.includes("ak_notary_output") ? "ak_notary_output" : "ak_inspector_output";
+      const args = { status: "pass", findings: [] };
+      const payload = { id: `chatcmpl-${requestCount}`, object: "chat.completion.chunk", created: 1, model: "faux-1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call-${requestCount}`, type: "function", function: { name: officerTool, arguments: JSON.stringify(args) } }] }, finish_reason: null }] };
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(`data: ${JSON.stringify(payload)}\n\n`);
+      response.write(`data: ${JSON.stringify({ ...payload, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`);
+      response.end("data: [DONE]\n\n");
+      return;
+    }
     const auditTool = toolNames.find((name: string) => name?.endsWith("_audit_decision"));
     if (auditTool !== undefined) {
       if (retentionInjected) {
