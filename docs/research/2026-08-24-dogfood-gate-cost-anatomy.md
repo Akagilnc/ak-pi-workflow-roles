@@ -1,7 +1,7 @@
 # 2026-08-24 dogfood 日票庭/复核时长解剖（#446 首单）
 
 > OWNER 2026-08-24：「本指标族建成后的第一单分析任务＝解剖 2026-08-24 dogfood 日全部票庭/复核 run 的时长构成」。
-> 本报告只消费 Analyst 已交付指标族（gate-cycles / leg-wall-clock / b2-frame-buckets-actions）与 sole-scan 保留的 toolIntervals；不新增生产扫描或写端。
+> 本报告只消费 Analyst 已交付指标族（gate-cycles / leg-wall-clock / b2-frame-buckets-actions）与 sole-scan / 官卷上的 typed toolIntervals；不新增生产扫描、写端或 typed 契约字段。
 
 ## 取数口径（闭合）
 
@@ -11,18 +11,22 @@
 | 时区（实际 dogfood 墙钟） | **Asia/Tokyo (JST, UTC+9)** |
 | 日历日标签 | `2026-08-24` |
 | **完整已结束日历日窗** | `[2026-08-23T15:00:00.000Z, 2026-08-24T15:00:00.000Z)` |
-| 观测窗 | 与日历日窗相同（全日已在 asOf 前结束，无截断） |
-| 全日是否在 asOf 已结束 | **是**（JST 日终 = `2026-08-24T15:00:00.000Z`；asOf 之后） |
+| 观测窗 | 与日历日窗相同（全日已在 asOf **之前**结束，无截断） |
+| 全日是否在 asOf 已结束 | **是**（JST 日终 = `2026-08-24T15:00:00.000Z`，在 asOf **之前**；`dayEndRelativeToAsOf=before`） |
 | 入总体判据 | 候簿 `books/*/runs/<runId>@<role>` 目录存在，且 runId UUIDv7 嵌入时间 ∈ 日历日窗，且 `role ∈ {judge, reviewer}` |
 | 簿 | 日历日内实际出现票庭/复核腿的簿：`ak-pi-workflow-roles`、`Ming_LLM` |
 | 指标入口 | 目录总体对账后，仅对 **readable** 子集跑 `scanAnalystIssueRuns({ bookKey })` → metric family `contribute`（gate-cycles / leg-wall-clock / b2-frame-buckets-actions） |
-| 全量测试调用 | readable 腿 `toolIntervals` 中 bash.`command` 匹配 `npm/pnpm/yarn … test(:all)?`，墙钟取 interval span |
-| 官取证 bash 次数 | `session/auditor-roles/*` 中出现官终局工具的卷内 `"toolName":"bash"` 计数（特征观察，非契约锁措辞） |
+| 官子会话总墙钟 `officerWall` | 配对官卷 first→last 可用时间戳差（gate-cycles；含模型间隙） |
+| 官取证工具墙钟 `officerEvidenceToolWall` | 配对官卷内 **closed typed toolIntervals** 裁到该卷 span 后的 **merge-union** 占用（与 b2 工具桶同核）；**与 `officerWall` 分列，不得互相冒充** |
+| 官 bash 次数 | 同上官卷内 `toolName === "bash"` 的 closed intervals 计数（typed toolName，非 command 文本） |
+| 父腿 test suite / test:all | **不可机械归因**：现有记录无 typed test-kind；`bash.command` 任意 shell 文本不得正则/措辞分类（锚定宪法）。本报告不产 suite 次数/耗时/派生总计 |
 | 闸终局合法性 | 仅同卷内获得 `toolResult.isError === false` 的终局 toolCall 可分类为 dispatch/officer；拒收或无结果不形成轮次 |
 
 **「全部」的定义**：完整已结束日历日内候簿目录总体，不是「Analyst 已接纳腿」的同义反复。进入指标汇总的只有 readable；其余类别逐 runId 列排除理由，总数守恒。
 
-> 口径变更说明（r3）：r2 曾用 UTC 标签并以 asOf 截断未闭合的 UTC 日（`fullUtcDayClosedAtAsOf=false`）。本机 dogfood 墙钟时区为 JST；JST `2026-08-24` 在 asOf 时已完整结束，故改以 JST 完整日历日为「该日全部」，不再用部分日冒充全日。
+> 口径变更说明（r3）：r2 曾用 UTC 标签并以 asOf 截断未闭合的 UTC 日（`fullUtcDayClosedAtAsOf=false`）。本机 dogfood 墙钟时区为 JST；JST `2026-08-24` 的日终 `15:00Z` 已在 asOf `19:40Z` **之前**完整结束，故改以 JST 完整日历日为「该日全部」，不再用部分日冒充全日。
+>
+> 口径变更说明（r4）：①补官取证工具墙钟并与 `officerWall` 分列；②拆除父腿 suite/test:all 自由文本机械分类及全部派生数字，诚实记不可机械归因；③勘正误写「日终在 asOf 之后」→「日终在 asOf 之前」。
 
 ## 目录总体对账（互斥类别）
 
@@ -71,14 +75,14 @@
 | 其中 reviewer | 26 |
 | unreadable（日历日） | 0 |
 | 闸循环总轮数（paired） | 93 |
-| 官耗时合计 | 155.66m |
+| 官子会话总墙钟 `officerWall` Σ | 155.66m |
+| 官取证工具墙钟 `officerEvidenceToolWall` Σ | 27.20m（占 officerWall 17.5%） |
+| 官卷 closed 工具次数 Σ | 1668 |
+| 官卷 bash closed 次数 Σ | 1263 |
 | 腿墙钟合计 | 3357.27m |
 | 两桶·工具合计 | 1504.58m（44.8%） |
 | 两桶·模型合计 | 1852.69m（55.2%） |
-| 父腿全量/测试 bash 次数 | 28 |
-| 父腿全量/测试 bash 墙钟合计 | 37.66m |
-| 其中 test:all 次数 | 6 |
-| test:all 次均墙钟 | 2.36m |
+| 父腿 test suite / test:all | **不可机械归因**（无 typed test-kind；见口径） |
 
 ### 按官（gate-cycles.byOfficer）
 
@@ -88,23 +92,23 @@
 
 ### 闸循环最多的腿（top 15）
 
-| rounds | officerWallΣ | role | book | runId |
-| ---: | ---: | --- | --- | --- |
-| 14 | 30.18m | judge | ak-pi-workflow-roles | `01a0327e-78c4-71a4-8382-d7ba444f133a` |
-| 13 | 16.69m | judge | ak-pi-workflow-roles | `01a031bd-7a9a-79ec-aed3-e340bf46c419` |
-| 9 | 16.65m | judge | ak-pi-workflow-roles | `01a0341a-c88c-77db-9f8c-c7d3e7466265` |
-| 7 | 11.41m | judge | ak-pi-workflow-roles | `01a032bc-69d4-74ab-9c6b-861bbaa2e3cb` |
-| 7 | 10.20m | judge | ak-pi-workflow-roles | `01a031ff-92c5-78e8-ad25-7ca0d346dd8b` |
-| 7 | 9.65m | judge | ak-pi-workflow-roles | `01a031e1-31c9-79b5-b9ef-cda423cc48ea` |
-| 6 | 11.01m | judge | ak-pi-workflow-roles | `01a032f6-0b0d-7a6f-8f5f-64bb5937d610` |
-| 5 | 13.64m | judge | ak-pi-workflow-roles | `01a0322e-d065-7d9b-a247-bd279f137934` |
-| 4 | 9.24m | judge | ak-pi-workflow-roles | `01a033f6-8225-7bde-b1c6-7c87524870be` |
-| 4 | 4.19m | judge | ak-pi-workflow-roles | `01a0340f-9bca-7095-af4c-99d8bf57b41a` |
-| 3 | 4.71m | judge | ak-pi-workflow-roles | `01a033b2-4a31-77cf-b308-b4a241ce26bb` |
-| 2 | 4.85m | judge | ak-pi-workflow-roles | `01a03254-06a1-762b-b906-0a8eb62ce62f` |
-| 2 | 2.85m | judge | ak-pi-workflow-roles | `01a0335f-b56a-7914-94c3-dbac27878c84` |
-| 2 | 1.76m | judge | ak-pi-workflow-roles | `01a031b0-a126-7dd0-8466-8e7de82995dc` |
-| 2 | 1.62m | judge | ak-pi-workflow-roles | `01a03395-c513-72c6-a2b4-e7ef888a475b` |
+| rounds | officerWallΣ | evidenceToolWallΣ | bashΣ | role | book | runId |
+| ---: | ---: | ---: | ---: | --- | --- | --- |
+| 14 | 30.18m | 7.30m | 177 | judge | ak-pi-workflow-roles | `01a0327e-78c4-71a4-8382-d7ba444f133a` |
+| 13 | 16.69m | 3.09m | 157 | judge | ak-pi-workflow-roles | `01a031bd-7a9a-79ec-aed3-e340bf46c419` |
+| 9 | 16.65m | 1.62m | 137 | judge | ak-pi-workflow-roles | `01a0341a-c88c-77db-9f8c-c7d3e7466265` |
+| 7 | 11.41m | 52.8s | 74 | judge | ak-pi-workflow-roles | `01a032bc-69d4-74ab-9c6b-861bbaa2e3cb` |
+| 7 | 10.20m | 1.87m | 101 | judge | ak-pi-workflow-roles | `01a031ff-92c5-78e8-ad25-7ca0d346dd8b` |
+| 7 | 9.65m | 1.45m | 100 | judge | ak-pi-workflow-roles | `01a031e1-31c9-79b5-b9ef-cda423cc48ea` |
+| 6 | 11.01m | 55.4s | 83 | judge | ak-pi-workflow-roles | `01a032f6-0b0d-7a6f-8f5f-64bb5937d610` |
+| 5 | 13.64m | 4.68m | 116 | judge | ak-pi-workflow-roles | `01a0322e-d065-7d9b-a247-bd279f137934` |
+| 4 | 9.24m | 1.94m | 88 | judge | ak-pi-workflow-roles | `01a033f6-8225-7bde-b1c6-7c87524870be` |
+| 4 | 4.19m | 6.4s | 31 | judge | ak-pi-workflow-roles | `01a0340f-9bca-7095-af4c-99d8bf57b41a` |
+| 3 | 4.71m | 40.0s | 43 | judge | ak-pi-workflow-roles | `01a033b2-4a31-77cf-b308-b4a241ce26bb` |
+| 2 | 4.85m | 1.76m | 27 | judge | ak-pi-workflow-roles | `01a03254-06a1-762b-b906-0a8eb62ce62f` |
+| 2 | 2.85m | 11.6s | 30 | judge | ak-pi-workflow-roles | `01a0335f-b56a-7914-94c3-dbac27878c84` |
+| 2 | 1.76m | 3.5s | 13 | judge | ak-pi-workflow-roles | `01a031b0-a126-7dd0-8466-8e7de82995dc` |
+| 2 | 1.62m | 5.7s | 21 | judge | ak-pi-workflow-roles | `01a03395-c513-72c6-a2b4-e7ef888a475b` |
 
 ### 腿墙钟 top 10（leg-wall-clock）
 
@@ -121,40 +125,19 @@
 | 36.33m | judge | ak-pi-workflow-roles | `01a031bd-7a9a-79ec-aed3-e340bf46c419` |
 | 31.91m | judge | ak-pi-workflow-roles | `01a032bc-69d4-74ab-9c6b-861bbaa2e3cb` |
 
-### 父腿全量/测试 bash（test:all / npm test）
+### 父腿 test suite / 全量测试（诚实缺口）
 
-| wall | role | book | runId | command |
-| ---: | --- | --- | --- | --- |
-| 6.48m | judge | ak-pi-workflow-roles | `01a02fb1-da05-7644-8c24-6d7cd8e491ad` | `pnpm test:integration` |
-| 6.48m | judge | ak-pi-workflow-roles | `01a02fb1-da05-7644-8c24-6d7cd8e491ad` | `pnpm test` |
-| 2.48m | judge | ak-pi-workflow-roles | `01a0341a-c88c-77db-9f8c-c7d3e7466265` | `npm run test:all` |
-| 2.40m | judge | ak-pi-workflow-roles | `01a032e6-5d99-76ac-be62-d55459a0ef0e` | `npm run test:all` |
-| 2.36m | judge | ak-pi-workflow-roles | `01a032bc-69d4-74ab-9c6b-861bbaa2e3cb` | `npm run test:all` |
-| 2.33m | judge | ak-pi-workflow-roles | `01a033f6-8225-7bde-b1c6-7c87524870be` | `npm run test:all` |
-| 2.31m | judge | ak-pi-workflow-roles | `01a033b2-4a31-77cf-b308-b4a241ce26bb` | `pnpm run test:all` |
-| 2.29m | judge | ak-pi-workflow-roles | `01a0327e-78c4-71a4-8382-d7ba444f133a` | `npm run test:all` |
-| 1.36m | judge | ak-pi-workflow-roles | `01a02f79-3046-7223-b6e6-b7a7acab0d74` | `pnpm test:integration` |
-| 1.36m | judge | ak-pi-workflow-roles | `01a02f79-3046-7223-b6e6-b7a7acab0d74` | `pnpm test` |
-| 1.33m | judge | ak-pi-workflow-roles | `01a02f88-a745-79d5-b515-8a3a93aa0d1f` | `set -o pipefail; pnpm test:integration 2>&1 \| tee /tmp/ak435-integration.log; status=${PIPESTATUS[0]}; if rg -n 'fatal: Unable to hash' /tmp...` |
-| 1.33m | judge | ak-pi-workflow-roles | `01a02f88-a745-79d5-b515-8a3a93aa0d1f` | `set -o pipefail; pnpm test 2>&1 \| tee /tmp/ak435-unit.log; status=${PIPESTATUS[0]}; if rg -n 'fatal: Unable to hash' /tmp/ak435-unit.log; th...` |
-| 1.30m | judge | ak-pi-workflow-roles | `01a02f80-598a-712d-98ec-f0772dbc3a29` | `pnpm test:integration` |
-| 1.30m | judge | ak-pi-workflow-roles | `01a02f80-598a-712d-98ec-f0772dbc3a29` | `pnpm test` |
-| 54.3s | reviewer | Ming_LLM | `01a0343c-4e0a-7028-aad8-e5ba5df5c820` | `if [ -f web/package.json ]; then cd web && npm test -- --run; else echo no-web-package; fi` |
-| 12.8s | judge | ak-pi-workflow-roles | `01a02f4f-6bb1-72fa-a3e4-c1fb98c1c619` | `npm run typecheck && node --import tsx --test --test-name-pattern='coder (plan\|apply unfinished\|completed submissions)' test/contract/judge-...` |
-| 9.8s | judge | Ming_LLM | `01a03445-aaed-7a41-a4ea-28938443223b` | `if [ -d web/node_modules ]; then cd web && npm test -- --run && npm run build; else echo 'NO_WEB_NODE_MODULES'; fi` |
-| 9.5s | reviewer | ak-pi-workflow-roles | `01a02f52-4ca6-7256-982d-f6ab4997496d` | `git diff --check 05db4136...HEAD && npm test -- --test-name-pattern='coder completed submissions traverse\|coder apply binds completion\|coder...` |
-| 9.4s | judge | ak-pi-workflow-roles | `01a02f3f-4931-79b0-bb9b-278e8de4191b` | `npm test` |
-| 8.9s | judge | ak-pi-workflow-roles | `01a02f23-e70e-7c1b-9e36-a43d4e7f83e6` | `npm test` |
-| 8.4s | judge | ak-pi-workflow-roles | `01a02f71-67b6-70cd-8072-9714c2b3876b` | `pnpm test` |
-| 8.3s | reviewer | ak-pi-workflow-roles | `01a02f93-e2d4-7298-bcdb-151858e83d8d` | `pnpm test` |
-| 8.1s | judge | ak-pi-workflow-roles | `01a02f6c-e6e3-7681-88f4-6009cc292bed` | `pnpm test` |
-| 7.8s | reviewer | Ming_LLM | `01a0325f-063e-7eb5-86c0-5b52a1c1c342` | `cd web && npm test -- --run` |
-| 5.2s | judge | Ming_LLM | `01a03440-589b-7bd9-b6d9-e574201de3ae` | `cd web && if [ -d node_modules ]; then npm test -- --run src/components/drawers.test.tsx src/components/map.test.tsx && npm run build; else ...` |
-| 5.2s | reviewer | Ming_LLM | `01a03439-5fb3-793b-89b0-435dde07c68d` | `cd web && npm test -- --run src/components/drawers.test.tsx src/components/map.test.tsx && npm run build` |
-| 3.9s | judge | Ming_LLM | `01a03266-7502-76cc-9bee-d4ad851be1a4` | `cd web && npm test -- --run src/components/drawers.test.tsx src/components/map.test.tsx` |
-| 1.8s | reviewer | Ming_LLM | `01a0325f-063e-7eb5-86c0-5b52a1c1c342` | `npm test -- --run && npm run build` |
+现有 sole-scan / session 记录**没有** typed `test-kind`（或等价 schema 键）。父腿 `bash` 的 `command` 虽挂在 typed bash 工具上，但是任意 shell 文本；以正则/措辞匹配 `npm/pnpm/yarn … test(:all)?` 再派生次数、墙钟、表格或机器摘要，违反仓级锚定宪法（机器只咬契约，不咬呈现/自由文本）。
 
-### 官卷 bash 取证密度（样本：闸轮最多的腿）
+因此本报告：
+
+- **删除**一切 suite / test:all 次数、耗时、次均、表格与机器摘要字段；
+- **不**在本修复中新增生产记录字段、第二扫描或写端；
+- 若 OWNER 仍要机器可消费的「判官自跑全量次数与耗时」，须另行授权 typed 契约后再取。
+
+（人读旁注，**不进机器摘要、不进承重总计**：历史手扒曾见个别父腿自跑全量测试；在无 typed test-kind 前，该观察不能升格为全日可复核数字。）
+
+### 官卷 bash 取证密度（样本：闸轮最多的腿；typed `toolName==="bash"`）
 
 | mean bash/round | rounds | bashΣ | role | runId |
 | ---: | ---: | ---: | --- | --- |
@@ -186,47 +169,38 @@
 | 两桶·工具 | 14.77m | 75.0% |
 | 两桶·模型 | 4.93m | 25.0% |
 | 闸循环轮数 | 7 | — |
-| 官耗时 Σ（gate-cycles） | 10.20m | 51.8% |
-| 父腿 test suite bash Σ | 0ms（0 次） | 0.0% |
+| 官子会话总墙钟 Σ（`officerWall`） | 10.20m | 51.8% |
+| 官取证工具墙钟 Σ（`officerEvidenceToolWall`） | 1.87m | 9.5%（占 officerWall 18.3%） |
+| 父腿 test suite | 不可机械归因（无 typed test-kind） | — |
 | 官卷 bash 次数 Σ / 轮均 | 101 / 14.4 | — |
 
-### 逐轮闸循环
+### 逐轮闸循环（officerWall 与 evidenceToolWall 分列）
 
-| round | officer | status | officerWall | findingsCount |
-| ---: | --- | --- | ---: | ---: |
-| 1 | notary | bounce | 1.42m | 3 |
-| 2 | notary | bounce | 59.6s | 1 |
-| 3 | notary | bounce | 1.08m | 1 |
-| 4 | notary | bounce | 1.65m | 1 |
-| 5 | notary | pass | 1.33m | 0 |
-| 6 | notary | bounce | 2.24m | 1 |
-| 7 | notary | pass | 1.49m | 0 |
-
-### 逐轮官 bash 次数（与上表 round 序未必一一，按官卷时间序）
-
-| officerVolume# | bashCount |
-| ---: | ---: |
-| 1 | 19 |
-| 2 | 14 |
-| 3 | 8 |
-| 4 | 11 |
-| 5 | 10 |
-| 6 | 22 |
-| 7 | 17 |
+| round | officer | status | officerWall | evidenceToolWall | bashCount | findingsCount |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 1 | notary | bounce | 1.42m | 3.9s | 19 | 3 |
+| 2 | notary | bounce | 59.6s | 6.6s | 14 | 1 |
+| 3 | notary | bounce | 1.08m | 7.7s | 8 | 1 |
+| 4 | notary | bounce | 1.65m | 40.1s | 11 | 1 |
+| 5 | notary | pass | 1.33m | 29.7s | 10 | 0 |
+| 6 | notary | bounce | 2.24m | 5.8s | 22 | 1 |
+| 7 | notary | pass | 1.49m | 18.2s | 17 | 0 |
 
 ### 归因（可核账）
 
-1. **闸循环本身是主放大器**：7 轮 paired 官会话，官耗时合计 10.20m，约占腿墙钟 51.8%。bounce×5 / pass×2。
-2. **两桶**：工具桶 14.77m vs 模型桶 4.93m——工具侧已是显著份额（75.0%），不是「纯模型思考」账。
-3. **父腿全量测试**：本焦点腿观测到 0 次 suite 匹配 bash，墙钟 0ms。OWNER 手扒线索「判官单轮自跑 test:all 两次约占 10 分钟」在**本完整日历日全局**核：test:all 共 6 次、次均 2.36m、合计约 14.16m；本焦点腿未自带 suite，10 分钟级账不是每个多轮闸腿的固定税。
-4. **官取证密度**：本腿官卷 bash 轮均 14.4 次（OWNER 手扒 ~19 次/轮；本腿 per-round 见上表，首轮 19 与线索同阶）。
-5. **合成解释**：一轮「小问题」一旦进入多轮封驳，成本 ≈ Σ(官取证墙钟) + 父腿模型/工具间隙 +（若触发）全量测试墙钟；7 轮把单轮官成本乘上去，就到 ~20 分钟量级（本腿 19.71m）。
+1. **闸循环本身是主放大器**：7 轮 paired 官会话，`officerWall` 合计 10.20m，约占腿墙钟 51.8%。bounce×5 / pass×2。此列为**官子会话总墙钟**（含模型间隙），不是取证工具占用。
+2. **官取证工具墙钟分列**：同 7 卷 closed typed toolIntervals 的 merge-union 合计 1.87m，占 `officerWall` 18.3%、占腿墙钟 9.5%。工具占用远小于子会话总墙钟——官会话里模型/间隙仍是大头；不得把 `officerWall` 误称为「Σ(官取证墙钟)」。
+3. **两桶**：工具桶 14.77m vs 模型桶 4.93m——父腿工具侧已是显著份额（75.0%），不是「纯模型思考」账。
+4. **父腿全量测试**：无 typed test-kind，**不可机械回答**本腿或全日「自跑 test:all 次数/耗时」。OWNER 手扒线索「判官单轮自跑 test:all 两次约占 10 分钟」在现有记录下无法依法机械复核；不得用 `bash.command` 措辞凑数字。
+5. **官取证密度（次数）**：本腿官卷 bash 轮均 14.4 次（typed toolName；OWNER 手扒 ~19 次/轮；本腿 per-round 见上表，首轮 19 与线索同阶）。次数高、单轮工具 union 墙钟却常只有数秒到数十秒，说明大量短工具调用，不是每次 bash 都是长测。
+6. **合成解释**：一轮「小问题」一旦进入多轮封驳，成本 ≈ Σ(`officerWall`) + 父腿模型/工具间隙 +（若触发且将来有 typed 记录）全量测试墙钟；其中 Σ(`officerEvidenceToolWall`) 只是官会话内的工具占用切片。7 轮把单轮官成本乘上去，就到 ~20 分钟量级（本腿 19.71m）。
 
 ## 完整日历日全局：两桶与闸的关系
 
 - 腿墙钟 3357.27m 中，工具桶 44.8%、模型桶 55.2%。
-- 官耗时合计 155.66m 是闸循环子会话墙钟，嵌在父腿墙钟内，**不可与父腿墙钟简单相加**；它回答的是「官审本身吃掉多少」。
-- 父腿 suite bash 合计 37.66m / 28 次；其中 test:all 6 次、次均 2.36m。OWNER「两次全量 ~10 分钟」在当日本机实测次均约 2.36m 时，两次约 4.72m——同阶但低于 10 分钟口述（suite 变快或口述含其它开销）。
+- **`officerWall` 合计 155.66m** 是闸循环子会话墙钟，嵌在父腿墙钟内，**不可与父腿墙钟简单相加**；它回答「官审子会话本身吃掉多少（含模型）」。
+- **`officerEvidenceToolWall` 合计 27.20m** 是上述子会话内 typed 工具 interval 的 union 占用，占 `officerWall` 17.5%；回答「官取证工具实际占用多少」，与总墙钟分列。
+- **父腿 suite / test:all**：现有记录不可机械归因（见上节）；本报告不给承重数字。
 - 腿墙钟 top 出现 ~6h 级 outlier（`01a02fca-…` / `01a02fce-…`）：均为 terminal 态可读腿的 frame-span 墙钟，计入全日合计；它们不是闸循环主因（闸 top 仍由多轮 notary 腿主导）。
 
 ## 复算入口
@@ -235,12 +209,15 @@
 # 1) 目录总体：枚举 ~/.ak-roles/books/*/runs/*@{judge,reviewer}
 #    过滤 runId UUIDv7 ∈ [JST dayStart, JST dayEnd) = [2026-08-23T15:00:00.000Z, 2026-08-24T15:00:00.000Z)
 # 2) 互斥分类：readable | unreadable | live | missing_invocation | corrupt_invocation | stale_unprojected
-# 3) 仅 readable → family.contribute
+# 3) 仅 readable → family.contribute（gate-cycles / leg-wall-clock / b2）
+# 4) 官取证工具墙钟：对配对官卷 session JSONL 跑 extractSessionToolIntervals，
+#    裁到官卷 span 后 merge-union（与 b2 工具桶同核）；与 officerWall 分列
+# 5) 禁止：对 bash.command 自由文本做 suite/test:all 正则分类
 # 全簿 issue 页（含 gateCycles / legWallClock / b2FrameBucketsActions）
 ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
 ```
 
-本报告数字 = 上表 asOf 冻结下的**完整已结束 JST 日历日**目录总体对账 + readable 子集上的既有 Analyst 指标族；**无新生产扫描、无写端、无永久 probe**。
+本报告数字 = 上表 asOf 冻结下的**完整已结束 JST 日历日**目录总体对账 + readable 子集上的既有 Analyst 指标族 + 官卷 typed toolIntervals 的一次性报告侧 union；**无新生产扫描、无写端、无永久 probe、无新增生产契约字段**。
 
 ## 机器摘要（typed，供复核）
 
@@ -253,6 +230,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
   "calendarDayEndExclusive": "2026-08-24T15:00:00.000Z",
   "observationEndExclusive": "2026-08-24T15:00:00.000Z",
   "fullCalendarDayClosedAtAsOf": true,
+  "dayEndRelativeToAsOf": "before",
   "books": [
     "Ming_LLM",
     "ak-pi-workflow-roles"
@@ -322,13 +300,21 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
   "unreadableDay": 0,
   "totalGateRounds": 93,
   "totalOfficerWallMs": 9339456,
+  "totalOfficerEvidenceToolWallMs": 1631996,
+  "totalOfficerClosedToolCount": 1668,
+  "totalOfficerBashClosedCount": 1263,
   "totalLegWallMs": 201436185,
   "totalToolBucketMs": 90274955,
   "totalModelBucketMs": 111161230,
-  "suiteBashCount": 28,
-  "suiteBashWallMs": 2259501,
-  "testAllCount": 6,
-  "testAllMeanWallMs": 141647,
+  "parentLegTestKindMechanicalAttribution": {
+    "possible": false,
+    "reason": "existing records have no typed test-kind field; bash.command free text must not be regex-classified under anchoring constitution"
+  },
+  "evidenceDefinition": {
+    "officerWallMs": "paired officer volume first→last usable timestamp delta (gate-cycles)",
+    "officerEvidenceToolWallMs": "union of closed typed tool intervals inside paired officer volume, clipped to that volume span (same merge-union kernel as b2 tool bucket)",
+    "relation": "officerEvidenceToolWallMs ≤ officerWallMs per round; two columns must not be conflated"
+  },
   "byOfficer": [
     {
       "officer": "notary",
@@ -348,12 +334,18 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
     "toolBucketMs": 886448,
     "modelBucketMs": 295998,
     "officerWallMs": 612178,
+    "evidenceToolWallMs": 111924,
+    "closedToolCount": 122,
+    "bashClosedCount": 101,
     "rounds": [
       {
         "roundIndex": 1,
         "officer": "notary",
         "status": "bounce",
         "officerWallMs": 85079,
+        "evidenceToolWallMs": 3901,
+        "closedToolCount": 21,
+        "bashClosedCount": 19,
         "findingsCount": 3
       },
       {
@@ -361,6 +353,9 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "officer": "notary",
         "status": "bounce",
         "officerWallMs": 59619,
+        "evidenceToolWallMs": 6611,
+        "closedToolCount": 16,
+        "bashClosedCount": 14,
         "findingsCount": 1
       },
       {
@@ -368,6 +363,9 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "officer": "notary",
         "status": "bounce",
         "officerWallMs": 64915,
+        "evidenceToolWallMs": 7658,
+        "closedToolCount": 11,
+        "bashClosedCount": 8,
         "findingsCount": 1
       },
       {
@@ -375,6 +373,9 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "officer": "notary",
         "status": "bounce",
         "officerWallMs": 99198,
+        "evidenceToolWallMs": 40108,
+        "closedToolCount": 12,
+        "bashClosedCount": 11,
         "findingsCount": 1
       },
       {
@@ -382,6 +383,9 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "officer": "notary",
         "status": "pass",
         "officerWallMs": 79648,
+        "evidenceToolWallMs": 29674,
+        "closedToolCount": 15,
+        "bashClosedCount": 10,
         "findingsCount": 0
       },
       {
@@ -389,6 +393,9 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "officer": "notary",
         "status": "bounce",
         "officerWallMs": 134137,
+        "evidenceToolWallMs": 5816,
+        "closedToolCount": 24,
+        "bashClosedCount": 22,
         "findingsCount": 1
       },
       {
@@ -396,10 +403,12 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "officer": "notary",
         "status": "pass",
         "officerWallMs": 89582,
+        "evidenceToolWallMs": 18156,
+        "closedToolCount": 23,
+        "bashClosedCount": 17,
         "findingsCount": 0
       }
     ],
-    "suiteBash": [],
     "officerBash": {
       "rounds": 7,
       "bashTotal": 101,
@@ -420,108 +429,153 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 14,
-      "officerWallMs": 1810567
+      "officerWallMs": 1810567,
+      "evidenceToolWallMs": 438162,
+      "bashClosedCount": 177,
+      "meanBashPerRound": 12.642857142857142
     },
     {
       "runId": "01a031bd-7a9a-79ec-aed3-e340bf46c419",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 13,
-      "officerWallMs": 1001568
+      "officerWallMs": 1001568,
+      "evidenceToolWallMs": 185694,
+      "bashClosedCount": 157,
+      "meanBashPerRound": 12.076923076923077
     },
     {
       "runId": "01a0341a-c88c-77db-9f8c-c7d3e7466265",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 9,
-      "officerWallMs": 998819
+      "officerWallMs": 998819,
+      "evidenceToolWallMs": 96950,
+      "bashClosedCount": 137,
+      "meanBashPerRound": 15.222222222222221
     },
     {
       "runId": "01a032bc-69d4-74ab-9c6b-861bbaa2e3cb",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 7,
-      "officerWallMs": 684347
+      "officerWallMs": 684347,
+      "evidenceToolWallMs": 52751,
+      "bashClosedCount": 74,
+      "meanBashPerRound": 10.571428571428571
     },
     {
       "runId": "01a031ff-92c5-78e8-ad25-7ca0d346dd8b",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 7,
-      "officerWallMs": 612178
+      "officerWallMs": 612178,
+      "evidenceToolWallMs": 111924,
+      "bashClosedCount": 101,
+      "meanBashPerRound": 14.428571428571429
     },
     {
       "runId": "01a031e1-31c9-79b5-b9ef-cda423cc48ea",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 7,
-      "officerWallMs": 578701
+      "officerWallMs": 578701,
+      "evidenceToolWallMs": 86912,
+      "bashClosedCount": 100,
+      "meanBashPerRound": 14.285714285714286
     },
     {
       "runId": "01a032f6-0b0d-7a6f-8f5f-64bb5937d610",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 6,
-      "officerWallMs": 660652
+      "officerWallMs": 660652,
+      "evidenceToolWallMs": 55432,
+      "bashClosedCount": 83,
+      "meanBashPerRound": 13.833333333333334
     },
     {
       "runId": "01a0322e-d065-7d9b-a247-bd279f137934",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 5,
-      "officerWallMs": 818638
+      "officerWallMs": 818638,
+      "evidenceToolWallMs": 280816,
+      "bashClosedCount": 116,
+      "meanBashPerRound": 23.2
     },
     {
       "runId": "01a033f6-8225-7bde-b1c6-7c87524870be",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 4,
-      "officerWallMs": 554511
+      "officerWallMs": 554511,
+      "evidenceToolWallMs": 116586,
+      "bashClosedCount": 88,
+      "meanBashPerRound": 22
     },
     {
       "runId": "01a0340f-9bca-7095-af4c-99d8bf57b41a",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 4,
-      "officerWallMs": 251584
+      "officerWallMs": 251584,
+      "evidenceToolWallMs": 6397,
+      "bashClosedCount": 31,
+      "meanBashPerRound": 7.75
     },
     {
       "runId": "01a033b2-4a31-77cf-b308-b4a241ce26bb",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 3,
-      "officerWallMs": 282842
+      "officerWallMs": 282842,
+      "evidenceToolWallMs": 40030,
+      "bashClosedCount": 43,
+      "meanBashPerRound": 14.333333333333334
     },
     {
       "runId": "01a03254-06a1-762b-b906-0a8eb62ce62f",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 2,
-      "officerWallMs": 290894
+      "officerWallMs": 290894,
+      "evidenceToolWallMs": 105307,
+      "bashClosedCount": 27,
+      "meanBashPerRound": 13.5
     },
     {
       "runId": "01a0335f-b56a-7914-94c3-dbac27878c84",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 2,
-      "officerWallMs": 171264
+      "officerWallMs": 171264,
+      "evidenceToolWallMs": 11622,
+      "bashClosedCount": 30,
+      "meanBashPerRound": 15
     },
     {
       "runId": "01a031b0-a126-7dd0-8466-8e7de82995dc",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 2,
-      "officerWallMs": 105810
+      "officerWallMs": 105810,
+      "evidenceToolWallMs": 3521,
+      "bashClosedCount": 13,
+      "meanBashPerRound": 6.5
     },
     {
       "runId": "01a03395-c513-72c6-a2b4-e7ef888a475b",
       "role": "judge",
       "book": "ak-pi-workflow-roles",
       "roundCount": 2,
-      "officerWallMs": 97214
+      "officerWallMs": 97214,
+      "evidenceToolWallMs": 5692,
+      "bashClosedCount": 21,
+      "meanBashPerRound": 10.5
     }
   ],
-  "officerBashSampleMean": 13.722958892958893,
+  "officerBashSampleMean": 13.722958892958895,
   "officerBashSampleN": 15
 }
 ```
