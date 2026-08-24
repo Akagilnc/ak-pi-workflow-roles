@@ -12,6 +12,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      channel:
+        description: "npm dist-tag channel (latest on main; e.g. dogfood for branch prereleases)"
+        required: false
+        default: latest
 
 permissions:
   contents: read
@@ -34,7 +39,15 @@ jobs:
       - name: Stamp version and publish (OIDC)
         run: |
           npm --version
+          CHANNEL="${{ github.event.inputs.channel || 'latest' }}"
+          if [ "$GITHUB_REF_NAME" != "main" ] && [ "$CHANNEL" = "latest" ]; then
+            echo "refuse: non-main ref must name a non-latest channel" >&2
+            exit 1
+          fi
           VERSION="0.1.$(git rev-list --count HEAD)"
+          if [ "$CHANNEL" != "latest" ]; then
+            VERSION="$VERSION-$CHANNEL.0"
+          fi
           npm version "$VERSION" --no-git-tag-version
-          npm publish --access public
-          echo "Published @akagilnc/pi-workflow-roles@$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          npm publish --access public --tag "$CHANNEL"
+          echo "Published @akagilnc/pi-workflow-roles@$VERSION ($CHANNEL)" >> "$GITHUB_STEP_SUMMARY"
