@@ -29,6 +29,8 @@
 > 口径变更说明（r4）：①补官取证工具墙钟并与 `officerWall` 分列；②拆除父腿 suite/test:all **生产代码**自由文本机械分类；③勘正误写「日终在 asOf 之后」→「日终在 asOf 之前」。
 >
 > 口径变更说明（r5 / 御批释宪）：r5 上呈「无 typed test-kind → 不可机械交付全量明细」死结，由 OWNER 释宪解决（PR #455 入宪）：锚定宪法自由文本禁令对象是**生产代码**对不可穷举输入的机械依赖；**统计/分析对已冻结卷宗**可由报告层 LLM 做语义分类与统计，逐条附卷宗引证即为可核；形式语言命令（shell）非散文。太史**代码机制**仍只认 typed 键（ADR 0047/0068 不动）。据此本报告补交父腿全量/聚焦测试明细：typed 区间底账 + LLM 逐条分类，零新生产机制。
+>
+> 口径变更说明（r6 / 分类底账勘误）：复核发现 fullLedger 中混入未启动测试 runner 的 git/rg/which 取证命令（误标 `pytest_tests_dir`）。已移出 **4** 条至 `not_test_invocation` 并按原命令重引证；同时补全因 300 字符截断而看不出 runner 片段的 `commandCited`（含 `01a03254…/call_1LV…` 的 `npm run test:all`）。重推后 full=**131** / **103.94m**，pytest_tests_dir=**105** / **61.30m**，Ming judge pytest=**99** / **57.29m**（solid 88 / 57.28m；ephemeral 11 / 386ms）。仍为零新生产机制。
 
 ## 目录总体对账（互斥类别）
 
@@ -86,7 +88,7 @@
 | 两桶·模型合计 | 1852.69m（55.2%） |
 | 父腿全量（`test:all`，judge） | **9 次 / 19.75m**（次均 2.19m；见全量明细） |
 | 父腿聚焦测试（两簿 judge+reviewer） | **375 次 / 44.19m**（LLM class=`focused`） |
-| 父腿全量族合计（含 pytest tests/ 等 subkind） | **135 次 / 104.01m**（LLM class=`full`；subkind 分列） |
+| 父腿全量族合计（含 pytest tests/ 等 subkind） | **131 次 / 103.94m**（LLM class=`full`；subkind 分列） |
 
 ### 按官（gate-cycles.byOfficer）
 
@@ -158,9 +160,9 @@ OWNER 题面「判官自跑**全量**」的**主口径**＝`role=judge` 且 `ful
 
 | class | 次数 | 墙钟 Σ |
 | --- | ---: | ---: |
-| full | 135 | 104.01m |
+| full | 131 | 103.94m |
 | focused | 375 | 44.19m |
-| not_test_invocation | 20 | 1.98m |
+| not_test_invocation | 24 | 2.05m |
 | ambiguous_or_mixed | 11 | 2.12m |
 
 full 按 subkind：
@@ -170,7 +172,7 @@ full 按 subkind：
 | test_all | 9 | 19.75m |
 | package_default_test | 10 | 11.22m |
 | test_integration_tier | 4 | 10.47m |
-| pytest_tests_dir | 109 | 61.38m |
+| pytest_tests_dir | 105 | 61.30m |
 | web_package_default_test | 3 | 1.20m |
 
 #### 4) OWNER 主问：判官自跑 `test:all`（9 次 / 19.75m / 次均 2.19m）
@@ -208,7 +210,7 @@ full 按 subkind：
 
 **test_integration_tier**：**4 次 / 10.47m**（`01a02fb1` 6.48m、`01a02f79` 1.36m、`01a02f88` 1.33m、`01a02f80` 1.30m；命令均为 `pnpm test:integration` 或 tee 包装）。
 
-**Ming_LLM judge · pytest_tests_dir**（`python -m pytest tests/ -q -n auto` 一类）：**102 次 / 57.34m**；其中 duration&lt;200ms 的短暂失败/空跑 **12 次 / 488ms**（仍记 full，solid 子集 90 次 / 57.33m）。
+**Ming_LLM judge · pytest_tests_dir**（`python -m pytest tests/ -q -n auto` 一类）：**99 次 / 57.29m**；其中 duration&lt;200ms 的短暂失败/空跑 **11 次 / 386ms**（仍记 full，solid 子集 88 次 / 57.28m）。
 
 #### 6) 聚焦样本（top wall；class=`focused`）
 
@@ -298,7 +300,7 @@ full 按 subkind：
 - **`officerWall` 合计 155.66m** 是闸循环子会话墙钟，嵌在父腿墙钟内，**不可与父腿墙钟简单相加**；它回答「官审子会话本身吃掉多少（含模型）」。
 - **`officerEvidenceToolWall` 合计 27.20m** 是上述子会话内 typed 工具 interval 的 union 占用，占 `officerWall` 17.5%；回答「官取证工具实际占用多少」，与总墙钟分列。
 - **父腿 test:all（judge）**：9 次 / 19.75m / 次均 2.19m（LLM class + typed 区间；见上节逐条引证）。
-- **父腿 focused**：375 次 / 44.19m；**full 族（含 pytest tests/ 等）**：135 次 / 104.01m（subkind 分列，勿跨簿混加）。
+- **父腿 focused**：375 次 / 44.19m；**full 族（含 pytest tests/ 等）**：131 次 / 103.94m（subkind 分列，勿跨簿混加）。
 - 腿墙钟 top 出现 ~6h 级 outlier（`01a02fca-…` / `01a02fce-…`）：均为 terminal 态可读腿的 frame-span 墙钟，计入全日合计；它们不是闸循环主因（闸 top 仍由多轮 notary 腿主导）。
 
 ## 复算入口
@@ -695,16 +697,16 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
     },
     "classCounts": {
       "full": {
-        "count": 135,
-        "totalMs": 6240620
+        "count": 131,
+        "totalMs": 6236148
       },
       "focused": {
         "count": 375,
         "totalMs": 2651397
       },
       "not_test_invocation": {
-        "count": 20,
-        "totalMs": 118541
+        "count": 24,
+        "totalMs": 123013
       },
       "ambiguous_or_mixed": {
         "count": 11,
@@ -725,8 +727,8 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "totalMs": 628165
       },
       "pytest_tests_dir": {
-        "count": 109,
-        "totalMs": 3682535
+        "count": 105,
+        "totalMs": 3678063
       },
       "web_package_default_test": {
         "count": 3,
@@ -824,7 +826,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
           "startedAt": "2026-08-24T05:53:56.130Z",
           "endedAt": "2026-08-24T05:55:34.751Z",
           "durationMs": 98621,
-          "commandCited": "set -e base=/tmp/ak440-base-$RANDOM cleanup() { git worktree remove --force \"$base\" >/dev/null 2>&1 || true; rm -f /tmp/ak440-base-test.log; } trap cleanup EXIT git worktree add --detach \"$base\" 2e2d63ad >/dev/null ln -s /Users/akagilnc/WorkSpace/ak-pi-workflow-roles/node_modules \"$base/node_modules",
+          "commandCited": "set -e base=/tmp/ak440-base-$RANDOM cleanup() { git worktree remove --force \"$base\" >/dev/null 2>&1 || true; rm -f /tmp/ak440-base-test.log; } trap cleanup EXIT git worktree add --detach \"$base\" 2e2d63ad >/dev/null ln -s /Users/akagilnc/WorkSpace/ak-pi-workflow-roles/node_modules \"$base/node_modules\" cd \"$base\" set +e npm run test:all > /tmp/ak440-base-test.log 2>&1 code=$? set -e tail -n 80 /tmp/ak440-base-test.log echo EXIT=$code",
           "wallMayIncludeNonTest": true
         },
         {
@@ -951,12 +953,12 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
       }
     },
     "ming_judge_pytest_tests_dir": {
-      "count": 102,
-      "totalMs": 3440441,
-      "solidCount_ge200ms": 90,
-      "solidTotalMs": 3439953,
-      "ephemeralCount_lt200ms": 12,
-      "ephemeralTotalMs": 488
+      "count": 99,
+      "totalMs": 3437338,
+      "solidCount_ge200ms": 88,
+      "solidTotalMs": 3436952,
+      "ephemeralCount_lt200ms": 11,
+      "ephemeralTotalMs": 386
     },
     "focusLegParentTestInvocations": [],
     "undercountBoundaries": [
@@ -1135,7 +1137,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "durationMs": 98621,
         "fullSubkind": "test_all",
         "commandFirstLine": "set -e",
-        "commandCited": "set -e base=/tmp/ak440-base-$RANDOM cleanup() { git worktree remove --force \"$base\" >/dev/null 2>&1 || true; rm -f /tmp/ak440-base-test.log; } trap cleanup EXIT git worktree add --detach \"$base\" 2e2d63ad >/dev/null ln -s /Users/akagilnc/WorkSpace/ak-pi-workflow-roles/node_modules \"$base/node_modules",
+        "commandCited": "set -e base=/tmp/ak440-base-$RANDOM cleanup() { git worktree remove --force \"$base\" >/dev/null 2>&1 || true; rm -f /tmp/ak440-base-test.log; } trap cleanup EXIT git worktree add --detach \"$base\" 2e2d63ad >/dev/null ln -s /Users/akagilnc/WorkSpace/ak-pi-workflow-roles/node_modules \"$base/node_modules\" cd \"$base\" set +e npm run test:all > /tmp/ak440-base-test.log 2>&1 code=$? set -e tail -n 80 /tmp/ak440-base-test.log echo EXIT=$code",
         "classReason": "package script test:all = CI full suite (unit+contract+integration+adjudication)",
         "wallMayIncludeNonTest": true
       },
@@ -2269,7 +2271,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "durationMs": 31629,
         "fullSubkind": "pytest_tests_dir",
         "commandFirstLine": "# Count how many tests in 620/621/624 actually call the origin helper path",
-        "commandCited": "# Count how many tests in 620/621/624 actually call the origin helper path python3 - << 'PY' import ast, pathlib for p in [ \"tests/test_staged_commitment_620.py\", \"tests/test_due_review_621.py\", \"tests/test_urge_lever_624.py\", \"tests/test_supervision_625.py\", ]: tree = ast.parse(pathlib.Path(p).read",
+        "commandCited": "# Count how many tests in 620/621/624 actually call the origin helper path python3 - << 'PY' import ast, pathlib for p in [ \"tests/test_staged_commitment_620.py\", \"tests/test_due_review_621.py\", \"tests/test_urge_lever_624.py\", \"tests/test_supervision_625.py\", ]: tree = ast.parse(pathlib.Path(p).read_text()) tests = [n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name.startswith(\"test_\")] print(p, \"tests\", len(tests)) PY echo \"==== worktree ====\" git status --porcelain echo \"==== HEAD ====\" git rev-parse HEAD echo \"==== a6e652b3 files only tests? ====\" git show --name-only --pretty=format: a6e652b3 echo \"==== full suite ====\" python3 -m pytest tests/ -q -n auto",
         "classReason": "pytest over whole tests/ (or default discovery) with only global flags",
         "wallMayIncludeNonTest": true
       },
@@ -2624,20 +2626,6 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "wallMayIncludeNonTest": false
       },
       {
-        "runId": "01a02f5d-ae15-7d70-9380-1f6220f5f7cb",
-        "role": "judge",
-        "book": "Ming_LLM",
-        "toolCallId": "call_3peE3ASQn2O5UID97lJZXY02|fc_0b6ea1f83496e5ae016a8b1a4b476887d08333b38b89a7001d",
-        "startedAt": "2026-08-23T16:05:31.686Z",
-        "endedAt": "2026-08-23T16:05:34.041Z",
-        "durationMs": 2355,
-        "fullSubkind": "pytest_tests_dir",
-        "commandFirstLine": "printf '%s\\n' '-- #722 boundary terms in branch delta --'; git diff origin/main...HEAD -U2 | rg -n \"loyalty|identity|satisfaction|blood|血债|四态|意愿|判官|ability|执行倾向|态史|inertia\" || true; printf '%s\\n' '-- head-only changed paths --'; git diff-tree --no-commit-id --name-only -r HEAD; printf '%s\\n' '-- governance touched? --'; git diff --name-only origin/main...HEAD | rg '(^|/)(CLAUDE\\.md|AGENTS\\.md|CONTEXT\\.md|docs/adr/)' || true; printf '%s\\n' '-- test hooks scan head --'; git show --format= --unified=0 HEAD | rg -n \"PYTEST|pytest|test_hook|TEST_|monkeypatch|os\\.environ|ifdef|pragma\" || true",
-        "commandCited": "printf '%s\\n' '-- #722 boundary terms in branch delta --'; git diff origin/main...HEAD -U2 | rg -n \"loyalty|identity|satisfaction|blood|血债|四态|意愿|判官|ability|执行倾向|态史|inertia\" || true; printf '%s\\n' '-- head-only changed paths --'; git diff-tree --no-commit-id --name-only -r HEAD; printf '%s\\n' '-- gov",
-        "classReason": "pytest over whole tests/ (or default discovery) with only global flags",
-        "wallMayIncludeNonTest": false
-      },
-      {
         "runId": "01a0325f-063e-7eb5-86c0-5b52a1c1c342",
         "role": "reviewer",
         "book": "Ming_LLM",
@@ -2650,34 +2638,6 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "commandCited": "npm test -- --run && npm run build",
         "classReason": "root package default test script (unit+contract), no path/name filter",
         "wallMayIncludeNonTest": true
-      },
-      {
-        "runId": "01a031d4-d17d-7607-b153-8ce2277cd399",
-        "role": "reviewer",
-        "book": "Ming_LLM",
-        "toolCallId": "call_LiOYI1gFZEdc02Zx7xU4pabj|fc_0cc434d66f86fdba016a8bbc46a9cc87d0ba4696ee2686ecde",
-        "startedAt": "2026-08-24T03:36:38.760Z",
-        "endedAt": "2026-08-24T03:36:40.129Z",
-        "durationMs": 1369,
-        "fullSubkind": "pytest_tests_dir",
-        "commandFirstLine": "which python3; which pytest; ls -d .venv venv ../rev-venv 2>/dev/null || true; git diff --check 1be90400642cb12d8f87c76e59d114c5e7a63e76...HEAD",
-        "commandCited": "which python3; which pytest; ls -d .venv venv ../rev-venv 2>/dev/null || true; git diff --check 1be90400642cb12d8f87c76e59d114c5e7a63e76...HEAD",
-        "classReason": "pytest over whole tests/ (or default discovery) with only global flags",
-        "wallMayIncludeNonTest": false
-      },
-      {
-        "runId": "01a031af-2373-75bf-92fd-a4d14a352521",
-        "role": "judge",
-        "book": "Ming_LLM",
-        "toolCallId": "call_giz21yk7HthSeV9qOy4xyVWM|fc_0b1daafb3b4ce597016a8bb223ab6487d08434e685cd21305e",
-        "startedAt": "2026-08-24T02:53:23.757Z",
-        "endedAt": "2026-08-24T02:53:24.403Z",
-        "durationMs": 646,
-        "fullSubkind": "pytest_tests_dir",
-        "commandFirstLine": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+    assert|^\\+    with pytest|^\\+        \"'",
-        "commandCited": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+ assert|^\\+ with pytest|^\\+ \"'",
-        "classReason": "pytest over whole tests/ (or default discovery) with only global flags",
-        "wallMayIncludeNonTest": false
       },
       {
         "runId": "01a031db-b8a6-77ac-8b4e-e23870ac2170",
@@ -2704,20 +2664,6 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "fullSubkind": "pytest_tests_dir",
         "commandFirstLine": "python -m pytest tests/ -q -n auto",
         "commandCited": "python -m pytest tests/ -q -n auto",
-        "classReason": "pytest over whole tests/ (or default discovery) with only global flags",
-        "wallMayIncludeNonTest": false
-      },
-      {
-        "runId": "01a031dd-8f06-7440-8448-c4a9467db1c8",
-        "role": "judge",
-        "book": "Ming_LLM",
-        "toolCallId": "call_ZsFyh6QusnLhYdTTIV9XTpP0|fc_07fe8835b2415ff4016a8bbdee9ea087d09edf12ea48e15d48",
-        "startedAt": "2026-08-24T03:43:42.679Z",
-        "endedAt": "2026-08-24T03:43:42.781Z",
-        "durationMs": 102,
-        "fullSubkind": "pytest_tests_dir",
-        "commandFirstLine": "printf '%s\\n' '-- status/root --'; git status --short; git rev-parse HEAD; printf '%s\\n' '-- diff fix --'; git diff --check HEAD^ HEAD; git diff --unified=80 HEAD^ HEAD -- ming_sim/db.py tests/test_mutiny_third_strike_318.py; printf '%s\\n' '-- manifests/test commands --'; ls -la | head -40; rg -n \"full|pytest|test\" AGENTS.md CLAUDE.md pyproject.toml Makefile package.json 2>/dev/null | head -120",
-        "commandCited": "printf '%s\\n' '-- status/root --'; git status --short; git rev-parse HEAD; printf '%s\\n' '-- diff fix --'; git diff --check HEAD^ HEAD; git diff --unified=80 HEAD^ HEAD -- ming_sim/db.py tests/test_mutiny_third_strike_318.py; printf '%s\\n' '-- manifests/test commands --'; ls -la | head -40; rg -n \"f",
         "classReason": "pytest over whole tests/ (or default discovery) with only global flags",
         "wallMayIncludeNonTest": false
       },
@@ -2861,7 +2807,87 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "classReason": "pytest over whole tests/ (or default discovery) with only global flags",
         "wallMayIncludeNonTest": false
       }
-    ]
+    ],
+    "r6_ledgerCorrections": {
+      "note": "r6 review: misclassified full/pytest_tests_dir entries that never started a test runner; moved to not_test_invocation and removed from fullLedger. Also restored commandCited full bodies where 300-char truncation hid the classifying runner fragment.",
+      "movedToNotTestInvocation": [
+        {
+          "runId": "01a02f5d-ae15-7d70-9380-1f6220f5f7cb",
+          "role": "judge",
+          "book": "Ming_LLM",
+          "toolCallId": "call_3peE3ASQn2O5UID97lJZXY02|fc_0b6ea1f83496e5ae016a8b1a4b476887d08333b38b89a7001d",
+          "startedAt": "2026-08-23T16:05:31.686Z",
+          "endedAt": "2026-08-23T16:05:34.041Z",
+          "durationMs": 2355,
+          "priorClass": "full",
+          "priorFullSubkind": "pytest_tests_dir",
+          "newClass": "not_test_invocation",
+          "commandFirstLine": "printf '%s\\n' '-- #722 boundary terms in branch delta --'; git diff origin/main...HEAD -U2 | rg -n \"loyalty|identity|satisfaction|blood|血债|四态|意愿|判官|ability|执行倾向|态史|inertia\" || true; printf '%s\\n' '-- head-only changed paths --'; git diff-tree --no-commit-id --name-only -r HEAD; printf '%s\\n' '-- governance touched? --'; git diff --name-only origin/main...HEAD | rg '(^|/)(CLAUDE\\.md|AGENTS\\.md|CONTEXT\\.md|docs/adr/)' || true; printf '%s\\n' '-- test hooks scan head --'; git show --format= --unified=0 HEAD | rg -n \"PYTEST|pytest|test_hook|TEST_|monkeypatch|os\\.environ|ifdef|pragma\" || true",
+          "commandCited": "printf '%s\\n' '-- #722 boundary terms in branch delta --'; git diff origin/main...HEAD -U2 | rg -n \"loyalty|identity|satisfaction|blood|血债|四态|意愿|判官|ability|执行倾向|态史|inertia\" || true; printf '%s\\n' '-- head-only changed paths --'; git diff-tree --no-commit-id --name-only -r HEAD; printf '%s\\n' '-- governance touched? --'; git diff --name-only origin/main...HEAD | rg '(^|/)(CLAUDE\\.md|AGENTS\\.md|CONTEXT\\.md|docs/adr/)' || true; printf '%s\\n' '-- test hooks scan head --'; git show --format= --unified=0 HEAD | rg -n \"PYTEST|pytest|test_hook|TEST_|monkeypatch|os\\.environ|ifdef|pragma\" || true",
+          "classReason": "git diff | rg over test file / pytest tokens; no test runner exec",
+          "correction": "r6 ledger integrity: prior pytest_tests_dir misclass; command never started runner"
+        },
+        {
+          "runId": "01a031d4-d17d-7607-b153-8ce2277cd399",
+          "role": "reviewer",
+          "book": "Ming_LLM",
+          "toolCallId": "call_LiOYI1gFZEdc02Zx7xU4pabj|fc_0cc434d66f86fdba016a8bbc46a9cc87d0ba4696ee2686ecde",
+          "startedAt": "2026-08-24T03:36:38.760Z",
+          "endedAt": "2026-08-24T03:36:40.129Z",
+          "durationMs": 1369,
+          "priorClass": "full",
+          "priorFullSubkind": "pytest_tests_dir",
+          "newClass": "not_test_invocation",
+          "commandFirstLine": "which python3; which pytest; ls -d .venv venv ../rev-venv 2>/dev/null || true; git diff --check 1be90400642cb12d8f87c76e59d114c5e7a63e76...HEAD",
+          "commandCited": "which python3; which pytest; ls -d .venv venv ../rev-venv 2>/dev/null || true; git diff --check 1be90400642cb12d8f87c76e59d114c5e7a63e76...HEAD",
+          "classReason": "which/env probe + git diff --check; no test runner exec",
+          "correction": "r6 ledger integrity: prior pytest_tests_dir misclass; command never started runner"
+        },
+        {
+          "runId": "01a031af-2373-75bf-92fd-a4d14a352521",
+          "role": "judge",
+          "book": "Ming_LLM",
+          "toolCallId": "call_giz21yk7HthSeV9qOy4xyVWM|fc_0b1daafb3b4ce597016a8bb223ab6487d08434e685cd21305e",
+          "startedAt": "2026-08-24T02:53:23.757Z",
+          "endedAt": "2026-08-24T02:53:24.403Z",
+          "durationMs": 646,
+          "priorClass": "full",
+          "priorFullSubkind": "pytest_tests_dir",
+          "newClass": "not_test_invocation",
+          "commandFirstLine": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+    assert|^\\+    with pytest|^\\+        \"'",
+          "commandCited": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+ assert|^\\+ with pytest|^\\+ \"'",
+          "classReason": "git diff | rg over test file / pytest tokens; no test runner exec",
+          "correction": "r6 ledger integrity: prior pytest_tests_dir misclass; command never started runner"
+        },
+        {
+          "runId": "01a031dd-8f06-7440-8448-c4a9467db1c8",
+          "role": "judge",
+          "book": "Ming_LLM",
+          "toolCallId": "call_ZsFyh6QusnLhYdTTIV9XTpP0|fc_07fe8835b2415ff4016a8bbdee9ea087d09edf12ea48e15d48",
+          "startedAt": "2026-08-24T03:43:42.679Z",
+          "endedAt": "2026-08-24T03:43:42.781Z",
+          "durationMs": 102,
+          "priorClass": "full",
+          "priorFullSubkind": "pytest_tests_dir",
+          "newClass": "not_test_invocation",
+          "commandFirstLine": "printf '%s\\n' '-- status/root --'; git status --short; git rev-parse HEAD; printf '%s\\n' '-- diff fix --'; git diff --check HEAD^ HEAD; git diff --unified=80 HEAD^ HEAD -- ming_sim/db.py tests/test_mutiny_third_strike_318.py; printf '%s\\n' '-- manifests/test commands --'; ls -la | head -40; rg -n \"full|pytest|test\" AGENTS.md CLAUDE.md pyproject.toml Makefile package.json 2>/dev/null | head -120",
+          "commandCited": "printf '%s\\n' '-- status/root --'; git status --short; git rev-parse HEAD; printf '%s\\n' '-- diff fix --'; git diff --check HEAD^ HEAD; git diff --unified=80 HEAD^ HEAD -- ming_sim/db.py tests/test_mutiny_third_strike_318.py; printf '%s\\n' '-- manifests/test commands --'; ls -la | head -40; rg -n \"full|pytest|test\" AGENTS.md CLAUDE.md pyproject.toml Makefile package.json 2>/dev/null | head -120",
+          "classReason": "git diff | rg over test file / pytest tokens; no test runner exec",
+          "correction": "r6 ledger integrity: prior pytest_tests_dir misclass; command never started runner"
+        }
+      ],
+      "citationRepairs": [
+        {
+          "toolCallId": "call_1LV9TZ1WNfnB5kK3gNID1TsD|fc_03ac8a583c965694016a8bdc74210887d08a9b2b9c6b7b9bc0",
+          "repair": "commandCited restored through npm run test:all (was truncated at node_modules symlink)"
+        },
+        {
+          "toolCallId": "call-55aee6c4-3382-49a5-98f8-ac3875bb474b-66|fc_14f19667-382a-95b5-ae0a-d04a5c458240_0",
+          "repair": "commandCited restored through python3 -m pytest tests/ -q -n auto (was truncated mid-ast.parse)"
+        }
+      ]
+    }
   }
 }
+
 ```
