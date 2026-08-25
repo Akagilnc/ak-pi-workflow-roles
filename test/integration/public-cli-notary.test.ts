@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
-  readFile,
+  readdir,
   realpath,
   rm,
   writeFile,
@@ -256,9 +256,10 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedSourceRun(home, project);
-    const { io, stdout, stderr } = captureIo();
+    const { io } = captureIo();
 
-    // Scripted pi runner that writes no accepted receipt and emits no_receipt lifecycle via empty session.
+    // Scripted runner: no accepted Notary receipt + shared lifecycle no_receipt fact.
+    // Public path classifies cause=output then settleFailureTerminalResult projects layer ③.
     const result = await runAkRole(
       ["notary", "--source-run", sourceRunPath],
       {
@@ -272,7 +273,6 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
           const sessionFile = flagValue(extraArgs, "--session");
           assert.ok(sessionFile);
           await mkdir(join(sessionFile, ".."), { recursive: true });
-          // Empty session + lifecycle no_receipt custom entry for current attempt.
           const runDir = options.env.AK_ROLE_RUN_DIR;
           assert.ok(typeof runDir === "string");
           const noReceipt = {
@@ -299,8 +299,6 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
             })}\n${JSON.stringify(noReceipt)}\n`,
             "utf8",
           );
-          // Exit 0 with empty terminal product → classifyPostAdmissionFailure cause=output,
-          // which is the shared path that projects no_receipt lifecycle facts.
           return {
             code: 0,
             timedOut: false,
@@ -311,17 +309,15 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
       },
     );
 
-    // When no accepted receipt, shared failure path may project no_receipt if lifecycle entry matches.
-    // If projection lands as failure/output, still assert we never fabricate a pass.
-    if (result.terminal !== undefined) {
-      assert.notEqual(result.terminal.roleOutcome.kind, "accepted");
-      if (result.terminal.roleOutcome.kind === "no_receipt") {
-        assert.equal(result.exitCode, 0);
-        assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), true);
-      }
+    assert.equal(result.exitCode, 0);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "no_receipt");
+    if (result.terminal.roleOutcome.kind === "no_receipt") {
+      assert.equal(result.terminal.roleOutcome.role, "notary");
+      assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
+      assert.equal(result.terminal.roleOutcome.sessionCompletion, "settled-without-accepted-receipt");
     }
-    assert.equal(stdout.join("").includes('"status":"pass"'), false);
-    void stderr;
+    assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), true);
   });
 });
 
@@ -356,22 +352,62 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
   });
 });
 
-test("default judge path has zero public notary intake call (observable CLI surface)", async () => {
-  // Judge public runner module must not import or invoke runPublicNotary.
-  const judgeRunSource = await readFile(
-    join(packageRoot, "src/public-cli/judge-run.ts"),
-    "utf8",
-  );
-  assert.equal(judgeRunSource.includes("runPublicNotary"), false);
-  assert.equal(judgeRunSource.includes("notary"), false);
-  const judgeRoleSource = await readFile(
-    join(packageRoot, "src/judge-role.ts"),
-    "utf8",
-  );
-  // Existing draft-submission gatekeeper remains; no independent notary seat intake.
-  assert.match(judgeRoleSource, /requireGatekeeperPass/);
-  assert.equal(judgeRoleSource.includes("runPublicNotary"), false);
-  assert.equal(judgeRoleSource.includes("ak-role notary"), false);
+test("default judge public path admits no notary seat intake (observable run)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io } = captureIo();
+    let dispatchedArgs: readonly string[] | undefined;
+    const judgeRunId = "01a0judge0-0000-7000-8000-000000000099";
+
+    await runAkRole(
+      ["judge", "--project", project, "ticket court intake probe"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => judgeRunId,
+        piRunner: async (args, options) => {
+          dispatchedArgs = args;
+          const sessionFile = flagValue(args, "--session");
+          assert.ok(sessionFile);
+          await mkdir(join(sessionFile, ".."), { recursive: true });
+          await writeFile(sessionFile, "", "utf8");
+          // Stop before any role receipt; intake observation only.
+          void options;
+          return { code: 1, timedOut: false, stderr: "stop after intake", args: [...args] };
+        },
+      },
+    );
+
+    assert.ok(dispatchedArgs, "judge public path must dispatch once");
+    assert.equal(flagValue(dispatchedArgs, "--ak-role"), "judge");
+    assert.equal(dispatchedArgs.includes("--ak-notary-source-run"), false);
+    assert.equal(flagValue(dispatchedArgs, "--ak-role") === "notary", false);
+
+    // No notary run directory is created as a side effect of judge intake.
+    const books = join(home, ".ak-roles", "books");
+    const notaryRuns: string[] = [];
+    async function walk(dir: string): Promise<void> {
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name.endsWith("@notary")) notaryRuns.push(path);
+          await walk(path);
+        }
+      }
+    }
+    await walk(books);
+    assert.deepEqual(notaryRuns, []);
+  });
 });
 
 test("extractNotaryRoleOutcome projects officer status onto accepted terminal facts", () => {
