@@ -745,147 +745,16 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
       "definition": "role=judge AND fullSubkind=test_all",
       "count": 9,
       "totalMs": 1185071,
-      "meanMs": 131675,
-      "items": [
-        {
-          "runId": "01a0341a-c88c-77db-9f8c-c7d3e7466265",
-          "toolCallId": "call_2qeq5uoOVaRQsfyJEm0RMFpf|fc_0fb55c458f1a12f0016a8c50ea7e7087d09056114c9b3c1bae",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 149002
-        },
-        {
-          "runId": "01a032e6-5d99-76ac-be62-d55459a0ef0e",
-          "toolCallId": "call_sXnozXCNxDFI4hTqgsW9cTJX|fc_00e6ff36232bf5f5016a8c020bc78487d095b74392247009ef",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 143826
-        },
-        {
-          "runId": "01a032bc-69d4-74ab-9c6b-861bbaa2e3cb",
-          "toolCallId": "call_HJ29Nqg1b3EcSryTxEcmZZ9J|fc_06ed057802452922016a8bf747f4ac87d0a53d5611e89459aa",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 141315
-        },
-        {
-          "runId": "01a033f6-8225-7bde-b1c6-7c87524870be",
-          "toolCallId": "call_tSf8Lky1Stqo66CpNliWoNVB|fc_0fca8464ed28d4db016a8c47b75a3c87d08497d3de94bbf3ef",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 139771
-        },
-        {
-          "runId": "01a033b2-4a31-77cf-b308-b4a241ce26bb",
-          "toolCallId": "call_johJreLMefBN6M23bN88Bdgi|fc_0e499e60e20b8beb016a8c366df36887d09ef63974cc61ab8d",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 138619
-        },
-        {
-          "runId": "01a0322e-d065-7d9b-a247-bd279f137934",
-          "toolCallId": "call_CMSLNUWtDB0RbKohizG5Yegi|fc_0547106a672c53c9016a8bd2ee736487d09ccf55eb6a88637a",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 137949,
-          "wallMayIncludeNonTest": true
-        },
-        {
-          "runId": "01a0327e-78c4-71a4-8382-d7ba444f133a",
-          "toolCallId": "call_WpXiJwSbeP3dP6igN6WxDxS7|fc_02e78677cbf53d14016a8be7584a0087d098bfdf0444f130d6",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 137349
-        },
-        {
-          "runId": "01a03254-06a1-762b-b906-0a8eb62ce62f",
-          "toolCallId": "call_1LV9TZ1WNfnB5kK3gNID1TsD|fc_03ac8a583c965694016a8bdc74210887d08a9b2b9c6b7b9bc0",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 98621,
-          "wallMayIncludeNonTest": true
-        },
-        {
-          "runId": "01a03254-06a1-762b-b906-0a8eb62ce62f",
-          "toolCallId": "call_0O1hMcy9MtgulSA3zRzsYoUt|fc_03ac8a583c965694016a8bdc7420ec87d0868835df02a352ac",
-          "role": "judge",
-          "book": "ak-pi-workflow-roles",
-          "durationMs": 98619
-        }
-      ]
+      "meanMs": 131675
     },
     "siblings_akRoles_judge": {
       "package_default_test": {
         "count": 8,
-        "totalMs": 662866,
-        "items": [
-          {
-            "runId": "01a02fb1-da05-7644-8c24-6d7cd8e491ad",
-            "toolCallId": "call_TOrorOtFHpDHx8pQlKgu3Sk8|fc_0c786fb7655f8009016a8b30234b7487d0b80cab974fcdc088",
-            "durationMs": 389021
-          },
-          {
-            "runId": "01a02f79-3046-7223-b6e6-b7a7acab0d74",
-            "toolCallId": "call_GpDLMPmkPMElMiH7t43wImXo|fc_0d8560b8fb5d20f9016a8b2149c63087d0803048c91237c8c9",
-            "durationMs": 81402
-          },
-          {
-            "runId": "01a02f88-a745-79d5-b515-8a3a93aa0d1f",
-            "toolCallId": "call_jP5ofa11ghbaiHy311dKkFlP|fc_0170ed1f45ff6455016a8b255da8fc87d0af926f46cdc74860",
-            "durationMs": 79508
-          },
-          {
-            "runId": "01a02f80-598a-712d-98ec-f0772dbc3a29",
-            "toolCallId": "call_2Fbc7xxzlHlRi9IDX0HxvC3R|fc_02bf6298448346e3016a8b232ec32887d0a361a11f7a61bf99",
-            "durationMs": 78226
-          },
-          {
-            "runId": "01a02f3f-4931-79b0-bb9b-278e8de4191b",
-            "toolCallId": "call_DShWaVUz96ZTFAdAI6TbjXzD|fc_0d2e402c3e8d00af016a8b1289896087d0aa1d4635381bc3e4",
-            "durationMs": 9385
-          },
-          {
-            "runId": "01a02f23-e70e-7c1b-9e36-a43d4e7f83e6",
-            "toolCallId": "call_RtRiuJ6awXcII5DR7ioYvkjf|fc_06e2e6f4781dd9df016a8b0b8641c087d0b56610a9efd0156c",
-            "durationMs": 8861
-          },
-          {
-            "runId": "01a02f71-67b6-70cd-8072-9714c2b3876b",
-            "toolCallId": "call_DajNtMRKEgCJUs6Qgg5FZnl0|fc_00e45e68c46987cd016a8b1f4c5cb487d08ce7e99305ecdc02",
-            "durationMs": 8410
-          },
-          {
-            "runId": "01a02f6c-e6e3-7681-88f4-6009cc292bed",
-            "toolCallId": "call_nAnJ2QOIrAkvqewtdCQKl3iv|fc_022ac9c4bb7b4286016a8b1e1af48087d09cf1933cf9cb6b73",
-            "durationMs": 8053
-          }
-        ]
+        "totalMs": 662866
       },
       "test_integration_tier": {
         "count": 4,
-        "totalMs": 628165,
-        "items": [
-          {
-            "runId": "01a02fb1-da05-7644-8c24-6d7cd8e491ad",
-            "toolCallId": "call_l7wmcu1KeKjGDIFAGncYVmGv|fc_0c786fb7655f8009016a8b30234b8087d0a144911fdf916cf0",
-            "durationMs": 389025
-          },
-          {
-            "runId": "01a02f79-3046-7223-b6e6-b7a7acab0d74",
-            "toolCallId": "call_l3ByBOLd69DXTSAqoMwF4l0W|fc_0d8560b8fb5d20f9016a8b2149c64487d0bd8273770ab0bc20",
-            "durationMs": 81403
-          },
-          {
-            "runId": "01a02f88-a745-79d5-b515-8a3a93aa0d1f",
-            "toolCallId": "call_cok9SCTWJauwRsno41GvpYEu|fc_0170ed1f45ff6455016a8b255da90c87d0b985dbdeb6837f82",
-            "durationMs": 79509
-          },
-          {
-            "runId": "01a02f80-598a-712d-98ec-f0772dbc3a29",
-            "toolCallId": "call_U6bsoo2QqMUGGjL9EDnj19ep|fc_02bf6298448346e3016a8b232ec33887d0b9be832989361b08",
-            "durationMs": 78228
-          }
-        ]
+        "totalMs": 628165
       }
     },
     "ming_judge_pytest_tests_dir": {
