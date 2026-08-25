@@ -1,15 +1,15 @@
 /**
- * Public Doctor Role run: admit Issue → retained case via #78 → shared one-shot
- * dispatch → settle Terminal result (#113). Lifecycle is the shared
- * Doctor-isomorphic seam; this module keeps only Doctor adapters.
+ * Public Notary Role run: admit source-run locator → shared one-shot dispatch
+ * → settle Terminal result (#448). Zero caller prompt/attachment. Lifecycle is
+ * the shared Doctor-isomorphic seam; this module keeps only Notary adapters.
  */
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  admitDoctorInvocation,
-  buildDoctorTransportPrompt,
-  type AdmittedDoctorInvocation,
-  type ParseDoctorArgvResult,
+  admitNotaryInvocation,
+  buildNotaryTransportPrompt,
+  type AdmittedNotaryInvocation,
+  type ParseNotaryArgvResult,
 } from "./invocation.ts";
 import {
   buildSeatModelCliArgs,
@@ -21,27 +21,18 @@ import {
 } from "./one-shot-dispatch.ts";
 import {
   presentStructuralRejection,
-  trySettleComplianceAuditIncompleteTerminalResult,
-  trySettleDoctorTerminalResult,
+  trySettleNotaryTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import {
-  isLawfulTypedTerminalOutcome,
-  type TerminalResult,
-} from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
 
-export type DoctorRunEnv = OneShotRunEnv & {
+export type NotaryRunEnv = OneShotRunEnv & {
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
 };
 
-/**
- * Build Internal activation extra-args for an admitted Doctor run.
- * Always --no-skills (Doctor forbids every Skill). Session under #78 book.
- * Case path is the retained runs root — never a legacy case packet.
- */
-export function buildDoctorActivationExtraArgs(
-  admitted: AdmittedDoctorInvocation,
+export function buildNotaryActivationExtraArgs(
+  admitted: AdmittedNotaryInvocation,
   options: {
     model?: SeatModelConfig;
     engine?: string;
@@ -49,7 +40,7 @@ export function buildDoctorActivationExtraArgs(
     extraPiArgs?: readonly string[];
   } = {},
 ): string[] {
-  const prompt = buildDoctorTransportPrompt(
+  const prompt = buildNotaryTransportPrompt(
     admitted,
     engineSessionMaterialFromOptions(options),
   );
@@ -64,9 +55,9 @@ export function buildDoctorActivationExtraArgs(
     admitted.sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
-    "doctor",
-    "--ak-doctor-case",
-    admitted.caseRunsPath,
+    "notary",
+    "--ak-notary-source-run",
+    admitted.sourceRunPath,
     "--mode",
     "json",
     ...buildSeatModelCliArgs(options.model),
@@ -74,29 +65,27 @@ export function buildDoctorActivationExtraArgs(
   ];
 }
 
-export async function runPublicDoctor(
+export async function runPublicNotary(
   argv: readonly string[],
-  env: DoctorRunEnv,
+  env: NotaryRunEnv,
   io: CliIo,
-  parseDoctorArgv: (args: readonly string[]) => ParseDoctorArgvResult,
+  parseNotaryArgv: (args: readonly string[]) => ParseNotaryArgvResult,
 ): Promise<{
   exitCode: number;
-  admitted?: AdmittedDoctorInvocation;
+  admitted?: AdmittedNotaryInvocation;
   terminal?: TerminalResult;
 }> {
-  let admitted: AdmittedDoctorInvocation;
+  let admitted: AdmittedNotaryInvocation;
   try {
-    const parsed = parseDoctorArgv(argv);
-    admitted = await admitDoctorInvocation({
+    const parsed = parseNotaryArgv(argv);
+    admitted = await admitNotaryInvocation({
       home: env.home,
       cwd: env.cwd,
-      issueNumber: parsed.issueNumber,
-      instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
+      sourceRun: parsed.sourceRun,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
-      ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -106,7 +95,7 @@ export async function runPublicDoctor(
     throw error;
   }
 
-  const extraArgs = buildDoctorActivationExtraArgs(admitted, {
+  const extraArgs = buildNotaryActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
@@ -119,10 +108,9 @@ export async function runPublicDoctor(
     io,
     extraArgs,
     adapters: {
-      trySettle: trySettleDoctorTerminalResult,
-      shouldPresentSettled: (terminal) =>
-        isLawfulTypedTerminalOutcome(terminal.roleOutcome),
-      trySettleSecondary: trySettleComplianceAuditIncompleteTerminalResult,
+      trySettle: trySettleNotaryTerminalResult,
+      // Accepted receipts and residual incomplete share one present path.
+      shouldPresentSettled: () => true,
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

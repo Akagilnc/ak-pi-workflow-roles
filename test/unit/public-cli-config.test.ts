@@ -137,6 +137,7 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
     "collector",
     "doctor",
     "merger",
+    "notary",
     "navigator",
   ]);
   assert.equal(seats.includes("auditor" as never), false);

@@ -5,6 +5,7 @@ import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.t
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "./package-contracts/worker-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 
 export const PACKAGED_ROLE_REGISTRY = [
   { role: "judge", phases: [null], outputTool: JUDGE_OUTPUT_TOOL_NAME, inputFlag: undefined, phaseFlag: undefined, activationStage: "load-and-install" },
@@ -14,6 +15,7 @@ export const PACKAGED_ROLE_REGISTRY = [
   { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-repo", phaseFlag: undefined, activationStage: "load-and-install" },
   { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: undefined, activationStage: "load-and-install" },
   { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: undefined, activationStage: "prepare-git-and-install" },
+  { role: "notary", phases: [null], outputTool: NOTARY_OUTPUT_TOOL_NAME, inputFlag: "ak-notary-source-run", phaseFlag: undefined, activationStage: "load-and-install" },
 ] as const;
 
 export type PackagedRole = (typeof PACKAGED_ROLE_REGISTRY)[number]["role"];
