@@ -20,6 +20,9 @@ import type {
 import type {
   AnalystRoundTimelineSection,
 } from "../../src/analyst-metric-families/round-timeline.ts";
+import type {
+  AnalystGateCyclesSection,
+} from "../../src/analyst-metric-families/gate-cycles.ts";
 import {
   analystIssuePagePath,
   type AnalystIssueMetricsPage,
@@ -33,6 +36,7 @@ type PageWithMetricFamilies = AnalystIssueMetricsPage & {
   readonly b2FrameBucketsActions?: AnalystB2FrameBucketsActionsSection;
   readonly acceptanceSuccessRework?: AnalystAcceptanceSuccessReworkSection;
   readonly roundTimeline?: AnalystRoundTimelineSection;
+  readonly gateCycles?: AnalystGateCyclesSection;
 };
 
 import {
@@ -42,9 +46,10 @@ import {
 
 /**
  * Public single-bundle regression: dist/public-cli/main.js must assemble B1–B4
- * without a sibling analyst-metric-families/ directory next to the bin.
+ * plus #446 gate-cycles without a sibling analyst-metric-families/ directory
+ * next to the bin.
  */
-test("public ak-role bundle assembles B1-B4 metric families without sibling family dir", async () => {
+test("public ak-role bundle assembles B1-B4 + gate-cycles metric families without sibling family dir", async () => {
   const buildUrl = pathToFileURL(join(packageRoot, "scripts/build-package.mjs")).href;
   const { buildPublicAkRoleBin } = (await import(buildUrl)) as {
     buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
@@ -93,10 +98,12 @@ test("public ak-role bundle assembles B1-B4 metric families without sibling fami
         assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
         assert.ok(page.acceptanceSuccessRework, "B3 must be reachable from public bundle");
         assert.ok(page.roundTimeline, "B4 must be reachable from public bundle");
+        assert.ok(page.gateCycles, "gate-cycles must be reachable from public bundle");
         assert.equal(page.legWallClock.kind, "analyst-leg-wall-clock");
         assert.equal(page.b2FrameBucketsActions.kind, "analyst-b2-frame-buckets-actions");
         assert.equal(page.acceptanceSuccessRework.kind, "analyst-acceptance-success-rework");
         assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
+        assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
       } finally {
         await rm(binDir, { recursive: true, force: true });
       }

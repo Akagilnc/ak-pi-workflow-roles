@@ -24,6 +24,7 @@ import type { AnalystIssueMetricsPage } from "./analyst-page.ts";
 import type { AnalystRoleAcceptanceStats } from "./analyst-metric-families/acceptance-success-rework.ts";
 import type { AnalystLegWallClockSection } from "./analyst-metric-families/leg-wall-clock.ts";
 import type { AnalystAcceptanceSuccessReworkSection } from "./analyst-metric-families/acceptance-success-rework.ts";
+import type { AnalystGateCyclesSection } from "./analyst-metric-families/gate-cycles.ts";
 
 /**
  * #338 page ensurer — read existing page or compute via sole issue kernel.
@@ -83,6 +84,19 @@ export type AnalystCohortRoleStats = {
   readonly successRate: AnalystCohortOptionalMetric;
 };
 
+/** Per-officer gate-cycle contrast stats within one cohort group (#446). */
+export type AnalystCohortGateOfficerStats = {
+  readonly officer: "inspector" | "notary";
+  /** Merged paired-round count across present issues. */
+  readonly rounds: number;
+  readonly bounceCount: number;
+  readonly passCount: number;
+  /** bounceCount / rounds; absent when rounds === 0. */
+  readonly bounceRate: AnalystCohortOptionalMetric;
+  /** Mean officer subsession wall across merged rounds; absent when rounds === 0. */
+  readonly meanOfficerWallMs: AnalystCohortOptionalMetric;
+};
+
 export type AnalystCohortGroupResult = {
   readonly groupLabel: string;
   /** One entry per input issue number, in input order (vacancy single-listed). */
@@ -90,6 +104,11 @@ export type AnalystCohortGroupResult = {
   readonly byRole: readonly AnalystCohortRoleStats[];
   readonly reworkRatio: AnalystCohortOptionalMetric;
   readonly medianWallMs: AnalystCohortOptionalMetric;
+  /**
+   * Gate-cycle by-officer fold from ensured issue pages (#446).
+   * Empty when no present page contributed a gateCycles section with rounds.
+   */
+  readonly gateCyclesByOfficer: readonly AnalystCohortGateOfficerStats[];
 };
 
 export type AnalystCohortModeResult = {
@@ -97,10 +116,11 @@ export type AnalystCohortModeResult = {
   readonly groups: readonly [AnalystCohortGroupResult, AnalystCohortGroupResult];
 };
 
-/** Issue page shape cohort actually reads (envelope + B-family sections). */
+/** Issue page shape cohort actually reads (envelope + metric-family sections). */
 type AnalystCohortSourcePage = AnalystIssueMetricsPage & {
   readonly acceptanceSuccessRework?: AnalystAcceptanceSuccessReworkSection;
   readonly legWallClock?: AnalystLegWallClockSection;
+  readonly gateCycles?: AnalystGateCyclesSection;
 };
 
 const ABSENT: AnalystCohortOptionalMetric = { status: "absent" };
@@ -155,6 +175,55 @@ function finishRole(role: string, accum: RoleAccum): AnalystCohortRoleStats {
   };
 }
 
+/**
+ * Cross-page fold of page-level gateCycles.byOfficer numerators (#446).
+ * status→bounce/pass classification stays sole in gate-cycles family;
+ * cohort only merges already-projected counts (same ratio-merge nail as rework).
+ */
+type GateOfficerNumeratorAccum = {
+  rounds: number;
+  bounceCount: number;
+  passCount: number;
+  /** Σ (meanOfficerWallMs × rounds) recovered from page summaries. */
+  wallSum: number;
+};
+
+function emptyGateOfficerNumeratorAccum(): GateOfficerNumeratorAccum {
+  return { rounds: 0, bounceCount: 0, passCount: 0, wallSum: 0 };
+}
+
+function absorbGateOfficerSummary(
+  accum: GateOfficerNumeratorAccum,
+  summary: {
+    readonly rounds: number;
+    readonly bounceCount: number;
+    readonly passCount: number;
+    readonly meanOfficerWallMs: number | undefined;
+  },
+): void {
+  accum.rounds += summary.rounds;
+  accum.bounceCount += summary.bounceCount;
+  accum.passCount += summary.passCount;
+  if (summary.meanOfficerWallMs !== undefined) {
+    accum.wallSum += summary.meanOfficerWallMs * summary.rounds;
+  }
+}
+
+function finishGateOfficerNumerators(
+  officer: "inspector" | "notary",
+  accum: GateOfficerNumeratorAccum,
+): AnalystCohortGateOfficerStats {
+  return {
+    officer,
+    rounds: accum.rounds,
+    bounceCount: accum.bounceCount,
+    passCount: accum.passCount,
+    bounceRate: rateMetric(accum.bounceCount, accum.rounds),
+    meanOfficerWallMs:
+      accum.rounds === 0 ? ABSENT : presentMetric(accum.wallSum / accum.rounds),
+  };
+}
+
 async function aggregateGroup(
   index: AnalystLibraryIndexPage | undefined,
   input: AnalystCohortGroupInput,
@@ -162,6 +231,10 @@ async function aggregateGroup(
 ): Promise<AnalystCohortGroupResult> {
   const issueEntries: AnalystCohortIssueEntry[] = [];
   const roleAccums = new Map<string, RoleAccum>();
+  const gateOfficerAccums = new Map<
+    "inspector" | "notary",
+    GateOfficerNumeratorAccum
+  >();
   let reworkWallMs = 0;
   let totalWallMs = 0;
   let hasReworkSample = false;
@@ -212,11 +285,29 @@ async function aggregateGroup(
         legWalls.push(leg.wallMs);
       }
     }
+
+    // Gate-cycle fold: merge page-projected byOfficer numerators (no rescan,
+    // no second status→bounce/pass classifier — sole owner is gate-cycles family).
+    const gateCycles = page.gateCycles;
+    if (gateCycles !== undefined) {
+      for (const summary of gateCycles.byOfficer) {
+        const accum =
+          gateOfficerAccums.get(summary.officer) ?? emptyGateOfficerNumeratorAccum();
+        absorbGateOfficerSummary(accum, summary);
+        gateOfficerAccums.set(summary.officer, accum);
+      }
+    }
   }
 
   const byRole = [...roleAccums.keys()]
     .sort((a, b) => a.localeCompare(b))
     .map((role) => finishRole(role, roleAccums.get(role)!));
+
+  const gateCyclesByOfficer = (["inspector", "notary"] as const)
+    .filter((officer) => gateOfficerAccums.has(officer))
+    .map((officer) =>
+      finishGateOfficerNumerators(officer, gateOfficerAccums.get(officer)!),
+    );
 
   return {
     groupLabel: input.groupLabel,
@@ -224,6 +315,7 @@ async function aggregateGroup(
     byRole,
     reworkRatio: hasReworkSample ? rateMetric(reworkWallMs, totalWallMs) : ABSENT,
     medianWallMs: optionalMedian(legWalls),
+    gateCyclesByOfficer,
   };
 }
 
