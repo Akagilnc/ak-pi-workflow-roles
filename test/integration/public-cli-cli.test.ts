@@ -190,6 +190,74 @@ test("config persistence round-trips across processes on the typed seat face", a
       model: "k3-256k",
       thinking: "high",
     });
+
+    // #453: automatic menxia seats are configurable; unset restores absence.
+    const menxiaSet = await runAkRole(
+      [
+        "config",
+        "set",
+        "gatekeeper",
+        "xai/grok-4.5:high",
+        "inspector",
+        "openai-codex/gpt-5.6-sol:medium",
+      ],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(menxiaSet.exitCode, 0);
+    const menxiaPersisted = await loadPublicCliConfig(home);
+    assert.deepEqual(menxiaPersisted.seats.gatekeeper, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
+    assert.deepEqual(menxiaPersisted.seats.inspector, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "medium",
+    });
+
+    const rolesAfter = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      credentials: { "openai-codex": true, xai: true },
+      io: captureIo().io,
+    });
+    assert.equal(rolesAfter.exitCode, 0);
+    assert.equal(
+      resolveEffectiveSeat(menxiaPersisted, "gatekeeper", {
+        "openai-codex": true,
+        xai: true,
+      }).source,
+      "persistent",
+    );
+    assert.equal(
+      resolveEffectiveSeat(menxiaPersisted, "gatekeeper", {
+        "openai-codex": true,
+        xai: true,
+      }).automatic,
+      true,
+    );
+
+    const unsetInspector = await runAkRole(["config", "unset", "inspector"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.equal(unsetInspector.exitCode, 0);
+    assert.equal((await loadPublicCliConfig(home)).seats.inspector, undefined);
+    assert.deepEqual((await loadPublicCliConfig(home)).seats.gatekeeper, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
+
+    const unsetGate = await runAkRole(["config", "unset", "gatekeeper"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.equal(unsetGate.exitCode, 0);
+    assert.equal((await loadPublicCliConfig(home)).seats.gatekeeper, undefined);
   });
 });
 

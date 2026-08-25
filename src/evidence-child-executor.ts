@@ -129,6 +129,11 @@ export type InheritedRuntimeOptions = {
   readonly signal?: AbortSignal;
   /** When true, wrap provider streams with ADR 0059 idle-only retry. */
   readonly idleRetry?: boolean;
+  /**
+   * Explicit child model. When set, auth/availability failures do not fall back
+   * to the parent session model (#453 menxia overrides).
+   */
+  readonly model?: Model<Api>;
 };
 
 export type InheritedRuntime = {
@@ -145,7 +150,8 @@ export type InheritedRuntime = {
  */
 export async function createInheritedRuntime(options: InheritedRuntimeOptions): Promise<InheritedRuntime> {
   const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
-  const activeModel = options.context.model;
+  // Explicit override wins; never silent-fallback to parent when override is set (#453).
+  const activeModel = options.model ?? options.context.model;
   if (activeModel === undefined) throw new Error(`${options.label} requires an active model`);
   const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.label);
   const parentProvider = options.runCompletion === undefined
@@ -716,6 +722,10 @@ export type AuditorRoleOptions = {
   signal?: AbortSignal;
   runCompletion?: AuditorCompletion;
   retainResponse?(response: AssistantMessage): void;
+  /** Explicit child model; auth failure does not fall back to parent (#453). */
+  model?: Model<Api>;
+  /** Thinking level for the child session when an explicit model override is set. */
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 };
 
 /**
@@ -734,6 +744,7 @@ export async function executeAuditorChild(
       context: options.context,
       label: options.roleLabel,
       idleRetry: true,
+      ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.runCompletion === undefined
         ? {}
         : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
@@ -792,7 +803,7 @@ export async function executeAuditorChild(
       cwd,
       agentDir: scratch,
       model: inherited.model,
-      thinkingLevel: options.context.thinkingLevel ?? "off",
+      thinkingLevel: options.thinkingLevel ?? options.context.thinkingLevel ?? "off",
       modelRuntime: inherited.runtime,
       systemPrompt: options.systemPrompt,
       customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
