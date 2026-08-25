@@ -32,7 +32,8 @@
 >
 > 口径变更说明（r6 / 分类底账勘误）：复核发现 fullLedger 中混入未启动测试 runner 的 git/rg/which 取证命令（误标 `pytest_tests_dir`）。已移出 **4** 条至 `not_test_invocation` 并按原命令重引证；同时补全因 300 字符截断而看不出 runner 片段的 `commandCited`（含 `01a03254…/call_1LV…` 的 `npm run test:all`）。重推后 full=**131** / **103.94m**，pytest_tests_dir=**105** / **61.30m**，Ming judge pytest=**99** / **57.29m**（solid 88 / 57.28m；ephemeral 11 / 386ms）。仍为零新生产机制。
 >
-> 口径变更说明（r8 / 全分类底账）：机器摘要将原 `fullLedger`（仅 full 131 条）扩为不重复的 `classificationLedger` **541** 条统一账（full 131 + focused 375 + not_test_invocation 24 + ambiguous_or_mixed 11）。逐条含 book / role / runId / toolCallId / startedAt / endedAt / durationMs / 完整 commandCited / class；full 另含 fullSubkind；仅 ambiguous_or_mixed 在全局明文判据不足以单列时附 note。classCounts / fullBySubkind / OWNER 主问各项与该底账守恒。人读表仍只展 top 样本；逐条复算以机器摘要底账为准。零新生产机制 / 不改 Analyst 代码、schema、闸判据或测试。
+> 口径变更说明（r8 / 全分类底账）：机器摘要将原 `fullLedger`（仅 full 131 条）扩为不重复的 `classificationLedger` **541** 条统一账（当时 full 131 + focused 375 + not_test_invocation 24 + ambiguous_or_mixed 11；r9 重判后见下条）。逐条含 book / role / runId / toolCallId / startedAt / endedAt / durationMs / 完整 commandCited / class；full 另含 fullSubkind；仅 ambiguous_or_mixed 在全局明文判据不足以单列时附 note。classCounts / fullBySubkind / OWNER 主问各项与该底账守恒。人读表仍只展 top 样本；逐条复算以机器摘要底账为准。零新生产机制 / 不改 Analyst 代码、schema、闸判据或测试。
+> 口径变更说明（r9 / 分类底账证据诚信）：复核发现 `ambiguous_or_mixed` 假类与 `not_test_invocation` 漏计 runner，以及 9 条 `commandCited` 非 session 原 command（8 条多行 shell 被压平、1 条 regex 缩进空格被改写）。已用一次性脚本从冻结 `session.jsonl` 机械抽取 541 条原命令逐字节回写；LLM 只重判 class/note。重推后 full=**131** / **103.94m**，focused=**373** / **35.29m**，not_test_invocation=**31** / **2.13m**，ambiguous_or_mixed=**6** / **10.94m**。classCounts / fullBySubkind / OWNER 主问与底账守恒。仍为零新生产机制 / 不改 Analyst 代码、schema、闸判据或测试。
 
 ## 目录总体对账（互斥类别）
 
@@ -89,7 +90,7 @@
 | 两桶·工具合计 | 1504.58m（44.8%） |
 | 两桶·模型合计 | 1852.69m（55.2%） |
 | 父腿全量（`test:all`，judge） | **9 次 / 19.75m**（次均 2.19m；见全量明细） |
-| 父腿聚焦测试（两簿 judge+reviewer） | **375 次 / 44.19m**（LLM class=`focused`） |
+| 父腿聚焦测试（两簿 judge+reviewer） | **373 次 / 35.29m**（LLM class=`focused`） |
 | 父腿全量族合计（含 pytest tests/ 等 subkind） | **131 次 / 103.94m**（LLM class=`full`；subkind 分列） |
 
 ### 按官（gate-cycles.byOfficer）
@@ -163,9 +164,9 @@ OWNER 题面「判官自跑**全量**」的**主口径**＝`role=judge` 且 `ful
 | class | 次数 | 墙钟 Σ |
 | --- | ---: | ---: |
 | full | 131 | 103.94m |
-| focused | 375 | 44.19m |
-| not_test_invocation | 24 | 2.05m |
-| ambiguous_or_mixed | 11 | 2.12m |
+| focused | 373 | 35.29m |
+| not_test_invocation | 31 | 2.13m |
+| ambiguous_or_mixed | 6 | 10.94m |
 
 full 按 subkind：
 
@@ -218,13 +219,13 @@ full 按 subkind：
 
 | wall | role | book | runId | command（节录） |
 | ---: | --- | --- | --- | --- |
-| 6.16m | judge | ak-pi-workflow-roles | `01a02fa8-61aa-7ade-9658-16e184a40376` | focused `node --import tsx --test test/integration/shared-cold-install-construction.test.ts` 等 |
-| 2.79m | judge | ak-pi-workflow-roles | `01a02fa8-61aa-7ade-9658-16e184a40376` | 同上族 focused 复跑 |
-| 47.7s | judge | Ming_LLM | `01a02fce-2beb-7140-bf47-7e089a2f5699` | 含 pytest 子集的诊断脚本 |
-| 43.9s | judge | Ming_LLM | `01a031ca-62f0-7210-b594-bb716ed853c9` | `pytest -q tests/test_mutiny_third_strike_318.py …`（多文件子集） |
+| 47.7s | judge | Ming_LLM | `01a02fce-2beb-7140-bf47-7e089a2f5699` | `set -u FILE=ming_sim/db.py # Mutation A: remove legacy migration append block entirely.…` |
+| 43.9s | judge | Ming_LLM | `01a031ca-62f0-7210-b594-bb716ed853c9` | `python3 -m pytest -q tests/test_mutiny_third_strike_318.py tests/test_mutiny_progressio…` |
+| 41.1s | judge | ak-pi-workflow-roles | `01a02fb1-da05-7644-8c24-6d7cd8e491ad` | `node --import tsx --test --test-name-pattern='fixer completed-side submissions traverse…` |
 | 41.1s | judge | ak-pi-workflow-roles | `01a02fb1-da05-7644-8c24-6d7cd8e491ad` | `node --import tsx --test test/integration/shared-cold-install-construction.test.ts` |
+| 38.6s | judge | Ming_LLM | `01a0321c-bbff-735c-a254-e30b7a8154dd` | `python3 -m pytest tests/test_audience_travel_gating_670.py tests/test_audience_undo_506…` |
 
-完整 focused 375 条不在人读表展开；机器摘要 `classificationLedger` 含全部 541 条（含 focused 375）逐条 runId/toolCallId/区间/完整命令/class，汇总与底账守恒。
+完整 focused 373 条不在人读表展开；机器摘要 `classificationLedger` 含全部 541 条（含 focused 373）逐条 runId/toolCallId/区间/完整命令/class，汇总与底账守恒。
 
 #### 7) 漏计边界申报
 
@@ -302,7 +303,7 @@ full 按 subkind：
 - **`officerWall` 合计 155.66m** 是闸循环子会话墙钟，嵌在父腿墙钟内，**不可与父腿墙钟简单相加**；它回答「官审子会话本身吃掉多少（含模型）」。
 - **`officerEvidenceToolWall` 合计 27.20m** 是上述子会话内 typed 工具 interval 的 union 占用，占 `officerWall` 17.5%；回答「官取证工具实际占用多少」，与总墙钟分列。
 - **父腿 test:all（judge）**：9 次 / 19.75m / 次均 2.19m（LLM class + typed 区间；见上节逐条引证）。
-- **父腿 focused**：375 次 / 44.19m；**full 族（含 pytest tests/ 等）**：131 次 / 103.94m（subkind 分列，勿跨簿混加）。
+- **父腿 focused**：373 次 / 35.29m；**full 族（含 pytest tests/ 等）**：131 次 / 103.94m（subkind 分列，勿跨簿混加）。
 - 腿墙钟 top 出现 ~6h 级 outlier（`01a02fca-…` / `01a02fce-…`）：均为 terminal 态可读腿的 frame-span 墙钟，计入全日合计；它们不是闸循环主因（闸 top 仍由多轮 notary 腿主导）。
 
 ## 复算入口
@@ -703,16 +704,16 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "totalMs": 6236148
       },
       "focused": {
-        "count": 375,
-        "totalMs": 2651397
+        "count": 373,
+        "totalMs": 2117256
       },
       "not_test_invocation": {
-        "count": 24,
-        "totalMs": 123013
+        "count": 31,
+        "totalMs": 127645
       },
       "ambiguous_or_mixed": {
-        "count": 11,
-        "totalMs": 126989
+        "count": 6,
+        "totalMs": 656498
       }
     },
     "fullBySubkind": {
@@ -806,7 +807,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
           "startedAt": "2026-08-24T05:13:18.720Z",
           "endedAt": "2026-08-24T05:15:36.669Z",
           "durationMs": 137949,
-          "commandCited": "set -o pipefail printf '%s\\n' '== typecheck ==' pnpm exec tsc --noEmit printf '%s\\n' '== test:all ==' npm run test:all printf '%s\\n' '== build ==' npm run build printf '%s\\n' '== post-build diff ==' git status --short git diff --exit-code",
+          "commandCited": "set -o pipefail\nprintf '%s\\n' '== typecheck =='\npnpm exec tsc --noEmit\nprintf '%s\\n' '== test:all =='\nnpm run test:all\nprintf '%s\\n' '== build =='\nnpm run build\nprintf '%s\\n' '== post-build diff =='\ngit status --short\ngit diff --exit-code\n",
           "wallMayIncludeNonTest": true
         },
         {
@@ -828,7 +829,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
           "startedAt": "2026-08-24T05:53:56.130Z",
           "endedAt": "2026-08-24T05:55:34.751Z",
           "durationMs": 98621,
-          "commandCited": "set -e base=/tmp/ak440-base-$RANDOM cleanup() { git worktree remove --force \"$base\" >/dev/null 2>&1 || true; rm -f /tmp/ak440-base-test.log; } trap cleanup EXIT git worktree add --detach \"$base\" 2e2d63ad >/dev/null ln -s /Users/akagilnc/WorkSpace/ak-pi-workflow-roles/node_modules \"$base/node_modules\" cd \"$base\" set +e npm run test:all > /tmp/ak440-base-test.log 2>&1 code=$? set -e tail -n 80 /tmp/ak440-base-test.log echo EXIT=$code",
+          "commandCited": "set -e\nbase=/tmp/ak440-base-$RANDOM\ncleanup() { git worktree remove --force \"$base\" >/dev/null 2>&1 || true; rm -f /tmp/ak440-base-test.log; }\ntrap cleanup EXIT\ngit worktree add --detach \"$base\" 2e2d63ad >/dev/null\nln -s /Users/akagilnc/WorkSpace/ak-pi-workflow-roles/node_modules \"$base/node_modules\"\ncd \"$base\"\nset +e\nnpm run test:all > /tmp/ak440-base-test.log 2>&1\ncode=$?\nset -e\ntail -n 80 /tmp/ak440-base-test.log\necho EXIT=$code",
           "wallMayIncludeNonTest": true
         },
         {
@@ -839,7 +840,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
           "startedAt": "2026-08-24T05:53:56.130Z",
           "endedAt": "2026-08-24T05:55:34.749Z",
           "durationMs": 98619,
-          "commandCited": "set -o pipefail npm run test:all > /tmp/ak440-head-test.log 2>&1; code=$?; tail -n 80 /tmp/ak440-head-test.log; echo EXIT=$code; exit 0",
+          "commandCited": "set -o pipefail\nnpm run test:all > /tmp/ak440-head-test.log 2>&1; code=$?; tail -n 80 /tmp/ak440-head-test.log; echo EXIT=$code; exit 0",
           "wallMayIncludeNonTest": false
         }
       ]
@@ -1021,7 +1022,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
           "priorFullSubkind": "pytest_tests_dir",
           "newClass": "not_test_invocation",
           "commandFirstLine": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+    assert|^\\+    with pytest|^\\+        \"'",
-          "commandCited": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+ assert|^\\+ with pytest|^\\+ \"'",
+          "commandCited": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+    assert|^\\+    with pytest|^\\+        \"'",
           "classReason": "git diff | rg over test file / pytest tokens; no test runner exec",
           "correction": "r6 ledger integrity: prior pytest_tests_dir misclass; command never started runner"
         },
@@ -1158,7 +1159,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T05:13:18.720Z",
         "endedAt": "2026-08-24T05:15:36.669Z",
         "durationMs": 137949,
-        "commandCited": "set -o pipefail printf '%s\\n' '== typecheck ==' pnpm exec tsc --noEmit printf '%s\\n' '== test:all ==' npm run test:all printf '%s\\n' '== build ==' npm run build printf '%s\\n' '== post-build diff ==' git status --short git diff --exit-code",
+        "commandCited": "set -o pipefail\nprintf '%s\\n' '== typecheck =='\npnpm exec tsc --noEmit\nprintf '%s\\n' '== test:all =='\nnpm run test:all\nprintf '%s\\n' '== build =='\nnpm run build\nprintf '%s\\n' '== post-build diff =='\ngit status --short\ngit diff --exit-code\n",
         "class": "full",
         "fullSubkind": "test_all"
       },
@@ -1194,7 +1195,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T05:53:56.130Z",
         "endedAt": "2026-08-24T05:55:34.751Z",
         "durationMs": 98621,
-        "commandCited": "set -e base=/tmp/ak440-base-$RANDOM cleanup() { git worktree remove --force \"$base\" >/dev/null 2>&1 || true; rm -f /tmp/ak440-base-test.log; } trap cleanup EXIT git worktree add --detach \"$base\" 2e2d63ad >/dev/null ln -s /Users/akagilnc/WorkSpace/ak-pi-workflow-roles/node_modules \"$base/node_modules\" cd \"$base\" set +e npm run test:all > /tmp/ak440-base-test.log 2>&1 code=$? set -e tail -n 80 /tmp/ak440-base-test.log echo EXIT=$code",
+        "commandCited": "set -e\nbase=/tmp/ak440-base-$RANDOM\ncleanup() { git worktree remove --force \"$base\" >/dev/null 2>&1 || true; rm -f /tmp/ak440-base-test.log; }\ntrap cleanup EXIT\ngit worktree add --detach \"$base\" 2e2d63ad >/dev/null\nln -s /Users/akagilnc/WorkSpace/ak-pi-workflow-roles/node_modules \"$base/node_modules\"\ncd \"$base\"\nset +e\nnpm run test:all > /tmp/ak440-base-test.log 2>&1\ncode=$?\nset -e\ntail -n 80 /tmp/ak440-base-test.log\necho EXIT=$code",
         "class": "full",
         "fullSubkind": "test_all"
       },
@@ -1206,7 +1207,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T05:53:56.130Z",
         "endedAt": "2026-08-24T05:55:34.749Z",
         "durationMs": 98619,
-        "commandCited": "set -o pipefail npm run test:all > /tmp/ak440-head-test.log 2>&1; code=$?; tail -n 80 /tmp/ak440-head-test.log; echo EXIT=$code; exit 0",
+        "commandCited": "set -o pipefail\nnpm run test:all > /tmp/ak440-head-test.log 2>&1; code=$?; tail -n 80 /tmp/ak440-head-test.log; echo EXIT=$code; exit 0",
         "class": "full",
         "fullSubkind": "test_all"
       },
@@ -1410,7 +1411,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T03:38:17.864Z",
         "endedAt": "2026-08-24T03:39:07.249Z",
         "durationMs": 49385,
-        "commandCited": "set -o pipefail printf '%s\\n' '-- executables --'; command -v python || true; command -v python3 || true printf '%s\\n' '-- full suite --' if command -v python >/dev/null 2>&1; then python -m pytest tests/ -q -n auto; else python3 -m pytest tests/ -q -n auto; fi",
+        "commandCited": "set -o pipefail\nprintf '%s\\n' '-- executables --'; command -v python || true; command -v python3 || true\nprintf '%s\\n' '-- full suite --'\nif command -v python >/dev/null 2>&1; then python -m pytest tests/ -q -n auto; else python3 -m pytest tests/ -q -n auto; fi",
         "class": "full",
         "fullSubkind": "pytest_tests_dir"
       },
@@ -1722,7 +1723,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T03:54:11.708Z",
         "endedAt": "2026-08-24T03:54:47.969Z",
         "durationMs": 36261,
-        "commandCited": "set -e shim=$(mktemp -d /tmp/ming318-python.XXXXXX) ln -s \"$(command -v python3)\" \"$shim/python\" trap 'rm -rf \"$shim\"' EXIT PATH=\"$shim:$PATH\" python -m pytest tests/ -q -n auto",
+        "commandCited": "set -e\nshim=$(mktemp -d /tmp/ming318-python.XXXXXX)\nln -s \"$(command -v python3)\" \"$shim/python\"\ntrap 'rm -rf \"$shim\"' EXIT\nPATH=\"$shim:$PATH\" python -m pytest tests/ -q -n auto",
         "class": "full",
         "fullSubkind": "pytest_tests_dir"
       },
@@ -1986,7 +1987,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T05:05:02.526Z",
         "endedAt": "2026-08-24T05:05:35.478Z",
         "durationMs": 32952,
-        "commandCited": "python3 - <<'PY' from ming_sim.matching import location_alias_rewrites print(location_alias_rewrites()) PY python3 -m pytest tests/ -q -n auto",
+        "commandCited": "python3 - <<'PY'\nfrom ming_sim.matching import location_alias_rewrites\nprint(location_alias_rewrites())\nPY\npython3 -m pytest tests/ -q -n auto",
         "class": "full",
         "fullSubkind": "pytest_tests_dir"
       },
@@ -2070,7 +2071,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T03:47:30.882Z",
         "endedAt": "2026-08-24T03:48:03.017Z",
         "durationMs": 32135,
-        "commandCited": "set -e shim=$(mktemp -d) trap 'rm -rf \"$shim\"' EXIT ln -s \"$(command -v python3)\" \"$shim/python\" PATH=\"$shim:$PATH\" python -m pytest tests/ -q -n auto",
+        "commandCited": "set -e\nshim=$(mktemp -d)\ntrap 'rm -rf \"$shim\"' EXIT\nln -s \"$(command -v python3)\" \"$shim/python\"\nPATH=\"$shim:$PATH\" python -m pytest tests/ -q -n auto",
         "class": "full",
         "fullSubkind": "pytest_tests_dir"
       },
@@ -2166,7 +2167,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T02:06:31.596Z",
         "endedAt": "2026-08-24T02:07:03.225Z",
         "durationMs": 31629,
-        "commandCited": "# Count how many tests in 620/621/624 actually call the origin helper path python3 - << 'PY' import ast, pathlib for p in [ \"tests/test_staged_commitment_620.py\", \"tests/test_due_review_621.py\", \"tests/test_urge_lever_624.py\", \"tests/test_supervision_625.py\", ]: tree = ast.parse(pathlib.Path(p).read_text()) tests = [n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name.startswith(\"test_\")] print(p, \"tests\", len(tests)) PY echo \"==== worktree ====\" git status --porcelain echo \"==== HEAD ====\" git rev-parse HEAD echo \"==== a6e652b3 files only tests? ====\" git show --name-only --pretty=format: a6e652b3 echo \"==== full suite ====\" python3 -m pytest tests/ -q -n auto",
+        "commandCited": "# Count how many tests in 620/621/624 actually call the origin helper path\npython3 - << 'PY'\nimport ast, pathlib\nfor p in [\n    \"tests/test_staged_commitment_620.py\",\n    \"tests/test_due_review_621.py\",\n    \"tests/test_urge_lever_624.py\",\n    \"tests/test_supervision_625.py\",\n]:\n    tree = ast.parse(pathlib.Path(p).read_text())\n    tests = [n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name.startswith(\"test_\")]\n    print(p, \"tests\", len(tests))\nPY\necho \"==== worktree ====\"\ngit status --porcelain\necho \"==== HEAD ====\"\ngit rev-parse HEAD\necho \"==== a6e652b3 files only tests? ====\"\ngit show --name-only --pretty=format: a6e652b3\necho \"==== full suite ====\"\npython3 -m pytest tests/ -q -n auto",
         "class": "full",
         "fullSubkind": "pytest_tests_dir"
       },
@@ -2635,7 +2636,8 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-23T17:38:39.984Z",
         "durationMs": 369503,
         "commandCited": "set -o pipefail\nLOG=/tmp/judge435-reverification.log\n: > \"$LOG\"\nprintf '\\n== focused construction tracer ==\\n' | tee -a \"$LOG\"\npnpm exec node --import tsx --test test/integration/shared-cold-install-construction.test.ts 2>&1 | tee -a \"$LOG\"\nprintf '\\n== cold-installed public coder ==\\n' | tee -a \"$LOG\"\npnpm exec node --import tsx --test test/integration/public-cli-coder-installed-run.test.ts 2>&1 | tee -a \"$LOG\"\nprintf '\\n== typecheck ==\\n' | tee -a \"$LOG\"\npnpm typecheck 2>&1 | tee -a \"$LOG\"\nprintf '\\n== unit+contract ==\\n' | tee -a \"$LOG\"\npnpm test 2>&1 | tee -a \"$LOG\"\nprintf '\\n== integration ==\\n' | tee -a \"$LOG\"\npnpm test:integration 2>&1 | tee -a \"$LOG\"\nprintf '\\n== fatal scan ==\\n' | tee -a \"$LOG\"\nif grep -i 'fatal: Unable to hash' \"$LOG\"; then exit 1; else echo none | tee -a \"$LOG\"; fi\nprintf '\\n== final status ==\\n' | tee -a \"$LOG\"\ngit status --short --branch | tee -a \"$LOG\"\ngit diff --check 05db4136..HEAD",
-        "class": "focused"
+        "class": "ambiguous_or_mixed",
+        "note": "compound contains focused node --test paths and full pnpm test + pnpm test:integration"
       },
       {
         "book": "ak-pi-workflow-roles",
@@ -2646,7 +2648,8 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-23T17:29:39.215Z",
         "durationMs": 167326,
         "commandCited": "set -o pipefail\nprintf '\\n== focused construction tracer ==\\n'\ntimeout 300 pnpm exec node --import tsx --test test/integration/shared-cold-install-construction.test.ts\nprintf '\\n== focused cold-installed public coder ==\\n'\ntimeout 300 pnpm exec node --import tsx --test --test-name-pattern='cold-installed public Coder' test/integration/*.test.ts\nprintf '\\n== typecheck ==\\n'\npnpm typecheck\nprintf '\\n== unit+contract ==\\n'\npnpm test\nprintf '\\n== integration ==\\n'\ntimeout 900 pnpm test:integration\nprintf '\\n== final status ==\\n'\ngit status --short --branch\nprintf '\\n== fatal scan of captured console unavailable; command outputs above ==\\n'",
-        "class": "focused"
+        "class": "ambiguous_or_mixed",
+        "note": "compound contains focused node --test paths and full pnpm test + pnpm test:integration"
       },
       {
         "book": "Ming_LLM",
@@ -6177,7 +6180,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-23T16:18:22.038Z",
         "durationMs": 135,
         "commandCited": "python3 - <<'PY'\n# reuse pytest fixture awkward; invoke focused test setup by loading helpers from conftest?\nimport sys, tempfile, os\nsys.path.insert(0,'tests')\nfrom conftest import _build_seeded_db\n# inspect signature\nimport inspect\nprint(inspect.signature(_build_seeded_db))\nPY",
-        "class": "focused"
+        "class": "not_test_invocation"
       },
       {
         "book": "Ming_LLM",
@@ -6375,7 +6378,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T14:01:14.314Z",
         "durationMs": 54,
         "commandCited": "git diff --unified=12 dadb0fbfd50b788110e9951e8dd22ab56edc4d7c...HEAD -- tests/test_execution_pressure_654.py tests/test_advance_paths_atomic.py tests/test_rejection_wiring.py; printf '\\n-- all modified assertions/tests symbols --\\n'; git diff --unified=2 dadb0fbfd50b788110e9951e8dd22ab56edc4d7c...HEAD -- tests | grep -E '^[+-].*(def test|assert|pytest.raises|monkeypatch|transit_semantics)' | head -400",
-        "class": "focused"
+        "class": "not_test_invocation"
       },
       {
         "book": "Ming_LLM",
@@ -6529,7 +6532,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T04:38:33.286Z",
         "durationMs": 26,
         "commandCited": "git diff 69005db556745ff37d9dcbdc24254a161a455c3f..HEAD -- tests/test_audience_travel_gating_670.py | rg '^\\+def test_|^\\+class |^\\+    assert|^\\+    with pytest'",
-        "class": "focused"
+        "class": "not_test_invocation"
       },
       {
         "book": "Ming_LLM",
@@ -6848,7 +6851,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T05:05:46.796Z",
         "durationMs": 980,
         "commandCited": "python3 - <<'PY'\n# Independent transaction ownership smoke: invoke the committed regression itself plus exact rewrite assertion already covered.\nimport subprocess, sys\nr=subprocess.run([sys.executable,'-m','pytest','tests/test_audience_travel_gating_670.py::test_waiting_active_departure_respects_strategic_preflight_savepoint','tests/test_audience_travel_gating_670.py::test_waiting_active_departure_external_rollback_reverts_transit_and_settle','tests/test_audience_travel_gating_670.py::test_waiting_active_departure_settles_and_does_not_revive','tests/test_audience_travel_gating_670.py::test_shuntian_zhili_aliases_are_not_migrated_on_reopen','-q'])\nraise SystemExit(r.returncode)\nPY",
-        "class": "not_test_invocation"
+        "class": "focused"
       },
       {
         "book": "Ming_LLM",
@@ -6858,7 +6861,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "startedAt": "2026-08-24T02:53:23.757Z",
         "endedAt": "2026-08-24T02:53:24.403Z",
         "durationMs": 646,
-        "commandCited": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+ assert|^\\+ with pytest|^\\+ \"'",
+        "commandCited": "git diff 109d0cfedb09d9bfecb68da8d97a4065f48ce9e4...HEAD -- tests/test_impeachment_surge_655.py | rg '^\\+def test_|^\\+class |^\\+    assert|^\\+    with pytest|^\\+        \"'",
         "class": "not_test_invocation"
       },
       {
@@ -7072,8 +7075,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T02:48:38.159Z",
         "durationMs": 3590,
         "commandCited": "git diff --check c437dd1d^..HEAD; printf '\\n-- changed assertions --\\n'; git diff c437dd1d^..HEAD -- tests | rg '^[-+]\\s*(assert|with pytest|def test_|@pytest)' | head -300; printf '\\n-- governance changed --\\n'; git diff --name-only c437dd1d^..HEAD | rg '(^|/)(CLAUDE|AGENTS|CONTEXT)\\.md$|docs/adr/' || true; printf '\\n-- unexpected structures --\\n'; git diff c437dd1d^..HEAD | rg '^\\+.*(CREATE TABLE|ALTER TABLE|location\\s*==|location\\s*!=|transit_to\\s*==|arrival callback|hook)' || true",
-        "class": "ambiguous_or_mixed",
-        "note": "compound contains both full and focused pytest invocations"
+        "class": "not_test_invocation"
       },
       {
         "book": "Ming_LLM",
@@ -7084,8 +7086,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T04:09:09.094Z",
         "durationMs": 1439,
         "commandCited": "set -e\np=tests/_judge_pr1547_probe.py\ntrap 'rm -f \"$p\"; git status --porcelain=v1' EXIT\ncat > \"$p\" <<'PY'\nimport pytest\nfrom ming_sim.flows import apply_fixed_period_flows\n\nARMY='guanning'\n\ndef config(db, hub):\n    for key in ('__army_pay_source_cutover','__fiscal_engine'):\n        db.conn.execute(\"INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','judge') ON CONFLICT(key) DO UPDATE SET value=excluded.value\", (key, int(hub)))\n    db.conn.execute('UPDATE armies SET manpower=0')\n\ndef tick(db,state):\n    state.metrics['国库']=10**9\n    apply_fixed_period_flows(db,state)\n    return db.conn.execute('SELECT owner_power,is_mutinied,mutiny_count FROM armies WHERE id=?',(ARMY,)).fetchone()\n\ndef test_hub_excluded_zero_manpower_latch_survives(game):\n    db,state,_=game; config(db,True)\n    db.conn.execute(\"UPDATE armies SET owner_power='ming',manpower=0,salary_rate=1,is_tusi=1,self_funded_pay=0,is_mutinied=1,mutiny_count=1 WHERE id=?\",(ARMY,)); db.conn.commit()\n    row=tick(db,state)\n    assert row['is_mutinied']==1  # demonstrates current bug\n\ndef test_existing_third_strike_latch_survives_both_paths(game,hub):\n    db,state,_=game; config(db,hub)\n    db.conn.execute(\"UPDATE armies SET owner_power='ming',manpower=10000,salary_rate=1,is_tusi=0,self_funded_pay=0,pay_source_region='liaodong',province_pay_share=0,central_pay_share=1,loyalty=10,arrears=5,province_pay_arrears=0,central_pay_arrears=?,is_mutinied=1,mutiny_count=3 WHERE id=?\",(5 if hub else 0,ARMY)); db.conn.commit()\n    row=tick(db,state)\n    assert (row['owner_power'],row['is_mutinied'],row['mutiny_count'])==('ming',1,3)  # demonstrates current bug\n\ntest_existing_third_strike_latch_survives_both_paths=pytest.mark.parametrize('hub',[False,True])(test_existing_third_strike_latch_survives_both_paths)\nPY\npython3 -m pytest \"$p\" -q",
-        "class": "ambiguous_or_mixed",
-        "note": "compound contains both full and focused pytest invocations"
+        "class": "focused"
       },
       {
         "book": "Ming_LLM",
@@ -7096,8 +7097,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T06:29:21.645Z",
         "durationMs": 683,
         "commandCited": "rg -n \"loyalty|军心|战略|strategic|复杂|complex\" CONTEXT.md | head -120 && printf '%s\\n' '--- assertions touched ---' && git diff 73e48bd4..HEAD -- tests | rg '^[-+]\\s*(assert|def test_|@pytest|with pytest)' || true && printf '%s\\n' '--- functions refs ---' && rg -n \"fold_loyalty_alias_delta|compute_loyalty_soft_adjust|_strategic_event_result_preflight_error|_army_noop_error|apply_army_deltas\" ming_sim tests/test_event_trigger_gate.py tests/test_loyalty_soft_adjust_clamp_320.py",
-        "class": "ambiguous_or_mixed",
-        "note": "compound contains both full and focused pytest invocations"
+        "class": "not_test_invocation"
       },
       {
         "book": "Ming_LLM",
@@ -7108,8 +7108,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T02:46:17.249Z",
         "durationMs": 654,
         "commandCited": "find . -maxdepth 3 -type f \\( -iname '*standard*' -o -iname 'CONTRIBUTING*' -o -iname 'STYLE*' -o -iname 'pyproject.toml' -o -iname 'pytest.ini' -o -iname 'setup.cfg' -o -iname 'ruff.toml' \\) -print | sort; rg -n \"coding standard|代码规范|style guide|contribut|pytest|ruff|black|mypy\" AGENTS.md CLAUDE.md README.md pyproject.toml setup.cfg pytest.ini 2>/dev/null | head -200",
-        "class": "ambiguous_or_mixed",
-        "note": "compound contains both full and focused pytest invocations"
+        "class": "not_test_invocation"
       },
       {
         "book": "Ming_LLM",
@@ -7120,8 +7119,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T04:50:25.484Z",
         "durationMs": 484,
         "commandCited": "cat > test_judge_repro_1538.py <<'PY'\nimport pytest\nfrom ming_sim.pay_order import restore_pay_order_override\nfrom ming_sim.issues import _validate_fiscal_levy_share_meta, _SETTLE_META_JIAPIAI_KEY\nfrom tests.test_pay_order_override_653 import _override_dossier\n\n\ndef test_unpromulgated_revoke_can_delete_live_override(game):\n    db, state, _ = game\n    target = _override_dossier(db, state, [{\"key\":\"due_priority_军饷@shaanxi\", \"value\":40}])\n    db.apply_dossier_promulgation(state, target, \"promulgated\")\n    revoke = db.create_decree_dossier(state, action_type=\"revoke_decree\", decree_text=\"未颁撤旨\", target_kind=\"dossier\", target_id=str(target), payload={\"revoke_target_dossier_id\":target})\n    assert not db.dossier_authorizes_effects(revoke)\n    assert \"due_priority_军饷@shaanxi\" in db.get_fiscal_config()\n    restore_pay_order_override(db, turn=state.turn, target_dossier_id=target, revoke_dossier_id=revoke)\n    assert \"due_priority_军饷@shaanxi\" not in db.get_fiscal_config()  # demonstrates the defect\n\n\ndef test_jiapai_omitted_from_first_pass_validation():\n    bad = {_SETTLE_META_JIAPIAI_KEY: []}\n    _validate_fiscal_levy_share_meta(bad, \"shaanxi\")  # currently accepts malformed value\nPY\npython3 -m pytest test_judge_repro_1538.py -q\nrm test_judge_repro_1538.py\ngit status --short",
-        "class": "ambiguous_or_mixed",
-        "note": "compound contains both full and focused pytest invocations"
+        "class": "focused"
       },
       {
         "book": "Ming_LLM",
@@ -7132,8 +7130,7 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T03:07:52.240Z",
         "durationMs": 350,
         "commandCited": "rg -n \"test_audience_travel_gating_670|pytest|python\" pyproject.toml pytest.ini setup.cfg tox.ini .github/workflows 2>/dev/null; rg -n \"def webgame_shell_for_secret_order|class WebGame|def _chat_core|def chat_stream\" tests/test_qa_c3_secret_order_path_1357_1376.py web_app.py | head -80",
-        "class": "ambiguous_or_mixed",
-        "note": "compound contains both full and focused pytest invocations"
+        "class": "not_test_invocation"
       },
       {
         "book": "Ming_LLM",
@@ -7144,12 +7141,11 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
         "endedAt": "2026-08-24T02:03:22.363Z",
         "durationMs": 120,
         "commandCited": "# Mechanical probe of routing admission + promulgation consumers using pytest fixture\npython3 - << 'PY'\nimport pytest\nfrom _pytest.config import get_config\n# Use the repo's game fixture via a tiny inline test file would pollute.\n# Instead instantiate like conftest.game\n\nimport inspect, tests.conftest as c\nprint(inspect.getsource(c.game))\nPY",
-        "class": "ambiguous_or_mixed",
-        "note": "compound contains both full and focused pytest invocations"
+        "class": "not_test_invocation"
       }
     ],
     "r8_classificationLedger": {
-      "note": "r8 review: expanded exclusive fullLedger into one DRY classificationLedger covering all four classes (541). Per-item citations: book/role/runId/toolCallId/startedAt/endedAt/durationMs/commandCited/class; full adds fullSubkind; ambiguous_or_mixed may add note. classCounts/fullBySubkind/ownerQuestion totals conserved against this ledger. Report-only; zero new production mechanism.",
+      "note": "r8 introduced exclusive classificationLedger (541). r9 restored original commands and corrected false classes; live classCounts/fullBySubkind/ownerQuestion conserved against post-r9 ledger.",
       "count": 541,
       "byClass": {
         "full": {
@@ -7157,16 +7153,166 @@ ak-role analyst   # cwd = 对应 git 仓；book = git common-dir
           "totalMs": 6236148
         },
         "focused": {
-          "count": 375,
-          "totalMs": 2651397
+          "count": 373,
+          "totalMs": 2117256
         },
         "not_test_invocation": {
-          "count": 24,
-          "totalMs": 123013
+          "count": 31,
+          "totalMs": 127645
         },
         "ambiguous_or_mixed": {
-          "count": 11,
-          "totalMs": 126989
+          "count": 6,
+          "totalMs": 656498
+        }
+      }
+    },
+    "r9_ledgerCorrections": {
+      "note": "r9 review: classificationLedger false classes and non-original commandCited. All 541 commandCited restored byte-exact from frozen session toolCall.arguments.command (8 multiline shells had been whitespace-flattened; 1 regex citation lost indent spaces). LLM re-judged class only; aggregates re-projected from unified ledger. Report-only; zero new production mechanism.",
+      "citationRestored": 9,
+      "classChanges": [
+        {
+          "runId": "01a02fa8-61aa-7ade-9658-16e184a40376",
+          "toolCallId": "call_atIAccMs5beGq8yZVhb5HF60|fc_0e8b72928154a31d016a8b2eab51d487d081091b9ee86d2688",
+          "from": "focused",
+          "to": "ambiguous_or_mixed",
+          "durationMs": 369503,
+          "reason": "focused + package_default + integration tier"
+        },
+        {
+          "runId": "01a02fa8-61aa-7ade-9658-16e184a40376",
+          "toolCallId": "call_HZLlzJCg0IC2HyxaXq5KdgQz|fc_0e8b72928154a31d016a8b2d5919d087d08f8127b8056c75f6",
+          "from": "focused",
+          "to": "ambiguous_or_mixed",
+          "durationMs": 167326,
+          "reason": "focused + package_default + integration tier"
+        },
+        {
+          "runId": "01a02f68-35f2-7964-8768-039960876f10",
+          "toolCallId": "call_GIEGXjBMaLW38YyRkGGDgv0b|fc_0debcbc4db022fc3016a8b1d4cc83487d0a3ab036e88a0d9e1",
+          "from": "focused",
+          "to": "not_test_invocation",
+          "durationMs": 135,
+          "reason": "python inspect conftest helper; no runner"
+        },
+        {
+          "runId": "01a03412-dd1d-796c-a14a-d63f9324576d",
+          "toolCallId": "call_y7cQpckimEwQ5niX9LUoMZdC|fc_06749c4fad811703016a8c4eaa619487d0afcbc751ec002ac2",
+          "from": "focused",
+          "to": "not_test_invocation",
+          "durationMs": 54,
+          "reason": "git diff only"
+        },
+        {
+          "runId": "01a0320f-377e-7d4b-9c7c-7b84e7f65cb4",
+          "toolCallId": "call_8ySbj1c7tbwXOeg6ochcdjc3|fc_03fb66bc8bdbe09e016a8bcac93b0087d088ee0eefb3837b73",
+          "from": "focused",
+          "to": "not_test_invocation",
+          "durationMs": 26,
+          "reason": "git diff | rg only"
+        },
+        {
+          "runId": "01a03227-2e4b-7378-8c71-eb2be3584fb0",
+          "toolCallId": "call_ogLkO3SG5ykrIFf1pBUwjXeH|fc_06b528e0c15dbd79016a8bd129ad8487d08bcf29a3c8a15dcc",
+          "from": "not_test_invocation",
+          "to": "focused",
+          "durationMs": 980,
+          "reason": "subprocess.run pytest four node-ids"
+        },
+        {
+          "runId": "01a031a9-fcec-7ed5-bafd-19b688dd348d",
+          "toolCallId": "call_Dv0ESvbTzPHIfPyquKRYlyjP|fc_07397411e9c51ba5016a8bb102a0fc87d08ddd0f8246f5038e",
+          "from": "ambiguous_or_mixed",
+          "to": "not_test_invocation",
+          "durationMs": 3590,
+          "reason": "git/rg assertion scan only; no runner"
+        },
+        {
+          "runId": "01a031f3-b103-7d9c-9574-123475be1c67",
+          "toolCallId": "call_It5I4EERBE8vFa29FcvBtY7m|fc_0176bb9d05238cb8016a8bc3d99f1c87d08a22555cafc78705",
+          "from": "ambiguous_or_mixed",
+          "to": "focused",
+          "durationMs": 1439,
+          "reason": "temp probe file + pytest single path only"
+        },
+        {
+          "runId": "01a03274-b3b2-761f-9c5c-8fc5130b74d0",
+          "toolCallId": "call_XbAuFkWtPnl7mnJuV6CQJsla|fc_0f09995a3094dfa8016a8be4c0efe087d097bb7047f829992a",
+          "from": "ambiguous_or_mixed",
+          "to": "not_test_invocation",
+          "durationMs": 683,
+          "reason": "rg/git only; no runner"
+        },
+        {
+          "runId": "01a031a6-d27d-79cf-ab98-3882dcab713b",
+          "toolCallId": "call_Oj7rYuN35zEwSXjUptYjDT8i|fc_09b2183903b0fb69016a8bb078ab0087d0b50f7ffd37efe99d",
+          "from": "ambiguous_or_mixed",
+          "to": "not_test_invocation",
+          "durationMs": 654,
+          "reason": "find/rg standards scan; no runner"
+        },
+        {
+          "runId": "01a03218-8ca8-7aad-935a-87e691007299",
+          "toolCallId": "call_gbCUdQYlw8ySdLDSg5oAQDXC|fc_0d20f96428e9b2ae016a8bcd8a62d487d0909814bc2f64603d",
+          "from": "ambiguous_or_mixed",
+          "to": "focused",
+          "durationMs": 484,
+          "reason": "temp repro file + pytest single path only"
+        },
+        {
+          "runId": "01a031bc-571a-743c-b60c-6cbb1cf29cbd",
+          "toolCallId": "call_GChaHUIb6wUycreggdMLxJbL|fc_0ab5ee65230c6c89016a8bb587effc87d0a18a921ec3271a7e",
+          "from": "ambiguous_or_mixed",
+          "to": "not_test_invocation",
+          "durationMs": 350,
+          "reason": "rg only; no runner"
+        },
+        {
+          "runId": "01a0317a-bfac-773d-842a-88f486582c8e",
+          "toolCallId": "call-753973e5-c6fb-4e9c-86ea-0e49f7ebaa18-50|fc_5b7365b8-5ee5-94de-bbb9-40c03083736a_0",
+          "from": "ambiguous_or_mixed",
+          "to": "not_test_invocation",
+          "durationMs": 120,
+          "reason": "python inspect conftest source; no pytest launch"
+        }
+      ],
+      "classCountsAfter": {
+        "full": {
+          "count": 131,
+          "totalMs": 6236148
+        },
+        "focused": {
+          "count": 373,
+          "totalMs": 2117256
+        },
+        "not_test_invocation": {
+          "count": 31,
+          "totalMs": 127645
+        },
+        "ambiguous_or_mixed": {
+          "count": 6,
+          "totalMs": 656498
+        }
+      },
+      "fullBySubkindAfter": {
+        "test_all": {
+          "count": 9,
+          "totalMs": 1185071
+        },
+        "package_default_test": {
+          "count": 10,
+          "totalMs": 672992
+        },
+        "test_integration_tier": {
+          "count": 4,
+          "totalMs": 628165
+        },
+        "pytest_tests_dir": {
+          "count": 105,
+          "totalMs": 3678063
+        },
+        "web_package_default_test": {
+          "count": 3,
+          "totalMs": 71857
         }
       }
     }
