@@ -172,10 +172,11 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
         (frozenReviewerReceipt as { specDisposition?: string }).specDisposition,
         "launched",
       );
-      const standardsText = "Standards finding count: 0.";
-      const specText = "Spec: fixed target satisfies the stated behavior.";
-      assert.equal(frozenReviewerReceipt.reports?.standards?.text, standardsText);
-      assert.equal(frozenReviewerReceipt.reports?.spec?.text, specText);
+      assert.equal(frozenReviewerReceipt.reports?.standards?.text, "Standards finding count: 0.");
+      assert.equal(
+        frozenReviewerReceipt.reports?.spec?.text,
+        "Spec: fixed target satisfies the stated behavior.",
+      );
       // Final receipt/artifact keep only amendment B after real auditor revise + resubmit.
       assert.deepEqual(frozenReviewerReceipt.amendments, REVIEWER_AMENDMENT_TRACE_B);
       assert.equal("aggregate" in frozenReviewerReceipt, false);
@@ -183,7 +184,7 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       assert.deepEqual(published.outcome?.decisiveFacts?.amendmentAxes, ["standards"]);
       assert.equal("amendments" in (published.outcome?.decisiveFacts ?? {}), false);
 
-      // Session custom entries: real output A then B candidates; child report bytes untouched.
+      // Session custom entries: real output A then B candidates; child reports shared by identity, not re-prosed.
       const evidenceArtifact = reviewer.terminal?.artifacts.find((item) => item.kind === "evidence");
       assert.ok(evidenceArtifact, `reviewer must publish evidence artifact: ${JSON.stringify(reviewer.terminal)}`);
       const evidence = JSON.parse(await readFile(evidenceArtifact!.path, "utf8")) as {
@@ -221,9 +222,10 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       const candidateB = candidates[1]!.data?.candidate;
       assert.deepEqual(candidateA?.amendments, REVIEWER_AMENDMENT_TRACE_A);
       assert.deepEqual(candidateB?.amendments, REVIEWER_AMENDMENT_TRACE_B);
+      // Non-text rewrite contract: A/B candidates share the same reports object as the final receipt.
+      assert.deepEqual(candidateA?.reports, frozenReviewerReceipt.reports);
+      assert.deepEqual(candidateB?.reports, frozenReviewerReceipt.reports);
       for (const candidate of [candidateA, candidateB]) {
-        assert.equal(candidate?.reports?.standards?.text, standardsText);
-        assert.equal(candidate?.reports?.spec?.text, specText);
         assert.equal("aggregate" in (candidate ?? {}), false);
         assert.equal("report" in (candidate ?? {}), false);
       }
