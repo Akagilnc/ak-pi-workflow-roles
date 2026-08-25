@@ -130,7 +130,7 @@
 | 代理 | 全体 33 提交 | 20 打回 | 13 接受 |
 | --- | ---: | ---: | ---: |
 | 拟判 JSON bytes · 合计 | 167825 | 91082 | 76743 |
-| 拟判 JSON bytes · 中位 | 4974 | 4863 | 5620 |
+| 拟判 JSON bytes · 中位 | 4974 | 4786.5 | 5620 |
 | 拟判 JSON bytes · 均 | 5086 | 4554 | 5903 |
 
 **观察（非因果断言）**：
@@ -203,7 +203,7 @@
   "auditorWallMsTotal": 1655937,
   "draftBytes": {
     "all": { "n": 33, "sum": 167825, "median": 4974, "mean": 5086 },
-    "bounce": { "n": 20, "sum": 91082, "median": 4863, "mean": 4554 },
+    "bounce": { "n": 20, "sum": 91082, "median": 4786.5, "mean": 4554 },
     "accepted": { "n": 13, "sum": 76743, "median": 5620, "mean": 5903 }
   },
   "attributionRule": "mutex-primary-root; full auditorWallMs to primary; secondary labels count-only; parent-gap excluded",
