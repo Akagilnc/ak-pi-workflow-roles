@@ -136,6 +136,7 @@ test("unconditional required: table required:true is the sole missing-option gat
   assert.deepEqual(requiredRows.sort(), [
     "collector/pr",
     "doctor/issue",
+    "notary/source-run",
     "reviewer/base",
   ]);
   assert.throws(() => parseReviewerArgv(["task"]), isUsage);

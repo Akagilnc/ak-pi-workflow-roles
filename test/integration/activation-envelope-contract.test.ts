@@ -243,6 +243,16 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
         }),
       };
     }
+    case "notary":
+      return {
+        ...base,
+        loadNotarySoul: law,
+        loadNotarySourceRun: async (path: string) => ({
+          runDirectory: path,
+          runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
+          role: "judge",
+        }),
+      };
     default:
       throw new Error(`unexpected packaged role: ${role}`);
   }
@@ -269,12 +279,14 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
       return { "ak-doctor-case": "/lawful/case" };
     case "merger":
       return { "ak-merger-input": "/lawful/merger.json" };
+    case "notary":
+      return { "ak-notary-source-run": "/lawful/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge" };
     default:
       return {};
   }
 }
 
-test("seven packaged terminating tools expose the provider-open registration inventory", async () => {
+test("packaged terminating tools expose the provider-open registration inventory", async () => {
   assert.deepEqual(
     new Set(PACKAGED_ROLE_REGISTRY.map(({ outputTool }) => outputTool)),
     new Set(TERMINATING_TOOL_NAMES),
@@ -290,6 +302,7 @@ test("seven packaged terminating tools expose the provider-open registration inv
       case "collector": return [];
       case "doctor": return ["status", "case", "findings", "reason", "missingEvidence"];
       case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis"];
+      case "notary": return ["status", "findings", "reason"];
       default: throw new Error(`unexpected packaged role ${role}`);
     }
   };
@@ -601,6 +614,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
         "ak-review-base": "main~1",
         "ak-doctor-case": "/lawful/case",
         "ak-merger-input": "/lawful/merger.json",
+        "ak-notary-source-run": "/lawful/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
       };
       await withInProcessPi({
         activationLedgerSession: true,
@@ -619,6 +633,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
           loadReviewerSoul: reject,
           loadCollectorSoul: reject,
           loadDoctorSoul: reject,
+          loadNotarySoul: reject,
           loadMergerSoul: reject,
           createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
           transcriptFromContext: () => "",

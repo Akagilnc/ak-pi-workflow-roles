@@ -86,6 +86,10 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ],
+  notary: [
+    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
+    { provider: "xai", model: "grok-4.5", thinking: "high" },
+  ],
   navigator: [
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },

@@ -46,6 +46,7 @@ export const MAIN_ROLE_SESSION_MATERIALS = {
   collector: ["CLAUDE.md", "souls/collector.md"],
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],
+  notary: ["CLAUDE.md", "souls/notary.md"],
   navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
 
