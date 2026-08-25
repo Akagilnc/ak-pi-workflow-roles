@@ -25815,9 +25815,31 @@ function finishRole(role, accum) {
     successRate: rateMetric(accum.successCount, accum.successEligibleCount)
   };
 }
+function emptyGateOfficerNumeratorAccum() {
+  return { rounds: 0, bounceCount: 0, passCount: 0, wallSum: 0 };
+}
+function absorbGateOfficerSummary(accum, summary) {
+  accum.rounds += summary.rounds;
+  accum.bounceCount += summary.bounceCount;
+  accum.passCount += summary.passCount;
+  if (summary.meanOfficerWallMs !== void 0) {
+    accum.wallSum += summary.meanOfficerWallMs * summary.rounds;
+  }
+}
+function finishGateOfficerNumerators(officer, accum) {
+  return {
+    officer,
+    rounds: accum.rounds,
+    bounceCount: accum.bounceCount,
+    passCount: accum.passCount,
+    bounceRate: rateMetric(accum.bounceCount, accum.rounds),
+    meanOfficerWallMs: accum.rounds === 0 ? ABSENT : presentMetric(accum.wallSum / accum.rounds)
+  };
+}
 async function aggregateGroup(index, input, ensureIssuePage) {
   const issueEntries = [];
   const roleAccums = /* @__PURE__ */ new Map();
+  const gateOfficerAccums = /* @__PURE__ */ new Map();
   let reworkWallMs = 0;
   let totalWallMs = 0;
   let hasReworkSample = false;
@@ -25857,14 +25879,26 @@ async function aggregateGroup(index, input, ensureIssuePage) {
         legWalls.push(leg.wallMs);
       }
     }
+    const gateCycles = page.gateCycles;
+    if (gateCycles !== void 0) {
+      for (const summary of gateCycles.byOfficer) {
+        const accum = gateOfficerAccums.get(summary.officer) ?? emptyGateOfficerNumeratorAccum();
+        absorbGateOfficerSummary(accum, summary);
+        gateOfficerAccums.set(summary.officer, accum);
+      }
+    }
   }
   const byRole = [...roleAccums.keys()].sort((a, b) => a.localeCompare(b)).map((role) => finishRole(role, roleAccums.get(role)));
+  const gateCyclesByOfficer = ["inspector", "notary"].filter((officer) => gateOfficerAccums.has(officer)).map(
+    (officer) => finishGateOfficerNumerators(officer, gateOfficerAccums.get(officer))
+  );
   return {
     groupLabel: input.groupLabel,
     issues: issueEntries,
     byRole,
     reworkRatio: hasReworkSample ? rateMetric(reworkWallMs, totalWallMs) : ABSENT,
-    medianWallMs: optionalMedian(legWalls)
+    medianWallMs: optionalMedian(legWalls),
+    gateCyclesByOfficer
   };
 }
 async function runAnalystCohortMode(ledgerHome, input, ensureIssuePage) {
@@ -26184,24 +26218,211 @@ var init_run_terminal_artifacts = __esm({
   }
 });
 
-// src/analyst-ledger.ts
-import { readdir as readdir5, readFile as readFile14 } from "node:fs/promises";
+// src/analyst-gate-cycles-read.ts
+import { readdir as readdir5 } from "node:fs/promises";
 import { join as join23 } from "node:path";
+function isRecord8(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isMissingDirectoryError(error) {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+function normalizeOfficerArg(raw) {
+  if (typeof raw !== "string") return void 0;
+  return OFFICER_ARG_ALIASES[raw.trim()];
+}
+function isGateTerminatingToolName(toolName) {
+  return DISPATCH_TOOLS.has(toolName) || OFFICER_TOOL_TO_FACE[toolName] !== void 0;
+}
+function acceptedGateReceiptIds(rows) {
+  const accepted = /* @__PURE__ */ new Set();
+  for (const row of rows) {
+    const message = isRecord8(row.message) ? row.message : void 0;
+    if (message?.role !== "toolResult") continue;
+    if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) continue;
+    if (message.isError === false) accepted.add(message.toolCallId);
+  }
+  return accepted;
+}
+function extractLastAcceptedGateToolCall(rows) {
+  const acceptedIds = acceptedGateReceiptIds(rows);
+  let last;
+  for (const row of rows) {
+    const message = isRecord8(row.message) ? row.message : void 0;
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (!isRecord8(part) || part.type !== "toolCall") continue;
+      if (typeof part.id !== "string" || part.id.length === 0) continue;
+      if (!acceptedIds.has(part.id)) continue;
+      if (typeof part.name !== "string" || part.name.length === 0) continue;
+      if (!isGateTerminatingToolName(part.name)) continue;
+      last = {
+        toolName: part.name,
+        args: isRecord8(part.arguments) ? part.arguments : void 0
+      };
+    }
+  }
+  return last;
+}
+function requireAcceptedGateStatus(args, filePath) {
+  if (args === void 0 || typeof args.status !== "string" || args.status.trim() === "") {
+    throw new Error(
+      `accepted gate receipt missing usable status in ${filePath}`
+    );
+  }
+  return args.status.trim();
+}
+function requireAcceptedGateSpan(rows, filePath) {
+  const span = extractSessionTimestampSpan(rows);
+  if (span.startedAt === void 0 || span.endedAt === void 0) {
+    throw new Error(
+      `accepted gate volume missing session timestamp span in ${filePath}`
+    );
+  }
+  const startedMs = Date.parse(span.startedAt);
+  const endedMs = Date.parse(span.endedAt);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs) || endedMs < startedMs) {
+    throw new Error(
+      `accepted gate volume has unusable timestamp span in ${filePath}`
+    );
+  }
+  return {
+    startedAt: span.startedAt,
+    endedAt: span.endedAt,
+    wallMs: endedMs - startedMs
+  };
+}
+async function classifyAuditorVolume(filePath) {
+  const rows = await readLedgerSessionJsonl(filePath);
+  const call = extractLastAcceptedGateToolCall(rows);
+  if (call === void 0) return void 0;
+  const span = requireAcceptedGateSpan(rows, filePath);
+  const status = requireAcceptedGateStatus(call.args, filePath);
+  const findings = call.args?.findings;
+  const findingsCount = Array.isArray(findings) ? findings.length : 0;
+  if (DISPATCH_TOOLS.has(call.toolName)) {
+    if (status !== "dispatch") {
+      throw new Error(
+        `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`
+      );
+    }
+    const officer2 = normalizeOfficerArg(call.args?.officer);
+    if (officer2 === void 0) {
+      throw new Error(
+        `accepted dispatch receipt missing or unknown officer in ${filePath}`
+      );
+    }
+    return {
+      kind: "dispatch",
+      startedAt: span.startedAt,
+      officer: officer2
+    };
+  }
+  const officer = OFFICER_TOOL_TO_FACE[call.toolName];
+  if (officer === void 0) {
+    throw new Error(
+      `accepted gate receipt has unknown officer tool ${call.toolName} in ${filePath}`
+    );
+  }
+  return {
+    kind: "officer",
+    startedAt: span.startedAt,
+    endedAt: span.endedAt,
+    officer,
+    status,
+    findingsCount,
+    officerWallMs: span.wallMs
+  };
+}
+function pairGateRounds(volumes) {
+  const ordered = [...volumes].sort((a, b) => {
+    if (a.startedAt !== b.startedAt) return a.startedAt.localeCompare(b.startedAt);
+    if (a.kind !== b.kind) return a.kind === "dispatch" ? -1 : 1;
+    return 0;
+  });
+  const usedOfficerIdx = /* @__PURE__ */ new Set();
+  const rounds = [];
+  for (let i = 0; i < ordered.length; i += 1) {
+    const vol = ordered[i];
+    if (vol.kind !== "dispatch") continue;
+    let match;
+    for (let j = i + 1; j < ordered.length; j += 1) {
+      if (usedOfficerIdx.has(j)) continue;
+      const candidate = ordered[j];
+      if (candidate.kind !== "officer") continue;
+      if (candidate.officer !== vol.officer) continue;
+      match = { index: j, officer: candidate };
+      break;
+    }
+    if (match === void 0) continue;
+    usedOfficerIdx.add(match.index);
+    rounds.push({
+      roundIndex: rounds.length + 1,
+      officer: match.officer.officer,
+      status: match.officer.status,
+      officerWallMs: match.officer.officerWallMs,
+      officerStartedAt: match.officer.startedAt,
+      officerEndedAt: match.officer.endedAt,
+      findingsCount: match.officer.findingsCount
+    });
+  }
+  return rounds;
+}
+async function readAnalystGateCyclesFromAuditorRoles(auditorRolesDirectory) {
+  let names;
+  try {
+    const entries = await readdir5(auditorRolesDirectory, { withFileTypes: true });
+    names = entries.filter((e) => e.isFile() && e.name.endsWith(".jsonl")).map((e) => e.name).sort();
+  } catch (error) {
+    if (isMissingDirectoryError(error)) return [];
+    throw error;
+  }
+  const volumes = [];
+  for (const name of names) {
+    const classified = await classifyAuditorVolume(join23(auditorRolesDirectory, name));
+    if (classified !== void 0) volumes.push(classified);
+  }
+  return pairGateRounds(volumes);
+}
+var DISPATCH_TOOLS, OFFICER_TOOL_TO_FACE, OFFICER_ARG_ALIASES;
+var init_analyst_gate_cycles_read = __esm({
+  "src/analyst-gate-cycles-read.ts"() {
+    "use strict";
+    init_ledger_session_read();
+    DISPATCH_TOOLS = /* @__PURE__ */ new Set(["ak_menxia_output", "ak_gatekeeper_output"]);
+    OFFICER_TOOL_TO_FACE = {
+      ak_jishizhong_output: "inspector",
+      ak_inspector_output: "inspector",
+      ak_fubaolang_output: "notary",
+      ak_notary_output: "notary"
+    };
+    OFFICER_ARG_ALIASES = {
+      jishizhong: "inspector",
+      inspector: "inspector",
+      fubaolang: "notary",
+      notary: "notary"
+    };
+  }
+});
+
+// src/analyst-ledger.ts
+import { readdir as readdir6, readFile as readFile14 } from "node:fs/promises";
+import { join as join24 } from "node:path";
 function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText3(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function isRecord8(value) {
+function isRecord9(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile14(join23(runDirectory, "run-state.json"), "utf8")
+      await readFile14(join24(runDirectory, "run-state.json"), "utf8")
     );
-    if (!isRecord8(raw) || typeof raw.state !== "string") return void 0;
+    if (!isRecord9(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
   } catch {
     return void 0;
@@ -26221,7 +26442,7 @@ function tryResolveBookKeyFromProjectRoot(projectRoot) {
 }
 async function listLedgerBookNames(booksRoot) {
   try {
-    const entries = await readdir5(booksRoot, { withFileTypes: true });
+    const entries = await readdir6(booksRoot, { withFileTypes: true });
     return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch (error) {
     if (isMissingPathError5(error)) return [];
@@ -26231,13 +26452,13 @@ async function listLedgerBookNames(booksRoot) {
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile14(join23(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile14(join24(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
     if (isMissingPathError5(error)) return void 0;
     throw error;
   }
   const parsed = JSON.parse(raw);
-  if (!isRecord8(parsed)) return void 0;
+  if (!isRecord9(parsed)) return void 0;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return void 0;
   }
@@ -26263,15 +26484,15 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile14(join23(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile14(join24(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
-    if (isRecord8(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
+    if (isRecord9(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
     }
   } catch (error) {
     if (!isMissingPathError5(error)) throw error;
   }
-  return join23(runDirectory, "session", "session.jsonl");
+  return join24(runDirectory, "session", "session.jsonl");
 }
 async function classifyScopedRun(input) {
   const missingSources = [];
@@ -26379,6 +26600,24 @@ async function classifyScopedRun(input) {
       `classifyScopedRun internal invariant: missing retained facts for ${input.runId}`
     );
   }
+  let gateCycles;
+  try {
+    gateCycles = await readAnalystGateCyclesFromAuditorRoles(
+      join24(input.runDirectory, "session", "auditor-roles")
+    );
+  } catch (error) {
+    return {
+      kind: "unreadable",
+      entry: {
+        runId: input.runId,
+        book: input.book,
+        missingSources: ["auditor-roles"],
+        reason: errorText3(error),
+        firstFrameAt: { status: "present", at: frameSpan.startedAt },
+        lastFrameAt: { status: "present", at: frameSpan.endedAt }
+      }
+    };
+  }
   return {
     kind: "readable",
     facts: {
@@ -26388,14 +26627,15 @@ async function classifyScopedRun(input) {
       frameSpan,
       toolIntervals,
       terminal,
-      models
+      models,
+      gateCycles
     }
   };
 }
 async function scanAnalystIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
-  const booksRoot = join23(ledgerHome, "books");
+  const booksRoot = join24(ledgerHome, "books");
   let wholeBook = false;
   let scopeRootIdentity;
   let bookNames;
@@ -26427,10 +26667,10 @@ async function scanAnalystIssueRuns(input) {
   const unreadable = [];
   const scopeConflicts = [];
   for (const book of bookNames) {
-    const runsDir = join23(booksRoot, book, "runs");
+    const runsDir = join24(booksRoot, book, "runs");
     let runNames;
     try {
-      const entries = await readdir5(runsDir, { withFileTypes: true });
+      const entries = await readdir6(runsDir, { withFileTypes: true });
       runNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
     } catch (error) {
       if (isMissingPathError5(error)) continue;
@@ -26439,7 +26679,7 @@ async function scanAnalystIssueRuns(input) {
     for (const runName of runNames) {
       const parsed = parseRunDirectoryName(runName);
       if (parsed === void 0) continue;
-      const runDirectory = join23(runsDir, runName);
+      const runDirectory = join24(runsDir, runName);
       let scopeFields;
       try {
         scopeFields = await readInvocationScopeFields(runDirectory);
@@ -26481,12 +26721,13 @@ var init_analyst_ledger = __esm({
     init_activation_ledger_topology();
     init_ledger_session_read();
     init_run_terminal_artifacts();
+    init_analyst_gate_cycles_read();
     LIVE_RUN_STATES = /* @__PURE__ */ new Set(["admitted", "running", "resumable"]);
   }
 });
 
 // src/analyst-metric-families/acceptance-success-rework.ts
-function isRecord9(value) {
+function isRecord10(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan(span) {
@@ -26495,21 +26736,21 @@ function wallMsFromSpan(span) {
 function findCollectorGroups(body) {
   if (Array.isArray(body.groups)) return body.groups;
   const receipt = body.receipt;
-  if (isRecord9(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
+  if (isRecord10(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
   const outcome = body.outcome;
-  if (isRecord9(outcome)) {
+  if (isRecord10(outcome)) {
     const facts = outcome.decisiveFacts;
-    if (isRecord9(facts) && Array.isArray(facts.groups)) return facts.groups;
+    if (isRecord10(facts) && Array.isArray(facts.groups)) return facts.groups;
   }
   return void 0;
 }
 function extractStatus(body) {
   const outcome = body.outcome;
-  if (isRecord9(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
+  if (isRecord10(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
     return outcome.status;
   }
   const receipt = body.receipt;
-  if (isRecord9(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
+  if (isRecord10(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
     return receipt.status;
   }
   if (typeof body.status === "string" && body.status.trim() !== "") {
@@ -27007,6 +27248,83 @@ var init_b2_frame_buckets_actions = __esm({
   }
 });
 
+// src/analyst-metric-families/gate-cycles.ts
+function projectRound(round) {
+  return {
+    roundIndex: round.roundIndex,
+    officer: round.officer,
+    status: round.status,
+    officerWallMs: round.officerWallMs,
+    findingsCount: round.findingsCount
+  };
+}
+function projectLeg(facts) {
+  const rounds = facts.gateCycles.map(projectRound);
+  return {
+    runId: facts.runId,
+    book: facts.book,
+    role: facts.role,
+    roundCount: rounds.length,
+    rounds
+  };
+}
+function compareLegs(a, b) {
+  if (a.book !== b.book) return a.book.localeCompare(b.book);
+  if (a.role !== b.role) return a.role.localeCompare(b.role);
+  return a.runId.localeCompare(b.runId);
+}
+function emptyAccum() {
+  return { rounds: 0, bounceCount: 0, passCount: 0, wallSum: 0 };
+}
+function absorbRound(accum, round) {
+  accum.rounds += 1;
+  accum.wallSum += round.officerWallMs;
+  if (round.status === "bounce") accum.bounceCount += 1;
+  if (round.status === "pass") accum.passCount += 1;
+}
+function finishOfficer(officer, accum) {
+  return {
+    officer,
+    rounds: accum.rounds,
+    bounceCount: accum.bounceCount,
+    passCount: accum.passCount,
+    bounceRate: accum.rounds === 0 ? void 0 : accum.bounceCount / accum.rounds,
+    meanOfficerWallMs: accum.rounds === 0 ? void 0 : accum.wallSum / accum.rounds
+  };
+}
+function summarizeByOfficer(legs) {
+  const byOfficer = /* @__PURE__ */ new Map();
+  for (const leg of legs) {
+    for (const round of leg.rounds) {
+      const accum = byOfficer.get(round.officer) ?? emptyAccum();
+      absorbRound(accum, round);
+      byOfficer.set(round.officer, accum);
+    }
+  }
+  const officers = ["inspector", "notary"].filter((o) => byOfficer.has(o));
+  return officers.map((officer) => finishOfficer(officer, byOfficer.get(officer)));
+}
+var gateCyclesFamily, gate_cycles_default;
+var init_gate_cycles = __esm({
+  "src/analyst-metric-families/gate-cycles.ts"() {
+    "use strict";
+    gateCyclesFamily = {
+      id: "gate-cycles",
+      contribute(input) {
+        if (input.runs.length === 0) return void 0;
+        const legs = input.runs.map(projectLeg).sort(compareLegs);
+        const section = {
+          kind: "analyst-gate-cycles",
+          legs,
+          byOfficer: summarizeByOfficer(legs)
+        };
+        return { gateCycles: section };
+      }
+    };
+    gate_cycles_default = gateCyclesFamily;
+  }
+});
+
 // src/analyst-metric-families/leg-wall-clock.ts
 function frameSpanWallMs(span) {
   return Date.parse(span.endedAt) - Date.parse(span.startedAt);
@@ -27058,21 +27376,21 @@ var init_leg_wall_clock = __esm({
 });
 
 // src/analyst-metric-families/round-timeline.ts
-function isRecord10(value) {
+function isRecord11(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan2(startedAt, endedAt) {
   return Date.parse(endedAt) - Date.parse(startedAt);
 }
 function readOutcomeStatus(body) {
-  if (!isRecord10(body.outcome)) return void 0;
+  if (!isRecord11(body.outcome)) return void 0;
   const status = body.outcome.status;
   if (typeof status !== "string" || status.trim() === "") return void 0;
   return status;
 }
 function readClassCount(body) {
-  if (!isRecord10(body.outcome)) return void 0;
-  if (!isRecord10(body.outcome.decisiveFacts)) return void 0;
+  if (!isRecord11(body.outcome)) return void 0;
+  if (!isRecord11(body.outcome.decisiveFacts)) return void 0;
   const classCount = body.outcome.decisiveFacts.classCount;
   if (typeof classCount !== "number" || !Number.isFinite(classCount)) {
     return void 0;
@@ -27185,11 +27503,13 @@ var init_analyst_metric_families = __esm({
     "use strict";
     init_acceptance_success_rework();
     init_b2_frame_buckets_actions();
+    init_gate_cycles();
     init_leg_wall_clock();
     init_round_timeline();
     ISSUE_METRIC_FAMILIES = [
       acceptance_success_rework_default,
       b2_frame_buckets_actions_default,
+      gate_cycles_default,
       leg_wall_clock_default,
       round_timeline_default
     ].sort((a, b) => a.id.localeCompare(b.id));
@@ -27214,7 +27534,7 @@ var init_analyst_metric_family = __esm({
 
 // src/analyst-page.ts
 import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname10, join as join24 } from "node:path";
+import { dirname as dirname10, join as join25 } from "node:path";
 function analystIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
@@ -27225,7 +27545,7 @@ function analystIssuePageKey(address) {
   return createHash4("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
 function analystIssuePagePath(ledgerHome, address) {
-  return join24(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
+  return join25(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
 }
 function analystIssuePageAddressFromPage(page) {
   return {
@@ -27756,7 +28076,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath5 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join25 } from "node:path";
+import { join as join26 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
   const taken = options.takeDashed(tokens);
@@ -27802,7 +28122,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join25(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join26(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -28672,7 +28992,7 @@ var init_cli = __esm({
 
 // src/public-cli/main.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname11, join as join26 } from "node:path";
+import { dirname as dirname11, join as join27 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -28761,8 +29081,8 @@ function linkPackage(packageRoot2, name, targetDir) {
 // src/public-cli/main.ts
 var here = dirname11(fileURLToPath(import.meta.url));
 function resolvePackageRoot(binDir) {
-  const canonical = join26(binDir, "..", "..");
-  if (existsSync3(join26(canonical, "package.json"))) {
+  const canonical = join27(binDir, "..", "..");
+  if (existsSync3(join27(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;
