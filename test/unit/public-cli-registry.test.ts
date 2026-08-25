@@ -10,21 +10,30 @@ import {
 } from "../../src/public-cli/registry.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 
-test("public registry exposes callable roles plus automatic Navigator only", () => {
+test("public registry exposes callable roles plus automatic configurable seats", () => {
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
   );
   assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
+  // #453: automatic menxia seats join navigator as configurable-only (never caller commands).
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
-    [...PUBLIC_CALLABLE_ROLES, "navigator"],
+    [...PUBLIC_CALLABLE_ROLES, "gatekeeper", "inspector", "navigator"],
   );
-  assert.equal(
-    PUBLIC_CONFIGURABLE_SEATS.includes("navigator" as never),
-    true,
-  );
+  for (const automatic of ["gatekeeper", "inspector", "navigator"] as const) {
+    assert.equal(
+      PUBLIC_CONFIGURABLE_SEATS.includes(automatic as never),
+      true,
+      `must expose automatic seat ${automatic}`,
+    );
+    assert.equal(
+      (PUBLIC_CALLABLE_ROLES as readonly string[]).includes(automatic),
+      false,
+      `${automatic} is automatic, not a callable command`,
+    );
+  }
   for (const forbidden of ["auditor", "soul-audit", "reviewer-cmr", "archivist", "assisted"]) {
     assert.equal(
       (PUBLIC_CONFIGURABLE_SEATS as readonly string[]).includes(forbidden),
