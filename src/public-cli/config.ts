@@ -7,9 +7,10 @@ import { dirname, join } from "node:path";
 
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
 import {
-  AUTOMATIC_NAVIGATOR_SEAT,
+  AUTOMATIC_CONFIGURABLE_SEATS,
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
+  isAutomaticConfigurableSeat,
   isPublicCallableRole,
   isPublicConfigurableSeat,
   type ModelRef,
@@ -18,6 +19,9 @@ import {
   type PublicThinkingLevel,
   publicStartupCandidates,
 } from "./registry.ts";
+
+/** Province officers that may carry a persistent model override (#453). */
+export type MenxiaOfficerSeat = "gatekeeper" | "inspector" | "notary";
 
 export type CredentialProviders = {
   "openai-codex": boolean;
@@ -49,7 +53,7 @@ export type EngineSource = "invocation" | "persistent" | "unconfigured";
 
 export type EffectiveSeat = {
   seat: PublicConfigurableSeat;
-  /** True when the seat is automatic Navigator attendance rather than caller-selected. */
+  /** True when the seat is automatic (no caller command) rather than caller-selected. */
   automatic: boolean;
   source: EffectiveSource;
   selection?: SeatModelConfig;
@@ -127,6 +131,36 @@ export function setPersistentSeatConfig(
       },
     },
   };
+}
+
+/**
+ * Remove a seat's entire persistent row (model + engine) so resolution falls
+ * back to startup/unconfigured, or province inheritance for menxia (#453).
+ * Already-absent seats are a no-op.
+ */
+export function clearPersistentSeatConfig(
+  config: PublicCliConfig,
+  seat: PublicConfigurableSeat,
+): PublicCliConfig {
+  if (config.seats[seat] === undefined) return config;
+  const { [seat]: _dropped, ...seats } = config.seats;
+  return { ...config, seats };
+}
+
+/**
+ * Province-only model selection (#453): officer persistent > gatekeeper persistent
+ * > unset (caller inherits parent session). Never consults startup candidates —
+ * direct `ak-role notary` keeps resolveEffectiveSeat; only province reads this.
+ */
+export function resolveMenxiaOfficerModelSelection(
+  config: PublicCliConfig,
+  officer: MenxiaOfficerSeat,
+): SeatModelConfig | undefined {
+  const own = config.seats[officer];
+  if (own !== undefined) return seatModelOnly(own);
+  if (officer === "gatekeeper") return undefined;
+  const gate = config.seats.gatekeeper;
+  return gate === undefined ? undefined : seatModelOnly(gate);
 }
 
 /**
@@ -444,7 +478,7 @@ function resolveBaseSeat(
   seat: PublicConfigurableSeat,
   credentials: CredentialProviders,
 ): EffectiveSeat {
-  const automatic = seat === AUTOMATIC_NAVIGATOR_SEAT;
+  const automatic = isAutomaticConfigurableSeat(seat);
   const persistent = config.seats[seat];
   if (persistent !== undefined) {
     return {
@@ -474,7 +508,7 @@ export function resolveEffectiveSeat(
   credentials: CredentialProviders,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
-  const automatic = seat === AUTOMATIC_NAVIGATOR_SEAT;
+  const automatic = isAutomaticConfigurableSeat(seat);
   const hasModelInvocation =
     invocation !== undefined &&
     (invocation.model !== undefined || invocation.thinking !== undefined);
@@ -527,7 +561,7 @@ export function effectiveSeatConfigurations(
   );
 }
 
-/** Callable roles first (package order), then automatic Navigator. */
+/** Callable roles first (package order), then automatic configurable seats. */
 export function listRolesForDisplay(
   config: PublicCliConfig,
   credentials: CredentialProviders,
@@ -537,8 +571,10 @@ export function listRolesForDisplay(
   const callable = PUBLIC_CALLABLE_ROLES.map(
     (role) => all.find((entry) => entry.seat === role)!,
   );
-  const navigator = all.find((entry) => entry.seat === AUTOMATIC_NAVIGATOR_SEAT)!;
-  return [...callable, navigator];
+  const automatic = AUTOMATIC_CONFIGURABLE_SEATS.map(
+    (seat) => all.find((entry) => entry.seat === seat)!,
+  );
+  return [...callable, ...automatic];
 }
 
 /**

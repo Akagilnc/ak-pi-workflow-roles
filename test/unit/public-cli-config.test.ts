@@ -6,12 +6,14 @@ import test from "node:test";
 
 import {
   buildSeatModelCliArgs,
+  clearPersistentSeatConfig,
   effectiveSeatConfigurations,
   formatModelSpec,
   loadPublicCliConfig,
   parseModelSpec,
   publicCliConfigPath,
   resolveEffectiveSeat,
+  resolveMenxiaOfficerModelSelection,
   savePublicCliConfig,
   setPersistentSeatConfig,
   type CredentialProviders,
@@ -138,9 +140,123 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
     "doctor",
     "merger",
     "notary",
+    "gatekeeper",
+    "inspector",
     "navigator",
   ]);
   assert.equal(seats.includes("auditor" as never), false);
+
+  // #453: automatic menxia seats are configurable but never receive startup candidates.
+  assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.source, "unconfigured");
+  assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.selection, undefined);
+  assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.automatic, true);
+  assert.equal(codexOnly.find((s) => s.seat === "inspector")?.source, "unconfigured");
+  assert.equal(codexOnly.find((s) => s.seat === "inspector")?.selection, undefined);
+  assert.equal(codexOnly.find((s) => s.seat === "inspector")?.automatic, true);
+});
+
+// #453: province model selection is persistent-only with gatekeeper inheritance.
+test("menxia officer selection: own persistent > gatekeeper > unset inherit", () => {
+  const empty: PublicCliConfig = { seats: {} };
+  assert.equal(resolveMenxiaOfficerModelSelection(empty, "gatekeeper"), undefined);
+  assert.equal(resolveMenxiaOfficerModelSelection(empty, "inspector"), undefined);
+  assert.equal(resolveMenxiaOfficerModelSelection(empty, "notary"), undefined);
+
+  const gateOnly = setPersistentSeatConfig(empty, "gatekeeper", {
+    provider: "xai",
+    model: "grok-4.5",
+    thinking: "high",
+  });
+  assert.deepEqual(resolveMenxiaOfficerModelSelection(gateOnly, "gatekeeper"), {
+    provider: "xai",
+    model: "grok-4.5",
+    thinking: "high",
+  });
+  assert.deepEqual(resolveMenxiaOfficerModelSelection(gateOnly, "inspector"), {
+    provider: "xai",
+    model: "grok-4.5",
+    thinking: "high",
+  });
+  assert.deepEqual(resolveMenxiaOfficerModelSelection(gateOnly, "notary"), {
+    provider: "xai",
+    model: "grok-4.5",
+    thinking: "high",
+  });
+
+  let both = setPersistentSeatConfig(gateOnly, "inspector", {
+    provider: "openai-codex",
+    model: "gpt-5.6-sol",
+    thinking: "medium",
+  });
+  both = setPersistentSeatConfig(both, "notary", {
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    thinking: "high",
+  });
+  assert.deepEqual(resolveMenxiaOfficerModelSelection(both, "gatekeeper"), {
+    provider: "xai",
+    model: "grok-4.5",
+    thinking: "high",
+  });
+  assert.deepEqual(resolveMenxiaOfficerModelSelection(both, "inspector"), {
+    provider: "openai-codex",
+    model: "gpt-5.6-sol",
+    thinking: "medium",
+  });
+  assert.deepEqual(resolveMenxiaOfficerModelSelection(both, "notary"), {
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    thinking: "high",
+  });
+
+  // Direct notary startup must not leak into province selection (persistent-only).
+  const startupNotary = resolveEffectiveSeat(empty, "notary", {
+    "openai-codex": true,
+    xai: false,
+  });
+  assert.equal(startupNotary.source, "startup");
+  assert.equal(resolveMenxiaOfficerModelSelection(empty, "notary"), undefined);
+});
+
+test("clearing a persistent seat restores unconfigured inheritance", async () => {
+  await withTempHome(async (home) => {
+    let config = setPersistentSeatConfig(
+      { seats: {} },
+      "gatekeeper",
+      { provider: "xai", model: "grok-4.5", thinking: "high" },
+    );
+    config = setPersistentSeatConfig(config, "inspector", {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "medium",
+    });
+    await savePublicCliConfig(config, home);
+
+    config = clearPersistentSeatConfig(await loadPublicCliConfig(home), "inspector");
+    await savePublicCliConfig(config, home);
+    const reloaded = await loadPublicCliConfig(home);
+    assert.equal(reloaded.seats.inspector, undefined);
+    assert.deepEqual(reloaded.seats.gatekeeper, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
+    assert.deepEqual(resolveMenxiaOfficerModelSelection(reloaded, "inspector"), {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
+
+    config = clearPersistentSeatConfig(reloaded, "gatekeeper");
+    await savePublicCliConfig(config, home);
+    const cleared = await loadPublicCliConfig(home);
+    assert.equal(cleared.seats.gatekeeper, undefined);
+    assert.equal(resolveMenxiaOfficerModelSelection(cleared, "gatekeeper"), undefined);
+    assert.equal(resolveMenxiaOfficerModelSelection(cleared, "inspector"), undefined);
+
+    // Idempotent clear of an already-absent seat.
+    assert.deepEqual(clearPersistentSeatConfig(cleared, "gatekeeper"), cleared);
+  });
 });
 
 test("persistent seat config wins over startup candidates", () => {
