@@ -23,6 +23,7 @@ import {
 } from "../../src/package-contracts/worker-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import {
   extractCoderRoleOutcome,
   extractCollectorRoleOutcome,
@@ -30,6 +31,7 @@ import {
   extractFixerRoleOutcome,
   extractJudgeRoleOutcome,
   extractMergerRoleOutcome,
+  extractNotaryRoleOutcome,
   extractReviewerRoleOutcome,
 } from "../../src/public-cli/settlement.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -191,6 +193,7 @@ const ACCEPTED_DETAILS_BY_TOOL: ReadonlyMap<string, unknown> = new Map<string, u
       mergeCommitId: "a".repeat(40),
     },
   ],
+  [NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] }],
 ]);
 
 function extractForTool(
@@ -212,6 +215,8 @@ function extractForTool(
       return extractDoctorRoleOutcome(entries as never);
     case MERGER_OUTPUT_TOOL_NAME:
       return extractMergerRoleOutcome(entries as never);
+    case NOTARY_OUTPUT_TOOL_NAME:
+      return extractNotaryRoleOutcome(entries as never);
     default:
       throw new Error(`unexpected tool ${toolName}`);
   }
@@ -365,10 +370,10 @@ test("registry public extractors and settlement share one closed terminal classi
     }
   }
 
-  assert.equal(rolesSeen.size, 7, "all seven packaged roles covered");
+  assert.equal(rolesSeen.size, 8, "all packaged roles covered");
   assert.deepEqual(
     [...rolesSeen].sort(),
-    ["coder", "collector", "doctor", "fixer", "judge", "merger", "reviewer"],
+    ["coder", "collector", "doctor", "fixer", "judge", "merger", "notary", "reviewer"],
   );
 
   // Singleton marker cardinality: two durable terminals after one marker fail closed.

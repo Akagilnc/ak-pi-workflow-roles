@@ -45,6 +45,7 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
+import { createNotaryRoleRuntime } from "./notary-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -377,6 +378,7 @@ type ActivationRuntime = {
   bindReviewerParent(activation: ReviewerActivation): void;
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
+  notary: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -413,6 +415,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
+    case "notary": return { id: "load-and-install", run: async () => runtime.notary.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -494,6 +497,8 @@ export type RoleRuntimeDependencies = {
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
+  loadNotarySoul?(): Promise<string>;
+  loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -982,6 +987,16 @@ export function createRoleRuntimeExtension(
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
       async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
+    const notary = createNotaryRoleRuntime(pi, {
+      async loadSoul() {
+        if (!dependencies.loadNotarySoul) throw new Error("Notary runtime dependencies are not configured");
+        return dependencies.loadNotarySoul();
+      },
+      async loadSourceRunLocator(path) {
+        if (!dependencies.loadNotarySourceRun) throw new Error("Notary runtime dependencies are not configured");
+        return dependencies.loadNotarySourceRun(path);
+      },
+    }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(pi, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1133,6 +1148,7 @@ export function createRoleRuntimeExtension(
         },
         collector,
         doctor,
+        notary,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);

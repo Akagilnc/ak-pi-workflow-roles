@@ -10,12 +10,13 @@ import {
 } from "../../src/public-cli/registry.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 
-test("public registry exposes seven callable roles plus automatic Navigator only", () => {
+test("public registry exposes callable roles plus automatic Navigator only", () => {
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
   );
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, 7);
+  assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
     [...PUBLIC_CALLABLE_ROLES, "navigator"],
@@ -79,7 +80,7 @@ test("startup model candidates follow #11 package defaults per seat", () => {
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ]);
-  for (const seat of ["coder", "fixer", "collector", "doctor", "merger"] as const) {
+  for (const seat of ["coder", "fixer", "collector", "doctor", "merger", "notary"] as const) {
     assert.deepEqual(publicStartupCandidates(seat), [
       { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
       { provider: "xai", model: "grok-4.5", thinking: "high" },

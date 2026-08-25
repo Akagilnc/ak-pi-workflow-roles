@@ -75,6 +75,12 @@ import {
   type MergerOutput,
 } from "../merger-contracts.ts";
 import {
+  NOTARY_OUTPUT_TOOL_NAME,
+  notaryDecisiveFacts,
+  validateRecordedNotaryOutput,
+  type NotaryOutput,
+} from "../notary-contracts.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -98,6 +104,7 @@ import {
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
+  type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -3204,6 +3211,100 @@ export async function trySettleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulDoctorTerminalResult(admitted);
+}
+
+/** Lawful Notary accepted outcome (pass/bounce/incomplete-with-reason). */
+export type LawfulNotaryRoleOutcome = {
+  kind: "accepted";
+  role: "notary";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+export function extractNotaryRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulNotaryRoleOutcome; output: NotaryOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== NOTARY_OUTPUT_TOOL_NAME) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
+    try {
+      const output = validateRecordedNotaryOutput(message.details);
+      const outcome: LawfulNotaryRoleOutcome = {
+        kind: "accepted",
+        role: "notary",
+        status: String(output.status),
+        decisiveFacts: notaryDecisiveFacts(output),
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function settleLawfulNotaryTerminalResult(
+  admitted: AdmittedNotaryInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractNotaryRoleOutcome(entries);
+  if (extracted === undefined) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(
+        entries,
+        index,
+        message,
+        NOTARY_OUTPUT_TOOL_NAME,
+      );
+      if (residual === undefined) continue;
+      return {
+        roleOutcome: buildResidualIncompleteTerminalOutcome({
+          role: "notary",
+          candidate: residual.candidate,
+          diagnostic: residual.diagnostic,
+        }),
+        navigator: extractNavigatorFact(entries),
+        artifacts: [],
+        runId: admitted.runId,
+      };
+    }
+    return undefined;
+  }
+  const navigator = extractNavigatorFact(entries);
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts: [],
+    runId: admitted.runId,
+  };
+}
+
+/** Settle a lawful Notary Terminal from the admitted session. */
+export async function settleNotaryTerminalResult(
+  admitted: AdmittedNotaryInvocation,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulNotaryTerminalResult(admitted);
+  if (settled === undefined) {
+    throw new Error(
+      "Notary Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Notary Terminal; undefined only for genuine absence. */
+export async function trySettleNotaryTerminalResult(
+  admitted: AdmittedNotaryInvocation,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulNotaryTerminalResult(admitted);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

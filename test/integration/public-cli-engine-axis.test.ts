@@ -19,7 +19,9 @@ import {
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
   isEngineAxisSeat,
   loadPublicCliConfig,
@@ -1137,6 +1139,8 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
       return [role, "--pr", "1", "--repo", "acme/widgets", "--project", project];
     case "doctor":
       return [role, "--issue", "1", "--project", project, "engine axis probe"];
+    case "notary":
+      return [role, "--source-run", "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge", "--project", project];
     default: {
       const _exhaustive: never = role;
       throw new Error(`unexpected role: ${String(_exhaustive)}`);
@@ -1146,11 +1150,38 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 7);
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
     await withTempHome(async (home) => {
       const baseProject = join(home, "project");
       await mkdir(baseProject, { recursive: true });
       seedGitProject(baseProject);
+      {
+        const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
+        const coords = roleRunSessionCoordinates({
+          cwd: baseProject,
+          runId: sourceRunId,
+          role: "judge",
+          home,
+        });
+        await mkdir(coords.sessionDirectory, { recursive: true });
+        const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
+        await writeFile(coords.sessionFile, "{}\n", "utf8");
+        await writeFile(
+          admittedRequestPath,
+          `${JSON.stringify({ role: "judge", runId: sourceRunId })}\n`,
+          "utf8",
+        );
+        await writeRoleRunState(coords.runDirectory, {
+          runId: sourceRunId,
+          role: "judge",
+          state: "terminal",
+          bookKey: coords.bookKey,
+          projectRoot: baseProject,
+          sessionDirectory: coords.sessionDirectory,
+          sessionFile: coords.sessionFile,
+          admittedRequestPath,
+        });
+      }
 
       const mergerProject = join(home, "merger-project");
       await mkdir(mergerProject, { recursive: true });
