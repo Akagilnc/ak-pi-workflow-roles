@@ -15,7 +15,7 @@ import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
-import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
+import { formatInProcessNavigatorRoleHelp, loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
 import {
   context,
   candidate,
@@ -621,6 +621,125 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("#438 Collector owner/repo identity is not Navigator file-path input", async () => {
+  // Public Collector: --project <cwd> + --repo owner/repo. The repo flag is GitHub
+  // identity, not a local material path — Navigator must not resolve/readFile it.
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const repoIdentity = "Acme/Widgets";
+
+    // Metadata must not project the identity flag as "input material" path help.
+    const help = formatInProcessNavigatorRoleHelp("collector");
+    assert.match(help, /Usage: ak-role collector/);
+    assert.equal(help.includes("--ak-collector-repo"), false);
+    assert.equal(help.includes("input material"), false);
+
+    const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+    const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+    const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
+    const { createFakeGitHubTransport, samplePull, sampleUser } = await import("../helpers/fake-github-transport.ts");
+
+    await withActivationHome({ prefix: "ak-nav-collector-repo-" }, async ({ home }) => {
+      // --project is the git work root; --repo remains owner/repo identity.
+      const project = home;
+      const collectorPi = {
+        getFlag: (name: string) => (name === "ak-collector-repo" ? repoIdentity : undefined),
+      };
+      const sessionDir = resolve(project, "runs/collector/session");
+      const collectorCtx = {
+        cwd: project,
+        sessionManager: { getSessionDir: () => sessionDir },
+      } as never;
+
+      const loaded = await loadNavigatorWorkContext(collectorPi, {
+        context: collectorCtx,
+        role: "collector",
+      });
+      assert.equal(loaded.subjectProvenance, "placeholder");
+      assert.equal("contextError" in loaded, false);
+      // Frozen shape was ENOENT open('<project>/Acme/Widgets') via source=context.
+      assert.equal(loaded.subject.includes("Acme"), false);
+      assert.equal(loaded.subjectKey.includes("Acme"), false);
+
+      // session_start wires Navigator before role activate; capture that handoff.
+      let observed: { contextError?: unknown; role?: string } | undefined;
+      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+      const tools = new Map<string, unknown>();
+      let activeTools: string[] = [];
+      const pi = {
+        registerFlag() {},
+        getFlag(name: string) {
+          if (name === "ak-role") return "collector";
+          if (name === "ak-collector-repo") return repoIdentity;
+          if (name === "ak-collector-pr") return "3";
+          return undefined;
+        },
+        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+          handlers.set(name, handler);
+        },
+        registerTool(tool: { name: string }) {
+          tools.set(tool.name, tool);
+        },
+        getAllTools() {
+          return [...tools.values()];
+        },
+        setActiveTools(names: string[]) {
+          activeTools = names;
+        },
+        getActiveTools() {
+          return activeTools;
+        },
+        appendEntry() {},
+      };
+
+      createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "judge",
+        loadCollectorSoul: async () => "# Collector\nObserve.",
+        createCollectorTransport: () =>
+          createFakeGitHubTransport({
+            user: sampleUser(),
+            pullRequest: samplePull({ headOid: "head-1" }),
+            reviews: [],
+            issueComments: [],
+            reviewComments: [],
+          }),
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, options),
+        createNavigatorAttendance: (options) => {
+          observed = { contextError: options.contextError, role: options.role };
+          return {
+            prepare() {},
+            setWorkContext() {},
+            warmHelp() {},
+            isPreparing: () => false,
+            settle: async () => {},
+            dispose() {},
+          };
+        },
+      })(pi as never);
+
+      const runSessionDir = join(home, "runs", "collector", "session");
+      await mkdir(runSessionDir, { recursive: true });
+      const sessionManager = SessionManager.create(home, runSessionDir);
+      await handlers.get("session_start")?.({}, {
+        cwd: project,
+        mode: "print",
+        sessionManager,
+        abort() {},
+      });
+
+      assert.ok(observed, "Navigator attendance must be constructed for Collector");
+      assert.equal(observed.role, "collector");
+      assert.equal(observed.contextError, undefined, "owner/repo must not poison Navigator context");
+    });
+  } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
   }
 });
 

@@ -12,7 +12,8 @@ export const PACKAGED_ROLE_REGISTRY = [
   { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
   { role: "coder", phases: ["plan", "apply"], outputTool: CODER_OUTPUT_TOOL_NAME, inputFlag: "ak-coder-task", phaseFlag: "ak-coder-phase", activationStage: "load-and-install" },
   { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: undefined, phaseFlag: undefined, activationStage: "load-and-install" },
-  { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: "ak-collector-repo", phaseFlag: undefined, activationStage: "load-and-install" },
+  // ak-collector-repo is GitHub owner/repo identity, not a local material path (#438).
+  { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: undefined, phaseFlag: undefined, activationStage: "load-and-install" },
   { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: undefined, activationStage: "load-and-install" },
   { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: undefined, activationStage: "prepare-git-and-install" },
   { role: "notary", phases: [null], outputTool: NOTARY_OUTPUT_TOOL_NAME, inputFlag: "ak-notary-source-run", phaseFlag: undefined, activationStage: "load-and-install" },
