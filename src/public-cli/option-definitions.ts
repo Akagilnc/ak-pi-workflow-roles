@@ -1125,7 +1125,7 @@ const SUPPORT_COMMAND_HELP = {
     summary: "Persistent seat model, labor-engine, and auto-resume defaults.",
     usage: [
       "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
-      "ak-role config unset <seat>",
+      "ak-role config unset <gatekeeper|inspector|notary>",
       "ak-role config set-engine <seat> <name>",
       "ak-role config unset-engine <seat>",
       "ak-role config set-auto-resume-limit <N>",

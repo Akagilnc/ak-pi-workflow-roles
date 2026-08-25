@@ -11,6 +11,7 @@ import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_E
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.js";
 import { engineNameFromEnv } from "./engine-detour.js";
 import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
+import { formatModelSpec, loadPublicCliConfig, resolveMenxiaOfficerModelSelection, } from "./public-cli/config.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
@@ -71,7 +72,8 @@ export async function withInProcessScratch(options, run) {
  */
 export async function createInheritedRuntime(options) {
     const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
-    const activeModel = options.context.model;
+    // Explicit override wins; never silent-fallback to parent when override is set (#453).
+    const activeModel = options.model ?? options.context.model;
     if (activeModel === undefined)
         throw new Error(`${options.label} requires an active model`);
     const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.label);
@@ -243,9 +245,11 @@ export async function createInheritedRuntime(options) {
         })();
         return wrapped;
     };
+    // Provider id must match activeModel.provider so ModelRuntime auth lookup
+    // finds this registration when a menxia override changes provider (#453).
     const provider = options.idleRetry === true || options.runCompletion !== undefined
         ? {
-            id: parentProvider?.id ?? activeModel.provider,
+            id: activeModel.provider,
             name: parentProvider?.name ?? options.label,
             auth: {
                 apiKey: {
@@ -573,6 +577,28 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
     });
 }
 /**
+ * Resolve province child model from public-cli persistent config (#453).
+ * Own override > gatekeeper override > unset (inherit parent). Availability
+ * failures throw — createInheritedRuntime must not silent-fallback to parent.
+ */
+async function resolveMenxiaSeatModelOptions(context, seat, roleLabel) {
+    const selection = resolveMenxiaOfficerModelSelection(await loadPublicCliConfig(), seat);
+    if (selection === undefined)
+        return {};
+    const find = context.modelRegistry.find?.bind(context.modelRegistry);
+    if (typeof find !== "function") {
+        throw new Error(`${roleLabel} model registry cannot resolve models`);
+    }
+    const model = find(selection.provider, selection.model);
+    if (model === undefined) {
+        throw new Error(`${roleLabel} model is unavailable: ${formatModelSpec(selection)}`);
+    }
+    return {
+        model,
+        ...(selection.thinking === undefined ? {} : { thinkingLevel: selection.thinking }),
+    };
+}
+/**
  * Auditor lifecycle via the shared in-process helper.
  * Adapter keeps role label / soul / decision tool / result projection only.
  * No tools allowlist (ADR 0064). Provider-stream idle-only retry (ADR 0059).
@@ -581,10 +607,14 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
 export async function executeAuditorChild(options) {
     const { createRecordSession } = await import("./archivist-record-entry.js");
     return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
+        const menxia = options.menxiaSeat === undefined
+            ? {}
+            : await resolveMenxiaSeatModelOptions(options.context, options.menxiaSeat, options.roleLabel);
         const inherited = await createInheritedRuntime({
             context: options.context,
             label: options.roleLabel,
             idleRetry: true,
+            ...(menxia.model === undefined ? {} : { model: menxia.model }),
             ...(options.runCompletion === undefined
                 ? {}
                 : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
@@ -640,7 +670,7 @@ export async function executeAuditorChild(options) {
             cwd,
             agentDir: scratch,
             model: inherited.model,
-            thinkingLevel: options.context.thinkingLevel ?? "off",
+            thinkingLevel: menxia.thinkingLevel ?? options.context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
             systemPrompt: options.systemPrompt,
             customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],

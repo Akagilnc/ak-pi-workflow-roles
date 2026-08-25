@@ -16,6 +16,7 @@ import {
   resolveMenxiaOfficerModelSelection,
   savePublicCliConfig,
   setPersistentSeatConfig,
+  setPersistentSeatEngine,
   type CredentialProviders,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
@@ -256,6 +257,34 @@ test("clearing a persistent seat restores unconfigured inheritance", async () =>
 
     // Idempotent clear of an already-absent seat.
     assert.deepEqual(clearPersistentSeatConfig(cleared, "gatekeeper"), cleared);
+  });
+});
+
+test("#453 clear notary model keeps engine; direct startup + province inherit", async () => {
+  await withTempHome(async (home) => {
+    let config = setPersistentSeatConfig(
+      { seats: {} },
+      "notary",
+      { provider: "xai", model: "grok-4.5", thinking: "high" },
+    );
+    config = setPersistentSeatEngine(config, "notary", "opus");
+    await savePublicCliConfig(config, home);
+
+    config = clearPersistentSeatConfig(await loadPublicCliConfig(home), "notary");
+    await savePublicCliConfig(config, home);
+    const reloaded = await loadPublicCliConfig(home);
+
+    // Model axis cleared; engine residual remains.
+    assert.deepEqual(reloaded.seats.notary, { engine: "opus" });
+    assert.equal(resolveMenxiaOfficerModelSelection(reloaded, "notary"), undefined);
+
+    const direct = resolveEffectiveSeat(reloaded, "notary", {
+      "openai-codex": true,
+      xai: true,
+    });
+    assert.equal(direct.source, "startup");
+    assert.equal(direct.engine, "opus");
+    assert.equal(direct.engineSource, "persistent");
   });
 });
 

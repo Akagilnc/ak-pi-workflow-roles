@@ -17,7 +17,13 @@ import {
   runAkRole,
 } from "../../src/public-cli/cli.ts";
 import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
-import { loadPublicCliConfig, publicCliConfigPath, resolveEffectiveSeat, type CredentialProviders } from "../../src/public-cli/config.ts";
+import {
+  loadPublicCliConfig,
+  publicCliConfigPath,
+  resolveEffectiveSeat,
+  resolveMenxiaOfficerModelSelection,
+  type CredentialProviders,
+} from "../../src/public-cli/config.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -258,6 +264,70 @@ test("config persistence round-trips across processes on the typed seat face", a
     });
     assert.equal(unsetGate.exitCode, 0);
     assert.equal((await loadPublicCliConfig(home)).seats.gatekeeper, undefined);
+  });
+});
+
+test("#453 config unset clears menxia model only; keeps notary engine; refuses non-menxia", async () => {
+  await withTempHome(async (home) => {
+    const setModel = await runAkRole(
+      ["config", "set", "notary", "xai/grok-4.5:high"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(setModel.exitCode, 0);
+    const setEngine = await runAkRole(
+      ["config", "set-engine", "notary", "opus"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(setEngine.exitCode, 0);
+    assert.deepEqual((await loadPublicCliConfig(home)).seats.notary, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+      engine: "opus",
+    });
+
+    const unset = await runAkRole(["config", "unset", "notary"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.equal(unset.exitCode, 0);
+    const after = await loadPublicCliConfig(home);
+    // Province override gone; engine residual remains for direct notary.
+    assert.deepEqual(after.seats.notary, { engine: "opus" });
+    assert.equal(resolveMenxiaOfficerModelSelection(after, "notary"), undefined);
+    const direct = resolveEffectiveSeat(after, "notary", {
+      "openai-codex": true,
+      xai: true,
+    });
+    assert.equal(direct.source, "startup");
+    assert.equal(direct.engine, "opus");
+    assert.equal(direct.engineSource, "persistent");
+
+    // Non-menxia seats do not receive the new destructive unset.
+    const refused = await runAkRole(["config", "unset", "judge"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.notEqual(refused.exitCode, 0);
+    // Pre-existing non-menxia row is untouched by the refused command.
+    const withJudge = await runAkRole(
+      ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(withJudge.exitCode, 0);
+    const refuseCoder = await runAkRole(["config", "unset", "coder"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.notEqual(refuseCoder.exitCode, 0);
+    assert.deepEqual((await loadPublicCliConfig(home)).seats.judge, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
   });
 });
 

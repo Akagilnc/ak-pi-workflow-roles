@@ -14587,6 +14587,9 @@ var init_registry2 = __esm({
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname as dirname2, join as join3 } from "node:path";
+function isMenxiaOfficerSeat(value) {
+  return MENXIA_OFFICER_SEATS.includes(value);
+}
 function publicCliConfigPath(home = homedir()) {
   return join3(home, ".ak-roles", "public-cli.json");
 }
@@ -14626,9 +14629,19 @@ function setPersistentSeatConfig(config, seat, selection) {
   };
 }
 function clearPersistentSeatConfig(config, seat) {
-  if (config.seats[seat] === void 0) return config;
-  const { [seat]: _dropped, ...seats } = config.seats;
-  return { ...config, seats };
+  const previous = config.seats[seat];
+  if (previous === void 0) return config;
+  if (previous.engine === void 0) {
+    const { [seat]: _dropped, ...seats } = config.seats;
+    return { ...config, seats };
+  }
+  return {
+    ...config,
+    seats: {
+      ...config.seats,
+      [seat]: { engine: previous.engine }
+    }
+  };
 }
 function isEngineAxisSeat(seat) {
   return isPublicCallableRole(seat);
@@ -14642,6 +14655,10 @@ function setPersistentSeatEngine(config, seat, engine) {
   }
   if (engine === void 0) {
     const { engine: _dropped, ...modelOnly } = previous;
+    if (seatModelOnly(modelOnly) === void 0) {
+      const { [seat]: _row, ...seats } = config.seats;
+      return { ...config, seats };
+    }
     return {
       ...config,
       seats: {
@@ -14670,6 +14687,7 @@ function setAutoResumeLimit(config, limit) {
   return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
 }
 function seatModelOnly(seat) {
+  if (seat?.provider === void 0 || seat.model === void 0) return void 0;
   return seat.thinking === void 0 ? { provider: seat.provider, model: seat.model } : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
 }
 function validatePublicCliConfigEngines(config, _packageRoot) {
@@ -14770,28 +14788,41 @@ function parseSeatModelConfig(value, seat) {
     throw new Error(`config seat ${seat} must be an object`);
   }
   const raw = value;
-  if (typeof raw.provider !== "string" || raw.provider.trim() === "") {
-    throw new Error(`config seat ${seat} requires provider`);
+  const hasProvider = raw.provider !== void 0;
+  const hasModel = raw.model !== void 0;
+  if (hasProvider !== hasModel) {
+    throw new Error(`config seat ${seat} requires both provider and model`);
   }
-  if (typeof raw.model !== "string" || raw.model.trim() === "") {
-    throw new Error(`config seat ${seat} requires model`);
+  if (raw.engine !== void 0 && typeof raw.engine !== "string") {
+    throw new Error(`config seat ${seat} engine must be a string`);
+  }
+  if (!hasProvider && raw.engine === void 0) {
+    throw new Error(`config seat ${seat} requires provider/model or engine`);
+  }
+  if (hasProvider) {
+    if (typeof raw.provider !== "string" || raw.provider.trim() === "") {
+      throw new Error(`config seat ${seat} requires provider`);
+    }
+    if (typeof raw.model !== "string" || raw.model.trim() === "") {
+      throw new Error(`config seat ${seat} requires model`);
+    }
   }
   if (raw.thinking !== void 0) {
+    if (!hasProvider) {
+      throw new Error(`config seat ${seat} thinking requires provider/model`);
+    }
     if (typeof raw.thinking !== "string" || !THINKING_LEVELS.has(raw.thinking)) {
       throw new Error(`config seat ${seat} requires a valid thinking level`);
     }
   }
   const parsed = {
-    provider: raw.provider,
-    model: raw.model,
-    ...raw.thinking === void 0 ? {} : { thinking: raw.thinking }
+    ...hasProvider ? {
+      provider: raw.provider,
+      model: raw.model,
+      ...raw.thinking === void 0 ? {} : { thinking: raw.thinking }
+    } : {},
+    ...raw.engine === void 0 ? {} : { engine: raw.engine }
   };
-  if (raw.engine !== void 0) {
-    if (typeof raw.engine !== "string") {
-      throw new Error(`config seat ${seat} engine must be a string`);
-    }
-    parsed.engine = raw.engine;
-  }
   return parsed;
 }
 function providerConfigured(credentials, provider) {
@@ -14840,13 +14871,13 @@ function attachEngineAxis(seat, config, invocation) {
 }
 function resolveBaseSeat(config, seat, credentials) {
   const automatic = isAutomaticConfigurableSeat(seat);
-  const persistent = config.seats[seat];
-  if (persistent !== void 0) {
+  const persistentModel = seatModelOnly(config.seats[seat]);
+  if (persistentModel !== void 0) {
     return {
       seat,
       automatic,
       source: "persistent",
-      selection: seatModelOnly(persistent),
+      selection: persistentModel,
       engineSource: "unconfigured"
     };
   }
@@ -14924,12 +14955,17 @@ async function loadCredentialProviders(agentDir) {
     throw error;
   }
 }
-var THINKING_LEVELS;
+var MENXIA_OFFICER_SEATS, THINKING_LEVELS;
 var init_config2 = __esm({
   "src/public-cli/config.ts"() {
     "use strict";
     init_engine_material();
     init_registry2();
+    MENXIA_OFFICER_SEATS = [
+      "gatekeeper",
+      "inspector",
+      "notary"
+    ];
     THINKING_LEVELS = /* @__PURE__ */ new Set([
       "off",
       "minimal",
@@ -17429,7 +17465,7 @@ var init_option_definitions = __esm({
         summary: "Persistent seat model, labor-engine, and auto-resume defaults.",
         usage: [
           "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
-          "ak-role config unset <seat>",
+          "ak-role config unset <gatekeeper|inspector|notary>",
           "ak-role config set-engine <seat> <name>",
           "ak-role config unset-engine <seat>",
           "ak-role config set-auto-resume-limit <N>"
@@ -28860,7 +28896,7 @@ function renderHelp() {
   lines.push(
     "",
     "Role options: ak-role help <command>",
-    "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <seat>",
+    "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles"
   );
@@ -28901,6 +28937,10 @@ function renderRoles(seats) {
   return `${lines.join("\n")}
 `;
 }
+function renderPersistentSeatModel(selection) {
+  const model = seatModelOnly(selection);
+  return model === void 0 ? "-" : formatModelSpec(model);
+}
 function renderConfig(config) {
   const lines = ["seat	model	engine"];
   const keys = Object.keys(config.seats);
@@ -28911,7 +28951,7 @@ function renderConfig(config) {
       const selection = config.seats[seat];
       if (selection === void 0) continue;
       const engine = selection.engine === void 0 ? "-" : selection.engine;
-      lines.push(`${seat}	${formatModelSpec(selection)}	${engine}`);
+      lines.push(`${seat}	${renderPersistentSeatModel(selection)}	${engine}`);
     }
   }
   lines.push(`autoResumeLimit	${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
@@ -28931,8 +28971,10 @@ async function runConfigCommand(args, home, packageRoot2, io) {
 `);
       } else {
         const engine = selection.engine === void 0 ? "-" : selection.engine;
-        io.stdout(`${args[1]}	${formatModelSpec(selection)}	${engine}
-`);
+        io.stdout(
+          `${args[1]}	${renderPersistentSeatModel(selection)}	${engine}
+`
+        );
       }
       return 0;
     }
@@ -28966,11 +29008,15 @@ async function runConfigCommand(args, home, packageRoot2, io) {
   }
   if (args[0] === "unset") {
     if (args.length !== 2) {
-      throw new CliUsageError("usage: ak-role config unset <seat>");
+      throw new CliUsageError(
+        "usage: ak-role config unset <gatekeeper|inspector|notary>"
+      );
     }
     const seat = args[1];
-    if (!isPublicConfigurableSeat(seat)) {
-      throw new CliUsageError(`unknown configurable seat: ${seat}`);
+    if (!isMenxiaOfficerSeat(seat)) {
+      throw new CliUsageError(
+        `config unset serves menxia officer overrides only (gatekeeper|inspector|notary); got ${seat}`
+      );
     }
     const config = clearPersistentSeatConfig(
       await loadAndValidateConfig(home, packageRoot2),
