@@ -19,14 +19,34 @@ export type PublicCallableRole = (typeof PUBLIC_CALLABLE_ROLES)[number];
 /** Automatic attendance seat — configurable, never a caller-selected command. */
 export const AUTOMATIC_NAVIGATOR_SEAT = "navigator" as const;
 
+/** Automatic menxia seats — configurable model only; never caller commands (#453). */
+export const AUTOMATIC_GATEKEEPER_SEAT = "gatekeeper" as const;
+export const AUTOMATIC_INSPECTOR_SEAT = "inspector" as const;
+
+/** All automatic configurable seats (no independent public activation command). */
+export const AUTOMATIC_CONFIGURABLE_SEATS = [
+  AUTOMATIC_GATEKEEPER_SEAT,
+  AUTOMATIC_INSPECTOR_SEAT,
+  AUTOMATIC_NAVIGATOR_SEAT,
+] as const;
+
+export type AutomaticConfigurableSeat =
+  (typeof AUTOMATIC_CONFIGURABLE_SEATS)[number];
+
 export type PublicConfigurableSeat =
   | PublicCallableRole
-  | typeof AUTOMATIC_NAVIGATOR_SEAT;
+  | AutomaticConfigurableSeat;
 
 export const PUBLIC_CONFIGURABLE_SEATS = [
   ...PUBLIC_CALLABLE_ROLES,
-  AUTOMATIC_NAVIGATOR_SEAT,
+  ...AUTOMATIC_CONFIGURABLE_SEATS,
 ] as const satisfies readonly PublicConfigurableSeat[];
+
+export function isAutomaticConfigurableSeat(
+  value: string,
+): value is AutomaticConfigurableSeat {
+  return (AUTOMATIC_CONFIGURABLE_SEATS as readonly string[]).includes(value);
+}
 
 export const PUBLIC_CLI_SUPPORT_COMMANDS = [
   "roles",
@@ -90,6 +110,9 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ],
+  // #453: automatic menxia seats have no startup default — unset means inherit parent.
+  gatekeeper: [],
+  inspector: [],
   navigator: [
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },

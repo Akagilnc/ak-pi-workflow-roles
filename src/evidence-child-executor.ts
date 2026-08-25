@@ -36,6 +36,13 @@ import {
   engineSessionMaterialFromOptions,
   type EngineSessionMaterial,
 } from "./package-resources/engine-material.ts";
+import {
+  formatModelSpec,
+  loadPublicCliConfig,
+  resolveMenxiaOfficerModelSelection,
+  type MenxiaOfficerSeat,
+} from "./public-cli/config.ts";
+import type { PublicThinkingLevel } from "./public-cli/registry.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
@@ -129,6 +136,11 @@ export type InheritedRuntimeOptions = {
   readonly signal?: AbortSignal;
   /** When true, wrap provider streams with ADR 0059 idle-only retry. */
   readonly idleRetry?: boolean;
+  /**
+   * Explicit child model. When set, auth/availability failures do not fall back
+   * to the parent session model (#453 menxia overrides).
+   */
+  readonly model?: Model<Api>;
 };
 
 export type InheritedRuntime = {
@@ -145,7 +157,8 @@ export type InheritedRuntime = {
  */
 export async function createInheritedRuntime(options: InheritedRuntimeOptions): Promise<InheritedRuntime> {
   const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
-  const activeModel = options.context.model;
+  // Explicit override wins; never silent-fallback to parent when override is set (#453).
+  const activeModel = options.model ?? options.context.model;
   if (activeModel === undefined) throw new Error(`${options.label} requires an active model`);
   const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.label);
   const parentProvider = options.runCompletion === undefined
@@ -333,9 +346,11 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
     return wrapped as ReturnType<Provider["stream"]>;
   };
 
+  // Provider id must match activeModel.provider so ModelRuntime auth lookup
+  // finds this registration when a menxia override changes provider (#453).
   const provider: Provider = options.idleRetry === true || options.runCompletion !== undefined
     ? {
-      id: parentProvider?.id ?? activeModel.provider,
+      id: activeModel.provider,
       name: parentProvider?.name ?? options.label,
       auth: {
         apiKey: {
@@ -716,7 +731,38 @@ export type AuditorRoleOptions = {
   signal?: AbortSignal;
   runCompletion?: AuditorCompletion;
   retainResponse?(response: AssistantMessage): void;
+  /**
+   * Province seat identity only — shared executor owns config load, registry
+   * resolve, and loud auth/availability failure (#453 / ADR 0018).
+   */
+  menxiaSeat?: MenxiaOfficerSeat;
 };
+
+/**
+ * Resolve province child model from public-cli persistent config (#453).
+ * Own override > gatekeeper override > unset (inherit parent). Availability
+ * failures throw — createInheritedRuntime must not silent-fallback to parent.
+ */
+async function resolveMenxiaSeatModelOptions(
+  context: ExtensionContext,
+  seat: MenxiaOfficerSeat,
+  roleLabel: string,
+): Promise<{ model?: Model<Api>; thinkingLevel?: PublicThinkingLevel }> {
+  const selection = resolveMenxiaOfficerModelSelection(await loadPublicCliConfig(), seat);
+  if (selection === undefined) return {};
+  const find = context.modelRegistry.find?.bind(context.modelRegistry);
+  if (typeof find !== "function") {
+    throw new Error(`${roleLabel} model registry cannot resolve models`);
+  }
+  const model = find(selection.provider, selection.model);
+  if (model === undefined) {
+    throw new Error(`${roleLabel} model is unavailable: ${formatModelSpec(selection)}`);
+  }
+  return {
+    model,
+    ...(selection.thinking === undefined ? {} : { thinkingLevel: selection.thinking }),
+  };
+}
 
 /**
  * Auditor lifecycle via the shared in-process helper.
@@ -730,10 +776,19 @@ export async function executeAuditorChild(
   const { createRecordSession } = await import("./archivist-record-entry.ts");
 
   return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
+    const menxia =
+      options.menxiaSeat === undefined
+        ? {}
+        : await resolveMenxiaSeatModelOptions(
+            options.context,
+            options.menxiaSeat,
+            options.roleLabel,
+          );
     const inherited = await createInheritedRuntime({
       context: options.context,
       label: options.roleLabel,
       idleRetry: true,
+      ...(menxia.model === undefined ? {} : { model: menxia.model }),
       ...(options.runCompletion === undefined
         ? {}
         : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
@@ -792,7 +847,7 @@ export async function executeAuditorChild(
       cwd,
       agentDir: scratch,
       model: inherited.model,
-      thinkingLevel: options.context.thinkingLevel ?? "off",
+      thinkingLevel: menxia.thinkingLevel ?? options.context.thinkingLevel ?? "off",
       modelRuntime: inherited.runtime,
       systemPrompt: options.systemPrompt,
       customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],

@@ -215,9 +215,11 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   const loadSoul = options.loadSoul ?? defaultLoadSoul;
   let provinceRun: Awaited<ReturnType<typeof executeAuditorChild>>;
   try {
+    // Seat identity only — shared executor owns model config/registry/auth (#453 / ADR 0018).
     provinceRun = await executeAuditorChild({
       context: options.context,
       roleLabel: "Gatekeeper",
+      menxiaSeat: "gatekeeper",
       systemPrompt: `${await loadSoul("gatekeeper")}\n\n${INVOCATION_OVERLAY}`,
       prompt: "Read the admitted subject with ak_gatekeeper_subject, then dispatch it or submit typed incomplete.",
       tool: createGatekeeperOutputTool(),
@@ -236,9 +238,11 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
 
   const officer = province.officer;
   try {
+    const roleLabel = officer === "inspector" ? "Inspector" : "Notary";
     const officerRun = await executeAuditorChild({
       context: options.context,
-      roleLabel: officer === "inspector" ? "Inspector" : "Notary",
+      roleLabel,
+      menxiaSeat: officer,
       systemPrompt: `${await loadSoul(officer)}\n\n${INVOCATION_OVERLAY}`,
       prompt: "Read the admitted subject with ak_gatekeeper_subject, then submit one typed decision on only your assigned axes.",
       tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),

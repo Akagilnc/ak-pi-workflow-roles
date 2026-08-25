@@ -7,9 +7,10 @@ import { dirname, join } from "node:path";
 
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
 import {
-  AUTOMATIC_NAVIGATOR_SEAT,
+  AUTOMATIC_CONFIGURABLE_SEATS,
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
+  isAutomaticConfigurableSeat,
   isPublicCallableRole,
   isPublicConfigurableSeat,
   type ModelRef,
@@ -19,6 +20,19 @@ import {
   publicStartupCandidates,
 } from "./registry.ts";
 
+/** Province officers that may carry a persistent model override (#453). */
+export const MENXIA_OFFICER_SEATS = [
+  "gatekeeper",
+  "inspector",
+  "notary",
+] as const;
+
+export type MenxiaOfficerSeat = (typeof MENXIA_OFFICER_SEATS)[number];
+
+export function isMenxiaOfficerSeat(value: string): value is MenxiaOfficerSeat {
+  return (MENXIA_OFFICER_SEATS as readonly string[]).includes(value);
+}
+
 export type CredentialProviders = {
   "openai-codex": boolean;
   xai: boolean;
@@ -26,8 +40,16 @@ export type CredentialProviders = {
 
 export type SeatModelConfig = ModelRef;
 
-/** Persistent seat row: provider/model[:thinking] + optional engine axis (#356/#384). */
-export type PersistentSeatConfig = SeatModelConfig & {
+/**
+ * Persistent seat row (#356/#384/#453): model fields and engine are independent
+ * axes. Engine-only residual is legal only for notary after model clear so direct
+ * notary activation keeps its labor engine while province inheritance resumes.
+ * All other seats keep the baseline provider/model required contract.
+ */
+export type PersistentSeatConfig = {
+  provider?: string;
+  model?: string;
+  thinking?: PublicThinkingLevel;
   engine?: string;
 };
 
@@ -49,7 +71,7 @@ export type EngineSource = "invocation" | "persistent" | "unconfigured";
 
 export type EffectiveSeat = {
   seat: PublicConfigurableSeat;
-  /** True when the seat is automatic Navigator attendance rather than caller-selected. */
+  /** True when the seat is automatic (no caller command) rather than caller-selected. */
   automatic: boolean;
   source: EffectiveSource;
   selection?: SeatModelConfig;
@@ -130,6 +152,49 @@ export function setPersistentSeatConfig(
 }
 
 /**
+ * Clear a menxia officer's persistent model override (#453).
+ * Scope is MenxiaOfficerSeat only — non-province seats have no destructive clear seam.
+ * Only notary may retain an engine-only residual so direct notary activation keeps
+ * its labor engine while model resolution returns to startup / province inheritance.
+ * gatekeeper/inspector drop the whole row. Already-absent seats are a no-op.
+ */
+export function clearPersistentSeatConfig(
+  config: PublicCliConfig,
+  seat: MenxiaOfficerSeat,
+): PublicCliConfig {
+  const previous = config.seats[seat];
+  if (previous === undefined) return config;
+  // Engine-only residual ownership is notary-only — never widen to other officers.
+  if (seat === "notary" && previous.engine !== undefined) {
+    return {
+      ...config,
+      seats: {
+        ...config.seats,
+        notary: { engine: previous.engine },
+      },
+    };
+  }
+  const { [seat]: _dropped, ...seats } = config.seats;
+  return { ...config, seats };
+}
+
+/**
+ * Province-only model selection (#453): officer persistent > gatekeeper persistent
+ * > unset (caller inherits parent session). Never consults startup candidates —
+ * direct `ak-role notary` keeps resolveEffectiveSeat; only province reads this.
+ * Engine-only residual is not a model override.
+ */
+export function resolveMenxiaOfficerModelSelection(
+  config: PublicCliConfig,
+  officer: MenxiaOfficerSeat,
+): SeatModelConfig | undefined {
+  const ownModel = seatModelOnly(config.seats[officer]);
+  if (ownModel !== undefined) return ownModel;
+  if (officer === "gatekeeper") return undefined;
+  return seatModelOnly(config.seats.gatekeeper);
+}
+
+/**
  * Seats that own the labor-engine axis (#391: PUBLIC_CALLABLE_ROLES only).
  * Navigator is configurable for model but has no independent activation path.
  */
@@ -138,9 +203,11 @@ export function isEngineAxisSeat(seat: string): seat is PublicCallableRole {
 }
 
 /**
- * Set or clear persistent engine on a callable role seat (#356 / #378 / #391).
- * Engine-only seats are rejected — provider/model[:thinking] remains required first.
- * Seat type is PublicCallableRole (navigator excluded at the type boundary).
+ * Set or clear persistent engine on a callable role seat (#356 / #378 / #391 / #453).
+ * First engine still requires an existing seat row (model, or notary engine residual).
+ * Clearing engine from a notary engine-only residual drops the empty row; clearing
+ * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
+ * (navigator excluded at the type boundary).
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
@@ -155,6 +222,11 @@ export function setPersistentSeatEngine(
   }
   if (engine === undefined) {
     const { engine: _dropped, ...modelOnly } = previous;
+    // Engine-only residual with engine cleared → drop the empty row.
+    if (seatModelOnly(modelOnly) === undefined) {
+      const { [seat]: _row, ...seats } = config.seats;
+      return { ...config, seats };
+    }
     return {
       ...config,
       seats: {
@@ -200,8 +272,14 @@ export function setAutoResumeLimit(
   return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
 }
 
-/** Strip optional engine so activation model argv never sees the engine axis. */
-export function seatModelOnly(seat: PersistentSeatConfig): SeatModelConfig {
+/**
+ * Strip optional engine so activation model argv never sees the engine axis.
+ * Engine-only residual (model cleared) yields undefined — not a model override.
+ */
+export function seatModelOnly(
+  seat: PersistentSeatConfig | undefined,
+): SeatModelConfig | undefined {
+  if (seat?.provider === undefined || seat.model === undefined) return undefined;
   return seat.thinking === undefined
     ? { provider: seat.provider, model: seat.model }
     : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
@@ -339,6 +417,27 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     throw new Error(`config seat ${seat} must be an object`);
   }
   const raw = value as Record<string, unknown>;
+  const hasProvider = raw.provider !== undefined;
+  const hasModel = raw.model !== undefined;
+  if (hasProvider !== hasModel) {
+    throw new Error(`config seat ${seat} requires both provider and model`);
+  }
+  if (raw.engine !== undefined && typeof raw.engine !== "string") {
+    // Shape only: engine must be a string field. Path-safety syntax is deferred to
+    // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
+    throw new Error(`config seat ${seat} engine must be a string`);
+  }
+  // #453: engine-only residual is legal only for notary after model clear.
+  // All other seats keep the baseline provider/model required contract.
+  if (!hasProvider) {
+    if (seat === "notary" && typeof raw.engine === "string") {
+      if (raw.thinking !== undefined) {
+        throw new Error(`config seat ${seat} thinking requires provider/model`);
+      }
+      return { engine: raw.engine };
+    }
+    throw new Error(`config seat ${seat} requires provider`);
+  }
   if (typeof raw.provider !== "string" || raw.provider.trim() === "") {
     throw new Error(`config seat ${seat} requires provider`);
   }
@@ -355,20 +454,13 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     }
   }
   const parsed: PersistentSeatConfig = {
-    provider: raw.provider,
-    model: raw.model,
+    provider: raw.provider as string,
+    model: raw.model as string,
     ...(raw.thinking === undefined
       ? {}
       : { thinking: raw.thinking as PublicThinkingLevel }),
+    ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
   };
-  if (raw.engine !== undefined) {
-    // Shape only: engine must be a string field. Path-safety syntax is deferred to
-    // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
-    if (typeof raw.engine !== "string") {
-      throw new Error(`config seat ${seat} engine must be a string`);
-    }
-    parsed.engine = raw.engine;
-  }
   return parsed;
 }
 
@@ -444,14 +536,15 @@ function resolveBaseSeat(
   seat: PublicConfigurableSeat,
   credentials: CredentialProviders,
 ): EffectiveSeat {
-  const automatic = seat === AUTOMATIC_NAVIGATOR_SEAT;
-  const persistent = config.seats[seat];
-  if (persistent !== undefined) {
+  const automatic = isAutomaticConfigurableSeat(seat);
+  // Engine-only residual is not a persistent model source (#453).
+  const persistentModel = seatModelOnly(config.seats[seat]);
+  if (persistentModel !== undefined) {
     return {
       seat,
       automatic,
       source: "persistent",
-      selection: seatModelOnly(persistent),
+      selection: persistentModel,
       engineSource: "unconfigured",
     };
   }
@@ -474,7 +567,7 @@ export function resolveEffectiveSeat(
   credentials: CredentialProviders,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
-  const automatic = seat === AUTOMATIC_NAVIGATOR_SEAT;
+  const automatic = isAutomaticConfigurableSeat(seat);
   const hasModelInvocation =
     invocation !== undefined &&
     (invocation.model !== undefined || invocation.thinking !== undefined);
@@ -527,7 +620,7 @@ export function effectiveSeatConfigurations(
   );
 }
 
-/** Callable roles first (package order), then automatic Navigator. */
+/** Callable roles first (package order), then automatic configurable seats. */
 export function listRolesForDisplay(
   config: PublicCliConfig,
   credentials: CredentialProviders,
@@ -537,8 +630,10 @@ export function listRolesForDisplay(
   const callable = PUBLIC_CALLABLE_ROLES.map(
     (role) => all.find((entry) => entry.seat === role)!,
   );
-  const navigator = all.find((entry) => entry.seat === AUTOMATIC_NAVIGATOR_SEAT)!;
-  return [...callable, navigator];
+  const automatic = AUTOMATIC_CONFIGURABLE_SEATS.map(
+    (seat) => all.find((entry) => entry.seat === seat)!,
+  );
+  return [...callable, ...automatic];
 }
 
 /**
