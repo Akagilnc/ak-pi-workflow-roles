@@ -94,6 +94,11 @@ function expectedAxesFromEnv(): ReadonlySet<"standards" | "spec"> {
   return new Set(axes as Array<"standards" | "spec">);
 }
 
+/** Stable seat-owned deltas for the real A→revise→B→pass package tracer (#437). */
+export const REVIEWER_AMENDMENT_TRACE_A = Object.freeze({ standards: "axis-delta-A" });
+export const REVIEWER_AMENDMENT_TRACE_B = Object.freeze({ standards: "axis-delta-B" });
+export const REVIEWER_AMENDMENT_TRACE_VIOLATION = "amendment-trace-revise";
+
 /** Offline provider for public ak-role Reviewer fixed two-axis + auditor chain. */
 export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
   const faux = fauxProvider({
@@ -123,7 +128,7 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
     const label = i === 0 ? "child prompt" : `child prompt #${i + 1}`;
     responses.push((context) => childResponse(context, label));
   }
-  responses.push((context: Context) => {
+  const parentOutput = (context: Context, amendments: Readonly<Record<string, string>>, id: string) => {
     for (const axis of expectedAxes) {
       if (!axisSeen.has(axis)) {
         throw new Error(`expected axes [${[...expectedAxes].join(",")}] before output; saw ${[...axisSeen].join(",")}`);
@@ -138,20 +143,34 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
       writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
     }
     return fauxAssistantMessage(
-      fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, { status: "completed" }, { id: "output" }),
+      fauxToolCall(
+        REVIEWER_OUTPUT_TOOL_NAME,
+        { status: "completed", amendments },
+        { id },
+      ),
       { stopReason: "toolUse" },
     );
-  });
-  responses.push(() =>
+  };
+  const auditDecision = (
+    status: "revise" | "pass",
+    id: string,
+    violations: readonly string[] = [],
+  ) =>
     fauxAssistantMessage(
       fauxToolCall(
         REVIEWER_AUDIT_TOOL_NAME,
-        { status: "pass", violations: [], conflicts: [], decisionGate: null },
-        { id: "audit" },
+        { status, violations: [...violations], conflicts: [], decisionGate: null },
+        { id },
       ),
       { stopReason: "toolUse" },
-    ),
+    );
+  // Real package lifecycle: output A → auditor revise → output B → auditor pass (#437).
+  responses.push((context) => parentOutput(context, REVIEWER_AMENDMENT_TRACE_A, "output-a"));
+  responses.push(() =>
+    auditDecision("revise", "audit-revise", [REVIEWER_AMENDMENT_TRACE_VIOLATION]),
   );
+  responses.push((context) => parentOutput(context, REVIEWER_AMENDMENT_TRACE_B, "output-b"));
+  responses.push(() => auditDecision("pass", "audit-pass"));
   faux.setResponses(responses);
   const model = faux.getModel();
   const provider: Provider = {

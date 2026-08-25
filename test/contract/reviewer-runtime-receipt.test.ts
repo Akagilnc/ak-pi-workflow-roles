@@ -175,24 +175,23 @@ function assembleFromSubmission(parameters: unknown) {
   return { intent, assembled, standardsText, specText };
 }
 
-test("parent axis amendment survives candidate and receipt without rewriting child reports", () => {
-  // One shared tracer: submitted output → intent → candidate/receipt assembly.
-  // Two dossier shapes (stale correction / fresh child miss) share this delta channel.
-  const deltaA = Object.freeze({ standards: "axis-delta-A" });
-  const { assembled: candidateA, standardsText, specText } = assembleFromSubmission({
+test("parent axis amendment survives assembly without rewriting child reports", () => {
+  // Unit seam only: intent → assembler → decisive-facts projection.
+  // Real A→auditor revise→B→pass lives on the package lifecycle tracer.
+  const delta = Object.freeze({ standards: "axis-delta-A" });
+  const { assembled, standardsText, specText } = assembleFromSubmission({
     status: "completed",
-    amendments: deltaA,
+    amendments: delta,
     unknownExtra: true,
   });
 
-  // Candidate (pre-audit) and post-pass receipt/details are the same assembled object.
-  assert.deepEqual(candidateA.amendments, deltaA);
-  assert.equal(candidateA.reports.standards?.text, standardsText);
-  assert.equal(candidateA.reports.spec?.text, specText);
+  assert.deepEqual(assembled.amendments, delta);
+  assert.equal(assembled.reports.standards?.text, standardsText);
+  assert.equal(assembled.reports.spec?.text, specText);
   // No second full aggregate report — only the seat-owned delta slot.
-  assert.equal("aggregate" in candidateA, false);
-  assert.equal("report" in candidateA, false);
-  validateRuntimeReviewerReceipt(candidateA);
+  assert.equal("aggregate" in assembled, false);
+  assert.equal("report" in assembled, false);
+  validateRuntimeReviewerReceipt(assembled);
   // Public decisive facts: typed amendment axis presence only — no prose copy.
   const extracted = extractReviewerRoleOutcome([
     {
@@ -201,24 +200,13 @@ test("parent axis amendment survives candidate and receipt without rewriting chi
         role: "toolResult",
         toolName: REVIEWER_OUTPUT_TOOL_NAME,
         content: [{ type: "text", text: "Reviewer report accepted" }],
-        details: candidateA,
+        details: assembled,
         isError: false,
       },
     } as any,
   ]);
   assert.deepEqual(extracted?.outcome.decisiveFacts.amendmentAxes, ["standards"]);
   assert.equal("amendments" in (extracted?.outcome.decisiveFacts ?? {}), false);
-
-  // Audit revise → resubmit amendment B: fresh candidate is B, not retained A; child bytes unchanged.
-  const deltaB = Object.freeze({ standards: "axis-delta-B" });
-  const { assembled: candidateB } = assembleFromSubmission({
-    status: "completed",
-    amendments: deltaB,
-  });
-  assert.deepEqual(candidateB.amendments, deltaB);
-  assert.notDeepEqual(candidateB.amendments, deltaA);
-  assert.equal(candidateB.reports.standards?.text, standardsText);
-  assert.equal(candidateB.reports.spec?.text, specText);
 
   // Missing amendments and unknown extras never reject; only typed presence is retained.
   const bare = assembleFromSubmission({ status: "completed", presentation: true });
