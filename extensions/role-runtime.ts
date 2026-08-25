@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
+import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
@@ -145,7 +146,9 @@ export async function loadNavigatorWorkContext(
   options: { context: ExtensionContext; role: string },
 ): Promise<{ subjectKey: string; subject: string; authority: string; subjectProvenance: NavigatorSubjectProvenance }> {
   const reference = navigatorInputReference(pi as ExtensionAPI, options.role);
-  const input = reference === undefined || options.role === "doctor" ? undefined : await readFile(reference, "utf8");
+  const input = reference === undefined || options.role === "doctor" || options.role === "notary"
+    ? undefined
+    : await readFile(reference, "utf8");
   const subjectRoot = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
   let subjectKey = reference === undefined
     ? subjectRoot
@@ -155,6 +158,11 @@ export async function loadNavigatorWorkContext(
   if (options.role === "doctor" && reference !== undefined) {
     const patient = await loadDoctorCase(reference);
     subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
+    subjectProvenance = "role_input";
+  }
+  if (options.role === "notary" && reference !== undefined) {
+    const locator = await loadNotarySourceRunLocator(reference);
+    subject = JSON.stringify({ sourceRun: locator });
     subjectProvenance = "role_input";
   }
   // Public ak-role run: admitted request is the typed Navigator work-context source.
@@ -257,6 +265,8 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
+    loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
+    loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {
       return createNavigatorAttendance({

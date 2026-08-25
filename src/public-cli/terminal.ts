@@ -38,11 +38,12 @@ export type TerminalRoleName =
   | "collector"
   | "doctor"
   | "reviewer"
-  | "merger";
+  | "merger"
+  | "notary";
 
 export type ResidualIncompleteTerminalOutcome = {
   kind: "incomplete";
-  role: "merger" | "collector";
+  role: "merger" | "collector" | "notary";
   status: "incomplete";
   decision: "no-usable-result";
   candidate: unknown;
@@ -130,7 +131,7 @@ export function exitCodeForTerminalOutcome(
 }
 
 export function buildResidualIncompleteTerminalOutcome(input: {
-  role: "merger" | "collector";
+  role: "merger" | "collector" | "notary";
   candidate: unknown;
   diagnostic: string;
 }): ResidualIncompleteTerminalOutcome {

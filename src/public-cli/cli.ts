@@ -38,6 +38,7 @@ import {
   parseFixerArgv,
   parseJudgeArgv,
   parseMergerArgv,
+  parseNotaryArgv,
   parseReviewerArgv,
   parseAnalystArgv,
 } from "./invocation.ts";
@@ -55,6 +56,7 @@ import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
+import { runPublicNotary } from "./notary-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
@@ -94,6 +96,7 @@ export const PUBLIC_ROLE_ARGV = {
   collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
   doctor: { parse: parseDoctorArgv, options: optionsForOwner("doctor") },
   merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
+  notary: { parse: parseNotaryArgv, options: optionsForOwner("notary") },
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
@@ -190,6 +193,10 @@ export type CliEnv = {
   mergerExtraPiArgs?: readonly string[];
   /** Override Merger role-run timeout (tests). */
   mergerTimeoutMs?: number;
+  /** Extra Pi args for Notary runs (tests: faux provider). */
+  notaryExtraPiArgs?: readonly string[];
+  /** Override Notary role-run timeout (tests). */
+  notaryTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -1196,6 +1203,50 @@ export async function runAkRole(
         },
         io,
         PUBLIC_ROLE_ARGV.doctor.parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Notary public run path: source-run locator only, direct officer seat (#448).
+    if (parsed.command === "notary") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "notary",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicNotary(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...projectSeatEngine(seat),
+          ...(env.notaryExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.notaryExtraPiArgs }),
+          ...(env.notaryTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.notaryTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        PUBLIC_ROLE_ARGV.notary.parse,
       );
       return {
         exitCode: result.exitCode,

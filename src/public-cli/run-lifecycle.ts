@@ -67,7 +67,8 @@ export type RoleRunRecord = {
     | "collector"
     | "doctor"
     | "reviewer"
-    | "merger";
+    | "merger"
+    | "notary";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -161,7 +162,8 @@ export async function readRoleRunState(
       record.role !== "collector" &&
       record.role !== "doctor" &&
       record.role !== "reviewer" &&
-      record.role !== "merger"
+      record.role !== "merger" &&
+      record.role !== "notary"
     ) {
       return undefined;
     }
@@ -995,6 +997,7 @@ export async function peekRoleRunRole(
   | "doctor"
   | "reviewer"
   | "merger"
+  | "notary"
   | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);

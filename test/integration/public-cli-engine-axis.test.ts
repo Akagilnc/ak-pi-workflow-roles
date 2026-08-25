@@ -1137,6 +1137,8 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
       return [role, "--pr", "1", "--repo", "acme/widgets", "--project", project];
     case "doctor":
       return [role, "--issue", "1", "--project", project, "engine axis probe"];
+    case "notary":
+      return [role, "--source-run", join(project, ".source-runs", "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge"), "--project", project];
     default: {
       const _exhaustive: never = role;
       throw new Error(`unexpected role: ${String(_exhaustive)}`);
@@ -1146,11 +1148,18 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 7);
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
     await withTempHome(async (home) => {
       const baseProject = join(home, "project");
       await mkdir(baseProject, { recursive: true });
       seedGitProject(baseProject);
+      const notarySource = join(
+        baseProject,
+        ".source-runs",
+        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+      );
+      await mkdir(join(notarySource, "session"), { recursive: true });
+      await writeFile(join(notarySource, "session", "session.jsonl"), "{}\n", "utf8");
 
       const mergerProject = join(home, "merger-project");
       await mkdir(mergerProject, { recursive: true });
