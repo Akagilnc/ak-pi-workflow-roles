@@ -17471,7 +17471,6 @@ var init_option_definitions = __esm({
         ],
         examples: [
           "ak-role config set judge openai-codex/gpt-5.6-sol:high",
-          "ak-role config set gatekeeper xai/grok-4.5:high",
           "ak-role config unset gatekeeper",
           "ak-role config set-engine judge opus",
           "ak-role config set-auto-resume-limit 3"
