@@ -1,3 +1,6 @@
 node_modules
 coverage/
 *.tgz
+
+# Claude Code session dir (local only)
+.claude/
