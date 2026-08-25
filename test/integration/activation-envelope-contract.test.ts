@@ -297,7 +297,7 @@ test("packaged terminating tools expose the provider-open registration inventory
     switch (role) {
       case "coder": return ["status", "report", "remainingScope", "reason"];
       case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence", "reason"];
-      case "reviewer": return ["status", "diagnostic"];
+      case "reviewer": return ["status", "diagnostic", "amendments"];
       case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"];
       case "collector": return [];
       case "doctor": return ["status", "case", "findings", "reason", "missingEvidence"];
