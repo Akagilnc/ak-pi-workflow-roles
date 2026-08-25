@@ -407,51 +407,101 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
   });
 });
 
+async function assertAuditorRolesUnreadable(
+  reasonPattern: RegExp,
+  label: string,
+): Promise<void> {
+  const result = await runAnalyst({
+    mode: "issue",
+    projectRoot: ISSUE_PROJECT_ROOT,
+  });
+  const entry = result.page.unreadable.find((row) => row.runId === GATE_JUDGE_RUN);
+  assert.ok(entry, `${label}: judge leg must be page-local unreadable`);
+  assert.deepEqual(entry.missingSources, ["auditor-roles"]);
+  assert.match(entry.reason, reasonPattern);
+  assert.equal(
+    gateSection(result.page).legs.some((leg) => leg.runId === GATE_JUDGE_RUN),
+    false,
+    `${label}: must not wash into a readable gateCycles leg`,
+  );
+}
+
 test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable leg", async () => {
   await withTempHome(async (home) => {
     const auditorDir = judgeAuditorDir(home);
     await mkdir(auditorDir, { recursive: true });
     // Completed-by-terminator malformed line — canonical reader must not under-count.
     await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
-
-    const malformed = await runAnalyst({
-      mode: "issue",
-      projectRoot: ISSUE_PROJECT_ROOT,
-    });
-
-    const damagedJsonl = malformed.page.unreadable.find((entry) => entry.runId === GATE_JUDGE_RUN);
-    assert.ok(damagedJsonl, "judge leg with damaged auditor-roles must be page-local unreadable");
-    assert.deepEqual(damagedJsonl.missingSources, ["auditor-roles"]);
-    assert.match(damagedJsonl.reason, /malformed JSONL record/);
-
-    // Must not appear as a zero-round readable leg (wash → under-count).
-    assert.equal(
-      gateSection(malformed.page).legs.some((leg) => leg.runId === GATE_JUDGE_RUN),
-      false,
-      "damaged gate leg must not contribute readable gateCycles rows",
-    );
+    await assertAuditorRolesUnreadable(/malformed JSONL record/, "malformed JSONL");
 
     // Plain file at auditor-roles path is damaged topology (ENOTDIR), not lawful zero.
     await rm(auditorDir, { recursive: true, force: true });
     await writeFile(auditorDir, "not-a-directory\n", "utf8");
+    await assertAuditorRolesUnreadable(/ENOTDIR/, "ENOTDIR topology");
 
-    const plainFile = await runAnalyst({
-      mode: "issue",
-      projectRoot: ISSUE_PROJECT_ROOT,
-    });
+    // Accepted gate receipt with inverted span must not silently omit the volume.
+    await rm(auditorDir, { recursive: true, force: true });
+    await mkdir(auditorDir, { recursive: true });
+    await writeFile(
+      join(auditorDir, "o01_inspector_inverted_span.jsonl"),
+      sessionLines({
+        id: "off-inverted",
+        startedAt: iso(20_000),
+        endedAt: iso(10_000),
+        toolName: "ak_inspector_output",
+        args: { status: "pass", findings: [] },
+      }),
+      "utf8",
+    );
+    await assertAuditorRolesUnreadable(/unusable timestamp span/, "inverted span");
 
-    const damagedTopology = plainFile.page.unreadable.find((entry) => entry.runId === GATE_JUDGE_RUN);
-    assert.ok(
-      damagedTopology,
-      "judge leg with plain-file auditor-roles must be page-local unreadable",
+    // Accepted gate receipt with blank status — shape refusal wash is forbidden.
+    await rm(auditorDir, { recursive: true, force: true });
+    await mkdir(auditorDir, { recursive: true });
+    await writeFile(
+      join(auditorDir, "o01_inspector_blank_status.jsonl"),
+      sessionLines({
+        id: "off-blank-status",
+        startedAt: iso(0),
+        endedAt: iso(10_000),
+        toolName: "ak_inspector_output",
+        args: { status: "   ", findings: [] },
+      }),
+      "utf8",
     );
-    assert.deepEqual(damagedTopology.missingSources, ["auditor-roles"]);
-    assert.match(damagedTopology.reason, /ENOTDIR/);
-    assert.equal(
-      gateSection(plainFile.page).legs.some((leg) => leg.runId === GATE_JUDGE_RUN),
-      false,
-      "ENOTDIR auditor-roles must not wash into a zero-round readable leg",
+    await assertAuditorRolesUnreadable(/missing usable status/, "blank status");
+
+    // Accepted dispatch with unknown officer arg.
+    await rm(auditorDir, { recursive: true, force: true });
+    await mkdir(auditorDir, { recursive: true });
+    await writeFile(
+      join(auditorDir, "d01_gatekeeper_unknown_officer.jsonl"),
+      sessionLines({
+        id: "disp-unknown-officer",
+        startedAt: iso(0),
+        endedAt: iso(1_000),
+        toolName: "ak_gatekeeper_output",
+        args: { status: "dispatch", officer: "magistracy" },
+      }),
+      "utf8",
     );
+    await assertAuditorRolesUnreadable(/missing or unknown officer/, "unknown officer");
+
+    // Accepted dispatch tool whose status is not the dispatch terminal.
+    await rm(auditorDir, { recursive: true, force: true });
+    await mkdir(auditorDir, { recursive: true });
+    await writeFile(
+      join(auditorDir, "d01_gatekeeper_non_dispatch_status.jsonl"),
+      sessionLines({
+        id: "disp-non-dispatch",
+        startedAt: iso(0),
+        endedAt: iso(1_000),
+        toolName: "ak_gatekeeper_output",
+        args: { status: "pass", officer: "inspector" },
+      }),
+      "utf8",
+    );
+    await assertAuditorRolesUnreadable(/non-dispatch status/, "non-dispatch status");
   });
 });
 

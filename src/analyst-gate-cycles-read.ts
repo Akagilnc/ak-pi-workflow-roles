@@ -11,8 +11,11 @@
  * Missing auditor-roles directory (ENOENT only) → empty rounds (lawful zero).
  * Path present but not a directory (ENOTDIR) and discovered nested JSONL that
  * fails canonical read/parse must fail loudly (never silently under-count).
- * Readable volumes that simply lack a gate terminating tool are omitted from
- * pairing — that is not a read failure.
+ * An accepted gate terminating receipt (isError:false pair on dispatch/officer
+ * tool) whose required typed facts are unusable — status, dispatch officer, or
+ * first/last span missing/unknown/unparseable/inverted — also fails loudly via
+ * the same throw→ledger `auditor-roles` unreadable seam. True non-gate volumes
+ * (soul-audit noise, etc.) stay omitted from pairing.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -75,12 +78,14 @@ function normalizeOfficerArg(raw: unknown): "inspector" | "notary" | undefined {
   return OFFICER_ARG_ALIASES[raw.trim()];
 }
 
-type TerminatingCall = {
+type AcceptedGateToolCall = {
   readonly toolName: string;
-  readonly status: string;
-  readonly officerArg?: "inspector" | "notary";
-  readonly findingsCount: number;
+  readonly args: Record<string, unknown> | undefined;
 };
+
+function isGateTerminatingToolName(toolName: string): boolean {
+  return DISPATCH_TOOLS.has(toolName) || OFFICER_TOOL_TO_FACE[toolName] !== undefined;
+}
 
 /**
  * toolCallIds whose paired toolResult is an accepted receipt (`isError === false`).
@@ -100,15 +105,16 @@ function acceptedGateReceiptIds(
 }
 
 /**
- * Last accepted gate terminating call on a nested volume (dispatch or officer).
- * Only toolCalls with a same-id non-error toolResult count; soul-audit and other
- * tools are ignored so they never form gate pairs.
+ * Last accepted gate terminating toolCall on a nested volume (dispatch or officer).
+ * Identity only — typed args are validated after recognition so unusable facts
+ * fail loud instead of being skipped as "not a gate volume". Soul-audit and
+ * other non-gate tools never qualify.
  */
-function extractLastGateTerminatingCall(
+function extractLastAcceptedGateToolCall(
   rows: readonly LedgerSessionRow[],
-): TerminatingCall | undefined {
+): AcceptedGateToolCall | undefined {
   const acceptedIds = acceptedGateReceiptIds(rows);
-  let last: TerminatingCall | undefined;
+  let last: AcceptedGateToolCall | undefined;
   for (const row of rows) {
     const message = isRecord(row.message) ? row.message : undefined;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
@@ -118,35 +124,50 @@ function extractLastGateTerminatingCall(
       if (typeof part.id !== "string" || part.id.length === 0) continue;
       if (!acceptedIds.has(part.id)) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
-      const toolName = part.name;
-      const isDispatch = DISPATCH_TOOLS.has(toolName);
-      const officerFace = OFFICER_TOOL_TO_FACE[toolName];
-      if (!isDispatch && officerFace === undefined) continue;
-      const args = isRecord(part.arguments) ? part.arguments : undefined;
-      const status =
-        args !== undefined && typeof args.status === "string" && args.status.trim() !== ""
-          ? args.status.trim()
-          : undefined;
-      if (status === undefined) continue;
-      const findings = args?.findings;
-      const findingsCount = Array.isArray(findings) ? findings.length : 0;
-      if (isDispatch) {
-        const officerArg = normalizeOfficerArg(args?.officer);
-        last =
-          officerArg === undefined
-            ? { toolName, status, findingsCount }
-            : { toolName, status, officerArg, findingsCount };
-      } else if (officerFace !== undefined) {
-        last = {
-          toolName,
-          status,
-          officerArg: officerFace,
-          findingsCount,
-        };
-      }
+      if (!isGateTerminatingToolName(part.name)) continue;
+      last = {
+        toolName: part.name,
+        args: isRecord(part.arguments) ? part.arguments : undefined,
+      };
     }
   }
   return last;
+}
+
+function requireAcceptedGateStatus(
+  args: Record<string, unknown> | undefined,
+  filePath: string,
+): string {
+  if (args === undefined || typeof args.status !== "string" || args.status.trim() === "") {
+    throw new Error(
+      `accepted gate receipt missing usable status in ${filePath}`,
+    );
+  }
+  return args.status.trim();
+}
+
+function requireAcceptedGateSpan(
+  rows: readonly LedgerSessionRow[],
+  filePath: string,
+): { readonly startedAt: string; readonly endedAt: string; readonly wallMs: number } {
+  const span = extractSessionTimestampSpan(rows);
+  if (span.startedAt === undefined || span.endedAt === undefined) {
+    throw new Error(
+      `accepted gate volume missing session timestamp span in ${filePath}`,
+    );
+  }
+  const startedMs = Date.parse(span.startedAt);
+  const endedMs = Date.parse(span.endedAt);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs) || endedMs < startedMs) {
+    throw new Error(
+      `accepted gate volume has unusable timestamp span in ${filePath}`,
+    );
+  }
+  return {
+    startedAt: span.startedAt,
+    endedAt: span.endedAt,
+    wallMs: endedMs - startedMs,
+  };
 }
 
 type ClassifiedVolume =
@@ -170,35 +191,50 @@ async function classifyAuditorVolume(
 ): Promise<ClassifiedVolume | undefined> {
   // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
   const rows = await readLedgerSessionJsonl(filePath);
-  const span = extractSessionTimestampSpan(rows);
-  if (span.startedAt === undefined || span.endedAt === undefined) return undefined;
-  const startedMs = Date.parse(span.startedAt);
-  const endedMs = Date.parse(span.endedAt);
-  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs) || endedMs < startedMs) {
-    return undefined;
-  }
-  const call = extractLastGateTerminatingCall(rows);
+  // Recognize accepted gate tool first. Non-gate volumes stay omitted; once a
+  // gate receipt is present, required typed facts must not silently under-count.
+  const call = extractLastAcceptedGateToolCall(rows);
   if (call === undefined) return undefined;
 
+  const span = requireAcceptedGateSpan(rows, filePath);
+  const status = requireAcceptedGateStatus(call.args, filePath);
+  const findings = call.args?.findings;
+  const findingsCount = Array.isArray(findings) ? findings.length : 0;
+
   if (DISPATCH_TOOLS.has(call.toolName)) {
-    if (call.status !== "dispatch" || call.officerArg === undefined) return undefined;
+    if (status !== "dispatch") {
+      throw new Error(
+        `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`,
+      );
+    }
+    const officer = normalizeOfficerArg(call.args?.officer);
+    if (officer === undefined) {
+      throw new Error(
+        `accepted dispatch receipt missing or unknown officer in ${filePath}`,
+      );
+    }
     return {
       kind: "dispatch",
       startedAt: span.startedAt,
-      officer: call.officerArg,
+      officer,
     };
   }
 
   const officer = OFFICER_TOOL_TO_FACE[call.toolName];
-  if (officer === undefined) return undefined;
+  if (officer === undefined) {
+    // isGateTerminatingToolName already screened; keep loud if tables drift.
+    throw new Error(
+      `accepted gate receipt has unknown officer tool ${call.toolName} in ${filePath}`,
+    );
+  }
   return {
     kind: "officer",
     startedAt: span.startedAt,
     endedAt: span.endedAt,
     officer,
-    status: call.status,
-    findingsCount: call.findingsCount,
-    officerWallMs: endedMs - startedMs,
+    status,
+    findingsCount,
+    officerWallMs: span.wallMs,
   };
 }
 

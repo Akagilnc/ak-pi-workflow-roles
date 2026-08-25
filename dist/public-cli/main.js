@@ -26231,6 +26231,9 @@ function normalizeOfficerArg(raw) {
   if (typeof raw !== "string") return void 0;
   return OFFICER_ARG_ALIASES[raw.trim()];
 }
+function isGateTerminatingToolName(toolName) {
+  return DISPATCH_TOOLS.has(toolName) || OFFICER_TOOL_TO_FACE[toolName] !== void 0;
+}
 function acceptedGateReceiptIds(rows) {
   const accepted = /* @__PURE__ */ new Set();
   for (const row of rows) {
@@ -26241,7 +26244,7 @@ function acceptedGateReceiptIds(rows) {
   }
   return accepted;
 }
-function extractLastGateTerminatingCall(rows) {
+function extractLastAcceptedGateToolCall(rows) {
   const acceptedIds = acceptedGateReceiptIds(rows);
   let last;
   for (const row of rows) {
@@ -26252,59 +26255,83 @@ function extractLastGateTerminatingCall(rows) {
       if (typeof part.id !== "string" || part.id.length === 0) continue;
       if (!acceptedIds.has(part.id)) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
-      const toolName = part.name;
-      const isDispatch = DISPATCH_TOOLS.has(toolName);
-      const officerFace = OFFICER_TOOL_TO_FACE[toolName];
-      if (!isDispatch && officerFace === void 0) continue;
-      const args = isRecord8(part.arguments) ? part.arguments : void 0;
-      const status = args !== void 0 && typeof args.status === "string" && args.status.trim() !== "" ? args.status.trim() : void 0;
-      if (status === void 0) continue;
-      const findings = args?.findings;
-      const findingsCount = Array.isArray(findings) ? findings.length : 0;
-      if (isDispatch) {
-        const officerArg = normalizeOfficerArg(args?.officer);
-        last = officerArg === void 0 ? { toolName, status, findingsCount } : { toolName, status, officerArg, findingsCount };
-      } else if (officerFace !== void 0) {
-        last = {
-          toolName,
-          status,
-          officerArg: officerFace,
-          findingsCount
-        };
-      }
+      if (!isGateTerminatingToolName(part.name)) continue;
+      last = {
+        toolName: part.name,
+        args: isRecord8(part.arguments) ? part.arguments : void 0
+      };
     }
   }
   return last;
 }
-async function classifyAuditorVolume(filePath) {
-  const rows = await readLedgerSessionJsonl(filePath);
+function requireAcceptedGateStatus(args, filePath) {
+  if (args === void 0 || typeof args.status !== "string" || args.status.trim() === "") {
+    throw new Error(
+      `accepted gate receipt missing usable status in ${filePath}`
+    );
+  }
+  return args.status.trim();
+}
+function requireAcceptedGateSpan(rows, filePath) {
   const span = extractSessionTimestampSpan(rows);
-  if (span.startedAt === void 0 || span.endedAt === void 0) return void 0;
+  if (span.startedAt === void 0 || span.endedAt === void 0) {
+    throw new Error(
+      `accepted gate volume missing session timestamp span in ${filePath}`
+    );
+  }
   const startedMs = Date.parse(span.startedAt);
   const endedMs = Date.parse(span.endedAt);
   if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs) || endedMs < startedMs) {
-    return void 0;
+    throw new Error(
+      `accepted gate volume has unusable timestamp span in ${filePath}`
+    );
   }
-  const call = extractLastGateTerminatingCall(rows);
+  return {
+    startedAt: span.startedAt,
+    endedAt: span.endedAt,
+    wallMs: endedMs - startedMs
+  };
+}
+async function classifyAuditorVolume(filePath) {
+  const rows = await readLedgerSessionJsonl(filePath);
+  const call = extractLastAcceptedGateToolCall(rows);
   if (call === void 0) return void 0;
+  const span = requireAcceptedGateSpan(rows, filePath);
+  const status = requireAcceptedGateStatus(call.args, filePath);
+  const findings = call.args?.findings;
+  const findingsCount = Array.isArray(findings) ? findings.length : 0;
   if (DISPATCH_TOOLS.has(call.toolName)) {
-    if (call.status !== "dispatch" || call.officerArg === void 0) return void 0;
+    if (status !== "dispatch") {
+      throw new Error(
+        `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`
+      );
+    }
+    const officer2 = normalizeOfficerArg(call.args?.officer);
+    if (officer2 === void 0) {
+      throw new Error(
+        `accepted dispatch receipt missing or unknown officer in ${filePath}`
+      );
+    }
     return {
       kind: "dispatch",
       startedAt: span.startedAt,
-      officer: call.officerArg
+      officer: officer2
     };
   }
   const officer = OFFICER_TOOL_TO_FACE[call.toolName];
-  if (officer === void 0) return void 0;
+  if (officer === void 0) {
+    throw new Error(
+      `accepted gate receipt has unknown officer tool ${call.toolName} in ${filePath}`
+    );
+  }
   return {
     kind: "officer",
     startedAt: span.startedAt,
     endedAt: span.endedAt,
     officer,
-    status: call.status,
-    findingsCount: call.findingsCount,
-    officerWallMs: endedMs - startedMs
+    status,
+    findingsCount,
+    officerWallMs: span.wallMs
   };
 }
 function pairGateRounds(volumes) {
