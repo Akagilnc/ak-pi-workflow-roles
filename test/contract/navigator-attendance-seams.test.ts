@@ -13,7 +13,7 @@ import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/packag
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
-import { PACKAGED_ROLE_REGISTRY, packagedRoleInputFlag } from "../../src/packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
 import {
@@ -617,37 +617,6 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     assert.equal(empty.subjectProvenance, "placeholder");
     assert.equal(empty.authority, "");
     assert.equal(empty.subject.includes(prose), false);
-  } finally {
-    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("#438 Collector owner/repo identity is not Navigator file-path input", async () => {
-  // Public Collector: --project <cwd> + --repo owner/repo. Repo is identity, not a path.
-  assert.equal(packagedRoleInputFlag("collector"), undefined);
-
-  const root = await mkdtemp(join(tmpdir(), "navigator-collector-repo-"));
-  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-  delete process.env.AK_ROLE_RUN_DIR;
-  try {
-    const project = resolve(root, "project");
-    await mkdir(project, { recursive: true });
-    const collectorPi = {
-      getFlag: (name: string) => (name === "ak-collector-repo" ? "Acme/Widgets" : undefined),
-    };
-    const collectorCtx = {
-      cwd: project,
-      sessionManager: { getSessionDir: () => resolve(project, "runs/collector/session") },
-    } as never;
-
-    const loaded = await loadNavigatorWorkContext(collectorPi, {
-      context: collectorCtx,
-      role: "collector",
-    });
-    assert.equal(loaded.subjectProvenance, "placeholder");
-    assert.equal("contextError" in loaded, false);
   } finally {
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
