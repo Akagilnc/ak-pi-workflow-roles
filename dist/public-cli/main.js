@@ -26224,8 +26224,8 @@ import { join as join23 } from "node:path";
 function isRecord8(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function isMissingPathError5(error) {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+function isMissingDirectoryError(error) {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 function normalizeOfficerArg(raw) {
   if (typeof raw !== "string") return void 0;
@@ -26347,7 +26347,7 @@ async function readAnalystGateCyclesFromAuditorRoles(auditorRolesDirectory) {
     const entries = await readdir5(auditorRolesDirectory, { withFileTypes: true });
     names = entries.filter((e) => e.isFile() && e.name.endsWith(".jsonl")).map((e) => e.name).sort();
   } catch (error) {
-    if (isMissingPathError5(error)) return [];
+    if (isMissingDirectoryError(error)) return [];
     throw error;
   }
   const volumes = [];
@@ -26381,7 +26381,7 @@ var init_analyst_gate_cycles_read = __esm({
 // src/analyst-ledger.ts
 import { readdir as readdir6, readFile as readFile14 } from "node:fs/promises";
 import { join as join24 } from "node:path";
-function isMissingPathError6(error) {
+function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText3(error) {
@@ -26418,7 +26418,7 @@ async function listLedgerBookNames(booksRoot) {
     const entries = await readdir6(booksRoot, { withFileTypes: true });
     return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch (error) {
-    if (isMissingPathError6(error)) return [];
+    if (isMissingPathError5(error)) return [];
     throw error;
   }
 }
@@ -26427,7 +26427,7 @@ async function readInvocationScopeFields(runDirectory) {
   try {
     raw = await readFile14(join24(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
-    if (isMissingPathError6(error)) return void 0;
+    if (isMissingPathError5(error)) return void 0;
     throw error;
   }
   const parsed = JSON.parse(raw);
@@ -26463,7 +26463,7 @@ async function resolveSessionFile(runDirectory) {
       return parsed.sessionFile;
     }
   } catch (error) {
-    if (!isMissingPathError6(error)) throw error;
+    if (!isMissingPathError5(error)) throw error;
   }
   return join24(runDirectory, "session", "session.jsonl");
 }
@@ -26646,7 +26646,7 @@ async function scanAnalystIssueRuns(input) {
       const entries = await readdir6(runsDir, { withFileTypes: true });
       runNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
     } catch (error) {
-      if (isMissingPathError6(error)) continue;
+      if (isMissingPathError5(error)) continue;
       throw error;
     }
     for (const runName of runNames) {
@@ -27655,7 +27655,7 @@ var init_analyst_page = __esm({
 
 // src/analyst-entry.ts
 import { readFile as readFile15 } from "node:fs/promises";
-function isMissingPathError7(error) {
+function isMissingPathError6(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function cachedPageMatchesRequestedScope(page, input) {
@@ -27690,7 +27690,7 @@ async function readOrComputeAnalystIssuePage(input, options) {
       return { mode: "issue", page, pagePath };
     }
   } catch (error) {
-    if (!isMissingPathError7(error)) {
+    if (!isMissingPathError6(error)) {
       throw new AnalystIssueComputeError({
         bookKey,
         projectRoot,
@@ -27781,7 +27781,7 @@ async function runAnalystModelGroupsMode(input) {
       const raw = await readFile15(pagePath, "utf8");
       JSON.parse(raw);
     } catch (error) {
-      if (!isMissingPathError7(error)) {
+      if (!isMissingPathError6(error)) {
         throw new AnalystIssueComputeError({ bookKey, projectRoot, cause: error });
       }
       try {
