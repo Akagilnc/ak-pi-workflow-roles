@@ -4,7 +4,7 @@
  * no attachment substitute. Caller supplies a run/case pointer; Notary self-fetches.
  */
 import { dirname, isAbsolute, join, resolve, basename } from "node:path";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
@@ -13,40 +13,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
-
-/** Retained identity fields required to bind a source-run pointer (run-state.json). */
-type RetainedSourceRunIdentity = {
-  readonly runId: string;
-  readonly role: string;
-  readonly bookKey: string;
-  readonly runDirectory: string;
-};
-
-async function readRetainedSourceRunIdentity(
-  runDirectory: string,
-): Promise<RetainedSourceRunIdentity | undefined> {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await readFile(join(runDirectory, "run-state.json"), "utf8"));
-  } catch {
-    return undefined;
-  }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const record = raw as Record<string, unknown>;
-  if (typeof record.runId !== "string" || record.runId.trim() === "") return undefined;
-  if (typeof record.role !== "string" || record.role.trim() === "") return undefined;
-  if (typeof record.bookKey !== "string" || record.bookKey.trim() === "") return undefined;
-  const retainedDirectory =
-    typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
-      ? record.runDirectory
-      : runDirectory;
-  return {
-    runId: record.runId,
-    role: record.role,
-    bookKey: record.bookKey,
-    runDirectory: retainedDirectory,
-  };
-}
+import { readRoleRunState } from "./public-cli/run-lifecycle.ts";
 
 const RUN_DIR_NAME =
   /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@([A-Za-z][A-Za-z0-9_-]*)$/i;
@@ -141,7 +108,8 @@ export async function resolveNotarySourceRunLocator(options: {
     );
   }
 
-  const runState = await readRetainedSourceRunIdentity(real);
+  // Authoritative retained record only — legal role/state via shared reader (DRY #14).
+  const runState = await readRoleRunState(real);
   if (runState === undefined) {
     throw new NotarySourceRunError(
       "notary --source-run lacks retained run-state identity",
@@ -176,7 +144,7 @@ export async function loadNotarySourceRunLocator(
 ): Promise<NotarySourceRunLocator> {
   const real = await requireRunDirectory(path, path);
   const identity = parseRunDirectoryName(basename(real))!;
-  const runState = await readRetainedSourceRunIdentity(real);
+  const runState = await readRoleRunState(real);
   if (runState === undefined) {
     throw new NotarySourceRunError(
       "notary source-run lacks retained run-state identity",
@@ -185,6 +153,11 @@ export async function loadNotarySourceRunLocator(
   if (runState.runId !== identity.runId || runState.role !== identity.role) {
     throw new NotarySourceRunError(
       "notary source-run retained identity does not match directory name",
+    );
+  }
+  if (physicalPathIdentity(runState.runDirectory) !== physicalPathIdentity(real)) {
+    throw new NotarySourceRunError(
+      "notary source-run retained runDirectory does not match locator path",
     );
   }
   return {
