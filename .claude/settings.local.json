@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(//Users/akagilnc/WorkSpace/Ming_LLM-exam766-sub-haiku/orchestrator/**)",
-      "Bash(npm run *)"
-    ]
-  }
-}
