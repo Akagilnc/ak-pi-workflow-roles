@@ -20,10 +20,15 @@ test("validateNotaryOutput accepts pass bounce incomplete and rejects residual s
   assert.throws(() => validateNotaryOutput(null));
 });
 
-test("Notary runtime registers output tool and injects locator-only materials", async () => {
+test("Notary runtime registers output tool and binds source-run locator without draft body", async () => {
   const flags = new Map<string, string>();
   const tools = new Map<string, { execute: Function }>();
   let beforeStart: ((event: { systemPrompt: string }) => unknown) | undefined;
+  const locator = {
+    runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+    runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
+    role: "judge",
+  };
   const pi = {
     registerFlag(name: string) {
       flags.set(name, "");
@@ -46,11 +51,7 @@ test("Notary runtime registers output tool and injects locator-only materials", 
     pi as never,
     {
       loadSoul: async () => "NOTARY LAW",
-      loadSourceRunLocator: async (path) => ({
-        runDirectory: path,
-        runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
-        role: "judge",
-      }),
+      loadSourceRunLocator: async () => locator,
     },
     {
       failInfrastructure(error) {
@@ -59,16 +60,16 @@ test("Notary runtime registers output tool and injects locator-only materials", 
     },
   );
 
-  flags.set("ak-notary-source-run", "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge");
+  flags.set("ak-notary-source-run", locator.runDirectory);
   await runtime.activate();
   assert.ok(tools.has(NOTARY_OUTPUT_TOOL_NAME));
   assert.ok(beforeStart);
+
   const prompted = beforeStart!({ systemPrompt: "BASE" }) as {
     systemPrompt: string;
   };
-  assert.match(prompted.systemPrompt, /NOTARY LAW/);
-  assert.match(prompted.systemPrompt, /notary_source_run/);
-  assert.match(prompted.systemPrompt, /01a034f1-75bf-71a6-bcf5-d1299145b1a5/);
-  // Must not preload draft body — locator only.
+  // Locator-only contract: bound identity is present as structured JSON; no draft body preload key.
+  assert.equal(prompted.systemPrompt.includes(JSON.stringify({ sourceRun: locator })), true);
   assert.equal(prompted.systemPrompt.includes("judge_draft"), false);
+  assert.equal(prompted.systemPrompt.includes('"material"'), false);
 });
