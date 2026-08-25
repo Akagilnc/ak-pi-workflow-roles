@@ -13,24 +13,11 @@ import {
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
 } from "../../src/gatekeeper-role.ts";
-import {
-  savePublicCliConfig,
-  setPersistentSeatConfig,
-  type PublicCliConfig,
-} from "../../src/public-cli/config.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
 
-type ParentRegistryOptions = {
-  readonly find?: (provider: string, modelId: string) => unknown;
-  readonly getApiKeyAndHeaders?: (model: unknown) => Promise<unknown>;
-};
-
-async function withParent(
-  run: (context: any) => Promise<void>,
-  registry: ParentRegistryOptions = {},
-) {
+async function withParent(run: (context: any) => Promise<void>) {
   await withActivationHome({ prefix: "ak-gatekeeper-real-entry-" }, async ({ agentDir, home }) => {
     const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent", tokenSize: { min: 1000, max: 1000 } });
     faux.setResponses([fauxAssistantMessage("parent")]);
@@ -40,48 +27,14 @@ async function withParent(
         model,
         modelRegistry: {
           getProvider() { return undefined; },
-          find(provider: string, modelId: string) {
-            return registry.find?.(provider, modelId);
-          },
           async getProviderAuth() { return { auth: {} }; },
-          async getApiKeyAndHeaders(candidate: unknown) {
-            if (registry.getApiKeyAndHeaders !== undefined) {
-              return registry.getApiKeyAndHeaders(candidate);
-            }
-            return { ok: true };
-          },
+          async getApiKeyAndHeaders() { return { ok: true }; },
         },
         thinkingLevel: "off",
         sessionManager: session.sessionManager,
       });
     });
   });
-}
-
-function captureModels(
-  calls: Array<{ tool?: string; args?: object | undefined; text?: string }>,
-  models: Array<{ provider: string; id: string }>,
-) {
-  const inner = completion(calls, []);
-  return async (model: any, context: any) => {
-    models.push({ provider: model.provider, id: model.id });
-    return inner(model, context);
-  };
-}
-
-function fauxModel(provider: string, id: string) {
-  return {
-    api: "openai-responses" as const,
-    provider,
-    id,
-    name: id,
-    baseUrl: "",
-    reasoning: false,
-    input: ["text" as const],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1,
-    maxTokens: 1,
-  };
 }
 
 test("scripted Inspector pass projects typed receipt and loads Inspector session materials", async () => {
@@ -343,200 +296,5 @@ test("missing arguments is one-shot incomplete with serializable typed observati
     // Typed observation must survive JSON session/tool_result projection.
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
     assert.equal(turns, 1);
-  });
-});
-
-// #453: province child model selection through the real gatekeeper entry.
-test("#453 unconfigured menxia seats inherit the parent session model", async () => {
-  const seen: Array<{ provider: string; id: string }> = [];
-  await withParent(async (context) => {
-    const result = await runGatekeeper({
-      context,
-      subject: { kind: "worker_completion", material: "completion" },
-      runCompletion: captureModels([
-        { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
-        { tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
-      ], seen),
-    });
-    assert.equal(result.status, "pass");
-    assert.deepEqual(seen, [
-      { provider: context.model.provider, id: context.model.id },
-      { provider: context.model.provider, id: context.model.id },
-    ]);
-  });
-});
-
-test("#453 gatekeeper-only config is inherited by inspector and notary", async () => {
-  const gateModel = fauxModel("xai", "gate-only-model");
-  await withActivationHome({ prefix: "ak-gatekeeper-model-gate-" }, async ({ home, agentDir }) => {
-    await savePublicCliConfig(
-      setPersistentSeatConfig({ seats: {} }, "gatekeeper", {
-        provider: "xai",
-        model: "gate-only-model",
-        thinking: "high",
-      }),
-      home,
-    );
-    const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent", tokenSize: { min: 1000, max: 1000 } });
-    faux.setResponses([fauxAssistantMessage("parent")]);
-    await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
-      for (const officer of ["inspector", "notary"] as const) {
-        const seen: Array<{ provider: string; id: string }> = [];
-        const result = await runGatekeeper({
-          context: {
-            cwd: home,
-            model,
-            modelRegistry: {
-              getProvider() { return undefined; },
-              find(provider: string, modelId: string) {
-                if (provider === "xai" && modelId === "gate-only-model") return gateModel;
-                return undefined;
-              },
-              async getProviderAuth() { return { auth: {} }; },
-              async getApiKeyAndHeaders() { return { ok: true }; },
-            },
-            thinkingLevel: "off",
-            sessionManager: session.sessionManager,
-          } as any,
-          subject: { kind: "worker_completion", material: "completion" },
-          runCompletion: captureModels([
-            { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer } },
-            {
-              tool: officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL,
-              args: { status: "pass", findings: [] },
-            },
-          ], seen),
-        });
-        assert.equal(result.status, "pass");
-        assert.deepEqual(seen, [
-          { provider: "xai", id: "gate-only-model" },
-          { provider: "xai", id: "gate-only-model" },
-        ]);
-      }
-    });
-  });
-});
-
-test("#453 inspector and notary persistent overrides do not cross wires", async () => {
-  const models = {
-    gate: fauxModel("xai", "gate-model"),
-    inspector: fauxModel("openai-codex", "inspector-model"),
-    notary: fauxModel("openai-codex", "notary-model"),
-  };
-  await withActivationHome({ prefix: "ak-gatekeeper-model-own-" }, async ({ home, agentDir }) => {
-    let config: PublicCliConfig = { seats: {} };
-    config = setPersistentSeatConfig(config, "gatekeeper", {
-      provider: "xai", model: "gate-model", thinking: "high",
-    });
-    config = setPersistentSeatConfig(config, "inspector", {
-      provider: "openai-codex", model: "inspector-model", thinking: "medium",
-    });
-    config = setPersistentSeatConfig(config, "notary", {
-      provider: "openai-codex", model: "notary-model", thinking: "high",
-    });
-    await savePublicCliConfig(config, home);
-    const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent", tokenSize: { min: 1000, max: 1000 } });
-    faux.setResponses([fauxAssistantMessage("parent")]);
-    await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
-      const registry = {
-        getProvider() { return undefined; },
-        find(provider: string, modelId: string) {
-          if (provider === "xai" && modelId === "gate-model") return models.gate;
-          if (provider === "openai-codex" && modelId === "inspector-model") return models.inspector;
-          if (provider === "openai-codex" && modelId === "notary-model") return models.notary;
-          return undefined;
-        },
-        async getProviderAuth() { return { auth: {} }; },
-        async getApiKeyAndHeaders() { return { ok: true }; },
-      };
-      const context = {
-        cwd: home,
-        model,
-        modelRegistry: registry,
-        thinkingLevel: "off" as const,
-        sessionManager: session.sessionManager,
-      } as any;
-
-      const inspectorSeen: Array<{ provider: string; id: string }> = [];
-      const inspectorResult = await runGatekeeper({
-        context,
-        subject: { kind: "worker_completion", material: "completion" },
-        runCompletion: captureModels([
-          { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
-          { tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
-        ], inspectorSeen),
-      });
-      assert.equal(inspectorResult.status, "pass");
-      assert.deepEqual(inspectorSeen, [
-        { provider: "xai", id: "gate-model" },
-        { provider: "openai-codex", id: "inspector-model" },
-      ]);
-
-      const notarySeen: Array<{ provider: string; id: string }> = [];
-      const notaryResult = await runGatekeeper({
-        context,
-        subject: { kind: "judge_draft", material: "draft" },
-        runCompletion: captureModels([
-          { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "notary" } },
-          { tool: NOTARY_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
-        ], notarySeen),
-      });
-      assert.equal(notaryResult.status, "pass");
-      assert.deepEqual(notarySeen, [
-        { provider: "xai", id: "gate-model" },
-        { provider: "openai-codex", id: "notary-model" },
-      ]);
-    });
-  });
-});
-
-test("#453 explicit menxia model auth failure does not fall back to parent", async () => {
-  const gateModel = fauxModel("xai", "auth-fail-model");
-  await withActivationHome({ prefix: "ak-gatekeeper-model-auth-" }, async ({ home, agentDir }) => {
-    await savePublicCliConfig(
-      setPersistentSeatConfig({ seats: {} }, "gatekeeper", {
-        provider: "xai",
-        model: "auth-fail-model",
-      }),
-      home,
-    );
-    const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent", tokenSize: { min: 1000, max: 1000 } });
-    faux.setResponses([fauxAssistantMessage("parent")]);
-    await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
-      let completionCalls = 0;
-      const result = await runGatekeeper({
-        context: {
-          cwd: home,
-          model,
-          modelRegistry: {
-            getProvider() { return undefined; },
-            find(provider: string, modelId: string) {
-              if (provider === "xai" && modelId === "auth-fail-model") return gateModel;
-              return undefined;
-            },
-            async getProviderAuth() { return { auth: {} }; },
-            async getApiKeyAndHeaders(candidate: any) {
-              if (candidate?.id === "auth-fail-model") {
-                return { ok: false, error: "override credentials missing" };
-              }
-              return { ok: true };
-            },
-          },
-          thinkingLevel: "off",
-          sessionManager: session.sessionManager,
-        } as any,
-        subject: { kind: "worker_completion", material: "completion" },
-        runCompletion: async () => {
-          completionCalls += 1;
-          throw new Error("must not reach child completion after auth failure");
-        },
-      });
-      assert.equal(result.status, "transport_failure");
-      if (result.status === "transport_failure") {
-        assert.equal(result.stage, "gatekeeper");
-        assert.match(result.reason, /authentication failed|override credentials missing/i);
-      }
-      assert.equal(completionCalls, 0);
-    });
   });
 });

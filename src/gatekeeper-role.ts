@@ -1,16 +1,8 @@
 import { Type } from "typebox";
-import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { executeAuditorChild, type AuditorCompletion, type AuditorDecisionTool } from "./evidence-child-executor.ts";
 import { openToolObject } from "./open-tool-schema.ts";
-import {
-  formatModelSpec,
-  loadPublicCliConfig,
-  resolveMenxiaOfficerModelSelection,
-  type MenxiaOfficerSeat,
-} from "./public-cli/config.ts";
-import type { PublicThinkingLevel } from "./public-cli/registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
 
@@ -219,47 +211,21 @@ function projectOfficerDecision(
   return noExplicitReleaseIncomplete(officer, decision);
 }
 
-/**
- * Resolve province child model from public-cli persistent config (#453).
- * Own override > gatekeeper override > unset (inherit parent). Availability
- * failures throw — shared executor must not silent-fallback to parent.
- */
-async function menxiaChildModelOptions(
-  context: ExtensionContext,
-  officer: MenxiaOfficerSeat,
-  roleLabel: string,
-): Promise<{ model?: Model<Api>; thinkingLevel?: PublicThinkingLevel }> {
-  const selection = resolveMenxiaOfficerModelSelection(await loadPublicCliConfig(), officer);
-  if (selection === undefined) return {};
-  const find = context.modelRegistry.find?.bind(context.modelRegistry);
-  if (typeof find !== "function") {
-    throw new Error(`${roleLabel} model registry cannot resolve models`);
-  }
-  const model = find(selection.provider, selection.model);
-  if (model === undefined) {
-    throw new Error(`${roleLabel} model is unavailable: ${formatModelSpec(selection)}`);
-  }
-  return {
-    model,
-    ...(selection.thinking === undefined ? {} : { thinkingLevel: selection.thinking }),
-  };
-}
-
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
   const loadSoul = options.loadSoul ?? defaultLoadSoul;
   let provinceRun: Awaited<ReturnType<typeof executeAuditorChild>>;
   try {
-    const modelOptions = await menxiaChildModelOptions(options.context, "gatekeeper", "Gatekeeper");
+    // Seat identity only — shared executor owns model config/registry/auth (#453 / ADR 0018).
     provinceRun = await executeAuditorChild({
       context: options.context,
       roleLabel: "Gatekeeper",
+      menxiaSeat: "gatekeeper",
       systemPrompt: `${await loadSoul("gatekeeper")}\n\n${INVOCATION_OVERLAY}`,
       prompt: "Read the admitted subject with ak_gatekeeper_subject, then dispatch it or submit typed incomplete.",
       tool: createGatekeeperOutputTool(),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
-      ...modelOptions,
     });
   } catch (error) {
     return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
@@ -273,17 +239,16 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   const officer = province.officer;
   try {
     const roleLabel = officer === "inspector" ? "Inspector" : "Notary";
-    const modelOptions = await menxiaChildModelOptions(options.context, officer, roleLabel);
     const officerRun = await executeAuditorChild({
       context: options.context,
       roleLabel,
+      menxiaSeat: officer,
       systemPrompt: `${await loadSoul(officer)}\n\n${INVOCATION_OVERLAY}`,
       prompt: "Read the admitted subject with ak_gatekeeper_subject, then submit one typed decision on only your assigned axes.",
       tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
-      ...modelOptions,
     });
     if (officerRun.noReceiptLifecycle !== undefined) {
       return { status: "no_receipt", stage: officer, reason: `${officer} settled without an accepted receipt`, facts: officerRun.noReceiptLifecycle };
