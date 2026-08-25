@@ -15,12 +15,32 @@ function read(value, key) {
         return undefined;
     }
 }
+/** Canonical per-axis string slots only — no shape reject, no prose parse (ADR 0057). */
+function readAmendments(output) {
+    const amendments = read(output, "amendments");
+    if (!isRecord(amendments))
+        return undefined;
+    const slots = {};
+    for (const axis of ["standards", "spec"]) {
+        const value = read(amendments, axis);
+        if (typeof value === "string")
+            slots[axis] = value;
+    }
+    if (slots.standards === undefined && slots.spec === undefined)
+        return undefined;
+    return Object.freeze(slots);
+}
 export function validateReviewerIntent(output) {
     const status = read(output, "status");
-    if (status === "completed")
-        return { status };
-    if (status === "refused")
-        return { status, diagnostic: read(output, "diagnostic") };
+    const amendments = readAmendments(output);
+    if (status === "completed") {
+        return amendments === undefined ? { status } : { status, amendments };
+    }
+    if (status === "refused") {
+        return amendments === undefined
+            ? { status, diagnostic: read(output, "diagnostic") }
+            : { status, diagnostic: read(output, "diagnostic"), amendments };
+    }
     throw new Error("Reviewer output has no recognized execution intent");
 }
 /** Validate runtime-owned facts at their real identity seams (target pins + plain text). */

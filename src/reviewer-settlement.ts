@@ -43,6 +43,8 @@ export function assembleRuntimeReviewerReceipt(input: {
   }
   const accepted = input.record.accepted;
   const skillText = accepted?.input.canonicalSkill ?? input.canonicalSkillText;
+  // Seat-owned amendments sit beside reports; never rewrite runtime-owned child bytes.
+  const amendments = input.intent.amendments;
   return freeze({
     version: 2,
     status: input.intent.status,
@@ -62,6 +64,7 @@ export function assembleRuntimeReviewerReceipt(input: {
         : { specFetchedMaterial: accepted.specFetchedMaterial }),
     }),
     reports,
+    ...(amendments === undefined ? {} : { amendments }),
     outcomes,
     identities: {
       canonicalSkill: { text: skillText },

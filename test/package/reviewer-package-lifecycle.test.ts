@@ -9,7 +9,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import {
+  REVIEWER_AMENDMENT_TRACE_A,
+  REVIEWER_AMENDMENT_TRACE_B,
+} from "../fixtures/reviewer-two-axis-provider.ts";
 import { withColdInstalledPackage, withHermeticHome, packageRoot } from "../helpers/pi-test-harness.ts";
 import { runPiSubprocess } from "../helpers/pi-test-harness.ts";
 
@@ -129,20 +134,30 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
         const facts = reviewer.terminal.roleOutcome.decisiveFacts as {
           axes?: unknown;
           reportAxes?: unknown;
+          amendmentAxes?: unknown;
+          amendments?: unknown;
         };
         assert.deepEqual(facts.axes, ["standards", "spec"]);
         assert.deepEqual(facts.reportAxes, ["standards", "spec"]);
+        // Decisive facts project typed amendment axis presence only — never amendment prose.
+        assert.deepEqual(facts.amendmentAxes, ["standards"]);
+        assert.equal("amendments" in facts, false);
       }
 
       const reportArtifact = reviewer.terminal?.artifacts.find((item) => item.kind === "report");
       assert.ok(reportArtifact, `reviewer must publish frozen report artifact: ${JSON.stringify(reviewer.terminal)}`);
       const published = JSON.parse(await readFile(reportArtifact!.path, "utf8")) as {
+        outcome?: { decisiveFacts?: { amendmentAxes?: unknown; amendments?: unknown } };
         receipt?: {
           acceptedBatch?: { legs?: Array<{ axis: string }> };
           reports?: { standards?: { text?: string }; spec?: { text?: string } };
+          amendments?: { standards?: string; spec?: string };
+          aggregate?: unknown;
+          report?: unknown;
         };
         acceptedBatch?: { legs?: Array<{ axis: string }> };
         reports?: { standards?: { text?: string }; spec?: { text?: string } };
+        amendments?: { standards?: string; spec?: string };
       };
       const frozenReviewerReceipt = published.receipt ?? published;
       assert.ok(
@@ -162,6 +177,68 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
         frozenReviewerReceipt.reports?.spec?.text,
         "Spec: fixed target satisfies the stated behavior.",
       );
+      // Final receipt/artifact keep only amendment B after real auditor revise + resubmit.
+      assert.deepEqual(frozenReviewerReceipt.amendments, REVIEWER_AMENDMENT_TRACE_B);
+      assert.equal("aggregate" in frozenReviewerReceipt, false);
+      assert.equal("report" in frozenReviewerReceipt, false);
+      assert.deepEqual(published.outcome?.decisiveFacts?.amendmentAxes, ["standards"]);
+      assert.equal("amendments" in (published.outcome?.decisiveFacts ?? {}), false);
+
+      // Session custom entries: real output A then B candidates; child reports shared by identity, not re-prosed.
+      const evidenceArtifact = reviewer.terminal?.artifacts.find((item) => item.kind === "evidence");
+      assert.ok(evidenceArtifact, `reviewer must publish evidence artifact: ${JSON.stringify(reviewer.terminal)}`);
+      const evidence = JSON.parse(await readFile(evidenceArtifact!.path, "utf8")) as {
+        sessionFile?: string;
+        sessionDirectory?: string;
+      };
+      assert.equal(typeof evidence.sessionFile, "string");
+      const sessionRows = (await readFile(evidence.sessionFile!, "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          customType?: string;
+          data?: {
+            version?: number;
+            candidate?: {
+              amendments?: { standards?: string; spec?: string };
+              reports?: { standards?: { text?: string }; spec?: { text?: string } };
+              aggregate?: unknown;
+              report?: unknown;
+            };
+          };
+          message?: {
+            role?: string;
+            toolName?: string;
+            isError?: boolean;
+            details?: { amendments?: { standards?: string } };
+          };
+        });
+      const candidates = sessionRows.filter(
+        (row) => row.type === "custom" && row.customType === REVIEWER_CANDIDATE_ENTRY_TYPE,
+      );
+      assert.equal(candidates.length, 2, `expected A then B candidates: ${JSON.stringify(candidates).slice(0, 500)}`);
+      const candidateA = candidates[0]!.data?.candidate;
+      const candidateB = candidates[1]!.data?.candidate;
+      assert.deepEqual(candidateA?.amendments, REVIEWER_AMENDMENT_TRACE_A);
+      assert.deepEqual(candidateB?.amendments, REVIEWER_AMENDMENT_TRACE_B);
+      // Non-text rewrite contract: A/B candidates share the same reports object as the final receipt.
+      assert.deepEqual(candidateA?.reports, frozenReviewerReceipt.reports);
+      assert.deepEqual(candidateB?.reports, frozenReviewerReceipt.reports);
+      for (const candidate of [candidateA, candidateB]) {
+        assert.equal("aggregate" in (candidate ?? {}), false);
+        assert.equal("report" in (candidate ?? {}), false);
+      }
+      const outputResults = sessionRows.filter(
+        (row) =>
+          row.type === "message" &&
+          row.message?.role === "toolResult" &&
+          row.message.toolName === "ak_reviewer_output",
+      );
+      assert.equal(outputResults.length, 2, "real output tool must run twice: A revise-bounce then B pass");
+      assert.equal(outputResults[0]?.message?.isError, true);
+      assert.equal(outputResults[1]?.message?.isError, false);
+      assert.deepEqual(outputResults[1]?.message?.details?.amendments, REVIEWER_AMENDMENT_TRACE_B);
 
       // Caller-owned handoff: public Judge admits the frozen Reviewer receipt.
       const judgeProvider = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
