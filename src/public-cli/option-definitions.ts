@@ -28,6 +28,7 @@ export type OptionOwner =
   | "collector"
   | "doctor"
   | "merger"
+  | "notary"
   | "analyst";
 
 /**
@@ -537,6 +538,24 @@ const DOCTOR_OPTIONS = [
   },
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const NOTARY_OPTIONS = [
+  bindOwner("notary", SHARED_PROJECT_SEMANTICS),
+  {
+    id: "source-run",
+    owner: "notary",
+    canonical: "--source-run",
+    aliases: [],
+    valueMetavar: "runId@role|path",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required source run locator (runId@role under the book home, or path to that run directory). Zero prompt/attachment projection.",
+      zh: "必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。零 prompt/附件投影。",
+    },
+  },
+] as const satisfies readonly PublicOptionDefinition[];
+
 const MERGER_OPTIONS = [
   // Merger project face differs: requires an in-progress ordinary merge root.
   {
@@ -701,6 +720,7 @@ export const PUBLIC_OPTION_TABLE = {
   collector: COLLECTOR_OPTIONS,
   doctor: DOCTOR_OPTIONS,
   merger: MERGER_OPTIONS,
+  notary: NOTARY_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
@@ -715,6 +735,7 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "collector",
   "doctor",
   "merger",
+  "notary",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
@@ -1066,6 +1087,14 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role merger [options] <instruction>"],
     examples: [
       'ak-role merger --project /path/to/worktree "Reconcile the active merge."',
+    ],
+  },
+  notary: {
+    command: "notary",
+    summary: "Direct Notary document check (quote fidelity + ticket alignment); zero prompt/attachment.",
+    usage: ["ak-role notary --source-run <runId@role|path> [options]"],
+    examples: [
+      "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
     ],
   },
   analyst: {

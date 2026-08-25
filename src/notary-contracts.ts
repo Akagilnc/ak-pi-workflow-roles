@@ -1,0 +1,134 @@
+/**
+ * Public Notary (符宝郎) terminating receipt contracts.
+ * Lawful explicit releases: pass | bounce | incomplete(with non-empty reason).
+ * Residual incomplete (no explicit release) is projected by public settlement, not here.
+ */
+import { Type } from "typebox";
+
+import {
+  readActivationEngineLaborFallbackField,
+  seatFallbackBaseStatus,
+  seatFallbackStatusHasLawfulEvidence,
+  withEngineLaborFallbackField,
+  type WithEngineLaborFallback,
+} from "./engine-labor-fallback.ts";
+import { openToolObject } from "./open-tool-schema.ts";
+
+export const NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
+export const NOTARY_ACCEPTED_TEXT = "Notary output accepted";
+export const NOTARY_SOURCE_RUN_FLAG = {
+  name: "ak-notary-source-run",
+  definition: {
+    description: "Absolute source run directory bound for Notary self-fetch",
+    type: "string" as const,
+  },
+} as const;
+
+/** Package-owned kickoff only — callers supply zero prompt bytes (ADR 0067 / #448). */
+export const NOTARY_FIXED_KICKOFF =
+  "Notary review. Bound source-run locator is on the session materials; fetch authoritative ticket, git, and dossier evidence yourself; submit one typed decision.";
+
+export const notaryOutputSchema = openToolObject(
+  Type.Object({
+    status: Type.Unknown({
+      description: "pass | bounce | incomplete — guidance, not a schema gate.",
+    }),
+    findings: Type.Unknown({
+      description: "string[] findings retained with pass or bounce.",
+    }),
+    reason: Type.Unknown({
+      description: "Why the notary decision is incomplete.",
+    }),
+  }),
+);
+
+export type NotarySourceRunLocator = {
+  readonly runDirectory: string;
+  readonly runId: string;
+  readonly role: string;
+};
+
+type NotaryOutputClean =
+  | { readonly status: "pass"; readonly findings: readonly string[] }
+  | {
+      readonly status: "bounce";
+      readonly disposition: "rewrite";
+      readonly findings: readonly string[];
+    }
+  | { readonly status: "incomplete"; readonly reason: string };
+
+/** Clean submission or seat-fallback tainted accepted receipt (ADR 0071). */
+export type NotaryOutput =
+  | NotaryOutputClean
+  | WithEngineLaborFallback<NotaryOutputClean>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asStringArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+/**
+ * Project one explicit Notary release. Throws when there is no lawful explicit
+ * pass / bounce / incomplete(reason) — callers map that to residual incomplete.
+ */
+export function validateNotaryOutput(value: unknown): NotaryOutput {
+  if (!isRecord(value)) {
+    throw new Error("Notary output has no recognized execution discriminator");
+  }
+  const statusRaw = typeof value.status === "string" ? value.status : undefined;
+  if (statusRaw === undefined || !seatFallbackStatusHasLawfulEvidence(statusRaw, value)) {
+    throw new Error("Notary output has no recognized execution discriminator");
+  }
+  const status = seatFallbackBaseStatus(statusRaw);
+  if (status === "incomplete") {
+    const reason = value.reason;
+    if (typeof reason !== "string" || reason.trim() === "") {
+      throw new Error("Notary incomplete requires a non-empty reason");
+    }
+    return structuredClone(value) as NotaryOutput;
+  }
+  if (status === "bounce") {
+    const clone = structuredClone(value) as Record<string, unknown>;
+    if (clone.disposition === undefined) clone.disposition = "rewrite";
+    if (!Array.isArray(clone.findings)) clone.findings = asStringArray(clone.findings);
+    return clone as NotaryOutput;
+  }
+  if (status === "pass") {
+    const clone = structuredClone(value) as Record<string, unknown>;
+    if (!Array.isArray(clone.findings)) clone.findings = asStringArray(clone.findings);
+    return clone as NotaryOutput;
+  }
+  throw new Error("Notary output has no recognized execution discriminator");
+}
+
+/** Shape check for recorded accepted details (may include engineLaborFallback). */
+export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
+  return validateNotaryOutput(value);
+}
+
+export function withNotaryAcceptedDetails(output: NotaryOutput): NotaryOutput {
+  return withEngineLaborFallbackField(
+    output,
+    readActivationEngineLaborFallbackField(),
+  ) as NotaryOutput;
+}
+
+export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknown> {
+  const status = seatFallbackBaseStatus(String(output.status));
+  const facts: Record<string, unknown> = { status, officer: "notary" };
+  if (status === "pass" || status === "bounce") {
+    const findings = (output as { findings?: unknown }).findings;
+    facts.findingsCount = Array.isArray(findings) ? findings.length : 0;
+  }
+  if (status === "bounce") {
+    facts.disposition = "rewrite";
+  }
+  if (status === "incomplete") {
+    facts.reason = (output as { reason: string }).reason;
+  }
+  return facts;
+}

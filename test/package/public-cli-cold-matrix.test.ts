@@ -305,8 +305,8 @@ async function installFromTarball(
   };
 }
 
-test("one cold install exercises all seven public roles plus automatic Navigator gates", async () => {
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, 7);
+test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
+  assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
@@ -583,6 +583,29 @@ test("one cold install exercises all seven public roles plus automatic Navigator
         assert.notEqual(result.code, 0, result.stderr);
         void error;
       }
+    }
+
+    // notary — source-run locator only; zero prompt/attachment.
+    {
+      const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
+      const sourceDir = join(project, ".source-runs", `${sourceRunId}@judge`);
+      await mkdir(join(sourceDir, "session"), { recursive: true });
+      await writeFile(
+        join(sourceDir, "session", "session.jsonl"),
+        "{}\n",
+        "utf8",
+      );
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["notary", "--project", project, "--source-run", sourceDir],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("notary", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "notary");
+      assert.equal(args.includes("--ak-notary-source-run"), true);
+      assert.equal(args.includes("--no-skills"), true);
     }
 
     // Install-unique admits grammar (absorbed from public-cli-install t2):
