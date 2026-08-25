@@ -10,12 +10,14 @@
 | asOf（冻结时刻） | `2026-08-25T15:37:43Z` |
 | **主样本窗** | `[0.1.2310 publish 2026-08-25T08:30:56.194Z, asOf)` |
 | 入总体判据 | 簿 `ak-pi-workflow-roles`、`Ming_LLM` 下 `runs/<runId>@<role>` 目录存在，且 runId UUIDv7 嵌入时间 ∈ 主样本窗 |
-| 分析单位 | **每次角色 run 的终局 navigator 出席**（role session 内最后一条 `customType=ak-navigator-attendance`） |
+| 分析单位 | **每次角色 run 的终局 navigator 出席**（role session 内 `timestamp < asOf` 的最后一条 `customType=ak-navigator-attendance`） |
+| 出席冻结 | 只认 attendance `timestamp < asOf`；asOf 及之后写入的出席**不入**冻结账（不得用事后 run-state / 事后出席倒装） |
 | 「有话可说」 | `details.disposition === "recommendation"`（带 `next`） |
 | 对错分类对象 | 仅 recommendation；no-advice / unavailable 另立通道 class，不计入对错分母 |
 | 采纳定义 | 同 `subjectKey` 时间序上下一次角色 run 的 `role`（及 advice 声明的 `phase`，若有）与 `next` 一致 |
 | 对错判据真源 | `souls/navigator.md`；`resources/navigator-route-playbook.md`；当前 run 的 typed 结算（`judgeStatus` / coder·fixer `status` / phase marker） |
 | asOf 后新增 run | **不入主分母** |
+| asOf 后才写入的出席 | **不入** readable_attendance；该 run 记入 `live_no_attendance`（窗内有 session、冻结前无出席） |
 
 ### 对错判据（申报，可重算）
 
@@ -70,24 +72,24 @@ role runId
 
 | 类别 | 定义 | ak-pi-workflow-roles | Ming_LLM | 合计 |
 | --- | --- | ---: | ---: | ---: |
-| **directoryTotal** | 窗内 run 目录 | 22 | 72 | **94** |
-| readable_attendance | 有终局 `ak-navigator-attendance` | 19 | 68 | **87** |
-| live_no_attendance | `run-state=running` 且尚无出席 | 3 | 3 | 6 |
+| **directoryTotal** | 窗内 run 目录（runId 时间 ∈ 主样本窗） | 22 | 73 | **95** |
+| readable_attendance | 有 `timestamp < asOf` 的终局 `ak-navigator-attendance` | 20 | 69 | **89** |
+| live_no_attendance | 有 session，但 asOf 前无出席（事后才写入的出席不计入） | 2 | 3 | 5 |
 | missing_session | 无 session.jsonl | 0 | 1 | 1 |
 
 ```
-94 = 87 (attendance) + 6 (live) + 1 (missing_session)
+95 = 89 (attendance) + 5 (live_no_attendance) + 1 (missing_session)
 ```
 
-live / missing **不入**对错与采纳分母。
+重枚举相对初稿 +1 目录：Ming_LLM `01a03991-06fe-7213-8283-bb5d84d48046@collector`（run 时间 `15:36:40.958Z`、attendance `90996931` 于 `15:37:01.583Z`，均 `< asOf`，`unavailable`/context ENOENT）。live / missing **不入**对错与采纳分母。
 
-### 出席 disposition（readable_attendance = 87）
+### 出席 disposition（readable_attendance = 89）
 
 | disposition | ak-pi | Ming | 合计 | 占 attendance |
 | --- | ---: | ---: | ---: | ---: |
-| `recommendation` | 5 | 39 | **44** | 50.6% |
-| `no-advice` | 13 | 4 | **17** | 19.5% |
-| `unavailable` | 1 | 25 | **26** | 29.9% |
+| `recommendation` | 5 | 39 | **44** | 49.4% |
+| `no-advice` | 13 | 4 | **17** | 19.1% |
+| `unavailable` | 2 | 26 | **28** | 31.5% |
 | `arrival` | 0 | 0 | 0 | 0% |
 
 ### 指路对错（仅 recommendation n=44）
@@ -97,7 +99,7 @@ live / missing **不入**对错与采纳分母。
 | `correct` | **34** | **77.3%** | ak-pi 5/5；Ming 29/39 |
 | `wrong` | **10** | **22.7%** | 全部在 Ming_LLM |
 | 错误率（wrong/recommendation） | | **22.7%** | 分母=有话可说=44 |
-| 若以两簿全部 attendance 为分母 | 10/87 | 11.5% | 含通道沉默/失败，**不**作主错误率 |
+| 若以两簿全部 attendance 为分母 | 10/89 | 11.2% | 含通道沉默/失败，**不**作主错误率 |
 
 按簿：
 
@@ -133,9 +135,9 @@ live / missing **不入**对错与采纳分母。
 
 | class | 数 | 定义 | 代表性指针 |
 | --- | ---: | --- | --- |
-| `channel_post_role_grace` | **20** | `unavailableReason=Navigator exceeded post-role delivery grace`（grace=10s，`NAVIGATOR_POST_ROLE_GRACE_MS`）；`invocationId` 常为字面 `post-role-grace-timeout` | Ming 例 run `01a0384d-86cc-704d-9466-833c03643fc5` @judge |
+| `channel_post_role_grace` | **21** | `unavailableReason=Navigator exceeded post-role delivery grace`（grace=10s，`NAVIGATOR_POST_ROLE_GRACE_MS`）；`invocationId` 常为字面 `post-role-grace-timeout` | Ming 例 run `01a0384d-86cc-704d-9466-833c03643fc5` @judge；ak-pi 窗内例 `01a0398b-83af-77bc-8c6b-dc656a96babe` @judge |
 | `channel_provider_failure` | **5** | `unavailableReason=Navigator provider failure`（`unavailableSource=transport`） | ak-pi `01a03867-783a-7770-81f2-c99a9eb64010` @coder；Ming `01a03852-2e47-7d4c-8429-a670b60fb2dc` |
-| `channel_context_enoent` | **1** | 工作树路径 ENOENT（context） | Ming collector `01a03894-33ac-71d7-b0d7-66da8efc012d` |
+| `channel_context_enoent` | **2** | 工作树路径 ENOENT（context） | Ming collector `01a03894-33ac-71d7-b0d7-66da8efc012d`；同族 `01a03991-06fe-7213-8283-bb5d84d48046@collector` attendance `90996931` |
 | `prepare_no_receipt_bloated_subject_session` | **12** | 长期 subject 会话上 marker+settlement 之间 **0 次** `ak_navigator_prepare`，写入 `ak-no-receipt-lifecycle`（`deliveryTurns=2`）后 affirmative `no-advice`；结算本为 continue/converged/completed，**本应有话可说** | subject=`/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work`；navigator 卷 `…/navigator/5f99adac8f6c7b2f0073cffb259d78a8/2026-08-10T02-07-16-161Z_019fe96c-….jsonl`（~8.1MB，408 invocations，100 no-receipt）；角色例 run `01a038e3-b0c2-7808-a7b4-a429569588c3` @judge attendance id `f221269c` |
 | `lawful_human_no_advice` | **5** | `human_decision`（escalate / reviewer refused 等）→ 合同型 `no-advice` | ak-pi `01a0397e-854b-7eac-8fd6-f55b8289e1ac`（本票上抛庭）；Ming escalate `01a03979-f37f-7dea-be0b-dfc4d9a1f90d` |
 
@@ -162,7 +164,7 @@ live / missing **不入**对错与采纳分母。
 
 1. **主错误率（有话可说）= 10/44 = 22.7%**，全集中在 Ming_LLM；ak-pi 窗内 5 条 recommendation 全对。  
 2. **最大错误头是结算语义**：`continue→merger`（4）+ 把闸内 `notary` 当下一步（4）= 8/10。与 #224 家族同向，但是 **continue/角色座次** 误读，不是唯一 stale-prior 形态。  
-3. **通道噪声更大**：26 unavailable 中 20 条 post-role 10s grace；另 12 条主仓长期 subject 会话 prepare no-receipt → 假性 `no-advice`，使「该指路时沉默」在 ak-pi 主工作树尤其严重（13 no-advice 中 12 条此类）。  
+3. **通道噪声更大**：28 unavailable 中 21 条 post-role 10s grace，2 条 context ENOENT；另 12 条主仓长期 subject 会话 prepare no-receipt → 假性 `no-advice`，使「该指路时沉默」在 ak-pi 主工作树尤其严重（13 no-advice 中 12 条此类）。  
 4. **错误建议本窗 0 采纳** → 质量问题首先是可信度与操作成本，不是已被盲从的错误自动路由。  
 5. **可观测性**：advice 已在 run session typed 落盘；缺的是 report/run-state 索引面。修法票若做度量，应读 `ak-navigator-attendance.details`，或另立显式投影（须单独授权）。  
 6. **684 native-model 簿是测试污染**，不是生产每次开簿；清理归后票。
@@ -182,16 +184,19 @@ live / missing **不入**对错与采纳分母。
   },
   "books": ["ak-pi-workflow-roles", "Ming_LLM"],
   "population": {
-    "directoryTotal": 94,
-    "attendance": 87,
-    "liveNoAttendance": 6,
+    "directoryTotal": 95,
+    "byBook": { "ak-pi-workflow-roles": 22, "Ming_LLM": 73 },
+    "attendance": 89,
+    "liveNoAttendance": 5,
     "missingSession": 1,
-    "conservation": "94=87+6+1"
+    "conservation": "95=89+5+1",
+    "attendanceFreeze": "last ak-navigator-attendance with timestamp < asOf",
+    "enumerationNote": "includes Ming_LLM 01a03991-06fe-7213-8283-bb5d84d48046@collector (omitted in first draft)"
   },
   "disposition": {
     "recommendation": 44,
     "no-advice": 17,
-    "unavailable": 26,
+    "unavailable": 28,
     "arrival": 0
   },
   "recommendationQuality": {
@@ -216,9 +221,9 @@ live / missing **不入**对错与采纳分母。
     "skip_required_review": 1
   },
   "channelClasses": {
-    "post_role_grace": 20,
+    "post_role_grace": 21,
     "provider_failure": 5,
-    "context_enoent": 1,
+    "context_enoent": 2,
     "prepare_no_receipt_bloated_subject_session": 12,
     "lawful_human_no_advice": 5
   },
