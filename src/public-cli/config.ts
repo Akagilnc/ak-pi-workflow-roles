@@ -21,7 +21,17 @@ import {
 } from "./registry.ts";
 
 /** Province officers that may carry a persistent model override (#453). */
-export type MenxiaOfficerSeat = "gatekeeper" | "inspector" | "notary";
+export const MENXIA_OFFICER_SEATS = [
+  "gatekeeper",
+  "inspector",
+  "notary",
+] as const;
+
+export type MenxiaOfficerSeat = (typeof MENXIA_OFFICER_SEATS)[number];
+
+export function isMenxiaOfficerSeat(value: string): value is MenxiaOfficerSeat {
+  return (MENXIA_OFFICER_SEATS as readonly string[]).includes(value);
+}
 
 export type CredentialProviders = {
   "openai-codex": boolean;
@@ -30,8 +40,15 @@ export type CredentialProviders = {
 
 export type SeatModelConfig = ModelRef;
 
-/** Persistent seat row: provider/model[:thinking] + optional engine axis (#356/#384). */
-export type PersistentSeatConfig = SeatModelConfig & {
+/**
+ * Persistent seat row (#356/#384/#453): model fields and engine are independent
+ * axes. Engine-only residual is legal after model clear so direct callable
+ * activation keeps its labor engine while province inheritance resumes.
+ */
+export type PersistentSeatConfig = {
+  provider?: string;
+  model?: string;
+  thinking?: PublicThinkingLevel;
   engine?: string;
 };
 
@@ -134,33 +151,45 @@ export function setPersistentSeatConfig(
 }
 
 /**
- * Remove a seat's entire persistent row (model + engine) so resolution falls
- * back to startup/unconfigured, or province inheritance for menxia (#453).
- * Already-absent seats are a no-op.
+ * Clear a seat's persistent model override only (#453).
+ * Engine axis is independent: when present it remains as an engine-only residual
+ * so direct callable activation keeps its labor engine while model resolution
+ * returns to startup / province inheritance. Model-less residual with no engine
+ * drops the row. Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(
   config: PublicCliConfig,
   seat: PublicConfigurableSeat,
 ): PublicCliConfig {
-  if (config.seats[seat] === undefined) return config;
-  const { [seat]: _dropped, ...seats } = config.seats;
-  return { ...config, seats };
+  const previous = config.seats[seat];
+  if (previous === undefined) return config;
+  if (previous.engine === undefined) {
+    const { [seat]: _dropped, ...seats } = config.seats;
+    return { ...config, seats };
+  }
+  return {
+    ...config,
+    seats: {
+      ...config.seats,
+      [seat]: { engine: previous.engine },
+    },
+  };
 }
 
 /**
  * Province-only model selection (#453): officer persistent > gatekeeper persistent
  * > unset (caller inherits parent session). Never consults startup candidates —
  * direct `ak-role notary` keeps resolveEffectiveSeat; only province reads this.
+ * Engine-only residual is not a model override.
  */
 export function resolveMenxiaOfficerModelSelection(
   config: PublicCliConfig,
   officer: MenxiaOfficerSeat,
 ): SeatModelConfig | undefined {
-  const own = config.seats[officer];
-  if (own !== undefined) return seatModelOnly(own);
+  const ownModel = seatModelOnly(config.seats[officer]);
+  if (ownModel !== undefined) return ownModel;
   if (officer === "gatekeeper") return undefined;
-  const gate = config.seats.gatekeeper;
-  return gate === undefined ? undefined : seatModelOnly(gate);
+  return seatModelOnly(config.seats.gatekeeper);
 }
 
 /**
@@ -189,6 +218,11 @@ export function setPersistentSeatEngine(
   }
   if (engine === undefined) {
     const { engine: _dropped, ...modelOnly } = previous;
+    // Engine-only residual with engine cleared → drop the empty row.
+    if (seatModelOnly(modelOnly) === undefined) {
+      const { [seat]: _row, ...seats } = config.seats;
+      return { ...config, seats };
+    }
     return {
       ...config,
       seats: {
@@ -234,8 +268,14 @@ export function setAutoResumeLimit(
   return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
 }
 
-/** Strip optional engine so activation model argv never sees the engine axis. */
-export function seatModelOnly(seat: PersistentSeatConfig): SeatModelConfig {
+/**
+ * Strip optional engine so activation model argv never sees the engine axis.
+ * Engine-only residual (model cleared) yields undefined — not a model override.
+ */
+export function seatModelOnly(
+  seat: PersistentSeatConfig | undefined,
+): SeatModelConfig | undefined {
+  if (seat?.provider === undefined || seat.model === undefined) return undefined;
   return seat.thinking === undefined
     ? { provider: seat.provider, model: seat.model }
     : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
@@ -373,14 +413,34 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     throw new Error(`config seat ${seat} must be an object`);
   }
   const raw = value as Record<string, unknown>;
-  if (typeof raw.provider !== "string" || raw.provider.trim() === "") {
-    throw new Error(`config seat ${seat} requires provider`);
+  const hasProvider = raw.provider !== undefined;
+  const hasModel = raw.model !== undefined;
+  if (hasProvider !== hasModel) {
+    throw new Error(`config seat ${seat} requires both provider and model`);
   }
-  if (typeof raw.model !== "string" || raw.model.trim() === "") {
-    throw new Error(`config seat ${seat} requires model`);
+  if (raw.engine !== undefined && typeof raw.engine !== "string") {
+    // Shape only: engine must be a string field. Path-safety syntax is deferred to
+    // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
+    throw new Error(`config seat ${seat} engine must be a string`);
+  }
+  // #453: engine-only residual is legal after model clear (independent axes).
+  if (!hasProvider && raw.engine === undefined) {
+    throw new Error(`config seat ${seat} requires provider/model or engine`);
+  }
+  if (hasProvider) {
+    if (typeof raw.provider !== "string" || raw.provider.trim() === "") {
+      throw new Error(`config seat ${seat} requires provider`);
+    }
+    if (typeof raw.model !== "string" || raw.model.trim() === "") {
+      throw new Error(`config seat ${seat} requires model`);
+    }
   }
   // #384: thinking is optional on persistent seats; when present it must be typed.
+  // Thinking without model is meaningless and rejected.
   if (raw.thinking !== undefined) {
+    if (!hasProvider) {
+      throw new Error(`config seat ${seat} thinking requires provider/model`);
+    }
     if (
       typeof raw.thinking !== "string" ||
       !THINKING_LEVELS.has(raw.thinking as PublicThinkingLevel)
@@ -389,20 +449,17 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     }
   }
   const parsed: PersistentSeatConfig = {
-    provider: raw.provider,
-    model: raw.model,
-    ...(raw.thinking === undefined
-      ? {}
-      : { thinking: raw.thinking as PublicThinkingLevel }),
+    ...(hasProvider
+      ? {
+          provider: raw.provider as string,
+          model: raw.model as string,
+          ...(raw.thinking === undefined
+            ? {}
+            : { thinking: raw.thinking as PublicThinkingLevel }),
+        }
+      : {}),
+    ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
   };
-  if (raw.engine !== undefined) {
-    // Shape only: engine must be a string field. Path-safety syntax is deferred to
-    // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
-    if (typeof raw.engine !== "string") {
-      throw new Error(`config seat ${seat} engine must be a string`);
-    }
-    parsed.engine = raw.engine;
-  }
   return parsed;
 }
 
@@ -479,13 +536,14 @@ function resolveBaseSeat(
   credentials: CredentialProviders,
 ): EffectiveSeat {
   const automatic = isAutomaticConfigurableSeat(seat);
-  const persistent = config.seats[seat];
-  if (persistent !== undefined) {
+  // Engine-only residual is not a persistent model source (#453).
+  const persistentModel = seatModelOnly(config.seats[seat]);
+  if (persistentModel !== undefined) {
     return {
       seat,
       automatic,
       source: "persistent",
-      selection: seatModelOnly(persistent),
+      selection: persistentModel,
       engineSource: "unconfigured",
     };
   }

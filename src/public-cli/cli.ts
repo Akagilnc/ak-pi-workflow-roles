@@ -13,11 +13,13 @@ import {
   effectiveSeatConfigurations,
   formatModelSpec,
   isEngineAxisSeat,
+  isMenxiaOfficerSeat,
   loadCredentialProviders,
   loadPublicCliConfig,
   parseModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
+  seatModelOnly,
   setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
@@ -479,7 +481,7 @@ function renderHelp(): string {
   lines.push(
     "",
     "Role options: ak-role help <command>",
-    "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <seat>",
+    "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Effective seats: ak-role roles",
   );
@@ -522,6 +524,15 @@ function renderRoles(seats: readonly EffectiveSeat[]): string {
   return `${lines.join("\n")}\n`;
 }
 
+function renderPersistentSeatModel(selection: {
+  provider?: string;
+  model?: string;
+  thinking?: PublicThinkingLevel;
+}): string {
+  const model = seatModelOnly(selection);
+  return model === undefined ? "-" : formatModelSpec(model);
+}
+
 function renderConfig(config: PublicCliConfig): string {
   const lines: string[] = ["seat\tmodel\tengine"];
   const keys = Object.keys(config.seats) as (keyof typeof config.seats)[];
@@ -532,7 +543,7 @@ function renderConfig(config: PublicCliConfig): string {
       const selection = config.seats[seat];
       if (selection === undefined) continue;
       const engine = selection.engine === undefined ? "-" : selection.engine;
-      lines.push(`${seat}\t${formatModelSpec(selection)}\t${engine}`);
+      lines.push(`${seat}\t${renderPersistentSeatModel(selection)}\t${engine}`);
     }
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
@@ -558,7 +569,9 @@ async function runConfigCommand(
       } else {
         const engine =
           selection.engine === undefined ? "-" : selection.engine;
-        io.stdout(`${args[1]}\t${formatModelSpec(selection)}\t${engine}\n`);
+        io.stdout(
+          `${args[1]}\t${renderPersistentSeatModel(selection)}\t${engine}\n`,
+        );
       }
       return 0;
     }
@@ -595,14 +608,18 @@ async function runConfigCommand(
     return 0;
   }
 
-  // #453: clear a seat's persistent model row so resolution returns to inherit/startup.
+  // #453: clear menxia officer model override only (engine axis preserved).
   if (args[0] === "unset") {
     if (args.length !== 2) {
-      throw new CliUsageError("usage: ak-role config unset <seat>");
+      throw new CliUsageError(
+        "usage: ak-role config unset <gatekeeper|inspector|notary>",
+      );
     }
     const seat = args[1]!;
-    if (!isPublicConfigurableSeat(seat)) {
-      throw new CliUsageError(`unknown configurable seat: ${seat}`);
+    if (!isMenxiaOfficerSeat(seat)) {
+      throw new CliUsageError(
+        `config unset serves menxia officer overrides only (gatekeeper|inspector|notary); got ${seat}`,
+      );
     }
     const config = clearPersistentSeatConfig(
       await loadAndValidateConfig(home, packageRoot),
