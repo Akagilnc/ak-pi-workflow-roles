@@ -161,6 +161,13 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | `--project` | — | `path` | no | no | option | — | Project root with one ordinary in-progress merge (defaults to cwd). |
 | `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
 
+### `notary`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--source-run` | — | `runId@role\|path` | yes | no | option | — | Required source run locator (runId@role under the book home, or path to that run directory). Zero prompt/attachment projection. |
+
 ### `analyst`
 
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
