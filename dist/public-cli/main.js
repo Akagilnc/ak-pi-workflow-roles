@@ -14631,17 +14631,17 @@ function setPersistentSeatConfig(config, seat, selection) {
 function clearPersistentSeatConfig(config, seat) {
   const previous = config.seats[seat];
   if (previous === void 0) return config;
-  if (previous.engine === void 0) {
-    const { [seat]: _dropped, ...seats } = config.seats;
-    return { ...config, seats };
+  if (seat === "notary" && previous.engine !== void 0) {
+    return {
+      ...config,
+      seats: {
+        ...config.seats,
+        notary: { engine: previous.engine }
+      }
+    };
   }
-  return {
-    ...config,
-    seats: {
-      ...config.seats,
-      [seat]: { engine: previous.engine }
-    }
-  };
+  const { [seat]: _dropped, ...seats } = config.seats;
+  return { ...config, seats };
 }
 function isEngineAxisSeat(seat) {
   return isPublicCallableRole(seat);
@@ -14796,31 +14796,30 @@ function parseSeatModelConfig(value, seat) {
   if (raw.engine !== void 0 && typeof raw.engine !== "string") {
     throw new Error(`config seat ${seat} engine must be a string`);
   }
-  if (!hasProvider && raw.engine === void 0) {
-    throw new Error(`config seat ${seat} requires provider/model or engine`);
+  if (!hasProvider) {
+    if (seat === "notary" && typeof raw.engine === "string") {
+      if (raw.thinking !== void 0) {
+        throw new Error(`config seat ${seat} thinking requires provider/model`);
+      }
+      return { engine: raw.engine };
+    }
+    throw new Error(`config seat ${seat} requires provider`);
   }
-  if (hasProvider) {
-    if (typeof raw.provider !== "string" || raw.provider.trim() === "") {
-      throw new Error(`config seat ${seat} requires provider`);
-    }
-    if (typeof raw.model !== "string" || raw.model.trim() === "") {
-      throw new Error(`config seat ${seat} requires model`);
-    }
+  if (typeof raw.provider !== "string" || raw.provider.trim() === "") {
+    throw new Error(`config seat ${seat} requires provider`);
+  }
+  if (typeof raw.model !== "string" || raw.model.trim() === "") {
+    throw new Error(`config seat ${seat} requires model`);
   }
   if (raw.thinking !== void 0) {
-    if (!hasProvider) {
-      throw new Error(`config seat ${seat} thinking requires provider/model`);
-    }
     if (typeof raw.thinking !== "string" || !THINKING_LEVELS.has(raw.thinking)) {
       throw new Error(`config seat ${seat} requires a valid thinking level`);
     }
   }
   const parsed = {
-    ...hasProvider ? {
-      provider: raw.provider,
-      model: raw.model,
-      ...raw.thinking === void 0 ? {} : { thinking: raw.thinking }
-    } : {},
+    provider: raw.provider,
+    model: raw.model,
+    ...raw.thinking === void 0 ? {} : { thinking: raw.thinking },
     ...raw.engine === void 0 ? {} : { engine: raw.engine }
   };
   return parsed;

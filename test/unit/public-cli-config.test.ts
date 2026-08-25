@@ -296,6 +296,27 @@ test("#453 clear notary model keeps engine; unset-engine drops residual row", as
   });
 });
 
+// #453 r3: engine-only residual ownership is notary-only at the persist boundary.
+test("#453 non-notary engine-only residual is rejected on persist boundary", async () => {
+  await withTempHome(async (home) => {
+    await assert.rejects(
+      () => savePublicCliConfig({ seats: { judge: { engine: "opus" } } }, home),
+      /config seat judge requires provider/,
+    );
+    // Clear on a non-notary model+engine row must drop the whole seat, not leave residual.
+    let config = setPersistentSeatConfig(
+      { seats: {} },
+      "judge",
+      { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
+    );
+    config = setPersistentSeatEngine(config, "judge", "opus");
+    config = clearPersistentSeatConfig(config, "judge");
+    assert.equal(config.seats.judge, undefined);
+    await savePublicCliConfig(config, home);
+    assert.equal((await loadPublicCliConfig(home)).seats.judge, undefined);
+  });
+});
+
 test("persistent seat config wins over startup candidates", () => {
   const config = setPersistentSeatConfig(
     { seats: {} },
