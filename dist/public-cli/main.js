@@ -21189,13 +21189,16 @@ function reviewerDecisiveFacts(output) {
   const status = safelyRead(candidate, "status");
   const outcomes = safelyRead(candidate, "outcomes");
   const reports = safelyRead(candidate, "reports");
+  const amendments = safelyRead(candidate, "amendments");
   const axes = reviewerAxes(outcomes.readable ? outcomes.value : void 0);
   const reportAxes = reviewerAxes(reports.readable ? reports.value : void 0);
+  const amendmentAxes = reviewerAxes(amendments.readable ? amendments.value : void 0);
   const acceptedBatch = safelyRead(candidate, "acceptedBatch");
   const specDisposition = safelyRead(candidate, "specDisposition");
   const facts = {
     axes,
     reportAxes,
+    amendmentAxes,
     acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== void 0,
     ...auditNoReceiptDecisiveFact(candidate),
     // #380: spread sole-built field; do not re-key here (S1).
