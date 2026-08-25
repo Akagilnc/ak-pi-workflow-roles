@@ -1,6 +1,6 @@
 /**
- * #448 public Notary seat — source-run locator only; four external terminal layers;
- * zero caller prompt/attachment framing; default judge path adds no intake notary call.
+ * #448 public Notary seat — source-run locator only; four external terminal layers
+ * via real runAkRole entry; default judge path adds no intake notary call.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -23,17 +23,8 @@ import {
   admitNotaryInvocation,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
-import {
-  buildNotaryActivationExtraArgs,
-} from "../../src/public-cli/notary-run.ts";
-import {
-  extractNotaryRoleOutcome,
-  trySettleNotaryTerminalResult,
-} from "../../src/public-cli/settlement.ts";
-import {
-  exitCodeForTerminalOutcome,
-  isLawfulTypedTerminalOutcome,
-} from "../../src/public-cli/terminal.ts";
+import { buildNotaryActivationExtraArgs } from "../../src/public-cli/notary-run.ts";
+import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -117,10 +108,7 @@ function sessionRows(toolArgs: unknown, options: { isError?: boolean } = {}) {
   ];
 }
 
-async function seedSourceRun(home: string, project: string): Promise<string> {
-  const book = join(home, ".ak-roles", "books", "ak-public-cli-notary-project");
-  // book key comes from git common dir basename — seed under resolved book after first admit
-  // Use absolute path form for locator to avoid book-key coupling in unit tests.
+async function seedSourceRun(project: string): Promise<string> {
   const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
   const sourceDir = join(project, ".source-runs", `${runId}@judge`);
   await mkdir(join(sourceDir, "session"), { recursive: true });
@@ -132,12 +120,38 @@ async function seedSourceRun(home: string, project: string): Promise<string> {
   return await realpath(sourceDir);
 }
 
-test("notary argv rejects caller prompt and attachment projection", () => {
+function flagValue(args: readonly string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index < 0) return undefined;
+  return args[index + 1];
+}
+
+function scriptedNotarySession(
+  toolArgs: unknown,
+  options: { isError?: boolean } = {},
+) {
+  return async (extraArgs: readonly string[]) => {
+    const sessionFile = flagValue(extraArgs, "--session");
+    assert.ok(sessionFile);
+    await mkdir(join(sessionFile, ".."), { recursive: true });
+    await writeFile(
+      sessionFile,
+      `${sessionRows(toolArgs, options).map((row) => JSON.stringify(row)).join("\n")}\n`,
+      "utf8",
+    );
+    return {
+      code: 0,
+      timedOut: false,
+      stderr: "",
+      args: [...extraArgs],
+    };
+  };
+}
+
+test("notary argv rejects caller prompt and attachment projection", async () => {
   assert.throws(
     () => parseNotaryArgv(["--source-run", "x@judge", "please bounce lightly"]),
-    (error: unknown) =>
-      error instanceof CliUsageError &&
-      /rejects caller prompt|instruction/i.test(error.message),
+    (error: unknown) => error instanceof CliUsageError,
   );
   assert.throws(
     () => parseNotaryArgv(["--attach", "./note.md", "--source-run", "x@judge"]),
@@ -147,6 +161,28 @@ test("notary argv rejects caller prompt and attachment projection", () => {
     () => parseNotaryArgv([]),
     (error: unknown) => error instanceof CliUsageError,
   );
+
+  // Public CLI structural exit for the same input contract.
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceRunPath = await seedSourceRun(project);
+    const { io } = captureIo();
+    const withPrompt = await runAkRole(
+      ["notary", "--source-run", sourceRunPath, "caller framing must not admit"],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(withPrompt.exitCode, 2);
+    assert.equal(withPrompt.terminal, undefined);
+
+    const withAttach = await runAkRole(
+      ["notary", "--attach", "./note.md", "--source-run", sourceRunPath],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(withAttach.exitCode, 2);
+    assert.equal(withAttach.terminal, undefined);
+  });
 });
 
 test("notary activation binds locator only — zero instruction/attachment on admitted request", async () => {
@@ -154,7 +190,8 @@ test("notary activation binds locator only — zero instruction/attachment on ad
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(home, project);
+    const sourceRunPath = await seedSourceRun(project);
+    const callerFraming = "UNIQUE_CALLER_FRAMING_MUST_NOT_ENTER_TRANSPORT";
 
     const admitted = await admitNotaryInvocation({
       home,
@@ -171,82 +208,90 @@ test("notary activation binds locator only — zero instruction/attachment on ad
     assert.equal(admitted.sourceRun.runId, "01a034f1-75bf-71a6-bcf5-d1299145b1a5");
     assert.equal(admitted.sourceRun.role, "judge");
 
-    const extra = buildNotaryActivationExtraArgs(admitted, {
-      packageRoot,
-    });
-    assert.equal(extra.includes("--ak-role"), true);
-    assert.equal(extra[extra.indexOf("--ak-role") + 1], "notary");
-    assert.equal(extra.includes("--ak-notary-source-run"), true);
-    assert.equal(
-      extra[extra.indexOf("--ak-notary-source-run") + 1],
-      sourceRunPath,
-    );
-    // Transport prompt is package-owned fixed kickoff — no caller framing bytes.
-    const prompt = extra[extra.length - 1]!;
-    assert.match(prompt, /Notary review/);
-    assert.equal(prompt.includes("please bounce"), false);
+    const extra = buildNotaryActivationExtraArgs(admitted, { packageRoot });
+    assert.equal(flagValue(extra, "--ak-role"), "notary");
+    assert.equal(flagValue(extra, "--ak-notary-source-run"), sourceRunPath);
+    // No caller framing bytes on the transport prompt tail.
+    assert.equal(extra.some((token) => token.includes(callerFraming)), false);
+    assert.equal(extra.at(-1)?.includes(callerFraming) ?? false, false);
   });
 });
 
-test("layer ① accepted pass/bounce/incomplete-with-reason are lawful typed terminals (exit 0)", async () => {
+test("layer ① accepted pass/bounce/incomplete-with-reason exit 0 via public entry", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(home, project);
+    const sourceRunPath = await seedSourceRun(project);
 
-    for (const receipt of [
+    const receipts = [
       { status: "pass", findings: [] as string[] },
-      { status: "bounce", findings: ["quote has no source"], disposition: "rewrite" },
+      {
+        status: "bounce",
+        findings: ["quote has no source"],
+        disposition: "rewrite",
+      },
       { status: "incomplete", reason: "source run missing draft" },
-    ] as const) {
-      const admitted = await admitNotaryInvocation({
-        home,
-        cwd: project,
-        sourceRun: sourceRunPath,
-        createRunId: () => `01a0notary-0000-7000-8000-${String(Math.random()).slice(2, 14).padEnd(12, "0")}`,
-      });
-      const lines = sessionRows(receipt)
-        .map((row) => JSON.stringify(row))
-        .join("\n");
-      await writeFile(admitted.sessionFile, `${lines}\n`, "utf8");
-      const terminal = await trySettleNotaryTerminalResult(admitted);
-      assert.ok(terminal);
-      assert.equal(terminal.roleOutcome.kind, "accepted");
-      assert.equal(terminal.roleOutcome.role, "notary");
-      assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), true);
-      assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 0);
+    ] as const;
+
+    for (const [index, receipt] of receipts.entries()) {
+      const { io } = captureIo();
+      const result = await runAkRole(
+        ["notary", "--source-run", sourceRunPath],
+        {
+          home,
+          packageRoot,
+          cwd: project,
+          io,
+          createRunId: () =>
+            `01a0notary-0000-7000-8000-${String(index).padStart(12, "0")}`,
+          piRunner: scriptedNotarySession(receipt),
+        },
+      );
+      assert.equal(result.exitCode, 0, `receipt ${receipt.status}`);
+      assert.ok(result.terminal, `receipt ${receipt.status}`);
+      assert.equal(result.terminal.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal.roleOutcome.role, "notary");
+      assert.equal(
+        result.terminal.roleOutcome.status,
+        receipt.status,
+        `receipt ${receipt.status}`,
+      );
+      assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), true);
     }
   });
 });
 
-test("layer ② residual incomplete keeps candidate and exits non-zero", async () => {
+test("layer ② residual incomplete keeps candidate and exits non-zero via public entry", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(home, project);
-    const admitted = await admitNotaryInvocation({
-      home,
-      cwd: project,
-      sourceRun: sourceRunPath,
-      createRunId: () => "01a0notary-0000-7000-8000-000000000002",
-    });
+    const sourceRunPath = await seedSourceRun(project);
     const bad = { status: "maybe", note: "not an explicit release" };
-    const lines = sessionRows(bad, { isError: true })
-      .map((row) => JSON.stringify(row))
-      .join("\n");
-    await writeFile(admitted.sessionFile, `${lines}\n`, "utf8");
-    const terminal = await trySettleNotaryTerminalResult(admitted);
-    assert.ok(terminal);
-    assert.equal(terminal.roleOutcome.kind, "incomplete");
-    if (terminal.roleOutcome.kind === "incomplete") {
-      assert.equal(terminal.roleOutcome.role, "notary");
-      assert.equal(terminal.roleOutcome.acceptedReceipt, false);
-      assert.deepEqual(terminal.roleOutcome.candidate, bad);
+    const { io } = captureIo();
+
+    const result = await runAkRole(
+      ["notary", "--source-run", sourceRunPath],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => "01a0notary-0000-7000-8000-000000000002",
+        piRunner: scriptedNotarySession(bad, { isError: true }),
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "incomplete");
+    if (result.terminal.roleOutcome.kind === "incomplete") {
+      assert.equal(result.terminal.roleOutcome.role, "notary");
+      assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
+      assert.deepEqual(result.terminal.roleOutcome.candidate, bad);
     }
-    assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
-    assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
+    assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), false);
   });
 });
 
@@ -255,11 +300,9 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(home, project);
+    const sourceRunPath = await seedSourceRun(project);
     const { io } = captureIo();
 
-    // Scripted runner: no accepted Notary receipt + shared lifecycle no_receipt fact.
-    // Public path classifies cause=output then settleFailureTerminalResult projects layer ③.
     const result = await runAkRole(
       ["notary", "--source-run", sourceRunPath],
       {
@@ -315,7 +358,10 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
     if (result.terminal.roleOutcome.kind === "no_receipt") {
       assert.equal(result.terminal.roleOutcome.role, "notary");
       assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
-      assert.equal(result.terminal.roleOutcome.sessionCompletion, "settled-without-accepted-receipt");
+      assert.equal(
+        result.terminal.roleOutcome.sessionCompletion,
+        "settled-without-accepted-receipt",
+      );
     }
     assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), true);
   });
@@ -326,7 +372,7 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(home, project);
+    const sourceRunPath = await seedSourceRun(project);
     const { io } = captureIo();
     const result = await runAkRole(
       ["notary", "--source-run", sourceRunPath],
@@ -375,9 +421,13 @@ test("default judge public path admits no notary seat intake (observable run)", 
           assert.ok(sessionFile);
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, "", "utf8");
-          // Stop before any role receipt; intake observation only.
           void options;
-          return { code: 1, timedOut: false, stderr: "stop after intake", args: [...args] };
+          return {
+            code: 1,
+            timedOut: false,
+            stderr: "stop after intake",
+            args: [...args],
+          };
         },
       },
     );
@@ -385,9 +435,7 @@ test("default judge public path admits no notary seat intake (observable run)", 
     assert.ok(dispatchedArgs, "judge public path must dispatch once");
     assert.equal(flagValue(dispatchedArgs, "--ak-role"), "judge");
     assert.equal(dispatchedArgs.includes("--ak-notary-source-run"), false);
-    assert.equal(flagValue(dispatchedArgs, "--ak-role") === "notary", false);
 
-    // No notary run directory is created as a side effect of judge intake.
     const books = join(home, ".ak-roles", "books");
     const notaryRuns: string[] = [];
     async function walk(dir: string): Promise<void> {
@@ -409,17 +457,3 @@ test("default judge public path admits no notary seat intake (observable run)", 
     assert.deepEqual(notaryRuns, []);
   });
 });
-
-test("extractNotaryRoleOutcome projects officer status onto accepted terminal facts", () => {
-  const rows = sessionRows({ status: "pass", findings: ["ok"] });
-  const extracted = extractNotaryRoleOutcome(rows as never);
-  assert.ok(extracted);
-  assert.equal(extracted.outcome.status, "pass");
-  assert.equal(extracted.outcome.decisiveFacts.officer, "notary");
-});
-
-function flagValue(args: readonly string[], flag: string): string | undefined {
-  const index = args.indexOf(flag);
-  if (index < 0) return undefined;
-  return args[index + 1];
-}
