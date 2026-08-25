@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import {
   NotarySourceRunError,
@@ -28,6 +29,7 @@ import {
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
 import { buildNotaryActivationExtraArgs } from "../../src/public-cli/notary-run.ts";
+import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -112,9 +114,52 @@ function sessionRows(toolArgs: unknown, options: { isError?: boolean } = {}) {
   ];
 }
 
-async function seedSourceRun(project: string): Promise<string> {
-  const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-  const sourceDir = join(project, ".source-runs", `${runId}@judge`);
+const CANONICAL_SOURCE_RUN_ID = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
+const CANONICAL_SOURCE_ROLE = "judge" as const;
+
+/** Seed a retained source run under the machine ledger book (authoritative path). */
+async function seedCanonicalSourceRun(
+  home: string,
+  project: string,
+): Promise<string> {
+  const coords = roleRunSessionCoordinates({
+    cwd: project,
+    runId: CANONICAL_SOURCE_RUN_ID,
+    role: CANONICAL_SOURCE_ROLE,
+    home,
+  });
+  await mkdir(coords.sessionDirectory, { recursive: true });
+  const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
+  await writeFile(
+    coords.sessionFile,
+    `${JSON.stringify({ type: "message", message: { role: "user", content: "draft" } })}\n`,
+    "utf8",
+  );
+  await writeFile(
+    admittedRequestPath,
+    `${JSON.stringify({ role: CANONICAL_SOURCE_ROLE, runId: CANONICAL_SOURCE_RUN_ID })}\n`,
+    "utf8",
+  );
+  await writeRoleRunState(coords.runDirectory, {
+    runId: CANONICAL_SOURCE_RUN_ID,
+    role: CANONICAL_SOURCE_ROLE,
+    state: "terminal",
+    bookKey: coords.bookKey,
+    projectRoot: project,
+    sessionDirectory: coords.sessionDirectory,
+    sessionFile: coords.sessionFile,
+    admittedRequestPath,
+  });
+  return await realpath(coords.runDirectory);
+}
+
+/** Project-tree fake projection — must be rejected by public locator. */
+async function seedProjectProjection(project: string): Promise<string> {
+  const sourceDir = join(
+    project,
+    ".source-runs",
+    `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+  );
   await mkdir(join(sourceDir, "session"), { recursive: true });
   await writeFile(
     join(sourceDir, "session", "session.jsonl"),
@@ -171,7 +216,7 @@ test("notary argv rejects caller prompt and attachment projection", async () => 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const { io } = captureIo();
     const withPrompt = await runAkRole(
       ["notary", "--source-run", sourceRunPath, "caller framing must not admit"],
@@ -194,7 +239,7 @@ test("notary activation binds locator only — zero instruction/attachment on ad
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
 
     const admitted = await admitNotaryInvocation({
       home,
@@ -249,6 +294,15 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
     assert.equal(badName.exitCode, 2);
     assert.equal(badName.terminal, undefined);
 
+    // Project-tree projection is not an authoritative source run.
+    const projection = await seedProjectProjection(project);
+    const projected = await runAkRole(
+      ["notary", "--source-run", projection],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(projected.exitCode, 2);
+    assert.equal(projected.terminal, undefined);
+
     // Unit seam: same failures surface as NotarySourceRunError before CLI wrap.
     await assert.rejects(
       () =>
@@ -259,6 +313,68 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
         }),
       (error: unknown) => error instanceof NotarySourceRunError,
     );
+    await assert.rejects(
+      () =>
+        resolveNotarySourceRunLocator({
+          projectRoot: project,
+          sourceRun: projection,
+          home,
+        }),
+      (error: unknown) =>
+        error instanceof NotarySourceRunError &&
+        error.message.includes("machine-ledger book"),
+    );
+  });
+});
+
+test("notary admits canonical ledger source-run and bare runId@role; rejects project projection", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
+    const projection = await seedProjectProjection(project);
+
+    const byPath = await resolveNotarySourceRunLocator({
+      projectRoot: project,
+      sourceRun: sourceRunPath,
+      home,
+    });
+    assert.equal(byPath.runDirectory, sourceRunPath);
+    assert.equal(byPath.runId, CANONICAL_SOURCE_RUN_ID);
+    assert.equal(byPath.role, CANONICAL_SOURCE_ROLE);
+
+    const bare = `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`;
+    const byBare = await resolveNotarySourceRunLocator({
+      projectRoot: project,
+      sourceRun: bare,
+      home,
+    });
+    assert.equal(byBare.runDirectory, sourceRunPath);
+
+    // Real public entry: bare locator admits; project projection is exit 2.
+    const { io } = captureIo();
+    const admittedBare = await runAkRole(
+      ["notary", "--source-run", bare],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => "01a0notary-0000-7000-8000-0000000000aa",
+        piRunner: scriptedNotarySession({ status: "pass", findings: [] }),
+      },
+    );
+    assert.equal(admittedBare.exitCode, 0);
+    assert.ok(admittedBare.terminal);
+    assert.equal(admittedBare.terminal.roleOutcome.kind, "accepted");
+
+    const rejectedProjection = await runAkRole(
+      ["notary", "--source-run", projection],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(rejectedProjection.exitCode, 2);
+    assert.equal(rejectedProjection.terminal, undefined);
   });
 });
 
@@ -267,7 +383,7 @@ test("layer ① accepted pass/bounce/incomplete-with-reason exit 0 via public en
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
 
     const receipts = [
       { status: "pass", findings: [] as string[] },
@@ -312,7 +428,7 @@ test("layer ② residual incomplete keeps candidate and exits non-zero via publi
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const bad = { status: "maybe", note: "not an explicit release" };
     const { io } = captureIo();
 
@@ -345,7 +461,7 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const { io } = captureIo();
 
     const result = await runAkRole(
@@ -417,7 +533,7 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedSourceRun(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const { io } = captureIo();
     const result = await runAkRole(
       ["notary", "--source-run", sourceRunPath],

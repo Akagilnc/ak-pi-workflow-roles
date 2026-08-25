@@ -15801,8 +15801,28 @@ var init_uuidv7 = __esm({
 });
 
 // src/notary-source-run.ts
-import { lstat, realpath as realpath2 } from "node:fs/promises";
-import { basename as basename3, isAbsolute as isAbsolute3, join as join6, resolve as resolve4 } from "node:path";
+import { dirname as dirname6, isAbsolute as isAbsolute3, join as join6, resolve as resolve4, basename as basename3 } from "node:path";
+import { lstat, readFile as readFile4, realpath as realpath2 } from "node:fs/promises";
+async function readRetainedSourceRunIdentity(runDirectory) {
+  let raw;
+  try {
+    raw = JSON.parse(await readFile4(join6(runDirectory, "run-state.json"), "utf8"));
+  } catch {
+    return void 0;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return void 0;
+  const record4 = raw;
+  if (typeof record4.runId !== "string" || record4.runId.trim() === "") return void 0;
+  if (typeof record4.role !== "string" || record4.role.trim() === "") return void 0;
+  if (typeof record4.bookKey !== "string" || record4.bookKey.trim() === "") return void 0;
+  const retainedDirectory = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
+  return {
+    runId: record4.runId,
+    role: record4.role,
+    bookKey: record4.bookKey,
+    runDirectory: retainedDirectory
+  };
+}
 function parseRunDirectoryName(name) {
   const match = RUN_DIR_NAME.exec(name);
   if (match === null) return void 0;
@@ -15845,31 +15865,46 @@ async function resolveNotarySourceRunLocator(options) {
   if (raw === "") {
     throw new NotarySourceRunError("notary --source-run requires a run locator");
   }
+  const ledgerHome = resolveActivationLedgerHome(
+    options.home === void 0 ? void 0 : () => options.home
+  );
+  const bookKey = resolveBookKeyFromGit(options.projectRoot);
+  const bookRunsRoot = join6(activationBookDirectory(ledgerHome, bookKey), "runs");
   let candidate;
   const bare = parseRunDirectoryName(raw);
   if (bare !== void 0 && !raw.includes("/") && !raw.includes("\\")) {
-    const ledgerHome2 = resolveActivationLedgerHome(
-      options.home === void 0 ? void 0 : () => options.home
-    );
-    const bookKey = resolveBookKeyFromGit(options.projectRoot);
-    candidate = join6(
-      activationBookDirectory(ledgerHome2, bookKey),
-      "runs",
-      `${bare.runId}@${bare.role}`
-    );
+    candidate = join6(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
     candidate = isAbsolute3(raw) ? raw : resolve4(options.projectRoot, raw);
   }
   const real = await requireRunDirectory(candidate, raw);
   const identity = parseRunDirectoryName(basename3(real));
-  const ledgerHome = resolveActivationLedgerHome(
-    options.home === void 0 ? void 0 : () => options.home
-  );
-  const projectRoot = physicalPathIdentity(options.projectRoot);
-  const homeRoot = physicalPathIdentity(ledgerHome);
-  if (!pathContainedIn(homeRoot, real) && !pathContainedIn(projectRoot, real)) {
+  const runsRootIdentity = physicalPathIdentity(bookRunsRoot);
+  const parentIdentity = physicalPathIdentity(dirname6(real));
+  if (parentIdentity !== runsRootIdentity) {
     throw new NotarySourceRunError(
-      "notary --source-run escapes ledger home and project root"
+      "notary --source-run must resolve to a retained run under the project machine-ledger book"
+    );
+  }
+  const runState = await readRetainedSourceRunIdentity(real);
+  if (runState === void 0) {
+    throw new NotarySourceRunError(
+      "notary --source-run lacks retained run-state identity"
+    );
+  }
+  if (runState.runId !== identity.runId || runState.role !== identity.role) {
+    throw new NotarySourceRunError(
+      "notary --source-run retained identity does not match directory name"
+    );
+  }
+  if (runState.bookKey !== bookKey) {
+    throw new NotarySourceRunError(
+      "notary --source-run retained book binding does not match project case"
+    );
+  }
+  if (physicalPathIdentity(runState.runDirectory) !== physicalPathIdentity(real)) {
+    throw new NotarySourceRunError(
+      "notary --source-run retained runDirectory does not match locator path"
     );
   }
   return {
@@ -16760,7 +16795,7 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat as lstat2,
   mkdir as mkdir2,
-  readFile as readFile4,
+  readFile as readFile5,
   realpath as realpath3,
   writeFile as writeFile2
 } from "node:fs/promises";
@@ -16795,7 +16830,7 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
 }
 async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   const ledgerPath = join7(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
+  const current = JSON.parse(await readFile5(ledgerPath, "utf8"));
   const next = { ...current };
   if (model !== void 0) {
     next.provider = model.provider;
@@ -16818,7 +16853,7 @@ async function recordEffectiveInvocationModel(runDirectory, model, engine) {
 }
 async function mergeInvocationIdentityPage(runDirectory, fields) {
   const ledgerPath = join7(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile4(ledgerPath, "utf8"));
+  const current = JSON.parse(await readFile5(ledgerPath, "utf8"));
   await writeFile2(
     ledgerPath,
     `${JSON.stringify({
@@ -16838,7 +16873,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
-    await readFile4(join7(rolePackageRoot, "package.json"), "utf8")
+    await readFile5(join7(rolePackageRoot, "package.json"), "utf8")
   );
   if (typeof raw.version !== "string" || raw.version.trim() === "") {
     throw new Error(
@@ -17036,7 +17071,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile4(absolute);
+  const bytes = await readFile5(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename4(absolute)}`;
   const frozenPath = join7(destinationDir, name);
   await writeFile2(frozenPath, bytes);
@@ -17240,7 +17275,7 @@ async function admitFixerInvocation(options) {
   if (options.prerequisitesPath !== void 0) {
     const absolutePrereq = isAbsolute4(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
     try {
-      prerequisitesSource = await readFile4(absolutePrereq, "utf8");
+      prerequisitesSource = await readFile5(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -18618,7 +18653,7 @@ var init_upstream_error_testimony = __esm({
 // src/public-cli/explicit-internal.ts
 import { execFile as execFile3, spawn } from "node:child_process";
 import { constants, writeFileSync } from "node:fs";
-import { access, readFile as readFile5, realpath as realpath4, unlink } from "node:fs/promises";
+import { access, readFile as readFile6, realpath as realpath4, unlink } from "node:fs/promises";
 import { delimiter as delimiter2, isAbsolute as isAbsolute5, join as join8, resolve as resolve6 } from "node:path";
 import { platform } from "node:process";
 import { promisify as promisify3 } from "node:util";
@@ -18641,7 +18676,7 @@ async function clearReviewerDispatchRejection(runDirectory) {
 async function readReviewerDispatchRejection(runDirectory) {
   let raw;
   try {
-    raw = await readFile5(reviewerDispatchRejectionPath(runDirectory), "utf8");
+    raw = await readFile6(reviewerDispatchRejectionPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -18843,7 +18878,7 @@ var init_engine_detour = __esm({
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile6, realpath as realpath5 } from "node:fs/promises";
+import { readFile as readFile7, realpath as realpath5 } from "node:fs/promises";
 import { join as join9 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
@@ -18962,7 +18997,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const provenancePath = join9(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile6(provenancePath, "utf8");
+    provenanceRaw = await readFile7(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -18979,7 +19014,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     const absolute = join9(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile6(absolute);
+      bytes = await readFile7(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -18995,7 +19030,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath5(skillPathConfigured);
-    raw = await readFile6(skillPath, "utf8");
+    raw = await readFile7(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -19110,7 +19145,7 @@ var init_public_run_credentials = __esm({
 });
 
 // src/typed-provider-http.ts
-import { readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
+import { readFile as readFile8, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join10 } from "node:path";
 function typedProviderHttpPath(runDirectory) {
   return join10(runDirectory, TYPED_HTTP_FILE);
@@ -19128,7 +19163,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readLatestTypedProviderHttpObservation(runDirectory) {
   let text;
   try {
-    text = await readFile7(typedProviderHttpPath(runDirectory), "utf8");
+    text = await readFile8(typedProviderHttpPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -19157,7 +19192,7 @@ var init_typed_provider_http = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { chmod, lstat as lstat3, open, readdir as readdir2, readFile as readFile8, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
+import { chmod, lstat as lstat3, open, readdir as readdir2, readFile as readFile9, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join11 } from "node:path";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
@@ -19188,7 +19223,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunState(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile8(join11(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile9(join11(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -19436,7 +19471,7 @@ async function loadResumableRunRecord(home, runId) {
   let ticketNumber;
   try {
     const raw = JSON.parse(
-      await readFile8(run.admittedRequestPath, "utf8")
+      await readFile9(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record4 = raw;
@@ -19508,7 +19543,7 @@ async function loadResumableRunRecord(home, runId) {
   if (correlationId === void 0 || ticketNumber === void 0) {
     try {
       const invocationRaw = JSON.parse(
-        await readFile8(join11(run.runDirectory, "invocation.json"), "utf8")
+        await readFile9(join11(run.runDirectory, "invocation.json"), "utf8")
       );
       if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
         const fromInvocation = parsePersistedTicketIdentity(
@@ -20350,8 +20385,8 @@ var init_navigator_invocation_identity = __esm({
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { appendFile, lstat as lstat4, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
-import { dirname as dirname6, join as join12 } from "node:path";
+import { appendFile, lstat as lstat4, mkdir as mkdir3, open as open2, readFile as readFile10, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
+import { dirname as dirname7, join as join12 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
   if (line2.startsWith("event:")) return true;
@@ -20411,7 +20446,7 @@ function presentControlledFailure(failure, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile9(sessionFile, "utf8");
+    await readFile10(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -20553,7 +20588,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile9(sessionFile, "utf8");
+  const text = await readFile10(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -20624,7 +20659,7 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join12(dirname6(sessionFile), "evidence-children");
+  const childDirectory = join12(dirname7(sessionFile), "evidence-children");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -20683,7 +20718,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     latestParentUserIndex = i;
     break;
   }
-  const childDirectory = join12(dirname6(sessionFile), "auditor-roles");
+  const childDirectory = join12(dirname7(sessionFile), "auditor-roles");
   let names;
   try {
     names = await readdir3(childDirectory);
@@ -22797,7 +22832,7 @@ function publicationAttemptFromError(path, error) {
 }
 function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   const dirs = [];
-  for (const dir of [baseDir, runDirectory, dirname6(runDirectory)]) {
+  for (const dir of [baseDir, runDirectory, dirname7(runDirectory)]) {
     if (!dirs.includes(dir)) dirs.push(dir);
   }
   return dirs;
@@ -23110,7 +23145,7 @@ var init_settlement = __esm({
 // src/public-cli/auto-resume.ts
 import { constants as fsConstants2 } from "node:fs";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open3, readFile as readFile10 } from "node:fs/promises";
+import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open3, readFile as readFile11 } from "node:fs/promises";
 import { join as join13 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
@@ -23248,7 +23283,7 @@ async function retainDispatchError(admitted, attempt, error) {
   }
   let pointerError;
   try {
-    const text = await readFile10(admitted.sessionFile, "utf8");
+    const text = await readFile11(admitted.sessionFile, "utf8");
     let parentId = null;
     for (const line2 of text.trim().split("\n").filter(Boolean)) {
       const entry = JSON.parse(line2);
@@ -24064,34 +24099,9 @@ var init_collector_run = __esm({
   }
 });
 
-// src/public-cli/doctor-run.ts
+// src/public-cli/one-shot-dispatch.ts
 import { writeFile as writeFile8 } from "node:fs/promises";
 import { join as join16 } from "node:path";
-function buildDoctorActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildDoctorTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "doctor",
-    "--ak-doctor-case",
-    admitted.caseRunsPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
-}
 async function presentControlledFailure4(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
@@ -24112,19 +24122,23 @@ async function presentControlledFailure4(admitted, failureInput, io) {
     terminal
   };
 }
-async function dispatchAdmittedDoctor(input) {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
+function presentSecondaryTerminal(terminal, io) {
+  if (terminal.roleOutcome.kind === "failure") {
+    presentFailureTerminal(terminal, io);
+  } else {
+    io.stdout(formatTerminalResult(terminal));
+  }
+}
+async function dispatchAdmittedOneShotRole(input) {
+  const { admitted, env, io, extraArgs, lease, effectiveEngine, adapters } = input;
+  const shouldPresent = adapters.shouldPresentSettled ?? ((_terminal) => true);
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure4(
-        admitted,
-        missingCredential,
-        io
-      );
+      return await presentControlledFailure4(admitted, missingCredential, io);
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -24170,9 +24184,9 @@ async function dispatchAdmittedDoctor(input) {
       );
     } catch {
     }
-    let lawful;
+    let settled;
     try {
-      lawful = await trySettleDoctorTerminalResult(admitted);
+      settled = await adapters.trySettle(admitted);
     } catch (error) {
       return await presentControlledFailure4(
         admitted,
@@ -24185,28 +24199,26 @@ async function dispatchAdmittedDoctor(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    if (settled !== void 0 && shouldPresent(settled)) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
+      io.stdout(formatTerminalResult(settled));
       return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
         admitted,
-        terminal: lawful
+        terminal: settled
       };
     }
-    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
-    if (auditIncomplete !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      if (auditIncomplete.roleOutcome.kind === "failure") {
-        presentFailureTerminal(auditIncomplete, io);
-      } else {
-        io.stdout(formatTerminalResult(auditIncomplete));
+    if (adapters.trySettleSecondary !== void 0) {
+      const secondary = await adapters.trySettleSecondary(admitted);
+      if (secondary !== void 0) {
+        await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+        presentSecondaryTerminal(secondary, io);
+        return {
+          exitCode: exitCodeForTerminalOutcome(secondary.roleOutcome),
+          admitted,
+          terminal: secondary
+        };
       }
-      return {
-        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
-        admitted,
-        terminal: auditIncomplete
-      };
     }
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
@@ -24233,6 +24245,69 @@ async function dispatchAdmittedDoctor(input) {
     await lease.release();
   }
 }
+async function runAdmittedOneShotRole(input) {
+  const { admitted, env, io, extraArgs, adapters, effectiveEngine } = input;
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(
+      admitted.runDirectory,
+      (diagnostic) => io.stderr(diagnostic)
+    );
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2, admitted };
+    }
+    throw error;
+  }
+  return await dispatchAdmittedOneShotRole({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    adapters,
+    ...effectiveEngine === void 0 ? {} : { effectiveEngine }
+  });
+}
+var init_one_shot_dispatch = __esm({
+  "src/public-cli/one-shot-dispatch.ts"() {
+    "use strict";
+    init_engine_detour();
+    init_explicit_internal();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+  }
+});
+
+// src/public-cli/doctor-run.ts
+function buildDoctorActivationExtraArgs(admitted, options = {}) {
+  const prompt = buildDoctorTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions(options)
+  );
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "doctor",
+    "--ak-doctor-case",
+    admitted.caseRunsPath,
+    "--mode",
+    "json",
+    ...buildSeatModelCliArgs(options.model),
+    prompt
+  ];
+}
 async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
   let admitted;
   try {
@@ -24255,44 +24330,35 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   const extraArgs = buildDoctorActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedDoctor({
+  return await runAdmittedOneShotRole({
     admitted,
     env,
     io,
     extraArgs,
-    lease,
+    adapters: {
+      trySettle: trySettleDoctorTerminalResult,
+      shouldPresentSettled: (terminal) => isLawfulTypedTerminalOutcome(terminal.roleOutcome),
+      trySettleSecondary: trySettleComplianceAuditIncompleteTerminalResult
+    },
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_doctor_run = __esm({
   "src/public-cli/doctor-run.ts"() {
     "use strict";
-    init_engine_detour();
     init_engine_material();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
     init_config2();
-    init_public_run_credentials();
-    init_run_lifecycle();
+    init_one_shot_dispatch();
     init_settlement();
+    init_terminal();
   }
 });
 
@@ -24706,8 +24772,6 @@ var init_fixer_run = __esm({
 });
 
 // src/public-cli/notary-run.ts
-import { writeFile as writeFile10 } from "node:fs/promises";
-import { join as join18 } from "node:path";
 function buildNotaryActivationExtraArgs(admitted, options = {}) {
   const prompt = buildNotaryTransportPrompt(
     admitted,
@@ -24733,129 +24797,6 @@ function buildNotaryActivationExtraArgs(admitted, options = {}) {
     prompt
   ];
 }
-async function presentControlledFailure6(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
-    ...session === void 0 ? {} : { session }
-  });
-  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(admitted, failure);
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedNotary(input) {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials
-    );
-    if (missingCredential !== void 0) {
-      return await presentControlledFailure6(admitted, missingCredential, io);
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure6(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile10(
-        join18(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleNotaryTerminalResult(admitted);
-    } catch (error) {
-      return await presentControlledFailure6(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const credentialFailure = postRunMissingCredentialFailure(
-      result2,
-      env.model,
-      env.credentials
-    );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
-      runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory
-    });
-    return await presentControlledFailure6(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
-}
 async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
   let admitted;
   try {
@@ -24876,53 +24817,40 @@ async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(
-      admitted.runDirectory,
-      (diagnostic) => io.stderr(diagnostic)
-    );
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
   const extraArgs = buildNotaryActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  return await dispatchAdmittedNotary({
+  return await runAdmittedOneShotRole({
     admitted,
     env,
     io,
     extraArgs,
-    lease,
+    adapters: {
+      trySettle: trySettleNotaryTerminalResult,
+      // Accepted receipts and residual incomplete share one present path.
+      shouldPresentSettled: () => true
+    },
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_notary_run = __esm({
   "src/public-cli/notary-run.ts"() {
     "use strict";
-    init_engine_detour();
     init_engine_material();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
     init_config2();
-    init_public_run_credentials();
-    init_run_lifecycle();
+    init_one_shot_dispatch();
     init_settlement();
   }
 });
 
 // src/public-cli/judge-run.ts
-import { writeFile as writeFile11 } from "node:fs/promises";
-import { join as join19 } from "node:path";
+import { writeFile as writeFile10 } from "node:fs/promises";
+import { join as join18 } from "node:path";
 function buildJudgeActivationExtraArgs(admitted, options = {}) {
   const prompt = buildJudgeTransportPrompt(
     admitted,
@@ -24966,7 +24894,7 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure7(admitted, failureInput, io) {
+async function presentControlledFailure6(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -25019,7 +24947,7 @@ async function dispatchAdmittedJudge(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure7(
+      return await presentControlledFailure6(
         admitted,
         missingCredential,
         io
@@ -25057,7 +24985,7 @@ async function dispatchAdmittedJudge(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure7(
+      return await presentControlledFailure6(
         admitted,
         {
           timedOut: false,
@@ -25069,8 +24997,8 @@ async function dispatchAdmittedJudge(input) {
       );
     }
     try {
-      await writeFile11(
-        join19(admitted.runDirectory, "stderr.log"),
+      await writeFile10(
+        join18(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25080,7 +25008,7 @@ async function dispatchAdmittedJudge(input) {
     try {
       lawful = await trySettleJudgeTerminalResult(admitted);
     } catch (error) {
-      return await presentControlledFailure7(
+      return await presentControlledFailure6(
         admitted,
         {
           timedOut: false,
@@ -25132,7 +25060,7 @@ async function dispatchAdmittedJudge(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure7(
+    return await presentControlledFailure6(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -25268,8 +25196,8 @@ var init_judge_run = __esm({
 });
 
 // src/public-cli/merger-run.ts
-import { mkdir as mkdir5, writeFile as writeFile12 } from "node:fs/promises";
-import { join as join20, resolve as resolve7 } from "node:path";
+import { mkdir as mkdir5, writeFile as writeFile11 } from "node:fs/promises";
+import { join as join19, resolve as resolve7 } from "node:path";
 function buildMergerActivationExtraArgs(admitted, options) {
   const prompt = buildMergerTransportPrompt(
     admitted,
@@ -25328,7 +25256,7 @@ function buildMergerResumeActivationExtraArgs(admitted, options) {
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure8(admitted, failureInput, io) {
+async function presentControlledFailure7(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -25384,7 +25312,7 @@ async function dispatchAdmittedMerger(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure8(
+      return await presentControlledFailure7(
         admitted,
         missingCredential,
         io
@@ -25416,7 +25344,7 @@ async function dispatchAdmittedMerger(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure8(
+      return await presentControlledFailure7(
         admitted,
         {
           timedOut: false,
@@ -25428,8 +25356,8 @@ async function dispatchAdmittedMerger(input) {
       );
     }
     try {
-      await writeFile12(
-        join20(admitted.runDirectory, "stderr.log"),
+      await writeFile11(
+        join19(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25446,7 +25374,7 @@ async function dispatchAdmittedMerger(input) {
         )
       });
     } catch (error) {
-      return await presentControlledFailure8(
+      return await presentControlledFailure7(
         admitted,
         {
           timedOut: false,
@@ -25477,7 +25405,7 @@ async function dispatchAdmittedMerger(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure8(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -25510,9 +25438,9 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join20(runDirectory, "admitted-request.json");
-  const mergerInputPath = join20(runDirectory, "merger-input.json");
-  await writeFile12(
+  const admittedRequestPath = join19(runDirectory, "admitted-request.json");
+  const mergerInputPath = join19(runDirectory, "merger-input.json");
+  await writeFile11(
     admittedRequestPath,
     `${JSON.stringify(
       {
@@ -25584,7 +25512,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
         ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
       });
       await markRunAdmitted(shell);
-      return await presentControlledFailure8(
+      return await presentControlledFailure7(
         shell,
         {
           timedOut: false,
@@ -25604,7 +25532,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
-    return await presentControlledFailure8(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: false,
@@ -25688,7 +25616,7 @@ async function runPublicMergerResume(argv, env, io) {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure8(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: false,
@@ -25740,8 +25668,8 @@ var init_merger_run = __esm({
 });
 
 // src/public-cli/reviewer-run.ts
-import { writeFile as writeFile13 } from "node:fs/promises";
-import { join as join21 } from "node:path";
+import { writeFile as writeFile12 } from "node:fs/promises";
+import { join as join20 } from "node:path";
 function buildReviewerTicketNumberArgs(ticketNumber) {
   return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
 }
@@ -25811,7 +25739,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure9(admitted, failureInput, io) {
+async function presentControlledFailure8(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -25864,7 +25792,7 @@ async function dispatchAdmittedReviewer(input) {
       env.credentials
     );
     if (missingCredential !== void 0) {
-      return await presentControlledFailure9(
+      return await presentControlledFailure8(
         admitted,
         missingCredential,
         io
@@ -25897,7 +25825,7 @@ async function dispatchAdmittedReviewer(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure9(
+      return await presentControlledFailure8(
         admitted,
         {
           timedOut: false,
@@ -25909,8 +25837,8 @@ async function dispatchAdmittedReviewer(input) {
       );
     }
     try {
-      await writeFile13(
-        join21(admitted.runDirectory, "stderr.log"),
+      await writeFile12(
+        join20(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25927,7 +25855,7 @@ async function dispatchAdmittedReviewer(input) {
         )
       });
     } catch (error) {
-      return await presentControlledFailure9(
+      return await presentControlledFailure8(
         admitted,
         {
           timedOut: false,
@@ -25979,7 +25907,7 @@ async function dispatchAdmittedReviewer(input) {
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
-    return await presentControlledFailure9(
+    return await presentControlledFailure8(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -26023,7 +25951,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    return await presentControlledFailure9(
+    return await presentControlledFailure8(
       admitted,
       {
         timedOut: false,
@@ -26106,7 +26034,7 @@ async function runPublicReviewerResume(argv, env, io) {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure9(
+    return await presentControlledFailure8(
       admitted,
       {
         timedOut: false,
@@ -26189,13 +26117,13 @@ var init_analyst_book_key = __esm({
 
 // src/atomic-write.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { rename, rm, writeFile as writeFile14 } from "node:fs/promises";
-import { dirname as dirname7, join as join22 } from "node:path";
+import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
+import { dirname as dirname8, join as join21 } from "node:path";
 async function writeFileAtomically(destination, contents) {
-  const parent = dirname7(destination);
-  const temporary = join22(parent, `.atomic-write-${randomUUID3()}.tmp`);
+  const parent = dirname8(destination);
+  const temporary = join21(parent, `.atomic-write-${randomUUID3()}.tmp`);
   try {
-    await writeFile14(temporary, contents);
+    await writeFile13(temporary, contents);
     await rename(temporary, destination);
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => void 0);
@@ -26209,8 +26137,8 @@ var init_atomic_write = __esm({
 });
 
 // src/analyst-index.ts
-import { open as open4, readFile as readFile11, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname8, join as join23 } from "node:path";
+import { open as open4, readFile as readFile12, unlink as unlink4 } from "node:fs/promises";
+import { dirname as dirname9, join as join22 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve9) => {
     setTimeout(resolve9, ms);
@@ -26218,8 +26146,8 @@ function sleep(ms) {
 }
 async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   const indexPath = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname8(indexPath));
-  const lockPath = join23(dirname8(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  ensureRealDirectoryTree(ledgerHome, dirname9(indexPath));
+  const lockPath = join22(dirname9(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
@@ -26246,7 +26174,7 @@ async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   }
 }
 function analystLibraryIndexPath(ledgerHome) {
-  return join23(ledgerHome, "analyst", "library-index.json");
+  return join22(ledgerHome, "analyst", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -26337,7 +26265,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
   const path = analystLibraryIndexPath(ledgerHome);
   let raw;
   try {
-    raw = await readFile11(path, "utf8");
+    raw = await readFile12(path, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
       return void 0;
@@ -26355,7 +26283,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
 }
 async function writeAnalystLibraryIndexPage(ledgerHome, page) {
   const path = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname8(path));
+  ensureRealDirectoryTree(ledgerHome, dirname9(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -26541,12 +26469,12 @@ var init_analyst_cohort = __esm({
 });
 
 // src/ledger-session-read.ts
-import { readFile as readFile12 } from "node:fs/promises";
+import { readFile as readFile13 } from "node:fs/promises";
 function isRecord7(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readLedgerSessionJsonl(path) {
-  const text = await readFile12(path, "utf8");
+  const text = await readFile13(path, "utf8");
   const lines = text.split("\n");
   const rows = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -26703,8 +26631,8 @@ var init_ledger_session_read = __esm({
 });
 
 // src/run-terminal-artifacts.ts
-import { readdir as readdir4, readFile as readFile13 } from "node:fs/promises";
-import { basename as basename5, dirname as dirname9, join as join24 } from "node:path";
+import { readdir as readdir4, readFile as readFile14 } from "node:fs/promises";
+import { basename as basename5, dirname as dirname10, join as join23 } from "node:path";
 function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -26735,7 +26663,7 @@ function readUsableTerminalArtifactBody(body) {
 async function readTerminalArtifactAtPath(path, file) {
   let raw;
   try {
-    raw = await readFile13(path, "utf8");
+    raw = await readFile14(path, "utf8");
   } catch (error) {
     if (isMissingPathError4(error)) return void 0;
     return {
@@ -26779,7 +26707,7 @@ async function listUniqueErrorFallbackPaths(directories) {
     }
     for (const name of names.sort((a, b) => a.localeCompare(b))) {
       if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join24(dir, name));
+      found.push(join23(dir, name));
     }
   }
   return found;
@@ -26795,14 +26723,14 @@ function presentUniqueFallbackBoundToRun(body, expectedRunId) {
   return typeof body.runId === "string" && body.runId === expectedRunId;
 }
 async function readRunTerminalArtifact(runDirectory) {
-  const artifactsDir = join24(runDirectory, "artifacts");
+  const artifactsDir = join23(runDirectory, "artifacts");
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join24(artifactsDir, file);
+    const path = join23(artifactsDir, file);
     const read3 = await readTerminalArtifactAtPath(path, file);
     if (read3 !== void 0) return read3;
   }
   for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join24(runDirectory, relative3);
+    const path = join23(runDirectory, relative3);
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 !== void 0) return read3;
   }
@@ -26811,7 +26739,7 @@ async function readRunTerminalArtifact(runDirectory) {
     if (read3 !== void 0) return read3;
   }
   const expectedRunId = runIdFromRunDirectory(runDirectory);
-  for (const path of await listUniqueErrorFallbackPaths([dirname9(runDirectory)])) {
+  for (const path of await listUniqueErrorFallbackPaths([dirname10(runDirectory)])) {
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 === void 0) continue;
     if (read3.status === "present") {
@@ -26840,7 +26768,7 @@ var init_run_terminal_artifacts = __esm({
 
 // src/analyst-gate-cycles-read.ts
 import { readdir as readdir5 } from "node:fs/promises";
-import { join as join25 } from "node:path";
+import { join as join24 } from "node:path";
 function isRecord9(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -26999,7 +26927,7 @@ async function readAnalystGateCyclesFromAuditorRoles(auditorRolesDirectory) {
   }
   const volumes = [];
   for (const name of names) {
-    const classified = await classifyAuditorVolume(join25(auditorRolesDirectory, name));
+    const classified = await classifyAuditorVolume(join24(auditorRolesDirectory, name));
     if (classified !== void 0) volumes.push(classified);
   }
   return pairGateRounds(volumes);
@@ -27026,8 +26954,8 @@ var init_analyst_gate_cycles_read = __esm({
 });
 
 // src/analyst-ledger.ts
-import { readdir as readdir6, readFile as readFile14 } from "node:fs/promises";
-import { join as join26 } from "node:path";
+import { readdir as readdir6, readFile as readFile15 } from "node:fs/promises";
+import { join as join25 } from "node:path";
 function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -27040,7 +26968,7 @@ function isRecord10(value) {
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile14(join26(runDirectory, "run-state.json"), "utf8")
+      await readFile15(join25(runDirectory, "run-state.json"), "utf8")
     );
     if (!isRecord10(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
@@ -27072,7 +27000,7 @@ async function listLedgerBookNames(booksRoot) {
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile14(join26(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile15(join25(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
     if (isMissingPathError5(error)) return void 0;
     throw error;
@@ -27104,7 +27032,7 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile14(join26(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile15(join25(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
     if (isRecord10(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
@@ -27112,7 +27040,7 @@ async function resolveSessionFile(runDirectory) {
   } catch (error) {
     if (!isMissingPathError5(error)) throw error;
   }
-  return join26(runDirectory, "session", "session.jsonl");
+  return join25(runDirectory, "session", "session.jsonl");
 }
 async function classifyScopedRun(input) {
   const missingSources = [];
@@ -27223,7 +27151,7 @@ async function classifyScopedRun(input) {
   let gateCycles;
   try {
     gateCycles = await readAnalystGateCyclesFromAuditorRoles(
-      join26(input.runDirectory, "session", "auditor-roles")
+      join25(input.runDirectory, "session", "auditor-roles")
     );
   } catch (error) {
     return {
@@ -27255,7 +27183,7 @@ async function classifyScopedRun(input) {
 async function scanAnalystIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
-  const booksRoot = join26(ledgerHome, "books");
+  const booksRoot = join25(ledgerHome, "books");
   let wholeBook = false;
   let scopeRootIdentity;
   let bookNames;
@@ -27287,7 +27215,7 @@ async function scanAnalystIssueRuns(input) {
   const unreadable = [];
   const scopeConflicts = [];
   for (const book of bookNames) {
-    const runsDir = join26(booksRoot, book, "runs");
+    const runsDir = join25(booksRoot, book, "runs");
     let runNames;
     try {
       const entries = await readdir6(runsDir, { withFileTypes: true });
@@ -27299,7 +27227,7 @@ async function scanAnalystIssueRuns(input) {
     for (const runName of runNames) {
       const parsed = parseRunDirectoryName2(runName);
       if (parsed === void 0) continue;
-      const runDirectory = join26(runsDir, runName);
+      const runDirectory = join25(runsDir, runName);
       let scopeFields;
       try {
         scopeFields = await readInvocationScopeFields(runDirectory);
@@ -28154,7 +28082,7 @@ var init_analyst_metric_family = __esm({
 
 // src/analyst-page.ts
 import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname10, join as join27 } from "node:path";
+import { dirname as dirname11, join as join26 } from "node:path";
 function analystIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
@@ -28165,7 +28093,7 @@ function analystIssuePageKey(address) {
   return createHash4("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
 function analystIssuePagePath(ledgerHome, address) {
-  return join27(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
+  return join26(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
 }
 function analystIssuePageAddressFromPage(page) {
   return {
@@ -28284,7 +28212,7 @@ async function buildAnalystIssueMetricsPage(input) {
 }
 async function writeAnalystIssueMetricsPage(ledgerHome, page) {
   const path = analystIssuePagePath(ledgerHome, analystIssuePageAddressFromPage(page));
-  ensureRealDirectoryTree(ledgerHome, dirname10(path));
+  ensureRealDirectoryTree(ledgerHome, dirname11(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -28301,7 +28229,7 @@ var init_analyst_page = __esm({
 });
 
 // src/analyst-entry.ts
-import { readFile as readFile15 } from "node:fs/promises";
+import { readFile as readFile16 } from "node:fs/promises";
 function isMissingPathError6(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -28331,7 +28259,7 @@ async function readOrComputeAnalystIssuePage(input, options) {
     ...issueNumber === void 0 && input.bookKey === void 0 ? { scopeRootIdentity: projectRoot } : {}
   });
   try {
-    const raw = await readFile15(pagePath, "utf8");
+    const raw = await readFile16(pagePath, "utf8");
     const page = JSON.parse(raw);
     if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
       return { mode: "issue", page, pagePath };
@@ -28425,7 +28353,7 @@ async function runAnalystModelGroupsMode(input) {
       scopeRootIdentity: projectRoot
     });
     try {
-      const raw = await readFile15(pagePath, "utf8");
+      const raw = await readFile16(pagePath, "utf8");
       JSON.parse(raw);
     } catch (error) {
       if (!isMissingPathError6(error)) {
@@ -28524,7 +28452,7 @@ var init_analyst_entry = __esm({
 });
 
 // src/public-cli/analyst-run.ts
-import { readFile as readFile16 } from "node:fs/promises";
+import { readFile as readFile17 } from "node:fs/promises";
 import { isAbsolute as isAbsolute7, resolve as resolve8 } from "node:path";
 function resolveAnalystIssueBookKeyFromCwd(cwd = process.cwd()) {
   try {
@@ -28577,7 +28505,7 @@ async function buildAnalystSweepModeInputFromAttachmentPaths(attachmentPaths) {
   const absolute = isAbsolute7(sourcePath) ? sourcePath : resolve8(sourcePath);
   let bytes;
   try {
-    bytes = await readFile16(absolute);
+    bytes = await readFile17(absolute);
   } catch (error) {
     throw new CliUsageError(
       `analyst sweep attachment is not a readable regular file: ${sourcePath}`,
@@ -28696,7 +28624,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath6 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join28 } from "node:path";
+import { join as join27 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
   const taken = options.takeDashed(tokens);
@@ -28742,7 +28670,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join28(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join27(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -29649,7 +29577,7 @@ var init_cli = __esm({
 
 // src/public-cli/main.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname11, join as join29 } from "node:path";
+import { dirname as dirname12, join as join28 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -29736,10 +29664,10 @@ function linkPackage(packageRoot2, name, targetDir) {
 }
 
 // src/public-cli/main.ts
-var here = dirname11(fileURLToPath(import.meta.url));
+var here = dirname12(fileURLToPath(import.meta.url));
 function resolvePackageRoot(binDir) {
-  const canonical = join29(binDir, "..", "..");
-  if (existsSync3(join29(canonical, "package.json"))) {
+  const canonical = join28(binDir, "..", "..");
+  if (existsSync3(join28(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;
