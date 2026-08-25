@@ -1309,13 +1309,17 @@ function reviewerDecisiveFacts(
   const status = safelyRead(candidate, "status");
   const outcomes = safelyRead(candidate, "outcomes");
   const reports = safelyRead(candidate, "reports");
+  const amendments = safelyRead(candidate, "amendments");
   const axes = reviewerAxes(outcomes.readable ? outcomes.value : undefined);
   const reportAxes = reviewerAxes(reports.readable ? reports.value : undefined);
+  // Typed presence only — never copy amendment prose into public facts.
+  const amendmentAxes = reviewerAxes(amendments.readable ? amendments.value : undefined);
   const acceptedBatch = safelyRead(candidate, "acceptedBatch");
   const specDisposition = safelyRead(candidate, "specDisposition");
   const facts: Record<string, unknown> = {
     axes,
     reportAxes,
+    amendmentAxes,
     acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== undefined,
     ...auditNoReceiptDecisiveFact(candidate),
     // #380: spread sole-built field; do not re-key here (S1).

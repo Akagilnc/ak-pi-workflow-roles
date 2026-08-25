@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as reviewerContracts from "../../src/package-contracts/reviewer-output.ts";
-import { projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, type ReviewerIntent } from "../../src/package-contracts/reviewer-output.ts";
+import { projectReviewerIntentToReceipt, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, validateRuntimeReviewerReceipt, type ReviewerIntent } from "../../src/package-contracts/reviewer-output.ts";
 // @ts-expect-error ReviewerOutput was a compatibility alias and is intentionally absent.
 import type { ReviewerOutput } from "../../src/package-contracts/reviewer-output.ts";
+import { extractReviewerRoleOutcome } from "../../src/public-cli/settlement.ts";
 import { assembleRuntimeReviewerReceipt } from "../../src/reviewer-settlement.ts";
 
 const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
@@ -134,4 +135,84 @@ test("Reviewer projections safely ignore unrecognizable shape", () => {
   }
   assert.deepEqual(validateReviewerIntent({ status: "completed", presentation: true }), { status: "completed" });
   assert.deepEqual(validateReviewerIntent({ status: "refused" }), { status: "refused", diagnostic: undefined });
+});
+
+/** Ledger-backed two-axis child reports — shared tracer for seat amendments. */
+function twoAxisRecord(source: any) {
+  const results = Object.fromEntries(("standards,spec".split(",") as ("standards" | "spec")[]).map(axis => [axis, {
+    dispatchIdentity: "dispatch",
+    axis,
+    status: "successful" as const,
+    prompt: source.outcomes[axis].prompt.text,
+    workspaceDisposition: source.outcomes[axis].workspaceDisposition,
+    target: source.identities.target,
+    report: source.reports[axis].text,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+  }]));
+  return {
+    rejections: [],
+    results,
+    accepted: {
+      identity: "dispatch",
+      input: { canonicalSkill: source.identities.canonicalSkill.text, task: "task", construction: { recipeId: "reviewer-common-bundle" } },
+      legs: source.acceptedBatch.legs.map((leg: { axis: "standards" | "spec"; prompt: { text: string } }) => ({ axis: leg.axis, prompt: leg.prompt.text })),
+      recipe: source.identities.construction.recipe,
+      target: source.identities.target,
+    },
+  } as any;
+}
+
+function assembleFromSubmission(parameters: unknown) {
+  const intent = validateReviewerIntent(parameters);
+  const source = receipt(["standards", "spec"]) as any;
+  const standardsText = source.reports.standards.text as string;
+  const specText = source.reports.spec.text as string;
+  const assembled = assembleRuntimeReviewerReceipt({
+    intent,
+    canonicalSkillText: source.identities.canonicalSkill.text,
+    record: twoAxisRecord(source),
+  });
+  return { intent, assembled, standardsText, specText };
+}
+
+test("parent axis amendment survives assembly without rewriting child reports", () => {
+  // Unit seam only: intent → assembler → decisive-facts projection.
+  // Real A→auditor revise→B→pass lives on the package lifecycle tracer.
+  const delta = Object.freeze({ standards: "axis-delta-A" });
+  const { assembled, standardsText, specText } = assembleFromSubmission({
+    status: "completed",
+    amendments: delta,
+    unknownExtra: true,
+  });
+
+  assert.deepEqual(assembled.amendments, delta);
+  assert.equal(assembled.reports.standards?.text, standardsText);
+  assert.equal(assembled.reports.spec?.text, specText);
+  // No second full aggregate report — only the seat-owned delta slot.
+  assert.equal("aggregate" in assembled, false);
+  assert.equal("report" in assembled, false);
+  validateRuntimeReviewerReceipt(assembled);
+  // Public decisive facts: typed amendment axis presence only — no prose copy.
+  const extracted = extractReviewerRoleOutcome([
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: REVIEWER_OUTPUT_TOOL_NAME,
+        content: [{ type: "text", text: "Reviewer report accepted" }],
+        details: assembled,
+        isError: false,
+      },
+    } as any,
+  ]);
+  assert.deepEqual(extracted?.outcome.decisiveFacts.amendmentAxes, ["standards"]);
+  assert.equal("amendments" in (extracted?.outcome.decisiveFacts ?? {}), false);
+
+  // Missing amendments and unknown extras never reject; only typed presence is retained.
+  const bare = assembleFromSubmission({ status: "completed", presentation: true });
+  assert.equal("amendments" in bare.assembled, false);
+  assert.deepEqual(bare.intent, { status: "completed" });
+  const emptySlots = assembleFromSubmission({ status: "completed", amendments: { other: 1 } });
+  assert.equal("amendments" in emptySlots.assembled, false);
+  assert.doesNotThrow(() => validateReviewerIntent({ status: "completed", amendments: "not-an-object" }));
 });
