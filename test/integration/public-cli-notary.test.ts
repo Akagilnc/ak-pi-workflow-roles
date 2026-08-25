@@ -17,6 +17,11 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../../src/activation-ledger-topology.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import {
   NotarySourceRunError,
@@ -29,7 +34,10 @@ import {
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
 import { buildNotaryActivationExtraArgs } from "../../src/public-cli/notary-run.ts";
-import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  readRoleRunState,
+  writeRoleRunState,
+} from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -323,6 +331,86 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
       (error: unknown) =>
         error instanceof NotarySourceRunError &&
         error.message.includes("machine-ledger book"),
+    );
+  });
+});
+
+test("notary rejects canonical ledger run with illegal retained role record (exit 2)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    // Hand-forged retained record under canonical runs/ — directory name parses,
+    // four-string shape looks complete, but shared typed reader rejects invented role.
+    const inventedRole = "inventedrole";
+    const runId = CANONICAL_SOURCE_RUN_ID;
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      activationBookDirectory(resolveActivationLedgerHome(() => home), bookKey),
+      "runs",
+      `${runId}@${inventedRole}`,
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
+    const sessionFile = join(sessionDirectory, "session.jsonl");
+    const admittedRequestPath = join(runDirectory, "admitted-request.json");
+    await writeFile(sessionFile, "\n", "utf8");
+    await writeFile(
+      admittedRequestPath,
+      `${JSON.stringify({ role: inventedRole, runId })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(runDirectory, "run-state.json"),
+      `${JSON.stringify(
+        {
+          runId,
+          role: inventedRole,
+          state: "terminal",
+          bookKey,
+          projectRoot: project,
+          sessionDirectory,
+          sessionFile,
+          runDirectory,
+          admittedRequestPath,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    assert.equal(await readRoleRunState(runDirectory), undefined);
+
+    const { io } = captureIo();
+    const bare = `${runId}@${inventedRole}`;
+    const rejectedBare = await runAkRole(["notary", "--source-run", bare], {
+      home,
+      packageRoot,
+      cwd: project,
+      io,
+    });
+    assert.equal(rejectedBare.exitCode, 2);
+    assert.equal(rejectedBare.terminal, undefined);
+
+    const rejectedPath = await runAkRole(
+      ["notary", "--source-run", runDirectory],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(rejectedPath.exitCode, 2);
+    assert.equal(rejectedPath.terminal, undefined);
+
+    await assert.rejects(
+      () =>
+        resolveNotarySourceRunLocator({
+          projectRoot: project,
+          sourceRun: bare,
+          home,
+        }),
+      (error: unknown) =>
+        error instanceof NotarySourceRunError &&
+        error.message.includes("retained run-state identity"),
     );
   });
 });

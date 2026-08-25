@@ -15800,29 +15800,680 @@ var init_uuidv7 = __esm({
   }
 });
 
-// src/notary-source-run.ts
-import { dirname as dirname6, isAbsolute as isAbsolute3, join as join6, resolve as resolve4, basename as basename3 } from "node:path";
-import { lstat, readFile as readFile4, realpath as realpath2 } from "node:fs/promises";
-async function readRetainedSourceRunIdentity(runDirectory) {
+// src/typed-provider-http.ts
+import { readFile as readFile4, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join6 } from "node:path";
+function typedProviderHttpPath(runDirectory) {
+  return join6(runDirectory, TYPED_HTTP_FILE);
+}
+async function clearTypedProviderHttpObservation(runDirectory) {
+  try {
+    await unlink(typedProviderHttpPath(runDirectory));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+async function readLatestTypedProviderHttpObservation(runDirectory) {
+  let text;
+  try {
+    text = await readFile4(typedProviderHttpPath(runDirectory), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return void 0;
+    }
+    throw error;
+  }
+  const raw = JSON.parse(text);
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("typed provider HTTP observation must be a JSON object");
+  }
+  const record4 = raw;
+  if (typeof record4.httpStatus !== "number") {
+    throw new Error("typed provider HTTP observation missing numeric httpStatus");
+  }
+  if (typeof record4.provider !== "string" || record4.provider.trim() === "") {
+    throw new Error("typed provider HTTP observation missing non-empty provider");
+  }
+  return { httpStatus: record4.httpStatus, provider: record4.provider };
+}
+var TYPED_HTTP_FILE;
+var init_typed_provider_http = __esm({
+  "src/typed-provider-http.ts"() {
+    "use strict";
+    TYPED_HTTP_FILE = "typed-provider-http.json";
+  }
+});
+
+// src/public-cli/run-lifecycle.ts
+import { chmod, lstat, open, readdir as readdir2, readFile as readFile5, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join7 } from "node:path";
+function isV1ResumableProvider(provider) {
+  return V1_RESUMABLE_PROVIDERS.includes(provider);
+}
+async function readTypedHttp429Observation(runDirectory) {
+  const observation = await readLatestTypedProviderHttpObservation(runDirectory);
+  if (observation === void 0) return void 0;
+  if (observation.httpStatus !== 429) return void 0;
+  if (!isV1ResumableProvider(observation.provider)) return void 0;
+  return { httpStatus: 429, provider: observation.provider };
+}
+function isV1ResumableFailure(input) {
+  if (input.hasLawfulTerminalResult) return false;
+  return input.typedHttp429 !== void 0;
+}
+function renderResumeCommand(runId) {
+  return `ak-role resume ${runId}`;
+}
+async function writeRoleRunState(runDirectory, record4) {
+  const payload = { ...record4, runDirectory };
+  await writeFile3(
+    join7(runDirectory, RUN_STATE_FILE),
+    `${JSON.stringify(payload, null, 2)}
+`,
+    "utf8"
+  );
+}
+async function readRoleRunState(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile4(join6(runDirectory, "run-state.json"), "utf8"));
+    raw = JSON.parse(await readFile5(join7(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return void 0;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return void 0;
+  }
   const record4 = raw;
-  if (typeof record4.runId !== "string" || record4.runId.trim() === "") return void 0;
-  if (typeof record4.role !== "string" || record4.role.trim() === "") return void 0;
-  if (typeof record4.bookKey !== "string" || record4.bookKey.trim() === "") return void 0;
-  const retainedDirectory = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
+  if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
+    return void 0;
+  }
+  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger" && record4.role !== "notary") {
+    return void 0;
+  }
+  if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
+    return void 0;
+  }
+  if (typeof record4.bookKey !== "string") return void 0;
+  if (typeof record4.projectRoot !== "string") return void 0;
+  if (typeof record4.sessionDirectory !== "string") return void 0;
+  if (typeof record4.admittedRequestPath !== "string") return void 0;
+  const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
+  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join7(record4.sessionDirectory, "session.jsonl");
+  let resumable;
+  if (record4.resumable !== void 0 && record4.resumable !== null) {
+    if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
+      const r = record4.resumable;
+      if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
+        resumable = { httpStatus: 429, provider: r.provider };
+      }
+    }
+  }
+  const phase = record4.phase === "plan" || record4.phase === "apply" ? record4.phase : void 0;
   return {
     runId: record4.runId,
     role: record4.role,
+    state: record4.state,
     bookKey: record4.bookKey,
-    runDirectory: retainedDirectory
+    projectRoot: record4.projectRoot,
+    sessionDirectory: record4.sessionDirectory,
+    sessionFile,
+    runDirectory: runDir,
+    admittedRequestPath: record4.admittedRequestPath,
+    ...phase === void 0 ? {} : { phase },
+    ...resumable === void 0 ? {} : { resumable }
   };
 }
+async function markRunAdmitted(admitted) {
+  await writeRoleRunState(admitted.runDirectory, {
+    runId: admitted.runId,
+    role: admitted.role,
+    state: "admitted",
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    sessionDirectory: admitted.sessionDirectory,
+    sessionFile: admitted.sessionFile,
+    admittedRequestPath: admitted.admittedRequestPath,
+    ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
+  });
+}
+async function markRunRunning(runDirectory, effectiveModel, effectiveEngine) {
+  if (effectiveModel !== void 0 || effectiveEngine !== void 0) {
+    await recordEffectiveInvocationModel(
+      runDirectory,
+      effectiveModel,
+      effectiveEngine
+    );
+  }
+  const current = await readRoleRunState(runDirectory);
+  if (current === void 0) {
+    throw new Error("cannot mark running: run state missing");
+  }
+  await writeRoleRunState(runDirectory, {
+    runId: current.runId,
+    role: current.role,
+    state: "running",
+    bookKey: current.bookKey,
+    projectRoot: current.projectRoot,
+    sessionDirectory: current.sessionDirectory,
+    sessionFile: current.sessionFile,
+    admittedRequestPath: current.admittedRequestPath,
+    ...current.phase === void 0 ? {} : { phase: current.phase }
+  });
+}
+async function markRunResumable(runDirectory, observation) {
+  const current = await readRoleRunState(runDirectory);
+  if (current === void 0) {
+    throw new Error("cannot mark resumable: run state missing");
+  }
+  await writeRoleRunState(runDirectory, {
+    ...current,
+    state: "resumable",
+    resumable: observation
+  });
+}
+async function markRunTerminal(runDirectory) {
+  const current = await readRoleRunState(runDirectory);
+  if (current === void 0) {
+    throw new Error("cannot mark terminal: run state missing");
+  }
+  await writeRoleRunState(runDirectory, {
+    runId: current.runId,
+    role: current.role,
+    state: "terminal",
+    bookKey: current.bookKey,
+    projectRoot: current.projectRoot,
+    sessionDirectory: current.sessionDirectory,
+    sessionFile: current.sessionFile,
+    admittedRequestPath: current.admittedRequestPath,
+    ...current.phase === void 0 ? {} : { phase: current.phase }
+  });
+}
+async function isSessionPrincipalAvailable(sessionFile) {
+  if (sessionFile.trim() === "") return false;
+  try {
+    const st = await lstat(sessionFile);
+    return st.isFile() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+function describeErrorIdentity(error) {
+  const candidate = error;
+  const name = typeof candidate?.name === "string" && candidate.name !== "" ? candidate.name : typeof error;
+  const code = typeof candidate?.code === "string" || typeof candidate?.code === "number" ? ` code=${String(candidate.code)}` : "";
+  const message = typeof candidate?.message === "string" && candidate.message !== "" ? `: ${candidate.message}` : "";
+  return `${name}${code}${message}`;
+}
+async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
+  const reportCleanupFailure = (error) => {
+    try {
+      onCleanupFailure?.(
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join7(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+      );
+    } catch {
+    }
+  };
+  const lockPath = join7(runDirectory, WRITER_LOCK_FILE);
+  try {
+    const handle = await open(lockPath, "wx");
+    try {
+      await handle.writeFile(`${process.pid}
+`, "utf8");
+    } catch (error) {
+      await handle.close().catch(() => void 0);
+      await unlink2(lockPath).catch(() => void 0);
+      throw error;
+    }
+    let released = false;
+    return {
+      lockPath,
+      async release() {
+        if (released) return;
+        released = true;
+        await handle.close().catch(() => void 0);
+        try {
+          await unlink2(lockPath);
+        } catch (error) {
+          if (error.code === "EACCES") {
+            try {
+              await chmod(runDirectory, 493);
+              await unlink2(lockPath);
+            } catch (retryError) {
+              reportCleanupFailure(retryError);
+            }
+          } else {
+            reportCleanupFailure(error);
+          }
+        }
+      }
+    };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+      throw new RunWriterLeaseHeldError();
+    }
+    throw error;
+  }
+}
+async function findRunDirectoryById(home, runId) {
+  if (runId.trim() === "") return void 0;
+  const ledgerHome = resolveActivationLedgerHome(() => home);
+  const booksRoot = join7(ledgerHome, "books");
+  let bookKeys;
+  try {
+    bookKeys = await readdir2(booksRoot);
+  } catch {
+    return void 0;
+  }
+  for (const bookKey of bookKeys) {
+    const runsDir = join7(activationBookDirectory(ledgerHome, bookKey), "runs");
+    let entries;
+    try {
+      entries = await readdir2(runsDir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
+        return join7(runsDir, entry);
+      }
+    }
+  }
+  return void 0;
+}
+function parsePersistedTicketIdentity(record4) {
+  const correlationId = typeof record4.correlationId === "string" && record4.correlationId.trim() !== "" ? record4.correlationId : void 0;
+  const ticketNumber = typeof record4.ticketNumber === "number" && Number.isInteger(record4.ticketNumber) && record4.ticketNumber >= 1 ? record4.ticketNumber : void 0;
+  return {
+    ...correlationId === void 0 ? {} : { correlationId },
+    ...ticketNumber === void 0 ? {} : { ticketNumber }
+  };
+}
+function restoredTicketFields(fields) {
+  return {
+    ...fields.correlationId === void 0 ? {} : { correlationId: fields.correlationId },
+    ...fields.ticketNumber === void 0 ? {} : { ticketNumber: fields.ticketNumber }
+  };
+}
+async function loadResumableRunRecord(home, runId) {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  if (runDirectory === void 0) {
+    throw new CliUsageError(`unknown role run id: ${runId}`);
+  }
+  const run = await readRoleRunState(runDirectory);
+  if (run === void 0) {
+    throw new CliUsageError(`unknown role run id: ${runId}`);
+  }
+  if (!await isSessionPrincipalAvailable(run.sessionFile)) {
+    throw new CliUsageError(
+      `role run Pi session principal is unavailable: ${runId}`
+    );
+  }
+  let instruction = "";
+  let instructionEmpty = true;
+  let attachments = [];
+  let phase;
+  let taskPath;
+  let packetPath;
+  let prerequisitesPath;
+  let prerequisites;
+  let baseRevision;
+  let authorityRefs;
+  let mergerInputPath;
+  let derived;
+  let correlationId;
+  let ticketNumber;
+  try {
+    const raw = JSON.parse(
+      await readFile5(run.admittedRequestPath, "utf8")
+    );
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+      const record4 = raw;
+      if (typeof record4.instruction === "string") {
+        instruction = record4.instruction;
+      }
+      if (typeof record4.instructionEmpty === "boolean") {
+        instructionEmpty = record4.instructionEmpty;
+      }
+      if (Array.isArray(record4.attachments)) {
+        attachments = record4.attachments;
+      }
+      if (record4.phase === "plan" || record4.phase === "apply") {
+        phase = record4.phase;
+      }
+      if (typeof record4.taskPath === "string" && record4.taskPath.trim() !== "") {
+        taskPath = record4.taskPath;
+      }
+      if (typeof record4.packetPath === "string" && record4.packetPath.trim() !== "") {
+        packetPath = record4.packetPath;
+      }
+      if (typeof record4.prerequisitesPath === "string" && record4.prerequisitesPath.trim() !== "") {
+        prerequisitesPath = record4.prerequisitesPath;
+      }
+      if (Array.isArray(record4.prerequisites)) {
+        prerequisites = record4.prerequisites;
+      }
+      if (typeof record4.baseRevision === "string" && record4.baseRevision.trim() !== "") {
+        baseRevision = record4.baseRevision;
+      }
+      if (Array.isArray(record4.authorityRefs)) {
+        authorityRefs = Object.freeze(
+          record4.authorityRefs.map((ref) => {
+            if (typeof ref !== "string") {
+              throw new CliUsageError(
+                "role run admitted authority refs must be durable reference strings"
+              );
+            }
+            return requireAuthorityRef(ref);
+          })
+        );
+      }
+      if (typeof record4.mergerInputPath === "string" && record4.mergerInputPath.trim() !== "") {
+        mergerInputPath = record4.mergerInputPath;
+      }
+      if (record4.derived !== null && typeof record4.derived === "object" && !Array.isArray(record4.derived)) {
+        const d = record4.derived;
+        if (typeof d.targetObjectId === "string" && typeof d.sourceObjectId === "string" && typeof d.automaticMergeTreeId === "string" && Array.isArray(d.expectedConflictPaths) && Array.isArray(d.resolutionScope) && d.expectedConflictPaths.every((p) => typeof p === "string") && d.resolutionScope.every((p) => typeof p === "string")) {
+          derived = {
+            targetObjectId: d.targetObjectId,
+            sourceObjectId: d.sourceObjectId,
+            automaticMergeTreeId: d.automaticMergeTreeId,
+            expectedConflictPaths: d.expectedConflictPaths,
+            resolutionScope: d.resolutionScope
+          };
+        }
+      }
+      const fromAdmitted = parsePersistedTicketIdentity(record4);
+      correlationId = fromAdmitted.correlationId;
+      ticketNumber = fromAdmitted.ticketNumber;
+    }
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    throw new CliUsageError(
+      `role run admitted request is unreadable: ${runId}`,
+      { cause: error }
+    );
+  }
+  if (correlationId === void 0 || ticketNumber === void 0) {
+    try {
+      const invocationRaw = JSON.parse(
+        await readFile5(join7(run.runDirectory, "invocation.json"), "utf8")
+      );
+      if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
+        const fromInvocation = parsePersistedTicketIdentity(
+          invocationRaw
+        );
+        if (correlationId === void 0) correlationId = fromInvocation.correlationId;
+        if (ticketNumber === void 0) ticketNumber = fromInvocation.ticketNumber;
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw new CliUsageError(
+          `role run invocation identity is unreadable: ${runId}`,
+          { cause: error }
+        );
+      }
+    }
+  }
+  return {
+    run,
+    ...run.resumable === void 0 ? {} : { observation: run.resumable },
+    admittedFields: {
+      instruction,
+      instructionEmpty,
+      attachments,
+      ...phase === void 0 ? {} : { phase },
+      ...taskPath === void 0 ? {} : { taskPath },
+      ...packetPath === void 0 ? {} : { packetPath },
+      ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
+      ...prerequisites === void 0 ? {} : { prerequisites },
+      ...baseRevision === void 0 ? {} : { baseRevision },
+      ...authorityRefs === void 0 ? {} : { authorityRefs },
+      ...mergerInputPath === void 0 ? {} : { mergerInputPath },
+      ...derived === void 0 ? {} : { derived },
+      ...correlationId === void 0 ? {} : { correlationId },
+      ...ticketNumber === void 0 ? {} : { ticketNumber }
+    }
+  };
+}
+async function loadResumableJudgeRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "judge") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not judge`
+    );
+  }
+  const admitted = {
+    role: "judge",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...restoredTicketFields(loaded.admittedFields)
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
+  };
+}
+async function loadResumableCoderRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "coder") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not coder`
+    );
+  }
+  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
+  if (phase !== "plan" && phase !== "apply") {
+    throw new CliUsageError(
+      `role run admitted coder phase is missing: ${runId}`
+    );
+  }
+  const taskPath = loaded.admittedFields.taskPath;
+  if (taskPath === void 0) {
+    throw new CliUsageError(
+      `role run admitted coder task path is missing: ${runId}`
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted coder task is blank: ${runId}`
+    );
+  }
+  const admitted = {
+    role: "coder",
+    phase,
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    taskPath,
+    ...restoredTicketFields(loaded.admittedFields)
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
+  };
+}
+async function loadResumableFixerRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "fixer") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not fixer`
+    );
+  }
+  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
+  if (phase !== "plan" && phase !== "apply") {
+    throw new CliUsageError(
+      `role run admitted fixer phase is missing: ${runId}`
+    );
+  }
+  const packetPath = loaded.admittedFields.packetPath;
+  if (packetPath === void 0) {
+    throw new CliUsageError(
+      `role run admitted fixer packet path is missing: ${runId}`
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted fixer instruction is blank: ${runId}`
+    );
+  }
+  const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
+  const admitted = {
+    role: "fixer",
+    phase,
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    packetPath,
+    ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
+    prerequisites,
+    ...restoredTicketFields(loaded.admittedFields)
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
+  };
+}
+async function loadResumableReviewerRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "reviewer") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not reviewer`
+    );
+  }
+  const baseRevision = loaded.admittedFields.baseRevision;
+  if (baseRevision === void 0 || baseRevision.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted reviewer base revision is missing: ${runId}`
+    );
+  }
+  const admitted = {
+    role: "reviewer",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    baseRevision,
+    authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
+    ...restoredTicketFields(loaded.admittedFields)
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
+  };
+}
+async function loadResumableMergerRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "merger") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not merger`
+    );
+  }
+  const mergerInputPath = loaded.admittedFields.mergerInputPath;
+  if (mergerInputPath === void 0) {
+    throw new CliUsageError(
+      `role run admitted merger input path is missing: ${runId}`
+    );
+  }
+  const derived = loaded.admittedFields.derived;
+  if (derived === void 0) {
+    throw new CliUsageError(
+      `role run admitted merger envelope is missing: ${runId}`
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted merger task is blank: ${runId}`
+    );
+  }
+  const admitted = {
+    role: "merger",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    mergerInputPath,
+    derived,
+    ...restoredTicketFields(loaded.admittedFields)
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
+  };
+}
+async function peekRoleRunRole(home, runId) {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  if (runDirectory === void 0) return void 0;
+  const run = await readRoleRunState(runDirectory);
+  return run?.role;
+}
+var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
+var init_run_lifecycle = __esm({
+  "src/public-cli/run-lifecycle.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+    init_cli_errors();
+    init_typed_provider_http();
+    init_typed_provider_http();
+    init_invocation();
+    V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
+    AUTO_RESUME_LIMIT = 2;
+    RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
+    RUN_STATE_FILE = "run-state.json";
+    WRITER_LOCK_FILE = "writer.lock";
+    RunWriterLeaseHeldError = class extends Error {
+      code = "AK_RUN_WRITER_LEASE_HELD";
+      constructor(message = "role run writer lease is already held") {
+        super(message);
+        this.name = "RunWriterLeaseHeldError";
+      }
+    };
+  }
+});
+
+// src/notary-source-run.ts
+import { dirname as dirname6, isAbsolute as isAbsolute3, join as join8, resolve as resolve4, basename as basename3 } from "node:path";
+import { lstat as lstat2, realpath as realpath2 } from "node:fs/promises";
 function parseRunDirectoryName(name) {
   const match = RUN_DIR_NAME.exec(name);
   if (match === null) return void 0;
@@ -15840,7 +16491,7 @@ async function requireRunDirectory(candidate, display) {
   }
   let stat2;
   try {
-    stat2 = await lstat(real);
+    stat2 = await lstat2(real);
   } catch (error) {
     throw new NotarySourceRunError(
       `notary --source-run is not a readable run directory: ${display}`,
@@ -15869,11 +16520,11 @@ async function resolveNotarySourceRunLocator(options) {
     options.home === void 0 ? void 0 : () => options.home
   );
   const bookKey = resolveBookKeyFromGit(options.projectRoot);
-  const bookRunsRoot = join6(activationBookDirectory(ledgerHome, bookKey), "runs");
+  const bookRunsRoot = join8(activationBookDirectory(ledgerHome, bookKey), "runs");
   let candidate;
   const bare = parseRunDirectoryName(raw);
   if (bare !== void 0 && !raw.includes("/") && !raw.includes("\\")) {
-    candidate = join6(bookRunsRoot, `${bare.runId}@${bare.role}`);
+    candidate = join8(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
     candidate = isAbsolute3(raw) ? raw : resolve4(options.projectRoot, raw);
   }
@@ -15886,7 +16537,7 @@ async function resolveNotarySourceRunLocator(options) {
       "notary --source-run must resolve to a retained run under the project machine-ledger book"
     );
   }
-  const runState = await readRetainedSourceRunIdentity(real);
+  const runState = await readRoleRunState(real);
   if (runState === void 0) {
     throw new NotarySourceRunError(
       "notary --source-run lacks retained run-state identity"
@@ -15919,6 +16570,7 @@ var init_notary_source_run = __esm({
     "use strict";
     init_activation_ledger_git();
     init_activation_ledger_topology();
+    init_run_lifecycle();
     RUN_DIR_NAME = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@([A-Za-z][A-Za-z0-9_-]*)$/i;
     NotarySourceRunError = class extends Error {
       constructor(message, options) {
@@ -16793,13 +17445,13 @@ var init_option_definitions = __esm({
 // src/public-cli/invocation.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
-  lstat as lstat2,
+  lstat as lstat3,
   mkdir as mkdir2,
-  readFile as readFile5,
+  readFile as readFile6,
   realpath as realpath3,
-  writeFile as writeFile2
+  writeFile as writeFile4
 } from "node:fs/promises";
-import { basename as basename4, isAbsolute as isAbsolute4, join as join7, resolve as resolve5, sep as sep3 } from "node:path";
+import { basename as basename4, isAbsolute as isAbsolute4, join as join9, resolve as resolve5, sep as sep3 } from "node:path";
 function effectiveModelLedgerFields(model) {
   if (model === void 0) return {};
   return {
@@ -16821,16 +17473,16 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
     ...source.ticketNumber === void 0 ? {} : { ticketNumber: source.ticketNumber },
     ...effectiveModelLedgerFields(effectiveModel)
   };
-  await writeFile2(
-    join7(source.runDirectory, "invocation.json"),
+  await writeFile4(
+    join9(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
 `,
     "utf8"
   );
 }
 async function recordEffectiveInvocationModel(runDirectory, model, engine) {
-  const ledgerPath = join7(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile5(ledgerPath, "utf8"));
+  const ledgerPath = join9(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile6(ledgerPath, "utf8"));
   const next = { ...current };
   if (model !== void 0) {
     next.provider = model.provider;
@@ -16844,7 +17496,7 @@ async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   if (engine !== void 0) {
     next.engine = engine;
   }
-  await writeFile2(
+  await writeFile4(
     ledgerPath,
     `${JSON.stringify(next, null, 2)}
 `,
@@ -16852,9 +17504,9 @@ async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   );
 }
 async function mergeInvocationIdentityPage(runDirectory, fields) {
-  const ledgerPath = join7(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile5(ledgerPath, "utf8"));
-  await writeFile2(
+  const ledgerPath = join9(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile6(ledgerPath, "utf8"));
+  await writeFile4(
     ledgerPath,
     `${JSON.stringify({
       ...current,
@@ -16873,7 +17525,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
-    await readFile5(join7(rolePackageRoot, "package.json"), "utf8")
+    await readFile6(join9(rolePackageRoot, "package.json"), "utf8")
   );
   if (typeof raw.version !== "string" || raw.version.trim() === "") {
     throw new Error(
@@ -17059,7 +17711,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   const absolute = isAbsolute4(sourcePath) ? sourcePath : resolve5(sourcePath);
   let st;
   try {
-    st = await lstat2(absolute);
+    st = await lstat3(absolute);
   } catch (error) {
     throw new CliUsageError(
       `attachment is not a readable regular file: ${sourcePath}`,
@@ -17071,10 +17723,10 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile5(absolute);
+  const bytes = await readFile6(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename4(absolute)}`;
-  const frozenPath = join7(destinationDir, name);
-  await writeFile2(frozenPath, bytes);
+  const frozenPath = join9(destinationDir, name);
+  await writeFile4(frozenPath, bytes);
   return {
     attachment: {
       provenancePath: absolute,
@@ -17114,7 +17766,7 @@ async function admitJudgeInvocation(options) {
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
-  const attachmentsDirectory = join7(runDirectory, "attachments");
+  const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -17143,8 +17795,8 @@ async function admitJudgeInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join7(runDirectory, "admitted-request.json");
-  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
+  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
@@ -17174,7 +17826,7 @@ function buildJudgeTransportPrompt(admitted, engineMaterial) {
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 async function ensureRunArtifactsDir(runDirectory) {
-  const dir = join7(runDirectory, "artifacts");
+  const dir = join9(runDirectory, "artifacts");
   await mkdir2(dir, { recursive: true });
   return dir;
 }
@@ -17194,7 +17846,7 @@ async function admitCoderInvocation(options) {
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
-  const attachmentsDirectory = join7(runDirectory, "attachments");
+  const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -17202,8 +17854,8 @@ async function admitCoderInvocation(options) {
     attachmentsDirectory
   );
   const ticketFields = ticketAdmissionFields(ticketNumber);
-  const taskPath = join7(runDirectory, "task.md");
-  await writeFile2(taskPath, instruction, "utf8");
+  const taskPath = join9(runDirectory, "task.md");
+  await writeFile4(taskPath, instruction, "utf8");
   const admitted = {
     role: "coder",
     phase: options.phase,
@@ -17225,8 +17877,8 @@ async function admitCoderInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join7(runDirectory, "admitted-request.json");
-  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
+  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
@@ -17275,7 +17927,7 @@ async function admitFixerInvocation(options) {
   if (options.prerequisitesPath !== void 0) {
     const absolutePrereq = isAbsolute4(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
     try {
-      prerequisitesSource = await readFile5(absolutePrereq, "utf8");
+      prerequisitesSource = await readFile6(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -17294,7 +17946,7 @@ async function admitFixerInvocation(options) {
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const attachmentsDirectory = join7(runDirectory, "attachments");
+  const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -17304,16 +17956,16 @@ async function admitFixerInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let prerequisitesPath;
   if (prerequisitesSource !== void 0) {
-    prerequisitesPath = join7(runDirectory, "prerequisites.json");
-    await writeFile2(
+    prerequisitesPath = join9(runDirectory, "prerequisites.json");
+    await writeFile4(
       prerequisitesPath,
       `${JSON.stringify(prerequisites, null, 2)}
 `,
       "utf8"
     );
   }
-  const packetPath = join7(runDirectory, "fix-packet.md");
-  await writeFile2(packetPath, instruction, "utf8");
+  const packetPath = join9(runDirectory, "fix-packet.md");
+  await writeFile4(packetPath, instruction, "utf8");
   const admitted = {
     role: "fixer",
     phase: options.phase,
@@ -17340,8 +17992,8 @@ async function admitFixerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join7(runDirectory, "admitted-request.json");
-  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
+  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
   await writeRoleInvocationLedger(admitted, admitted.role, options.model);
   return {
@@ -17537,7 +18189,7 @@ async function admitCollectorInvocation(options) {
   const manifestDigest = manifest.digest;
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
-  const attachmentsDirectory = join7(runDirectory, "attachments");
+  const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -17547,8 +18199,8 @@ async function admitCollectorInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let requestManifestPath;
   if (manifestCanonicalJson !== void 0) {
-    requestManifestPath = join7(runDirectory, "request-manifest.json");
-    await writeFile2(requestManifestPath, manifestCanonicalJson, "utf8");
+    requestManifestPath = join9(runDirectory, "request-manifest.json");
+    await writeFile4(requestManifestPath, manifestCanonicalJson, "utf8");
   }
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -17576,8 +18228,8 @@ async function admitCollectorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join7(runDirectory, "admitted-request.json");
-  await writeFile2(
+  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  await writeFile4(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
 `,
@@ -17677,7 +18329,7 @@ function parseDoctorArgv(args) {
 }
 async function resolveDoctorCaseRunsPath(options) {
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const defaultRuns = join7(
+  const defaultRuns = join9(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
     String(options.issueNumber),
@@ -17772,7 +18424,7 @@ async function admitDoctorInvocation(options) {
       { cause: error }
     );
   }
-  const attachmentsDirectory = join7(runDirectory, "attachments");
+  const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -17804,8 +18456,8 @@ async function admitDoctorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join7(runDirectory, "admitted-request.json");
-  await writeFile2(
+  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  await writeFile4(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
 `,
@@ -17930,8 +18582,8 @@ async function admitNotaryInvocation(options) {
     sourceRun,
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId }
   };
-  const admittedRequestPath = join7(runDirectory, "admitted-request.json");
-  await writeFile2(
+  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  await writeFile4(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
 `,
@@ -18019,7 +18671,7 @@ async function admitReviewerInvocation(options) {
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
-  const attachmentsDirectory = join7(runDirectory, "attachments");
+  const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18050,8 +18702,8 @@ async function admitReviewerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join7(runDirectory, "admitted-request.json");
-  await writeFile2(
+  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  await writeFile4(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
 `,
@@ -18170,7 +18822,7 @@ async function admitMergerInvocation(options) {
   );
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const attachmentsDirectory = join7(runDirectory, "attachments");
+  const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18202,8 +18854,8 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const mergerInputPath = join7(runDirectory, "merger-input.json");
-  await writeFile2(
+  const mergerInputPath = join9(runDirectory, "merger-input.json");
+  await writeFile4(
     mergerInputPath,
     `${JSON.stringify(mergerInput, null, 2)}
 `,
@@ -18236,8 +18888,8 @@ async function admitMergerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join7(runDirectory, "admitted-request.json");
-  await writeFile2(
+  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  await writeFile4(
     admittedRequestPath,
     `${JSON.stringify(admitted, null, 2)}
 `,
@@ -18653,19 +19305,19 @@ var init_upstream_error_testimony = __esm({
 // src/public-cli/explicit-internal.ts
 import { execFile as execFile3, spawn } from "node:child_process";
 import { constants, writeFileSync } from "node:fs";
-import { access, readFile as readFile6, realpath as realpath4, unlink } from "node:fs/promises";
-import { delimiter as delimiter2, isAbsolute as isAbsolute5, join as join8, resolve as resolve6 } from "node:path";
+import { access, readFile as readFile7, realpath as realpath4, unlink as unlink3 } from "node:fs/promises";
+import { delimiter as delimiter2, isAbsolute as isAbsolute5, join as join10, resolve as resolve6 } from "node:path";
 import { platform } from "node:process";
 import { promisify as promisify3 } from "node:util";
 function isReviewerPreflightViolation(value) {
   return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
 }
 function reviewerDispatchRejectionPath(runDirectory) {
-  return join8(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+  return join10(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 async function clearReviewerDispatchRejection(runDirectory) {
   try {
-    await unlink(reviewerDispatchRejectionPath(runDirectory));
+    await unlink3(reviewerDispatchRejectionPath(runDirectory));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return;
@@ -18676,7 +19328,7 @@ async function clearReviewerDispatchRejection(runDirectory) {
 async function readReviewerDispatchRejection(runDirectory) {
   let raw;
   try {
-    raw = await readFile6(reviewerDispatchRejectionPath(runDirectory), "utf8");
+    raw = await readFile7(reviewerDispatchRejectionPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -18703,7 +19355,7 @@ async function readReviewerDispatchRejection(runDirectory) {
   };
 }
 function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join8(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
+  return join10(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
 }
 function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
   return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
@@ -18878,8 +19530,8 @@ var init_engine_detour = __esm({
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile7, realpath as realpath5 } from "node:fs/promises";
-import { join as join9 } from "node:path";
+import { readFile as readFile8, realpath as realpath5 } from "node:fs/promises";
+import { join as join11 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
@@ -18896,10 +19548,10 @@ function packagedMethodSkillRelativeDirectory(name) {
   return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
 }
 function resolvePackagedMethodSkillRoot(packageRoot2, name) {
-  return join9(packageRoot2, packagedMethodSkillRelativeDirectory(name));
+  return join11(packageRoot2, packagedMethodSkillRelativeDirectory(name));
 }
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
-  return join9(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
+  return join11(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -18993,11 +19645,11 @@ function parseProvenance(raw, expectedName) {
 }
 async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
-  const skillPathConfigured = join9(rootDirectory, "SKILL.md");
-  const provenancePath = join9(rootDirectory, "provenance.json");
+  const skillPathConfigured = join11(rootDirectory, "SKILL.md");
+  const provenancePath = join11(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile7(provenancePath, "utf8");
+    provenanceRaw = await readFile8(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -19011,10 +19663,10 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   }
   const provenance = parseProvenance(provenanceJson, name);
   for (const [rel, expected] of Object.entries(provenance.files)) {
-    const absolute = join9(rootDirectory, rel);
+    const absolute = join11(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile7(absolute);
+      bytes = await readFile8(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -19030,7 +19682,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath5(skillPathConfigured);
-    raw = await readFile7(skillPath, "utf8");
+    raw = await readFile8(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -19141,677 +19793,6 @@ var init_public_run_credentials = __esm({
   "src/public-cli/public-run-credentials.ts"() {
     "use strict";
     init_config2();
-  }
-});
-
-// src/typed-provider-http.ts
-import { readFile as readFile8, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join10 } from "node:path";
-function typedProviderHttpPath(runDirectory) {
-  return join10(runDirectory, TYPED_HTTP_FILE);
-}
-async function clearTypedProviderHttpObservation(runDirectory) {
-  try {
-    await unlink2(typedProviderHttpPath(runDirectory));
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
-}
-async function readLatestTypedProviderHttpObservation(runDirectory) {
-  let text;
-  try {
-    text = await readFile8(typedProviderHttpPath(runDirectory), "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return void 0;
-    }
-    throw error;
-  }
-  const raw = JSON.parse(text);
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("typed provider HTTP observation must be a JSON object");
-  }
-  const record4 = raw;
-  if (typeof record4.httpStatus !== "number") {
-    throw new Error("typed provider HTTP observation missing numeric httpStatus");
-  }
-  if (typeof record4.provider !== "string" || record4.provider.trim() === "") {
-    throw new Error("typed provider HTTP observation missing non-empty provider");
-  }
-  return { httpStatus: record4.httpStatus, provider: record4.provider };
-}
-var TYPED_HTTP_FILE;
-var init_typed_provider_http = __esm({
-  "src/typed-provider-http.ts"() {
-    "use strict";
-    TYPED_HTTP_FILE = "typed-provider-http.json";
-  }
-});
-
-// src/public-cli/run-lifecycle.ts
-import { chmod, lstat as lstat3, open, readdir as readdir2, readFile as readFile9, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
-import { join as join11 } from "node:path";
-function isV1ResumableProvider(provider) {
-  return V1_RESUMABLE_PROVIDERS.includes(provider);
-}
-async function readTypedHttp429Observation(runDirectory) {
-  const observation = await readLatestTypedProviderHttpObservation(runDirectory);
-  if (observation === void 0) return void 0;
-  if (observation.httpStatus !== 429) return void 0;
-  if (!isV1ResumableProvider(observation.provider)) return void 0;
-  return { httpStatus: 429, provider: observation.provider };
-}
-function isV1ResumableFailure(input) {
-  if (input.hasLawfulTerminalResult) return false;
-  return input.typedHttp429 !== void 0;
-}
-function renderResumeCommand(runId) {
-  return `ak-role resume ${runId}`;
-}
-async function writeRoleRunState(runDirectory, record4) {
-  const payload = { ...record4, runDirectory };
-  await writeFile4(
-    join11(runDirectory, RUN_STATE_FILE),
-    `${JSON.stringify(payload, null, 2)}
-`,
-    "utf8"
-  );
-}
-async function readRoleRunState(runDirectory) {
-  let raw;
-  try {
-    raw = JSON.parse(await readFile9(join11(runDirectory, RUN_STATE_FILE), "utf8"));
-  } catch {
-    return void 0;
-  }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return void 0;
-  }
-  const record4 = raw;
-  if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
-    return void 0;
-  }
-  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger" && record4.role !== "notary") {
-    return void 0;
-  }
-  if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
-    return void 0;
-  }
-  if (typeof record4.bookKey !== "string") return void 0;
-  if (typeof record4.projectRoot !== "string") return void 0;
-  if (typeof record4.sessionDirectory !== "string") return void 0;
-  if (typeof record4.admittedRequestPath !== "string") return void 0;
-  const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join11(record4.sessionDirectory, "session.jsonl");
-  let resumable;
-  if (record4.resumable !== void 0 && record4.resumable !== null) {
-    if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
-      const r = record4.resumable;
-      if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
-        resumable = { httpStatus: 429, provider: r.provider };
-      }
-    }
-  }
-  const phase = record4.phase === "plan" || record4.phase === "apply" ? record4.phase : void 0;
-  return {
-    runId: record4.runId,
-    role: record4.role,
-    state: record4.state,
-    bookKey: record4.bookKey,
-    projectRoot: record4.projectRoot,
-    sessionDirectory: record4.sessionDirectory,
-    sessionFile,
-    runDirectory: runDir,
-    admittedRequestPath: record4.admittedRequestPath,
-    ...phase === void 0 ? {} : { phase },
-    ...resumable === void 0 ? {} : { resumable }
-  };
-}
-async function markRunAdmitted(admitted) {
-  await writeRoleRunState(admitted.runDirectory, {
-    runId: admitted.runId,
-    role: admitted.role,
-    state: "admitted",
-    bookKey: admitted.bookKey,
-    projectRoot: admitted.projectRoot,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
-    admittedRequestPath: admitted.admittedRequestPath,
-    ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
-  });
-}
-async function markRunRunning(runDirectory, effectiveModel, effectiveEngine) {
-  if (effectiveModel !== void 0 || effectiveEngine !== void 0) {
-    await recordEffectiveInvocationModel(
-      runDirectory,
-      effectiveModel,
-      effectiveEngine
-    );
-  }
-  const current = await readRoleRunState(runDirectory);
-  if (current === void 0) {
-    throw new Error("cannot mark running: run state missing");
-  }
-  await writeRoleRunState(runDirectory, {
-    runId: current.runId,
-    role: current.role,
-    state: "running",
-    bookKey: current.bookKey,
-    projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
-    admittedRequestPath: current.admittedRequestPath,
-    ...current.phase === void 0 ? {} : { phase: current.phase }
-  });
-}
-async function markRunResumable(runDirectory, observation) {
-  const current = await readRoleRunState(runDirectory);
-  if (current === void 0) {
-    throw new Error("cannot mark resumable: run state missing");
-  }
-  await writeRoleRunState(runDirectory, {
-    ...current,
-    state: "resumable",
-    resumable: observation
-  });
-}
-async function markRunTerminal(runDirectory) {
-  const current = await readRoleRunState(runDirectory);
-  if (current === void 0) {
-    throw new Error("cannot mark terminal: run state missing");
-  }
-  await writeRoleRunState(runDirectory, {
-    runId: current.runId,
-    role: current.role,
-    state: "terminal",
-    bookKey: current.bookKey,
-    projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
-    admittedRequestPath: current.admittedRequestPath,
-    ...current.phase === void 0 ? {} : { phase: current.phase }
-  });
-}
-async function isSessionPrincipalAvailable(sessionFile) {
-  if (sessionFile.trim() === "") return false;
-  try {
-    const st = await lstat3(sessionFile);
-    return st.isFile() && !st.isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-function describeErrorIdentity(error) {
-  const candidate = error;
-  const name = typeof candidate?.name === "string" && candidate.name !== "" ? candidate.name : typeof error;
-  const code = typeof candidate?.code === "string" || typeof candidate?.code === "number" ? ` code=${String(candidate.code)}` : "";
-  const message = typeof candidate?.message === "string" && candidate.message !== "" ? `: ${candidate.message}` : "";
-  return `${name}${code}${message}`;
-}
-async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
-  const reportCleanupFailure = (error) => {
-    try {
-      onCleanupFailure?.(
-        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join11(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
-      );
-    } catch {
-    }
-  };
-  const lockPath = join11(runDirectory, WRITER_LOCK_FILE);
-  try {
-    const handle = await open(lockPath, "wx");
-    try {
-      await handle.writeFile(`${process.pid}
-`, "utf8");
-    } catch (error) {
-      await handle.close().catch(() => void 0);
-      await unlink3(lockPath).catch(() => void 0);
-      throw error;
-    }
-    let released = false;
-    return {
-      lockPath,
-      async release() {
-        if (released) return;
-        released = true;
-        await handle.close().catch(() => void 0);
-        try {
-          await unlink3(lockPath);
-        } catch (error) {
-          if (error.code === "EACCES") {
-            try {
-              await chmod(runDirectory, 493);
-              await unlink3(lockPath);
-            } catch (retryError) {
-              reportCleanupFailure(retryError);
-            }
-          } else {
-            reportCleanupFailure(error);
-          }
-        }
-      }
-    };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-      throw new RunWriterLeaseHeldError();
-    }
-    throw error;
-  }
-}
-async function findRunDirectoryById(home, runId) {
-  if (runId.trim() === "") return void 0;
-  const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join11(ledgerHome, "books");
-  let bookKeys;
-  try {
-    bookKeys = await readdir2(booksRoot);
-  } catch {
-    return void 0;
-  }
-  for (const bookKey of bookKeys) {
-    const runsDir = join11(activationBookDirectory(ledgerHome, bookKey), "runs");
-    let entries;
-    try {
-      entries = await readdir2(runsDir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join11(runsDir, entry);
-      }
-    }
-  }
-  return void 0;
-}
-function parsePersistedTicketIdentity(record4) {
-  const correlationId = typeof record4.correlationId === "string" && record4.correlationId.trim() !== "" ? record4.correlationId : void 0;
-  const ticketNumber = typeof record4.ticketNumber === "number" && Number.isInteger(record4.ticketNumber) && record4.ticketNumber >= 1 ? record4.ticketNumber : void 0;
-  return {
-    ...correlationId === void 0 ? {} : { correlationId },
-    ...ticketNumber === void 0 ? {} : { ticketNumber }
-  };
-}
-function restoredTicketFields(fields) {
-  return {
-    ...fields.correlationId === void 0 ? {} : { correlationId: fields.correlationId },
-    ...fields.ticketNumber === void 0 ? {} : { ticketNumber: fields.ticketNumber }
-  };
-}
-async function loadResumableRunRecord(home, runId) {
-  const runDirectory = await findRunDirectoryById(home, runId);
-  if (runDirectory === void 0) {
-    throw new CliUsageError(`unknown role run id: ${runId}`);
-  }
-  const run = await readRoleRunState(runDirectory);
-  if (run === void 0) {
-    throw new CliUsageError(`unknown role run id: ${runId}`);
-  }
-  if (!await isSessionPrincipalAvailable(run.sessionFile)) {
-    throw new CliUsageError(
-      `role run Pi session principal is unavailable: ${runId}`
-    );
-  }
-  let instruction = "";
-  let instructionEmpty = true;
-  let attachments = [];
-  let phase;
-  let taskPath;
-  let packetPath;
-  let prerequisitesPath;
-  let prerequisites;
-  let baseRevision;
-  let authorityRefs;
-  let mergerInputPath;
-  let derived;
-  let correlationId;
-  let ticketNumber;
-  try {
-    const raw = JSON.parse(
-      await readFile9(run.admittedRequestPath, "utf8")
-    );
-    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      const record4 = raw;
-      if (typeof record4.instruction === "string") {
-        instruction = record4.instruction;
-      }
-      if (typeof record4.instructionEmpty === "boolean") {
-        instructionEmpty = record4.instructionEmpty;
-      }
-      if (Array.isArray(record4.attachments)) {
-        attachments = record4.attachments;
-      }
-      if (record4.phase === "plan" || record4.phase === "apply") {
-        phase = record4.phase;
-      }
-      if (typeof record4.taskPath === "string" && record4.taskPath.trim() !== "") {
-        taskPath = record4.taskPath;
-      }
-      if (typeof record4.packetPath === "string" && record4.packetPath.trim() !== "") {
-        packetPath = record4.packetPath;
-      }
-      if (typeof record4.prerequisitesPath === "string" && record4.prerequisitesPath.trim() !== "") {
-        prerequisitesPath = record4.prerequisitesPath;
-      }
-      if (Array.isArray(record4.prerequisites)) {
-        prerequisites = record4.prerequisites;
-      }
-      if (typeof record4.baseRevision === "string" && record4.baseRevision.trim() !== "") {
-        baseRevision = record4.baseRevision;
-      }
-      if (Array.isArray(record4.authorityRefs)) {
-        authorityRefs = Object.freeze(
-          record4.authorityRefs.map((ref) => {
-            if (typeof ref !== "string") {
-              throw new CliUsageError(
-                "role run admitted authority refs must be durable reference strings"
-              );
-            }
-            return requireAuthorityRef(ref);
-          })
-        );
-      }
-      if (typeof record4.mergerInputPath === "string" && record4.mergerInputPath.trim() !== "") {
-        mergerInputPath = record4.mergerInputPath;
-      }
-      if (record4.derived !== null && typeof record4.derived === "object" && !Array.isArray(record4.derived)) {
-        const d = record4.derived;
-        if (typeof d.targetObjectId === "string" && typeof d.sourceObjectId === "string" && typeof d.automaticMergeTreeId === "string" && Array.isArray(d.expectedConflictPaths) && Array.isArray(d.resolutionScope) && d.expectedConflictPaths.every((p) => typeof p === "string") && d.resolutionScope.every((p) => typeof p === "string")) {
-          derived = {
-            targetObjectId: d.targetObjectId,
-            sourceObjectId: d.sourceObjectId,
-            automaticMergeTreeId: d.automaticMergeTreeId,
-            expectedConflictPaths: d.expectedConflictPaths,
-            resolutionScope: d.resolutionScope
-          };
-        }
-      }
-      const fromAdmitted = parsePersistedTicketIdentity(record4);
-      correlationId = fromAdmitted.correlationId;
-      ticketNumber = fromAdmitted.ticketNumber;
-    }
-  } catch (error) {
-    if (error instanceof CliUsageError) throw error;
-    throw new CliUsageError(
-      `role run admitted request is unreadable: ${runId}`,
-      { cause: error }
-    );
-  }
-  if (correlationId === void 0 || ticketNumber === void 0) {
-    try {
-      const invocationRaw = JSON.parse(
-        await readFile9(join11(run.runDirectory, "invocation.json"), "utf8")
-      );
-      if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
-        const fromInvocation = parsePersistedTicketIdentity(
-          invocationRaw
-        );
-        if (correlationId === void 0) correlationId = fromInvocation.correlationId;
-        if (ticketNumber === void 0) ticketNumber = fromInvocation.ticketNumber;
-      }
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw new CliUsageError(
-          `role run invocation identity is unreadable: ${runId}`,
-          { cause: error }
-        );
-      }
-    }
-  }
-  return {
-    run,
-    ...run.resumable === void 0 ? {} : { observation: run.resumable },
-    admittedFields: {
-      instruction,
-      instructionEmpty,
-      attachments,
-      ...phase === void 0 ? {} : { phase },
-      ...taskPath === void 0 ? {} : { taskPath },
-      ...packetPath === void 0 ? {} : { packetPath },
-      ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
-      ...prerequisites === void 0 ? {} : { prerequisites },
-      ...baseRevision === void 0 ? {} : { baseRevision },
-      ...authorityRefs === void 0 ? {} : { authorityRefs },
-      ...mergerInputPath === void 0 ? {} : { mergerInputPath },
-      ...derived === void 0 ? {} : { derived },
-      ...correlationId === void 0 ? {} : { correlationId },
-      ...ticketNumber === void 0 ? {} : { ticketNumber }
-    }
-  };
-}
-async function loadResumableJudgeRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
-  if (loaded.run.role !== "judge") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not judge`
-    );
-  }
-  const admitted = {
-    role: "judge",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    ...restoredTicketFields(loaded.admittedFields)
-  };
-  return {
-    admitted,
-    run: loaded.run,
-    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
-  };
-}
-async function loadResumableCoderRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
-  if (loaded.run.role !== "coder") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not coder`
-    );
-  }
-  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
-  if (phase !== "plan" && phase !== "apply") {
-    throw new CliUsageError(
-      `role run admitted coder phase is missing: ${runId}`
-    );
-  }
-  const taskPath = loaded.admittedFields.taskPath;
-  if (taskPath === void 0) {
-    throw new CliUsageError(
-      `role run admitted coder task path is missing: ${runId}`
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted coder task is blank: ${runId}`
-    );
-  }
-  const admitted = {
-    role: "coder",
-    phase,
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: false,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    taskPath,
-    ...restoredTicketFields(loaded.admittedFields)
-  };
-  return {
-    admitted,
-    run: loaded.run,
-    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
-  };
-}
-async function loadResumableFixerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
-  if (loaded.run.role !== "fixer") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not fixer`
-    );
-  }
-  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
-  if (phase !== "plan" && phase !== "apply") {
-    throw new CliUsageError(
-      `role run admitted fixer phase is missing: ${runId}`
-    );
-  }
-  const packetPath = loaded.admittedFields.packetPath;
-  if (packetPath === void 0) {
-    throw new CliUsageError(
-      `role run admitted fixer packet path is missing: ${runId}`
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted fixer instruction is blank: ${runId}`
-    );
-  }
-  const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
-  const admitted = {
-    role: "fixer",
-    phase,
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: false,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    packetPath,
-    ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
-    prerequisites,
-    ...restoredTicketFields(loaded.admittedFields)
-  };
-  return {
-    admitted,
-    run: loaded.run,
-    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
-  };
-}
-async function loadResumableReviewerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
-  if (loaded.run.role !== "reviewer") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not reviewer`
-    );
-  }
-  const baseRevision = loaded.admittedFields.baseRevision;
-  if (baseRevision === void 0 || baseRevision.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted reviewer base revision is missing: ${runId}`
-    );
-  }
-  const admitted = {
-    role: "reviewer",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    baseRevision,
-    authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
-    ...restoredTicketFields(loaded.admittedFields)
-  };
-  return {
-    admitted,
-    run: loaded.run,
-    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
-  };
-}
-async function loadResumableMergerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
-  if (loaded.run.role !== "merger") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not merger`
-    );
-  }
-  const mergerInputPath = loaded.admittedFields.mergerInputPath;
-  if (mergerInputPath === void 0) {
-    throw new CliUsageError(
-      `role run admitted merger input path is missing: ${runId}`
-    );
-  }
-  const derived = loaded.admittedFields.derived;
-  if (derived === void 0) {
-    throw new CliUsageError(
-      `role run admitted merger envelope is missing: ${runId}`
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted merger task is blank: ${runId}`
-    );
-  }
-  const admitted = {
-    role: "merger",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: false,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    mergerInputPath,
-    derived,
-    ...restoredTicketFields(loaded.admittedFields)
-  };
-  return {
-    admitted,
-    run: loaded.run,
-    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
-  };
-}
-async function peekRoleRunRole(home, runId) {
-  const runDirectory = await findRunDirectoryById(home, runId);
-  if (runDirectory === void 0) return void 0;
-  const run = await readRoleRunState(runDirectory);
-  return run?.role;
-}
-var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
-var init_run_lifecycle = __esm({
-  "src/public-cli/run-lifecycle.ts"() {
-    "use strict";
-    init_activation_ledger_topology();
-    init_cli_errors();
-    init_typed_provider_http();
-    init_typed_provider_http();
-    init_invocation();
-    V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
-    AUTO_RESUME_LIMIT = 2;
-    RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
-    RUN_STATE_FILE = "run-state.json";
-    WRITER_LOCK_FILE = "writer.lock";
-    RunWriterLeaseHeldError = class extends Error {
-      code = "AK_RUN_WRITER_LEASE_HELD";
-      constructor(message = "role run writer lease is already held") {
-        super(message);
-        this.name = "RunWriterLeaseHeldError";
-      }
-    };
   }
 });
 
@@ -20385,7 +20366,7 @@ var init_navigator_invocation_identity = __esm({
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { appendFile, lstat as lstat4, mkdir as mkdir3, open as open2, readFile as readFile10, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
+import { appendFile, lstat as lstat4, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
 import { dirname as dirname7, join as join12 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
@@ -20446,7 +20427,7 @@ function presentControlledFailure(failure, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile10(sessionFile, "utf8");
+    await readFile9(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -20588,7 +20569,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile10(sessionFile, "utf8");
+  const text = await readFile9(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -23145,7 +23126,7 @@ var init_settlement = __esm({
 // src/public-cli/auto-resume.ts
 import { constants as fsConstants2 } from "node:fs";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open3, readFile as readFile11 } from "node:fs/promises";
+import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open3, readFile as readFile10 } from "node:fs/promises";
 import { join as join13 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
@@ -23283,7 +23264,7 @@ async function retainDispatchError(admitted, attempt, error) {
   }
   let pointerError;
   try {
-    const text = await readFile11(admitted.sessionFile, "utf8");
+    const text = await readFile10(admitted.sessionFile, "utf8");
     let parentId = null;
     for (const line2 of text.trim().split("\n").filter(Boolean)) {
       const entry = JSON.parse(line2);
@@ -26137,7 +26118,7 @@ var init_atomic_write = __esm({
 });
 
 // src/analyst-index.ts
-import { open as open4, readFile as readFile12, unlink as unlink4 } from "node:fs/promises";
+import { open as open4, readFile as readFile11, unlink as unlink4 } from "node:fs/promises";
 import { dirname as dirname9, join as join22 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve9) => {
@@ -26265,7 +26246,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
   const path = analystLibraryIndexPath(ledgerHome);
   let raw;
   try {
-    raw = await readFile12(path, "utf8");
+    raw = await readFile11(path, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
       return void 0;
@@ -26469,12 +26450,12 @@ var init_analyst_cohort = __esm({
 });
 
 // src/ledger-session-read.ts
-import { readFile as readFile13 } from "node:fs/promises";
+import { readFile as readFile12 } from "node:fs/promises";
 function isRecord7(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readLedgerSessionJsonl(path) {
-  const text = await readFile13(path, "utf8");
+  const text = await readFile12(path, "utf8");
   const lines = text.split("\n");
   const rows = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -26631,7 +26612,7 @@ var init_ledger_session_read = __esm({
 });
 
 // src/run-terminal-artifacts.ts
-import { readdir as readdir4, readFile as readFile14 } from "node:fs/promises";
+import { readdir as readdir4, readFile as readFile13 } from "node:fs/promises";
 import { basename as basename5, dirname as dirname10, join as join23 } from "node:path";
 function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
@@ -26663,7 +26644,7 @@ function readUsableTerminalArtifactBody(body) {
 async function readTerminalArtifactAtPath(path, file) {
   let raw;
   try {
-    raw = await readFile14(path, "utf8");
+    raw = await readFile13(path, "utf8");
   } catch (error) {
     if (isMissingPathError4(error)) return void 0;
     return {
@@ -26954,7 +26935,7 @@ var init_analyst_gate_cycles_read = __esm({
 });
 
 // src/analyst-ledger.ts
-import { readdir as readdir6, readFile as readFile15 } from "node:fs/promises";
+import { readdir as readdir6, readFile as readFile14 } from "node:fs/promises";
 import { join as join25 } from "node:path";
 function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
@@ -26968,7 +26949,7 @@ function isRecord10(value) {
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile15(join25(runDirectory, "run-state.json"), "utf8")
+      await readFile14(join25(runDirectory, "run-state.json"), "utf8")
     );
     if (!isRecord10(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
@@ -27000,7 +26981,7 @@ async function listLedgerBookNames(booksRoot) {
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile15(join25(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile14(join25(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
     if (isMissingPathError5(error)) return void 0;
     throw error;
@@ -27032,7 +27013,7 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile15(join25(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile14(join25(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
     if (isRecord10(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
@@ -28229,7 +28210,7 @@ var init_analyst_page = __esm({
 });
 
 // src/analyst-entry.ts
-import { readFile as readFile16 } from "node:fs/promises";
+import { readFile as readFile15 } from "node:fs/promises";
 function isMissingPathError6(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -28259,7 +28240,7 @@ async function readOrComputeAnalystIssuePage(input, options) {
     ...issueNumber === void 0 && input.bookKey === void 0 ? { scopeRootIdentity: projectRoot } : {}
   });
   try {
-    const raw = await readFile16(pagePath, "utf8");
+    const raw = await readFile15(pagePath, "utf8");
     const page = JSON.parse(raw);
     if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
       return { mode: "issue", page, pagePath };
@@ -28353,7 +28334,7 @@ async function runAnalystModelGroupsMode(input) {
       scopeRootIdentity: projectRoot
     });
     try {
-      const raw = await readFile16(pagePath, "utf8");
+      const raw = await readFile15(pagePath, "utf8");
       JSON.parse(raw);
     } catch (error) {
       if (!isMissingPathError6(error)) {
@@ -28452,7 +28433,7 @@ var init_analyst_entry = __esm({
 });
 
 // src/public-cli/analyst-run.ts
-import { readFile as readFile17 } from "node:fs/promises";
+import { readFile as readFile16 } from "node:fs/promises";
 import { isAbsolute as isAbsolute7, resolve as resolve8 } from "node:path";
 function resolveAnalystIssueBookKeyFromCwd(cwd = process.cwd()) {
   try {
@@ -28505,7 +28486,7 @@ async function buildAnalystSweepModeInputFromAttachmentPaths(attachmentPaths) {
   const absolute = isAbsolute7(sourcePath) ? sourcePath : resolve8(sourcePath);
   let bytes;
   try {
-    bytes = await readFile17(absolute);
+    bytes = await readFile16(absolute);
   } catch (error) {
     throw new CliUsageError(
       `analyst sweep attachment is not a readable regular file: ${sourcePath}`,
