@@ -32,9 +32,20 @@ export type ReviewerAdmittedInputs = Readonly<{
   ticketNumber?: number;
 }>;
 
+const reviewerAmendmentsSchema = Type.Object({
+  standards: Type.Optional(Type.String({ description: "Delta relative to the Standards child report: added finding, withdrawal, or factual correction." })),
+  spec: Type.Optional(Type.String({ description: "Delta relative to the Spec child report: added finding, withdrawal, or factual correction." })),
+}, { additionalProperties: true, description: "Optional per-axis deltas relative to child reports; not a replacement report. Omit axes with no delta." });
 const reviewerOutputVariants = Type.Union([
-  Type.Object({ status: Type.Literal("completed", { description: "Reviewer dispatch completed." }) }, { additionalProperties: false }),
-  Type.Object({ status: Type.Literal("refused", { description: "Reviewer dispatch was lawfully refused." }), diagnostic: Type.String({ minLength: 1, description: "Diagnostic explaining the refusal." }) }, { additionalProperties: false }),
+  Type.Object({
+    status: Type.Literal("completed", { description: "Reviewer dispatch completed." }),
+    amendments: Type.Optional(reviewerAmendmentsSchema),
+  }, { additionalProperties: false }),
+  Type.Object({
+    status: Type.Literal("refused", { description: "Reviewer dispatch was lawfully refused." }),
+    diagnostic: Type.String({ minLength: 1, description: "Diagnostic explaining the refusal." }),
+    amendments: Type.Optional(reviewerAmendmentsSchema),
+  }, { additionalProperties: false }),
 ]);
 const reviewerOutputSchema = openToolObjectFromUnion(reviewerOutputVariants);
 export type ReviewerRoleDependencies = {

@@ -11,9 +11,11 @@ import type { ReviewerAcceptedEvidence, ReviewerFailureClassification, ReviewerW
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
 
+/** Seat-owned per-axis delta relative to child reports — not a replacement report. */
+export type ReviewerAmendments = Readonly<Partial<Record<"standards" | "spec", string>>>;
 export type ReviewerIntent =
-  | Readonly<{ status: "completed" }>
-  | Readonly<{ status: "refused"; diagnostic: string }>;
+  | Readonly<{ status: "completed"; amendments?: ReviewerAmendments }>
+  | Readonly<{ status: "refused"; diagnostic: string; amendments?: ReviewerAmendments }>;
 /** Child report is plain text — no length/digest identity shell (ADR 0031). */
 export type VerbatimChildReport = Readonly<{ text: string }>;
 /** Prompt projection on the receipt face is plain text (ADR 0031). */
@@ -44,6 +46,8 @@ type RuntimeReviewerReceiptV2Clean = Readonly<{
   /** Self-fetch bytes + source annotation when Spec primary path produced material (#343). */
   specFetchedMaterial?: ReviewerAcceptedEvidence["specFetchedMaterial"];
   reports: Readonly<Partial<Record<"standards" | "spec", VerbatimChildReport>>>;
+  /** Seat-owned per-axis deltas; separate from runtime-owned child reports. */
+  amendments?: ReviewerAmendments;
   outcomes: Readonly<Partial<Record<"standards" | "spec", RuntimeReviewerOutcome>>>;
   identities: Readonly<{
     canonicalSkill: ReviewerReceiptSkillContent;
@@ -68,10 +72,30 @@ function read(value: unknown, key: string): unknown {
   try { return value[key]; } catch { return undefined; }
 }
 
+/** Canonical per-axis string slots only — no shape reject, no prose parse (ADR 0057). */
+function readAmendments(output: unknown): ReviewerAmendments | undefined {
+  const amendments = read(output, "amendments");
+  if (!isRecord(amendments)) return undefined;
+  const slots: Partial<Record<"standards" | "spec", string>> = {};
+  for (const axis of ["standards", "spec"] as const) {
+    const value = read(amendments, axis);
+    if (typeof value === "string") slots[axis] = value;
+  }
+  if (slots.standards === undefined && slots.spec === undefined) return undefined;
+  return Object.freeze(slots);
+}
+
 export function validateReviewerIntent(output: unknown): ReviewerIntent {
   const status = read(output, "status");
-  if (status === "completed") return { status };
-  if (status === "refused") return { status, diagnostic: read(output, "diagnostic") as string };
+  const amendments = readAmendments(output);
+  if (status === "completed") {
+    return amendments === undefined ? { status } : { status, amendments };
+  }
+  if (status === "refused") {
+    return amendments === undefined
+      ? { status, diagnostic: read(output, "diagnostic") as string }
+      : { status, diagnostic: read(output, "diagnostic") as string, amendments };
+  }
   throw new Error("Reviewer output has no recognized execution intent");
 }
 
