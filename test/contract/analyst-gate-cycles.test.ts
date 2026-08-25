@@ -414,22 +414,43 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     // Completed-by-terminator malformed line — canonical reader must not under-count.
     await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
 
-    const result = await runAnalyst({
+    const malformed = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
     });
 
-    const damaged = result.page.unreadable.find((entry) => entry.runId === GATE_JUDGE_RUN);
-    assert.ok(damaged, "judge leg with damaged auditor-roles must be page-local unreadable");
-    assert.deepEqual(damaged.missingSources, ["auditor-roles"]);
-    assert.match(damaged.reason, /malformed JSONL record/);
+    const damagedJsonl = malformed.page.unreadable.find((entry) => entry.runId === GATE_JUDGE_RUN);
+    assert.ok(damagedJsonl, "judge leg with damaged auditor-roles must be page-local unreadable");
+    assert.deepEqual(damagedJsonl.missingSources, ["auditor-roles"]);
+    assert.match(damagedJsonl.reason, /malformed JSONL record/);
 
     // Must not appear as a zero-round readable leg (wash → under-count).
-    const section = gateSection(result.page);
     assert.equal(
-      section.legs.some((leg) => leg.runId === GATE_JUDGE_RUN),
+      gateSection(malformed.page).legs.some((leg) => leg.runId === GATE_JUDGE_RUN),
       false,
       "damaged gate leg must not contribute readable gateCycles rows",
+    );
+
+    // Plain file at auditor-roles path is damaged topology (ENOTDIR), not lawful zero.
+    await rm(auditorDir, { recursive: true, force: true });
+    await writeFile(auditorDir, "not-a-directory\n", "utf8");
+
+    const plainFile = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_PROJECT_ROOT,
+    });
+
+    const damagedTopology = plainFile.page.unreadable.find((entry) => entry.runId === GATE_JUDGE_RUN);
+    assert.ok(
+      damagedTopology,
+      "judge leg with plain-file auditor-roles must be page-local unreadable",
+    );
+    assert.deepEqual(damagedTopology.missingSources, ["auditor-roles"]);
+    assert.match(damagedTopology.reason, /ENOTDIR/);
+    assert.equal(
+      gateSection(plainFile.page).legs.some((leg) => leg.runId === GATE_JUDGE_RUN),
+      false,
+      "ENOTDIR auditor-roles must not wash into a zero-round readable leg",
     );
   });
 });

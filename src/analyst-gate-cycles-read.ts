@@ -8,10 +8,11 @@
  * the current gatekeeper/inspector/notary English face. Projection always uses
  * the current English officer identity (inspector | notary).
  *
- * Missing auditor-roles directory → empty rounds (lawful zero).
- * Discovered nested JSONL that fails canonical read/parse must fail loudly
- * (never silently under-count). Readable volumes that simply lack a gate
- * terminating tool are omitted from pairing — that is not a read failure.
+ * Missing auditor-roles directory (ENOENT only) → empty rounds (lawful zero).
+ * Path present but not a directory (ENOTDIR) and discovered nested JSONL that
+ * fails canonical read/parse must fail loudly (never silently under-count).
+ * Readable volumes that simply lack a gate terminating tool are omitted from
+ * pairing — that is not a read failure.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -60,11 +61,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isMissingPathError(error: unknown): boolean {
+/** Only true absence (ENOENT). ENOTDIR is damaged topology — must stay loud. */
+function isMissingDirectoryError(error: unknown): boolean {
   return (
     error instanceof Error
     && "code" in error
-    && (error.code === "ENOENT" || error.code === "ENOTDIR")
+    && error.code === "ENOENT"
   );
 }
 
@@ -244,7 +246,8 @@ function pairGateRounds(
 
 /**
  * Read and pair gate-cycle rounds from a run's session/auditor-roles directory.
- * ENOENT/ENOTDIR → []. Other directory errors propagate (failure honesty).
+ * ENOENT (directory truly absent) → []. ENOTDIR and other errors propagate
+ * (failure honesty — damaged topology must not wash to zero rounds).
  */
 export async function readAnalystGateCyclesFromAuditorRoles(
   auditorRolesDirectory: string,
@@ -257,7 +260,7 @@ export async function readAnalystGateCyclesFromAuditorRoles(
       .map((e) => e.name)
       .sort();
   } catch (error) {
-    if (isMissingPathError(error)) return [];
+    if (isMissingDirectoryError(error)) return [];
     throw error;
   }
 
