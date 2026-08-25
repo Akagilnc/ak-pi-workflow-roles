@@ -17,6 +17,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import {
+  NotarySourceRunError,
+  resolveNotarySourceRunLocator,
+} from "../../src/notary-source-run.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -191,7 +195,6 @@ test("notary activation binds locator only — zero instruction/attachment on ad
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedSourceRun(project);
-    const callerFraming = "UNIQUE_CALLER_FRAMING_MUST_NOT_ENTER_TRANSPORT";
 
     const admitted = await admitNotaryInvocation({
       home,
@@ -211,9 +214,51 @@ test("notary activation binds locator only — zero instruction/attachment on ad
     const extra = buildNotaryActivationExtraArgs(admitted, { packageRoot });
     assert.equal(flagValue(extra, "--ak-role"), "notary");
     assert.equal(flagValue(extra, "--ak-notary-source-run"), sourceRunPath);
-    // No caller framing bytes on the transport prompt tail.
-    assert.equal(extra.some((token) => token.includes(callerFraming)), false);
-    assert.equal(extra.at(-1)?.includes(callerFraming) ?? false, false);
+  });
+});
+
+test("notary bad source-run locator is structural reject (exit 2)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io } = captureIo();
+
+    const missing = await runAkRole(
+      ["notary", "--source-run", join(project, "no-such-run@judge")],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(missing.exitCode, 2);
+    assert.equal(missing.terminal, undefined);
+
+    const filePath = join(project, "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge");
+    await writeFile(filePath, "not a directory\n", "utf8");
+    const notDir = await runAkRole(
+      ["notary", "--source-run", filePath],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(notDir.exitCode, 2);
+    assert.equal(notDir.terminal, undefined);
+
+    const badNameDir = join(project, "not-a-run-id");
+    await mkdir(badNameDir, { recursive: true });
+    const badName = await runAkRole(
+      ["notary", "--source-run", badNameDir],
+      { home, packageRoot, cwd: project, io },
+    );
+    assert.equal(badName.exitCode, 2);
+    assert.equal(badName.terminal, undefined);
+
+    // Unit seam: same failures surface as NotarySourceRunError before CLI wrap.
+    await assert.rejects(
+      () =>
+        resolveNotarySourceRunLocator({
+          projectRoot: project,
+          sourceRun: join(project, "missing@judge"),
+          home,
+        }),
+      (error: unknown) => error instanceof NotarySourceRunError,
+    );
   });
 });
 

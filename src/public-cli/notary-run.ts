@@ -44,7 +44,6 @@ import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   inspectJudgeSession,
-  isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
   resolveAuditedRunnerKnownFailure,
@@ -231,17 +230,8 @@ async function dispatchAdmittedNotary(input: {
         io,
       );
     }
-    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful,
-      };
-    }
-    // Layer ② residual incomplete is a typed non-zero terminal, not a failure.
-    if (lawful !== undefined && lawful.roleOutcome.kind === "incomplete") {
+    // Accepted receipts and residual incomplete share one present path (collector seam).
+    if (lawful !== undefined) {
       await markRunTerminal(admitted.runDirectory).catch(() => undefined);
       io.stdout(formatTerminalResult(lawful));
       return {

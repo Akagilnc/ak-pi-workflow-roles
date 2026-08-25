@@ -24822,16 +24822,7 @@ async function dispatchAdmittedNotary(input) {
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    if (lawful !== void 0 && lawful.roleOutcome.kind === "incomplete") {
+    if (lawful !== void 0) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
