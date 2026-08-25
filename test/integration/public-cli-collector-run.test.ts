@@ -68,6 +68,12 @@ else if(path.includes('/reviews')||path.includes('/reactions')||path.includes('/
       assert.equal(report.receipt.requestAttempts[0].status, "succeeded");
       assert.ok(report.receipt.snapshots.length >= 2);
       assert.ok(report.receipt.evidenceRecords.some((record: any) => record.kind === "issue_comment" && record.raw.id === 91));
+      // #438: --repo owner/repo is identity, not a Navigator file path — Terminal must not project source=context path ENOENT.
+      const navigator = result.terminal?.navigator;
+      assert.ok(navigator, "public Terminal must expose Navigator fact");
+      if (navigator.disposition === "unavailable") {
+        assert.notEqual(navigator.source, "context");
+      }
     } finally {
       if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
     }
