@@ -14,8 +14,10 @@
  * An accepted gate terminating receipt (isError:false pair on dispatch/officer
  * tool) whose required typed facts are unusable — status, dispatch officer, or
  * first/last span missing/unknown/unparseable/inverted — also fails loudly via
- * the same throw→ledger `auditor-roles` unreadable seam. True non-gate volumes
- * (soul-audit noise, etc.) stay omitted from pairing.
+ * the same throw→ledger `auditor-roles` unreadable seam. Lawful Gatekeeper
+ * typed `incomplete` is a recognizable terminal (omit from pairing, leg stays
+ * readable) — only unknown/non-contract dispatch status stays loud. True
+ * non-gate volumes (soul-audit noise, etc.) stay omitted from pairing.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -202,6 +204,9 @@ async function classifyAuditorVolume(
   const findingsCount = Array.isArray(findings) ? findings.length : 0;
 
   if (DISPATCH_TOOLS.has(call.toolName)) {
+    // Gatekeeper contract terminals: dispatch | incomplete. Incomplete is a
+    // lawful zero-pair terminal (#434-436 / #458) — never wash the parent leg.
+    if (status === "incomplete") return undefined;
     if (status !== "dispatch") {
       throw new Error(
         `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`,
