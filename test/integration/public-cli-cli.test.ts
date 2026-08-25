@@ -17,7 +17,12 @@ import {
   runAkRole,
 } from "../../src/public-cli/cli.ts";
 import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
-import { loadPublicCliConfig, publicCliConfigPath, resolveEffectiveSeat, type CredentialProviders } from "../../src/public-cli/config.ts";
+import {
+  loadPublicCliConfig,
+  publicCliConfigPath,
+  resolveEffectiveSeat,
+  type CredentialProviders,
+} from "../../src/public-cli/config.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -188,6 +193,118 @@ test("config persistence round-trips across processes on the typed seat face", a
     assert.deepEqual((await loadPublicCliConfig(home)).seats.coder, {
       provider: "kimi-coding",
       model: "k3-256k",
+      thinking: "high",
+    });
+
+    // #453: automatic menxia seats are configurable; unset restores absence.
+    const menxiaSet = await runAkRole(
+      [
+        "config",
+        "set",
+        "gatekeeper",
+        "xai/grok-4.5:high",
+        "inspector",
+        "openai-codex/gpt-5.6-sol:medium",
+      ],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(menxiaSet.exitCode, 0);
+    const menxiaPersisted = await loadPublicCliConfig(home);
+    assert.deepEqual(menxiaPersisted.seats.gatekeeper, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
+    assert.deepEqual(menxiaPersisted.seats.inspector, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "medium",
+    });
+
+    const rolesAfter = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      credentials: { "openai-codex": true, xai: true },
+      io: captureIo().io,
+    });
+    assert.equal(rolesAfter.exitCode, 0);
+    assert.equal(
+      resolveEffectiveSeat(menxiaPersisted, "gatekeeper", {
+        "openai-codex": true,
+        xai: true,
+      }).source,
+      "persistent",
+    );
+    assert.equal(
+      resolveEffectiveSeat(menxiaPersisted, "gatekeeper", {
+        "openai-codex": true,
+        xai: true,
+      }).automatic,
+      true,
+    );
+
+    const unsetInspector = await runAkRole(["config", "unset", "inspector"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.equal(unsetInspector.exitCode, 0);
+    assert.equal((await loadPublicCliConfig(home)).seats.inspector, undefined);
+    assert.deepEqual((await loadPublicCliConfig(home)).seats.gatekeeper, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
+
+    const unsetGate = await runAkRole(["config", "unset", "gatekeeper"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.equal(unsetGate.exitCode, 0);
+    assert.equal((await loadPublicCliConfig(home)).seats.gatekeeper, undefined);
+  });
+});
+
+test("#453 config unset clears menxia model only; keeps notary engine; refuses non-menxia", async () => {
+  await withTempHome(async (home) => {
+    const setModel = await runAkRole(
+      ["config", "set", "notary", "xai/grok-4.5:high"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(setModel.exitCode, 0);
+    const setEngine = await runAkRole(
+      ["config", "set-engine", "notary", "opus"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(setEngine.exitCode, 0);
+
+    const unset = await runAkRole(["config", "unset", "notary"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.equal(unset.exitCode, 0);
+    // Public surface: model gone, engine residual remains. Resolve semantics stay unit.
+    assert.deepEqual((await loadPublicCliConfig(home)).seats.notary, {
+      engine: "opus",
+    });
+
+    // Non-menxia seat with a real row: refused unset must leave it untouched.
+    const withJudge = await runAkRole(
+      ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(withJudge.exitCode, 0);
+    const refused = await runAkRole(["config", "unset", "judge"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+    assert.notEqual(refused.exitCode, 0);
+    assert.deepEqual((await loadPublicCliConfig(home)).seats.judge, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
       thinking: "high",
     });
   });

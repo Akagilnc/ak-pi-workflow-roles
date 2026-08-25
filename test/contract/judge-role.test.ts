@@ -51,6 +51,12 @@ import {
   NAVIGATOR_POST_ROLE_GRACE_MS,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
+import {
+  clearPersistentSeatConfig,
+  savePublicCliConfig,
+  setPersistentSeatConfig,
+  type PublicCliConfig,
+} from "../../src/public-cli/config.ts";
 import { packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -343,6 +349,88 @@ function workerCompletionGatekeeperHarness(options: {
     },
     get providerRequests() { return providerRequests; },
     get remainingResponses() { return responses.length; },
+  };
+}
+
+function menxiaCatalogModel(provider: string, id: string) {
+  return {
+    api: "openai-responses" as const,
+    provider,
+    id,
+    name: id,
+    baseUrl: "",
+    reasoning: false,
+    input: ["text" as const],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1,
+    maxTokens: 1,
+  };
+}
+
+/**
+ * Real submit-tool → requireGatekeeperPass → shared executor child model observation (#453).
+ * Pass-only script; full non-pass matrix stays on workerCompletionGatekeeperHarness.
+ */
+function realEntryMenxiaModelHarness(options: {
+  officer?: "inspector" | "notary";
+  catalog?: ReadonlyArray<{ provider: string; id: string }>;
+  authFailIds?: ReadonlySet<string>;
+}) {
+  const officer = options.officer ?? "inspector";
+  const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
+  const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
+  const parentModel = faux.getModel();
+  const catalog = new Map(
+    (options.catalog ?? []).map((entry) => [
+      `${entry.provider}/${entry.id}`,
+      menxiaCatalogModel(entry.provider, entry.id),
+    ]),
+  );
+  const authFailIds = options.authFailIds ?? new Set<string>();
+  const seen: Array<{ provider: string; id: string }> = [];
+  const responses = [
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
+    fauxAssistantMessage(fauxToolCall(officerTool, { status: "pass", findings: [] })),
+  ];
+  const provider = {
+    ...faux.provider,
+    stream(model: { provider: string; id: string }) {
+      seen.push({ provider: model.provider, id: model.id });
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => stream.end(next));
+      return stream;
+    },
+    streamSimple(model: { provider: string; id: string }) {
+      return this.stream(model);
+    },
+  };
+  return {
+    parentModel,
+    seen,
+    context(id: string, toolName: string) {
+      return Object.assign(toolCallContext([{ id, name: toolName }]), {
+        cwd: process.cwd(),
+        model: parentModel,
+        modelRegistry: {
+          // Override providers share the scripted stream so completion model is observable.
+          getProvider() { return provider; },
+          find(providerName: string, modelId: string) {
+            return catalog.get(`${providerName}/${modelId}`);
+          },
+          async getProviderAuth() { return { auth: { apiKey: "test-key" } }; },
+          async getApiKeyAndHeaders(candidate: { id?: string }) {
+            if (candidate?.id !== undefined && authFailIds.has(candidate.id)) {
+              return { ok: false, error: "override credentials missing" };
+            }
+            // Known providers (xai/openai-codex) require a key on ModelRuntime refresh.
+            return { ok: true, apiKey: "test-key" };
+          },
+        },
+        thinkingLevel: "off",
+      });
+    },
   };
 }
 
@@ -1369,6 +1457,254 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
   );
   assert.equal(auditCalls, 1, "auditor must not start on Gatekeeper non-pass for other judgeStatus");
   assert.equal(secondGate.providerRequests, 1);
+});
+
+// #453: menxia model selection through real coder/fixer/judge submit tools.
+test("#453 real coder/fixer/judge entries observe menxia model inheritance and overrides", async () => {
+  const completedCoder = { status: "completed", report: "TDD and verification evidence" };
+  const completedFixer = {
+    status: "completed" as const,
+    report: "repair complete",
+    classResults: [{
+      name: "Gate",
+      disposition: "completed" as const,
+      searchScope: "all",
+      exceptions: [],
+      commitSha: "a".repeat(40),
+    }],
+  };
+  const continueVerdict = {
+    judgeStatus: "continue" as const,
+    fix: { summary: "tighten the gate" },
+    note: "ticket-review",
+  };
+
+  const startCoder = async () => {
+    const request = "Apply the approved plan.";
+    const harness = extensionHarness(undefined, {
+      "ak-coder-task": "/materials/approved.md",
+      "ak-coder-phase": "apply",
+    });
+    const runtime = createCoderRoleRuntime(
+      harness.pi as ExtensionAPI,
+      {
+        loadSoul: async () => "CODER LAW",
+        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+        loadCanonicalSkillBinding: async () => tddBinding(),
+      },
+      testHostActions(),
+    );
+    await runtime.activate();
+    // Completed coder requires the canonical tdd expansion arming path.
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.({
+      systemPrompt: "BASE",
+      prompt: expandedTdd(request),
+    }, { abort() {}, mode: "tui" });
+    return harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
+  };
+  const startFixer = async () => {
+    const harness = extensionHarness(undefined, {
+      "ak-fix-packet": "/materials/fix.md",
+      "ak-fixer-phase": "apply",
+    });
+    const runtime = createFixerRoleRuntime(
+      harness.pi as ExtensionAPI,
+      { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
+      testHostActions(),
+    );
+    await runtime.activate();
+    return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
+  };
+
+  await withActivationHome({ prefix: "ak-453-menxia-model-" }, async ({ home }) => {
+    // Unconfigured: all three real entries inherit the parent session model.
+    for (const entry of [
+      {
+        name: "coder",
+        officer: "inspector" as const,
+        start: startCoder,
+        output: completedCoder,
+        toolName: CODER_OUTPUT_TOOL_NAME,
+      },
+      {
+        name: "fixer",
+        officer: "inspector" as const,
+        start: startFixer,
+        output: completedFixer,
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+      },
+      {
+        name: "judge",
+        officer: "notary" as const,
+        start: async () => (await startJudge(async () => ({ status: "pass" as const }))).tool,
+        output: continueVerdict,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+      },
+    ]) {
+      const tool = await entry.start();
+      const tracer = realEntryMenxiaModelHarness({ officer: entry.officer });
+      const accepted = await tool.execute(
+        `${entry.name}-inherit`,
+        entry.output,
+        undefined,
+        undefined,
+        tracer.context(`${entry.name}-inherit`, entry.toolName),
+      );
+      assert.equal(accepted.terminate, true, `${entry.name} must terminate after gate pass`);
+      assert.deepEqual(
+        tracer.seen,
+        [
+          { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
+          { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
+        ],
+        `${entry.name} unconfigured menxia seats inherit parent model`,
+      );
+    }
+
+    // gatekeeper-only: province + officer both use gatekeeper override.
+    await savePublicCliConfig(
+      setPersistentSeatConfig({ seats: {} }, "gatekeeper", {
+        provider: "xai",
+        model: "gate-only-model",
+        thinking: "high",
+      }),
+      home,
+    );
+    for (const officer of ["inspector", "notary"] as const) {
+      const tool = await startCoder();
+      const tracer = realEntryMenxiaModelHarness({
+        officer,
+        catalog: [{ provider: "xai", id: "gate-only-model" }],
+      });
+      const accepted = await tool.execute(
+        `gate-only-${officer}`,
+        completedCoder,
+        undefined,
+        undefined,
+        tracer.context(`gate-only-${officer}`, CODER_OUTPUT_TOOL_NAME),
+      );
+      assert.equal(accepted.terminate, true);
+      assert.deepEqual(tracer.seen, [
+        { provider: "xai", id: "gate-only-model" },
+        { provider: "xai", id: "gate-only-model" },
+      ]);
+    }
+
+    // Own officer overrides win; inspector/notary do not cross-wire.
+    let config: PublicCliConfig = { seats: {} };
+    config = setPersistentSeatConfig(config, "gatekeeper", {
+      provider: "xai", model: "gate-model", thinking: "high",
+    });
+    config = setPersistentSeatConfig(config, "inspector", {
+      provider: "openai-codex", model: "inspector-model", thinking: "medium",
+    });
+    config = setPersistentSeatConfig(config, "notary", {
+      provider: "openai-codex", model: "notary-model", thinking: "high",
+    });
+    await savePublicCliConfig(config, home);
+    const catalog = [
+      { provider: "xai", id: "gate-model" },
+      { provider: "openai-codex", id: "inspector-model" },
+      { provider: "openai-codex", id: "notary-model" },
+    ];
+    {
+      const tool = await startCoder();
+      const tracer = realEntryMenxiaModelHarness({ officer: "inspector", catalog });
+      assert.equal(
+        (await tool.execute(
+          "own-inspector",
+          completedCoder,
+          undefined,
+          undefined,
+          tracer.context("own-inspector", CODER_OUTPUT_TOOL_NAME),
+        )).terminate,
+        true,
+      );
+      assert.deepEqual(tracer.seen, [
+        { provider: "xai", id: "gate-model" },
+        { provider: "openai-codex", id: "inspector-model" },
+      ]);
+    }
+    {
+      const tool = await startCoder();
+      const tracer = realEntryMenxiaModelHarness({ officer: "notary", catalog });
+      assert.equal(
+        (await tool.execute(
+          "own-notary",
+          completedCoder,
+          undefined,
+          undefined,
+          tracer.context("own-notary", CODER_OUTPUT_TOOL_NAME),
+        )).terminate,
+        true,
+      );
+      assert.deepEqual(tracer.seen, [
+        { provider: "xai", id: "gate-model" },
+        { provider: "openai-codex", id: "notary-model" },
+      ]);
+    }
+
+    // unset restores parent inheritance (gatekeeper cleared after officers).
+    config = clearPersistentSeatConfig(config, "inspector");
+    config = clearPersistentSeatConfig(config, "notary");
+    config = clearPersistentSeatConfig(config, "gatekeeper");
+    await savePublicCliConfig(config, home);
+    {
+      const tool = await startCoder();
+      const tracer = realEntryMenxiaModelHarness({
+        officer: "inspector",
+        catalog, // leftover catalog must not apply without persistent seats
+      });
+      assert.equal(
+        (await tool.execute(
+          "unset-restore",
+          completedCoder,
+          undefined,
+          undefined,
+          tracer.context("unset-restore", CODER_OUTPUT_TOOL_NAME),
+        )).terminate,
+        true,
+      );
+      assert.deepEqual(tracer.seen, [
+        { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
+        { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
+      ]);
+    }
+
+    // Explicit override auth failure is loud transport failure — no parent fallback.
+    await savePublicCliConfig(
+      setPersistentSeatConfig({ seats: {} }, "gatekeeper", {
+        provider: "xai",
+        model: "auth-fail-model",
+      }),
+      home,
+    );
+    {
+      const tool = await startCoder();
+      const tracer = realEntryMenxiaModelHarness({
+        officer: "inspector",
+        catalog: [{ provider: "xai", id: "auth-fail-model" }],
+        authFailIds: new Set(["auth-fail-model"]),
+      });
+      await assert.rejects(
+        tool.execute(
+          "auth-fail",
+          completedCoder,
+          undefined,
+          undefined,
+          tracer.context("auth-fail", CODER_OUTPUT_TOOL_NAME),
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.equal(error instanceof GatekeeperDecisionError, false);
+          assert.match(error.message, /authentication failed|override credentials missing/i);
+          return true;
+        },
+      );
+      assert.deepEqual(tracer.seen, [], "auth failure must not reach child completion");
+    }
+  });
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {

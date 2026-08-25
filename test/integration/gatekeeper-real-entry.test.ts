@@ -22,7 +22,17 @@ async function withParent(run: (context: any) => Promise<void>) {
     const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent", tokenSize: { min: 1000, max: 1000 } });
     faux.setResponses([fauxAssistantMessage("parent")]);
     await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
-      await run({ cwd: home, model, modelRegistry: { getProvider() { return undefined; }, async getProviderAuth() { return { auth: {} }; }, async getApiKeyAndHeaders() { return { ok: true }; } }, thinkingLevel: "off", sessionManager: session.sessionManager });
+      await run({
+        cwd: home,
+        model,
+        modelRegistry: {
+          getProvider() { return undefined; },
+          async getProviderAuth() { return { auth: {} }; },
+          async getApiKeyAndHeaders() { return { ok: true }; },
+        },
+        thinkingLevel: "off",
+        sessionManager: session.sessionManager,
+      });
     });
   });
 }
