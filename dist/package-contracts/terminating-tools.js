@@ -9,8 +9,9 @@ import { isAuditEscalationResult } from "../audit-escalation.js";
 import { seatFallbackBaseStatus, seatFallbackStatusHasLawfulEvidence, } from "../engine-labor-fallback.js";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
+import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput } from "../notary-contracts.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
-export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, validateDoctorSubmissionShape, validateRecordedDoctorOutput, validateMergerOutput, };
+export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, validateDoctorSubmissionShape, validateRecordedDoctorOutput, validateMergerOutput, validateRecordedNotaryOutput, };
 export const TERMINATING_TOOL_NAMES = [
     CODER_OUTPUT_TOOL_NAME,
     FIXER_OUTPUT_TOOL_NAME,
@@ -19,6 +20,7 @@ export const TERMINATING_TOOL_NAMES = [
     COLLECTOR_OUTPUT_TOOL,
     DOCTOR_OUTPUT_TOOL_NAME,
     MERGER_OUTPUT_TOOL_NAME,
+    NOTARY_OUTPUT_TOOL_NAME,
 ];
 export function isTerminatingToolName(name) {
     return TERMINATING_TOOL_NAMES.includes(name);
@@ -39,6 +41,8 @@ export function acceptedTextFor(toolName) {
             return "Doctor output accepted";
         case MERGER_OUTPUT_TOOL_NAME:
             return MERGER_ACCEPTED_TEXT;
+        case NOTARY_OUTPUT_TOOL_NAME:
+            return NOTARY_ACCEPTED_TEXT;
     }
 }
 export class AcceptedDetailsContractError extends Error {
@@ -78,6 +82,7 @@ export function validateAcceptedDetails(toolName, details) {
         [COLLECTOR_OUTPUT_TOOL]: [],
         [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
         [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
+        [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce", "incomplete"],
     };
     const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
     const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
@@ -107,6 +112,8 @@ export function validateAcceptedDetails(toolName, details) {
                 return validateRecordedDoctorOutput(details);
             case MERGER_OUTPUT_TOOL_NAME:
                 return validateMergerOutput(details);
+            case NOTARY_OUTPUT_TOOL_NAME:
+                return validateRecordedNotaryOutput(details);
         }
     }
     catch (error) {
@@ -143,7 +150,8 @@ export function acceptedFacts(toolName, details) {
         case CODER_OUTPUT_TOOL_NAME:
         case FIXER_OUTPUT_TOOL_NAME:
         case REVIEWER_OUTPUT_TOOL_NAME:
-        case DOCTOR_OUTPUT_TOOL_NAME: return { status: details.status };
+        case DOCTOR_OUTPUT_TOOL_NAME:
+        case NOTARY_OUTPUT_TOOL_NAME: return { status: details.status };
         case JUDGE_OUTPUT_TOOL_NAME: return { status: details.judgeStatus };
         case MERGER_OUTPUT_TOOL_NAME: {
             const output = details;

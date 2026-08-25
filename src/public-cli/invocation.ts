@@ -48,6 +48,14 @@ import {
 import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
+  NOTARY_FIXED_KICKOFF,
+  type NotarySourceRunLocator,
+} from "../notary-contracts.ts";
+import {
+  NotarySourceRunError,
+  resolveNotarySourceRunLocator,
+} from "../notary-source-run.ts";
+import {
   appendEngineSessionMaterial,
   type EngineSessionMaterial,
 } from "../package-resources/engine-material.ts";
@@ -143,6 +151,14 @@ export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
   readonly caseIdentity: DoctorCaseIdentity;
 };
 
+export type AdmittedNotaryInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "notary";
+  /** Absolute source run directory passed to internal --ak-notary-source-run. */
+  readonly sourceRunPath: string;
+  /** Typed locator identity bound at admission (self-fetch target). */
+  readonly sourceRun: NotarySourceRunLocator;
+};
+
 export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "reviewer";
   /** Required fixed base revision for the pinned review target (ADR 0037). */
@@ -177,6 +193,7 @@ export type AdmittedRoleInvocation =
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
   | AdmittedDoctorInvocation
+  | AdmittedNotaryInvocation
   | AdmittedReviewerInvocation
   | AdmittedMergerInvocation;
 
@@ -1740,6 +1757,159 @@ export function buildDoctorTransportPrompt(
     }
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+
+export type ParseNotaryArgvResult = {
+  readonly sourceRun: string;
+  readonly project?: string;
+};
+
+/**
+ * Parse Notary-specific argv after the `notary` token.
+ * Input contract = zero prompt, zero attachment projection (#448 / #276).
+ */
+export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult {
+  let project: string | undefined;
+  let sourceRun: string | undefined;
+  const tokens = [...args];
+  const definitions = roleOptions("notary");
+  const options = createTypedOptionConsumer(definitions);
+
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      if (tokens.length > 0) {
+        throw new CliUsageError(
+          "notary rejects caller prompt/instruction; only --source-run locator is admitted",
+        );
+      }
+      break;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== undefined) {
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "source-run") {
+        if (taken.value === undefined || taken.value.trim() === "") {
+          throw new CliUsageError("notary --source-run requires a run locator");
+        }
+        sourceRun = taken.value;
+        continue;
+      }
+      throw new CliUsageError(`unknown notary option: ${taken.def.canonical}`);
+    }
+    const token = tokens.shift()!;
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown notary option: ${token}`);
+    }
+    throw new CliUsageError(
+      "notary rejects caller prompt/instruction; only --source-run locator is admitted",
+    );
+  }
+
+  options.assertRequired();
+  if (sourceRun === undefined || sourceRun.trim() === "") {
+    throw new CliUsageError("notary --source-run requires a run locator");
+  }
+  return {
+    sourceRun,
+    ...(project === undefined ? {} : { project }),
+  };
+}
+
+export async function admitNotaryInvocation(options: {
+  readonly home: string;
+  readonly cwd: string;
+  readonly sourceRun: string;
+  readonly project?: string;
+  readonly runs?: string;
+  readonly createRunId?: () => string;
+  readonly model?: InvocationEffectiveModel;
+  readonly correlationId?: string;
+}): Promise<AdmittedNotaryInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const projectRoot = resolve(options.project ?? options.cwd);
+  let sourceRun: NotarySourceRunLocator;
+  try {
+    sourceRun = await resolveNotarySourceRunLocator({
+      projectRoot,
+      sourceRun: options.sourceRun,
+      home: options.home,
+    });
+  } catch (error) {
+    if (error instanceof NotarySourceRunError) {
+      throw new CliUsageError(error.message, { cause: error });
+    }
+    throw error;
+  }
+
+  const runId = options.createRunId?.() ?? uuidv7();
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({
+      cwd: projectRoot,
+      runId,
+      role: "notary",
+      home: options.home,
+    });
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+
+  const admitted = {
+    role: "notary" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    instruction: "",
+    instructionEmpty: true,
+    attachments: [] as const,
+    sourceRunPath: sourceRun.runDirectory,
+    sourceRun,
+    ...(options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId }),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(
+    admittedRequestPath,
+    `${JSON.stringify(admitted, null, 2)}\n`,
+    "utf8",
+  );
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+
+  return {
+    role: "notary",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction: "",
+    instructionEmpty: true,
+    attachments: [],
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    sourceRunPath: sourceRun.runDirectory,
+    sourceRun,
+    ...(options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId }),
+  };
+}
+
+/** Package-owned fixed kickoff only — never caller instruction/attachments. */
+export function buildNotaryTransportPrompt(
+  _admitted: AdmittedNotaryInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join(
+    "\n",
+  );
 }
 
 /**
