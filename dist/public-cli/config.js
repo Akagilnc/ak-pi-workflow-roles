@@ -65,17 +65,17 @@ export function setPersistentSeatConfig(config, seat, selection) {
     };
 }
 /**
- * Clear a seat's persistent model override (#453).
+ * Clear a menxia officer's persistent model override (#453).
+ * Scope is MenxiaOfficerSeat only — non-province seats have no destructive clear seam.
  * Only notary may retain an engine-only residual so direct notary activation keeps
  * its labor engine while model resolution returns to startup / province inheritance.
- * Every other seat drops the whole row (baseline provider/model contract). Already-absent
- * seats are a no-op.
+ * gatekeeper/inspector drop the whole row. Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(config, seat) {
     const previous = config.seats[seat];
     if (previous === undefined)
         return config;
-    // Engine-only residual ownership is notary-only — never widen to other callables.
+    // Engine-only residual ownership is notary-only — never widen to other officers.
     if (seat === "notary" && previous.engine !== undefined) {
         return {
             ...config,
