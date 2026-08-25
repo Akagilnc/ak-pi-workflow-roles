@@ -201,9 +201,11 @@ export function isEngineAxisSeat(seat: string): seat is PublicCallableRole {
 }
 
 /**
- * Set or clear persistent engine on a callable role seat (#356 / #378 / #391).
- * Engine-only seats are rejected — provider/model[:thinking] remains required first.
- * Seat type is PublicCallableRole (navigator excluded at the type boundary).
+ * Set or clear persistent engine on a callable role seat (#356 / #378 / #391 / #453).
+ * First engine still requires an existing seat row (model or engine residual).
+ * Clearing engine from an engine-only residual drops the empty row; clearing
+ * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
+ * (navigator excluded at the type boundary).
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,

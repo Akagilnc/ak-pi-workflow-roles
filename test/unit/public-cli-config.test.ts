@@ -260,7 +260,7 @@ test("clearing a persistent seat restores unconfigured inheritance", async () =>
   });
 });
 
-test("#453 clear notary model keeps engine; direct startup + province inherit", async () => {
+test("#453 clear notary model keeps engine; unset-engine drops residual row", async () => {
   await withTempHome(async (home) => {
     let config = setPersistentSeatConfig(
       { seats: {} },
@@ -285,6 +285,14 @@ test("#453 clear notary model keeps engine; direct startup + province inherit", 
     assert.equal(direct.source, "startup");
     assert.equal(direct.engine, "opus");
     assert.equal(direct.engineSource, "persistent");
+
+    // Clearing engine from engine-only residual must drop the empty row
+    // (never write parse-rejected {} to disk).
+    config = setPersistentSeatEngine(reloaded, "notary", undefined);
+    await savePublicCliConfig(config, home);
+    const emptied = await loadPublicCliConfig(home);
+    assert.equal(emptied.seats.notary, undefined);
+    assert.equal(Object.prototype.hasOwnProperty.call(emptied.seats, "notary"), false);
   });
 });
 
