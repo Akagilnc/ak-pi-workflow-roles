@@ -561,17 +561,49 @@ test("public CLI audit-incomplete keeps menxia read damage off the publication-f
         await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
       },
     });
+    // Menxia read throws after successful publication → auto-resume exhausts with
+    // the JSONL identity. Must not be labeled publication failure.
     assert.equal(exitCode, 1);
-    assert.ok(terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "audit_incomplete");
-    if (terminal.roleOutcome.kind === "failure") {
-      // Must not wash menxia JSONL damage into the publication-failure label.
-      assert.equal(
-        terminal.roleOutcome.diagnostic.includes(
-          "audit-incomplete evidence publication failed",
-        ),
-        false,
-      );
-      assert.match(terminal.roleOutcome.diagnostic, /malformed JSONL record/);
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind !== "failure") {
+      throw new Error("expected failure terminal carrying JSONL read cause");
     }
+    assert.equal(
+      terminal.roleOutcome.diagnostic.includes(
+        "audit-incomplete evidence publication failed",
+      ),
+      false,
+    );
+    assert.match(terminal.roleOutcome.diagnostic, /malformed JSONL record/);
+    assert.equal(terminal.menxia, undefined);
   }, { prefix: "ak-menxia-audit-read-" });
+});
+
+test("public CLI failure path keeps damaged auditor-roles loud (not silent no-gate)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { terminal, exitCode } = await runJudgePublic({
+      home,
+      project,
+      runId: "run-menxia-fail-damaged",
+      piResult: { code: 1, stderr: "provider rejected the request\n" },
+      seedSession: async (sessionDir) => {
+        await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+        const auditorDir = join(sessionDir, "auditor-roles");
+        await mkdir(auditorDir, { recursive: true });
+        await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
+      },
+    });
+    // Failure settlement projects menxia loud: damaged volumes surface their
+    // JSONL cause rather than a silent no-gate omission on the failure Terminal.
+    assert.equal(exitCode, 1);
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind !== "failure") {
+      throw new Error("expected failure");
+    }
+    assert.match(terminal.roleOutcome.diagnostic, /malformed JSONL record/);
+    assert.equal(terminal.menxia, undefined);
+  }, { prefix: "ak-menxia-fail-damaged-" });
 });
