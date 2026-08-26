@@ -5,15 +5,15 @@
  * Owned under test/contract so daily `pnpm test` still covers it with unit+contract.
  *
  * External contracts only:
- *   1. normal dispatch + officer findings on accepted Terminal
+ *   1. normal dispatch + officer findings; non-empty reason kept as written
  *   2. seat reduction without written reason (reason key absent)
  *   3. no-gate → menxia omitted
  *   4. damaged auditor-roles → must not wash to "no gate"
- *   5. dispatch reason kept as written (trim only for emptiness)
- *   6. ordinary controlled failure still projects accepted gate facts
- *   7. no_receipt projects accepted gate facts
- *   8. resumable failure projects menxia while keeping runId only in resume.command
- *   9. audit-incomplete + menxia read damage ≠ publication-failure label
+ *   5. ordinary controlled failure still projects accepted gate facts
+ *   6. no_receipt projects accepted gate facts
+ *   7. resumable failure projects menxia while keeping runId only in resume.command
+ *   8. audit-incomplete + menxia read damage ≠ publication-failure label
+ *   9. failure path keeps damaged auditor-roles loud
  *
  * Oracles: typed TerminalResult.menxia / roleOutcome fields only (ADR 0052).
  */
@@ -33,6 +33,7 @@ import {
   seedGitProject,
   withTempHome,
 } from "../helpers/failure-settlement-kit.ts";
+import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
@@ -40,55 +41,6 @@ const BASE_MS = Date.parse("2026-08-26T04:00:00.000Z");
 
 function iso(offsetMs: number): string {
   return new Date(BASE_MS + offsetMs).toISOString();
-}
-
-function gateVolumeLines(input: {
-  readonly id: string;
-  readonly startedAt: string;
-  readonly endedAt: string;
-  readonly toolName: string;
-  readonly args: Record<string, unknown>;
-}): string {
-  const header = {
-    type: "session",
-    version: 3,
-    id: input.id,
-    timestamp: input.startedAt,
-    cwd: "/tmp/menxia-terminal",
-  };
-  const call = {
-    type: "message",
-    id: `${input.id}-call`,
-    parentId: null,
-    timestamp: input.endedAt,
-    message: {
-      role: "assistant",
-      timestamp: input.endedAt,
-      content: [
-        {
-          type: "toolCall",
-          id: `call_${input.id}`,
-          name: input.toolName,
-          arguments: input.args,
-        },
-      ],
-    },
-  };
-  const result = {
-    type: "message",
-    id: `${input.id}-result`,
-    parentId: `${input.id}-call`,
-    timestamp: input.endedAt,
-    message: {
-      role: "toolResult",
-      toolCallId: `call_${input.id}`,
-      toolName: input.toolName,
-      timestamp: input.endedAt,
-      isError: false,
-      content: [{ type: "text", text: "ok" }],
-    },
-  };
-  return [header, call, result].map((row) => JSON.stringify(row)).join("\n") + "\n";
 }
 
 async function seedMenxiaPair(
@@ -105,7 +57,7 @@ async function seedMenxiaPair(
     input.officer === "notary" ? "ak_notary_output" : "ak_inspector_output";
   await writeFile(
     join(auditorDir, "d01_gatekeeper.jsonl"),
-    gateVolumeLines({
+    gateToolSessionJsonl({
       id: "disp-1",
       startedAt: iso(0),
       endedAt: iso(1_000),
@@ -120,7 +72,7 @@ async function seedMenxiaPair(
   );
   await writeFile(
     join(auditorDir, `o02_${input.officer}.jsonl`),
-    gateVolumeLines({
+    gateToolSessionJsonl({
       id: "off-1",
       startedAt: iso(1_000),
       endedAt: iso(11_000),
@@ -281,7 +233,8 @@ test("public CLI projects normal menxia dispatch + officer findings", async () =
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const reason = "reason-token-normal";
+    // Leading/trailing whitespace is durable content — trim only decides emptiness.
+    const reason = "  reason-token-normal  ";
     // Opaque durable tokens — assert typed projection structure, not prose wording.
     const findings = ["finding-token-a", "finding-token-b"] as const;
     const { terminal, exitCode } = await runJudgePublic({
@@ -301,6 +254,8 @@ test("public CLI projects normal menxia dispatch + officer findings", async () =
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.ok(terminal.menxia !== undefined);
     assertMenxiaNotaryRound(terminal.menxia!, reason);
+    // Typed reason field projects fixture bytes as written (not re-trimmed).
+    assert.equal(terminal.menxia!.rounds[0]!.dispatch.reason, reason);
     assert.equal(terminal.menxia!.rounds[0]!.officer.findings.length, findings.length);
     assert.deepEqual(terminal.menxia!.rounds[0]!.officer.findings, [...findings]);
   }, { prefix: "ak-menxia-normal-" });
@@ -380,27 +335,6 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
     assert.equal(exitCode, 1);
     assertLoudMenxiaReadFailure(terminal);
   }, { prefix: "ak-menxia-damaged-" });
-});
-
-test("public CLI keeps non-empty dispatch reason bytes as written", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    // Leading/trailing whitespace is durable content — trim only decides emptiness.
-    const reason = "  reason-token-padded  ";
-    const { terminal } = await runJudgePublic({
-      home,
-      project,
-      runId: "run-menxia-reason-as-is",
-      seedSession: async (sessionDir) => {
-        await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
-        await seedMenxiaPair(sessionDir, { officer: "notary", reason });
-      },
-    });
-    assert.ok(terminal.menxia !== undefined);
-    assert.equal(terminal.menxia!.rounds[0]!.dispatch.reason, reason);
-  }, { prefix: "ak-menxia-reason-" });
 });
 
 test("public CLI failure Terminal still projects accepted menxia gate facts", async () => {
