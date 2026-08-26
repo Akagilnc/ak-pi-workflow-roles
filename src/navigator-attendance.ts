@@ -8,7 +8,6 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
-import { seatFallbackBaseStatus } from "./engine-labor-fallback.ts";
 import {
   NAVIGATOR_INVOCATION_ENTRY,
   mintNavigatorInvocationId,
@@ -462,18 +461,6 @@ export type NavigatorCandidateSelection = {
   readonly matchedToSettlement: boolean;
 };
 
-/** Match route-playbook statuses against settlement, treating seat-fallback taint as base-equivalent. */
-function statusListMatchesSettlement(
-  candidateStatuses: readonly string[],
-  settlementStatus: string,
-): boolean {
-  if (candidateStatuses.includes(settlementStatus)) return true;
-  const settlementBase = seatFallbackBaseStatus(settlementStatus);
-  return candidateStatuses.some(
-    (status) => seatFallbackBaseStatus(status) === settlementBase,
-  );
-}
-
 export function selectNavigatorCandidate(
   candidates: readonly NavigatorCandidate[],
   settlement: NavigatorSettlement,
@@ -492,7 +479,7 @@ export function selectNavigatorCandidate(
       const statusSpecific = rolePhaseMatched.find(
         (candidate) =>
           candidate.matches?.statuses !== undefined &&
-          statusListMatchesSettlement(candidate.matches.statuses, settlement.status!),
+          candidate.matches.statuses.includes(settlement.status!),
       );
       if (statusSpecific !== undefined) {
         return { candidate: statusSpecific, matchedToSettlement: true };

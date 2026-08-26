@@ -9,8 +9,7 @@ const entries = [
   "work-subject-identity",
   "navigator-invocation-identity",
   "navigator-attendance",
-  // Navigator package-graph dependency (seat-fallback base status / ADR 0071).
-  "engine-labor-fallback",
+  // Navigator package-graph dependencies used by attendance settlement.
   "activation-ledger-git",
   "activation-ledger-topology",
   "activation-reconciliation",

@@ -475,14 +475,16 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
                     engine: engineName,
                     packageRoot: options.packageRoot,
                 });
-        // #378/#380: same detour tool as parent seat. Engine process failure soft-returns
-        // seat main-road fallback (ADR 0069 detour-rejoins-main-road); tool misuse still throws.
+        // Evidence legs use the parent detour tool; retain any engine process cause
+        // so the enclosing child boundary, rather than a tool-error result, terminates.
+        let engineDetourFailure;
         const engineDetourTool = engineName === undefined
             ? undefined
             : createEngineDetourToolDefinition({
                 engineName,
                 fail(error) {
-                    throw error instanceof Error ? error : new Error(String(error));
+                    engineDetourFailure ??= error instanceof Error ? error : new Error(String(error));
+                    throw engineDetourFailure;
                 },
             });
         // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
@@ -521,7 +523,13 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
                 await session.prompt(delivered);
             }
             catch (error) {
+                if (engineDetourFailure !== undefined) {
+                    throw classifiedError(engineDetourFailure, "child");
+                }
                 throw classifiedError(error, "provider");
+            }
+            if (engineDetourFailure !== undefined) {
+                throw classifiedError(engineDetourFailure, "child");
             }
             if (signal?.aborted)
                 throw new Error("Evidence child was cancelled");

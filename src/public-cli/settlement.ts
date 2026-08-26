@@ -40,11 +40,6 @@ import {
 } from "../collector-ledger.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
 import {
-  readEngineLaborFallbackFieldFrom,
-  seatFallbackBaseStatus,
-  seatFallbackStatusHasLawfulEvidence,
-} from "../engine-labor-fallback.ts";
-import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
 } from "../package-contracts/judge-output.ts";
@@ -1170,10 +1165,8 @@ function judgeDecisiveFacts(
   const facts: Record<string, unknown> = {
     judgeStatus,
     ...auditNoReceiptDecisiveFact(verdict),
-    // #380: spread sole-built field; do not re-key here (S1).
-    ...readEngineLaborFallbackFieldFrom(verdict),
   };
-  const statusBase = seatFallbackBaseStatus(judgeStatus);
+  const statusBase = judgeStatus;
   if (statusBase === "continue") {
     const fix = safelyRead(verdict, "fix");
     if (fix.readable && isRecord(fix.value)) {
@@ -1227,7 +1220,7 @@ function coderDecisiveFacts(output: CoderOutput): Record<string, unknown> {
   if (status.readable && typeof status.value === "string") facts.coderStatus = status.value;
   const statusBase =
     status.readable && typeof status.value === "string"
-      ? seatFallbackBaseStatus(status.value)
+      ? (status.value)
       : undefined;
   const remainingScope = safelyRead(candidate, "remainingScope");
   if (statusBase === "unfinished" && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
@@ -1247,7 +1240,7 @@ function fixerDecisiveFacts(output: FixerOutput): Record<string, unknown> {
   if (status.readable && typeof status.value === "string") facts.fixerStatus = status.value;
   const statusBase =
     status.readable && typeof status.value === "string"
-      ? seatFallbackBaseStatus(status.value)
+      ? (status.value)
       : undefined;
   const remainingScope = safelyRead(candidate, "remainingScope");
   if ((statusBase === "unfinished" || statusBase === "refused") && remainingScope.readable && typeof remainingScope.value === "string") facts.remainingScope = remainingScope.value;
@@ -1340,7 +1333,7 @@ function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
   if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
   const statusBase =
     status.readable && typeof status.value === "string"
-      ? seatFallbackBaseStatus(status.value)
+      ? (status.value)
       : undefined;
   if (statusBase === "refused") {
     const reason = safelyRead(candidate, "reason");
@@ -1389,8 +1382,6 @@ function reviewerDecisiveFacts(
     amendmentAxes,
     acceptedBatchPresent: acceptedBatch.readable && acceptedBatch.value !== undefined,
     ...auditNoReceiptDecisiveFact(candidate),
-    // #380: spread sole-built field; do not re-key here (S1).
-    ...readEngineLaborFallbackFieldFrom(candidate),
   };
   if (status.readable && typeof status.value === "string") facts.reviewerStatus = status.value;
   if (
@@ -1402,7 +1393,7 @@ function reviewerDecisiveFacts(
   const diagnostic = safelyRead(candidate, "diagnostic");
   const statusBase =
     status.readable && typeof status.value === "string"
-      ? seatFallbackBaseStatus(status.value)
+      ? (status.value)
       : undefined;
   if (statusBase === "refused" && diagnostic.readable) {
     facts.diagnosticPresent = typeof diagnostic.value === "string" && diagnostic.value.trim().length > 0;
@@ -1903,10 +1894,8 @@ export function extractJudgeRoleOutcome(
     const statusRead = safelyRead(details, "judgeStatus");
     if (!statusRead.readable || typeof statusRead.value !== "string") continue;
     const judgeStatus = statusRead.value;
-    const statusBase = seatFallbackBaseStatus(judgeStatus);
+    const statusBase = judgeStatus;
     if (statusBase !== "converged" && statusBase !== "continue" && statusBase !== "escalate") continue;
-    // ADR 0071: `-by-fallback` without latch-shaped evidence is not a lawful terminal.
-    if (!seatFallbackStatusHasLawfulEvidence(judgeStatus, details)) continue;
     return {
       kind: "accepted",
       role: "judge",
@@ -3012,10 +3001,9 @@ async function settleLawfulDoctorTerminalResult(
   const extracted = extractDoctorRoleOutcome(entries);
   if (extracted === undefined) return undefined;
   // Bind completed receipt case identity to the admitted Issue evidence case.
-  // Seat-fallback may taint status; base semantics still require case binding.
   if (
     extracted.output !== undefined &&
-    seatFallbackBaseStatus(String(extracted.output.status)) === "completed"
+    (String(extracted.output.status)) === "completed"
   ) {
     const completedCase = (
       extracted.output as {
@@ -3466,7 +3454,7 @@ function mergerDecisiveFacts(output: MergerOutput): Record<string, unknown> {
   if (attemptId.readable && attemptId.value !== undefined) facts.attemptId = attemptId.value;
   const statusBase =
     status.readable && typeof status.value === "string"
-      ? seatFallbackBaseStatus(status.value)
+      ? (status.value)
       : undefined;
   const decisiveKey = statusBase === "completed" ? "mergeCommitId" : "diagnosis";
   const decisive = safelyRead(candidate, decisiveKey);

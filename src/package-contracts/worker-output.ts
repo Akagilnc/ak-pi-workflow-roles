@@ -15,24 +15,16 @@ export type {
 } from "./fixer-output.ts";
 export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./fixer-packet.ts";
 export type { FixerInvocationInput, FixerPrerequisite } from "./fixer-packet.ts";
-import type { WithEngineLaborFallback } from "../engine-labor-fallback.ts";
 import { validateFixerOutput, type FixerOutput } from "./fixer-output.ts";
 
 export const CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
 export const CODER_ACCEPTED_TEXT = "Coder report accepted";
 export type WorkerRoleLabel = "Coder" | "Fixer";
-type CoderOutputClean =
+export type CoderOutput =
   | { status: "planned"; report: string }
   | { status: "completed" | "refused"; report: string }
   | { status: "unfinished"; report: string; remainingScope: string; reason?: string };
-/** Clean submission shape or seat-fallback tainted accepted receipt (ADR 0071). */
-export type CoderOutput =
-  | CoderOutputClean
-  | WithEngineLaborFallback<CoderOutputClean>;
-export type WorkerOutput =
-  | CoderOutput
-  | FixerOutput
-  | WithEngineLaborFallback<FixerOutput>;
+export type WorkerOutput = CoderOutput | FixerOutput;
 
 export function validateAcceptedCoderDetails(output: unknown): CoderOutput {
   return output as CoderOutput;
