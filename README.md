@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev): `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
 
 ## Install
 
@@ -11,7 +11,7 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat model defaults with `ak-role config set judge openai-codex/gpt-5.6-sol:high`; set or clear a persistent labor engine (callable roles) with `ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`.
+Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat model defaults with `ak-role config set <seat> <provider/model[:thinking]>` (callable seats plus automatic `gatekeeper` / `inspector` / `navigator`); clear a Menxia officer override with `ak-role config unset <gatekeeper|inspector|notary>`; set or clear a persistent labor engine (callable roles) with `ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`.
 
 ## Reading results
 
@@ -23,31 +23,41 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId>` reopens that run's exact Pi session. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector and Doctor remain one-shot. The package never auto-switches providers; override the model for one run with the global flags.
+`ak-role resume <runId>` reopens that run's exact Pi session. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, and Notary remain one-shot. The package never auto-switches providers; override the model for one run with the global flags.
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
 Global overrides work before or after the role: `ak-role --model xai/grok-4.5:high resume <runId>`.
 
-Every run also prepares Navigator advice in the same Terminal. Configure it like any other seat:
+Every run also prepares Navigator advice in the same Terminal. Configure seats like this:
 
 ```bash
-ak-role config set navigator openai-codex/gpt-5.6-luna:medium
+ak-role config set judge <provider/model[:thinking]>
+ak-role config set navigator <provider/model[:thinking]>
+# Menxia officers (automatic on submission; not caller commands except direct notary)
+ak-role config set gatekeeper <provider/model[:thinking]>
+ak-role config set inspector <provider/model[:thinking]>
+ak-role config set notary <provider/model[:thinking]>
+ak-role config unset gatekeeper
 # persistent labor engine (callable roles; not navigator); one-shot override remains --engine
 ak-role config set-engine judge opus
 ak-role config unset-engine judge
 ak-role config set-auto-resume-limit 3
 ```
 
-`config set` stores the seat model default; `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on callable roles (same seats as `--engine`; navigator refused — no independent activation). `config set-auto-resume-limit` stores the single-call auto-resume ceiling. Usage and refusal text are owned by `ak-role config` in the public CLI.
+`config set` stores the seat model default. For Menxia officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. `config unset` clears only those officer overrides. `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on callable roles (same seats as `--engine`; navigator refused — no independent activation). `config set-auto-resume-limit` stores the single-call auto-resume ceiling. Usage and refusal text are owned by `ak-role config` / `ak-role help config`.
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
+
+### Menxia submission gate
+
+On completing-side submissions the package may spawn the Menxia province before the run settles: `gatekeeper` reads the subject and dispatches an officer (`inspector` or `notary`); existing auditor hooks stay where already wired. Bounce means rewrite-and-resubmit in-session — not role failure. `planned` / `refused` / `unfinished` skip the province. Pointers only: [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md), [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md). Read the typed Terminal for gate outcome; do not scrape session prose.
 
 When a labor-engine detour fails and the seat continues the labor on the main road, the typed receipt may carry a mechanical `engineLaborFallback` field: `{ engine, failure, laborBy: "seat" }`. It appears only after a real detour failure that fell back to seat labor—not on detour success or caller cancel. First failure wins for the activation; model-forged `engineLaborFallback` keys are stripped unless the package latch recorded one. Sole producer: `src/engine-labor-fallback.ts`; decision record: [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md). This README only projects that contract.
 
 ## Call the roles
 
-Public option identity, aliases, requiredness, and mode faces live in the generated [Public CLI options](#public-cli-options-generated) table and in `ak-role help <command>` — both project the same typed source. The examples below are usage sketches, not a second flag contract. An instruction is optional for judge, collector, and doctor, and required nonblank for coder, fixer, reviewer, and merger.
+Public option identity, aliases, requiredness, and mode faces live in the generated [Public CLI options](#public-cli-options-generated) table and in `ak-role help <command>` — both project the same typed source. The examples below are usage sketches, not a second flag contract. An instruction is optional for judge, collector, and doctor; notary admits no caller prompt or attachment; analyst is deterministic (see help). Required nonblank for coder, fixer, reviewer, and merger.
 
 ```bash
 # judge — adjudicate the supplied materials; infers its burden, no burden flag
@@ -79,6 +89,17 @@ ak-role doctor --issue 115 "Diagnose this retained case."
 # merger — resolve one merge already in conflict (start it first with Git’s ort)
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 # hands new intent/authority questions back instead of inventing authority
+
+# notary — document-fidelity check on one retained source run; zero prompt/attachment; one-shot
+ak-role notary --source-run <runId@role|path>
+
+# analyst — deterministic metrics over the book (cwd git common-dir); bare = whole book
+ak-role analyst
+ak-role analyst --ticket <N>
+ak-role analyst sweep --attach ./payload.md
+ak-role analyst --cohort \
+  --group-a-label A --group-a-issues 1,2 \
+  --group-b-label B --group-b-issues 3,4
 ```
 
 ## Names

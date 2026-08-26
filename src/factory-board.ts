@@ -398,7 +398,7 @@ const YAMEN_LABELS: Readonly<Record<string, string>> = {
   coder: "将作监",
   fixer: "修内司",
   reviewer: "御史台",
-  collector: "门下省",
+  collector: "通进司",
   doctor: "太医署",
   merger: "校书郎",
   marshal: "刑部",
@@ -808,7 +808,7 @@ const COLUMN_LABELS: Readonly<Record<string, string>> = {
   court: "大理寺 · 审票",
   coder: "将作监",
   marshal: "刑部",
-  collector: "门下省",
+  collector: "通进司",
   done: "已完成",
 };
 
