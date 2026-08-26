@@ -41,6 +41,7 @@ async function withParent(run: (context: any) => Promise<void>) {
 test("scripted Inspector pass projects typed receipt and loads Inspector session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
   const qualityLaw = await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8");
+  const menxiaGuide = await readFile(resolve(packageRoot, "souls/menxia-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
   const overlay =
@@ -60,14 +61,14 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
     // Mechanical projection of the scripted officer receipt; session order Gatekeeper → officer.
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
     assert.equal(seen.length, 2);
-    // #443: default load injects factory constitution; inspector also gets quality-law.
+    // #443/#476: constitution + soul + menxia guide; inspector also gets quality-law.
     assert.equal(
       seen[0],
-      [constitution, gatekeeperSoul, overlay].join("\n\n"),
+      [constitution, gatekeeperSoul, menxiaGuide, overlay].join("\n\n"),
     );
     assert.equal(
       seen[1],
-      [constitution, inspectorSoul, qualityLaw, overlay].join("\n\n"),
+      [constitution, inspectorSoul, qualityLaw, menxiaGuide, overlay].join("\n\n"),
     );
   });
 });
@@ -88,6 +89,7 @@ test("Gatekeeper accepts its typed officer choice instead of machine-rejecting d
 
 test("scripted officer bounce projects rewrite disposition and loads that officer's session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
+  const menxiaGuide = await readFile(resolve(packageRoot, "souls/menxia-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
   const overlay =
@@ -113,14 +115,14 @@ test("scripted officer bounce projects rewrite disposition and loads that office
       assert.deepEqual(result.submission, bounceSubmission);
     }
     assert.equal(seen.length, 2);
-    // #443: scripted Notary real entry receives factory constitution + notary soul.
+    // #443/#476: scripted Notary real entry receives constitution + soul + menxia guide.
     assert.equal(
       seen[0],
-      [constitution, gatekeeperSoul, overlay].join("\n\n"),
+      [constitution, gatekeeperSoul, menxiaGuide, overlay].join("\n\n"),
     );
     assert.equal(
       seen[1],
-      [constitution, notarySoul, overlay].join("\n\n"),
+      [constitution, notarySoul, menxiaGuide, overlay].join("\n\n"),
     );
   });
 });

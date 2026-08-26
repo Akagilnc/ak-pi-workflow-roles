@@ -39,6 +39,7 @@ import {
 } from "../../src/package-contracts/terminating-tools.ts";
 import { extractJudgeRoleOutcome } from "../../src/public-cli/settlement.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
 
 function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
   const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
@@ -61,12 +62,7 @@ function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
   return Object.assign(context, {
     cwd: process.cwd(),
     model,
-    modelRegistry: {
-      getProvider(name: string) { return name === model.provider ? provider : undefined; },
-      find(_providerName: string, _modelId: string) { return model; },
-      async getProviderAuth() { return { auth: {} }; },
-      async getApiKeyAndHeaders() { return { ok: true }; },
-    },
+    modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
     thinkingLevel: "off",
   });
 }

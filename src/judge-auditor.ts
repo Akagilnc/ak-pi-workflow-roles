@@ -24,7 +24,7 @@ export type JudgeAuditOptions = {
 
 const auditDecisionTool = createComplianceDecisionTool(
   JUDGE_AUDIT_TOOL_NAME,
-  "Return whether the proposed verdict demonstrably follows the judge soul and dossier evidence.",
+  "Return whether the proposed verdict demonstrably follows the audit law and Judge role boundaries from the dossier evidence.",
 );
 
 /**
@@ -44,8 +44,8 @@ export function createPiJudgeAuditor(
     return runComplianceAudit({
       tool: auditDecisionTool,
       systemPrompt: await loadAuditorSoul("judge"),
-      roleLabel: "Soul compliance audit",
-      invalidDecisionLabel: "invalid soul audit decision",
+      roleLabel: "Judge compliance audit",
+      invalidDecisionLabel: "invalid judge audit decision",
       ...(runCompletion === undefined ? {} : { runCompletion }),
       context: options.context,
       ...(auditorRunDirectory(options.context) === undefined ? {} : { runDirectory: auditorRunDirectory(options.context) }),
