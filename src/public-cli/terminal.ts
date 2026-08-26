@@ -147,6 +147,42 @@ export type TerminalResume = {
   readonly command: string;
 };
 
+/** Current English menxia seat faces projected on Terminal (#478). */
+export type TerminalMenxiaSeat = "gatekeeper" | "inspector" | "notary";
+
+/** One accepted province dispatch receipt (status/officer + optional reduce-seat reason). */
+export type TerminalMenxiaDispatch = {
+  readonly status: string;
+  readonly officer: "inspector" | "notary";
+  /** Present only when the accepted dispatch wrote a non-empty reason. */
+  readonly reason?: string;
+};
+
+/** One accepted officer report: seat, status, full typed findings. */
+export type TerminalMenxiaOfficerReport = {
+  readonly seat: "inspector" | "notary";
+  readonly status: string;
+  readonly findings: readonly string[];
+};
+
+/** One paired dispatch↔officer gate round on the public Terminal. */
+export type TerminalMenxiaRound = {
+  readonly roundIndex: number;
+  readonly dispatch: TerminalMenxiaDispatch;
+  readonly officer: TerminalMenxiaOfficerReport;
+};
+
+/**
+ * Optional menxia province projection (#478).
+ * Absent when no accepted paired gate rounds exist (no-gate zero change).
+ * Only durable accepted child receipts — never soul-derived expected/missing seats.
+ */
+export type TerminalMenxiaFact = {
+  /** Seats that actually ran, derived from accepted paired receipts. */
+  readonly actualSeats: readonly TerminalMenxiaSeat[];
+  readonly rounds: readonly TerminalMenxiaRound[];
+};
+
 /** Public free-text stand-in when an exact Role run ID is stripped outside resume.command. */
 export const REDACTED_RUN_ID_TOKEN = "[run-id]" as const;
 
@@ -172,6 +208,11 @@ export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
+  /**
+   * Optional menxia province facts (#478). Present only when accepted paired
+   * gate rounds exist under session/auditor-roles; omitted on no-gate runs.
+   */
+  menxia?: TerminalMenxiaFact;
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
   autoResumeCount?: number;
 } & (
@@ -261,6 +302,22 @@ export function formatTerminalResult(result: TerminalResult): string {
   }
   for (const artifact of result.artifacts) {
     lines.push(`artifact\t${artifact.kind}\t${encodeTerminalField(artifact.path)}`);
+  }
+  // Menxia region is unfrozen presentation of typed facts (ADR 0052) — machines
+  // read result.menxia, never these row labels.
+  if (result.menxia !== undefined) {
+    lines.push(
+      `menxia\t${encodeTerminalField(result.menxia.actualSeats.join(","))}\t${result.menxia.rounds.length}`,
+    );
+    for (const round of result.menxia.rounds) {
+      const reason =
+        round.dispatch.reason === undefined
+          ? ""
+          : encodeTerminalField(round.dispatch.reason);
+      lines.push(
+        `menxia-round\t${round.roundIndex}\t${round.dispatch.status}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
+      );
+    }
   }
   if (result.resume !== undefined) {
     // Resumable failure: run ID is revealed only inside the complete resume command.

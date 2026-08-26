@@ -1,8 +1,10 @@
 /**
  * Sole nested-volume reader for gate-cycle facts under session/auditor-roles/.
  *
- * Called only from the Analyst sole ledger scan (classifyScopedRun). Metric
- * families must not open a second disk scan — they consume retained facts.
+ * Consumers: Analyst sole ledger scan (classifyScopedRun) and Terminal menxia
+ * projection (#478). Metric families must not open a second disk scan — they
+ * consume retained facts. Terminal settlement reuses this same pairing seam
+ * (no second auditor-roles scanner).
  *
  * Naming: records may carry pre-#440 menxia/jishizhong/fubaolang tool faces or
  * the current gatekeeper/inspector/notary English face. Projection always uses
@@ -39,8 +41,20 @@ export type AnalystGateCycleRound = {
   readonly officerWallMs: number;
   readonly officerStartedAt: string;
   readonly officerEndedAt: string;
-  /** findings[] length only — prose never retained. */
+  /**
+   * Typed string findings retained from the accepted officer receipt (#478 Terminal
+   * projection). Analyst metrics still consume findingsCount only — never prose.
+   */
+  readonly findings: readonly string[];
+  /** findings.length — retained so metric families need not re-derive. */
   readonly findingsCount: number;
+  /** Accepted dispatch receipt status (paired rounds are always "dispatch"). */
+  readonly dispatchStatus: string;
+  /**
+   * Optional seat-reduction reason from the accepted dispatch receipt.
+   * Absent when the dispatch did not write a non-empty reason — never invented.
+   */
+  readonly dispatchReason?: string;
 };
 
 const DISPATCH_TOOLS = new Set(["ak_menxia_output", "ak_gatekeeper_output"]);
@@ -77,6 +91,22 @@ function isMissingDirectoryError(error: unknown): boolean {
 function normalizeOfficerArg(raw: unknown): "inspector" | "notary" | undefined {
   if (typeof raw !== "string") return undefined;
   return OFFICER_ARG_ALIASES[raw.trim()];
+}
+
+/** Typed string findings only — non-strings dropped; missing/non-array → []. */
+function asStringFindings(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+/**
+ * Optional non-empty dispatch reason. Trim only decides emptiness; a non-empty
+ * durable reason is returned as written (gatekeeper keeps reason as-is).
+ */
+function optionalDispatchReason(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  if (raw.trim() === "") return undefined;
+  return raw;
 }
 
 type AcceptedGateToolCall = {
@@ -176,6 +206,8 @@ type ClassifiedVolume =
       readonly kind: "dispatch";
       readonly startedAt: string;
       readonly officer: "inspector" | "notary";
+      readonly status: string;
+      readonly reason?: string;
     }
   | {
       readonly kind: "officer";
@@ -183,6 +215,7 @@ type ClassifiedVolume =
       readonly endedAt: string;
       readonly officer: "inspector" | "notary";
       readonly status: string;
+      readonly findings: readonly string[];
       readonly findingsCount: number;
       readonly officerWallMs: number;
     };
@@ -199,8 +232,8 @@ async function classifyAuditorVolume(
 
   const span = requireAcceptedGateSpan(rows, filePath);
   const status = requireAcceptedGateStatus(call.args, filePath);
-  const findings = call.args?.findings;
-  const findingsCount = Array.isArray(findings) ? findings.length : 0;
+  const findings = asStringFindings(call.args?.findings);
+  const findingsCount = findings.length;
 
   if (DISPATCH_TOOLS.has(call.toolName)) {
     // Gatekeeper contract terminal is dispatch only (#475).
@@ -215,10 +248,13 @@ async function classifyAuditorVolume(
         `accepted dispatch receipt missing or unknown officer in ${filePath}`,
       );
     }
+    const reason = optionalDispatchReason(call.args?.reason);
     return {
       kind: "dispatch",
       startedAt: span.startedAt,
       officer,
+      status,
+      ...(reason === undefined ? {} : { reason }),
     };
   }
 
@@ -235,6 +271,7 @@ async function classifyAuditorVolume(
     endedAt: span.endedAt,
     officer,
     status,
+    findings,
     findingsCount,
     officerWallMs: span.wallMs,
   };
@@ -275,7 +312,10 @@ function pairGateRounds(
       officerWallMs: match.officer.officerWallMs,
       officerStartedAt: match.officer.startedAt,
       officerEndedAt: match.officer.endedAt,
+      findings: match.officer.findings,
       findingsCount: match.officer.findingsCount,
+      dispatchStatus: vol.status,
+      ...(vol.reason === undefined ? {} : { dispatchReason: vol.reason }),
     });
   }
 

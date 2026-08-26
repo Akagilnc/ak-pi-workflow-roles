@@ -74,10 +74,6 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 调用角色时使用 `pi --session-dir ~/.ak-roles/books/<主仓目录名>/issues/<issue>/runs/<invocation>@<源树>/session`（session 直落机器账本之家，ADR 0048——仓工作树内不再落卷宗；#11 launcher 落地后此路径由机器自算。不用 `--no-session`），stdin **须**以 `</dev/null` 封死（pi 启动会将非 TTY stdin 读到 EOF 才干活，未封死的后台管道=永久停车，README 点火第 2 步 / upstream pi#2078），stdout **须**丢到 `/dev/null`（stdout 流是无上限副本面，session 才是正本——2026-08-03 一条 med 腿 stdout 膨胀 137GB 实证；仪表挂 `stderr.log` 与 session 文件），`stderr.log` 和 `invocation.json` 留在家中同次 `runs/` 目录。
 
-## 直通御前
-
-受审者提交 `escalate`（叫人），审核衙门只有两个选项——能解决就给出答案放其继续；解决不了就放行上呈。没有打回重叫这个选项（陛下 2026-08-24 拍定）。
-
 ## 锚定宪法
 
 **机器只咬契约，不咬呈现**：对自由文本的正则/措辞/表头机械依赖、对图像的像素机械依赖，视同缺陷；机器要消费的信息必须以键、typed 字段或 schema 提供。呈现为人服务，随时可重排。
