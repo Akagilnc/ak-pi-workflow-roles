@@ -18,7 +18,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 /** Ticket #443 What-to-build oracles — not imported from production tables. */
 const TICKET_MAIN_MATERIALS = {
-  judge: ["CLAUDE.md", "souls/judge.md", "souls/judge-output-guide.md"],
+  judge: ["CLAUDE.md", "souls/judge.md", "souls/audit-law.md", "souls/judge-output-guide.md"],
   fixer: [
     "CLAUDE.md",
     "souls/fixer.md",
@@ -31,22 +31,29 @@ const TICKET_MAIN_MATERIALS = {
     "souls/quality-law.md",
     "souls/coder-output-guide.md",
   ],
-  reviewer: ["CLAUDE.md", "souls/reviewer.md"],
+  reviewer: ["CLAUDE.md", "souls/reviewer.md", "souls/audit-law.md"],
   collector: ["CLAUDE.md", "souls/collector.md"],
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],
+  notary: ["CLAUDE.md", "souls/notary.md", "souls/menxia-output-guide.md"],
   navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
 
 const TICKET_GATEKEEPER_MATERIALS = {
-  gatekeeper: ["CLAUDE.md", "souls/gatekeeper.md"],
-  inspector: ["CLAUDE.md", "souls/inspector.md", "souls/quality-law.md"],
-  notary: ["CLAUDE.md", "souls/notary.md"],
+  gatekeeper: ["CLAUDE.md", "souls/gatekeeper.md", "souls/menxia-output-guide.md"],
+  inspector: [
+    "CLAUDE.md",
+    "souls/inspector.md",
+    "souls/quality-law.md",
+    "souls/menxia-output-guide.md",
+  ],
+  notary: ["CLAUDE.md", "souls/notary.md", "souls/menxia-output-guide.md"],
 } as const;
 
 const TICKET_AUDITOR_MATERIALS = {
-  judge: ["CLAUDE.md", "souls/judge-auditor.md"],
-  reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md"],
+  judge: ["CLAUDE.md", "souls/judge-auditor.md", "souls/audit-law.md"],
+  reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md", "souls/audit-law.md"],
+  // #470 范围修正: doctor auditor 暂不装审刑院法典
   doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
 } as const;
 
