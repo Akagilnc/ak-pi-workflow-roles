@@ -717,10 +717,16 @@ export async function readBoundEvidenceChildKnownFailure(
   return undefined;
 }
 
-/** Recover a provider stop from the auditor child bound to the current parent attempt. */
-export async function readBoundAuditorKnownFailure(
+type BoundAuditorVolume = {
+  readonly entries: SessionEntry[];
+  readonly attemptEntryId?: string;
+  readonly parentId: string;
+  readonly sessionFile: string;
+};
+
+async function loadBoundAuditorVolumes(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<readonly BoundAuditorVolume[] | undefined> {
   let parentEntries: SessionEntry[];
   try {
     parentEntries = await readBoundSessionEntries(sessionFile);
@@ -762,7 +768,7 @@ export async function readBoundAuditorKnownFailure(
   // first attempt's child after resume advanced latest, losing retentionFailure
   // when retry had no compliance entry. Fix: ignore envelope for staleness and
   // prefer any valid compliance failure before falling back to primary.
-  const validAuditorFiles: Array<{ file: string; entries: SessionEntry[]; attemptEntryId?: string }> = [];
+  const valid: BoundAuditorVolume[] = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries: SessionEntry[];
     try {
@@ -777,10 +783,20 @@ export async function readBoundAuditorKnownFailure(
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
     const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-    validAuditorFiles.push({ file, entries, ...(attemptEntryId === undefined ? {} : { attemptEntryId }) });
+    valid.push({
+      entries,
+      parentId,
+      sessionFile,
+      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+    });
   }
-  // Prefer compliance failure (retention) from any valid attempt, newest first.
-  for (const { entries, attemptEntryId } of validAuditorFiles) {
+  return valid;
+}
+
+function complianceFailureFromAuditorVolumes(
+  volumes: readonly BoundAuditorVolume[],
+): ExplicitInternalKnownFailure | undefined {
+  for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -801,8 +817,13 @@ export async function readBoundAuditorKnownFailure(
       };
     }
   }
-  // No compliance failure: fall back to most recent provider stop (auto-resume latest attempt).
-  for (const { entries } of validAuditorFiles) {
+  return undefined;
+}
+
+function providerStopFallbackFromAuditorVolumes(
+  volumes: readonly BoundAuditorVolume[],
+): ExplicitInternalKnownFailure | undefined {
+  for (const { entries } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
     const primary = knownFailureFromProviderStop(stop)!;
@@ -815,6 +836,34 @@ export async function readBoundAuditorKnownFailure(
     };
   }
   return undefined;
+}
+
+/** Recover a provider stop from the auditor child bound to the current parent attempt. */
+export async function readBoundAuditorKnownFailure(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  if (volumes === undefined) return undefined;
+  return complianceFailureFromAuditorVolumes(volumes)
+    ?? providerStopFallbackFromAuditorVolumes(volumes);
+}
+
+/** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
+async function readBoundAuditorComplianceFailure(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  if (volumes === undefined) return undefined;
+  return complianceFailureFromAuditorVolumes(volumes);
+}
+
+/** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
+async function readBoundAuditorProviderStopFallback(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  if (volumes === undefined) return undefined;
+  return providerStopFallbackFromAuditorVolumes(volumes);
 }
 
 function typedFailedTerminatingToolKnownFailure(
@@ -902,12 +951,13 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       });
     }
   }
-  // Bound auditor evidence outranks a parent failure that the auditor path itself
-  // caused (retention EISDIR race). A typed terminating-tool host failure is next:
-  // it outranks provider/credential and nonzero fallbacks, but not its recorded cause.
+  // Bound auditor compliance-failure retention outranks a parent failure that the
+  // auditor path itself caused (retention EISDIR race). A typed terminating-tool
+  // host failure is next — it outranks weaker auditor provider-stop fallback so
+  // parent failInfrastructure abort pollution cannot wash a real diagnostic (#475).
   try {
-    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
-    if (auditorFailure !== undefined) return resolutionOf(auditorFailure);
+    const auditorCompliance = await readBoundAuditorComplianceFailure(input.sessionFile);
+    if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return resolutionOf({
@@ -930,6 +980,17 @@ export async function resolveAuditedRunnerFailureResolution(input: {
         diagnostic: failure.message || failure.name,
       });
     }
+  }
+  try {
+    const auditorStop = await readBoundAuditorProviderStopFallback(input.sessionFile);
+    if (auditorStop !== undefined) return resolutionOf(auditorStop);
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound auditor provider stop");
+    return resolutionOf({
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name,
+    });
   }
   // Reviewer axis evidence-children are next: fixed two-axis dispatch fails
   // during activation with only child stops durable. Parent stop remains the
