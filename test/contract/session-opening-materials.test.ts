@@ -18,7 +18,13 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 /** Ticket #443 What-to-build oracles — not imported from production tables. */
 const TICKET_MAIN_MATERIALS = {
-  judge: ["CLAUDE.md", "souls/judge.md", "souls/audit-law.md", "souls/judge-output-guide.md"],
+  judge: [
+    "CLAUDE.md",
+    "souls/judge.md",
+    "souls/audit-law.md",
+    "souls/quality-law.md",
+    "souls/judge-output-guide.md",
+  ],
   fixer: [
     "CLAUDE.md",
     "souls/fixer.md",
@@ -51,7 +57,12 @@ const TICKET_GATEKEEPER_MATERIALS = {
 } as const;
 
 const TICKET_AUDITOR_MATERIALS = {
-  judge: ["CLAUDE.md", "souls/judge-auditor.md", "souls/audit-law.md"],
+  judge: [
+    "CLAUDE.md",
+    "souls/judge-auditor.md",
+    "souls/audit-law.md",
+    "souls/quality-law.md",
+  ],
   reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md", "souls/audit-law.md"],
   // #470 范围修正: doctor auditor 暂不装审刑院法典
   doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
