@@ -28665,12 +28665,12 @@ function parseArgv(argv) {
   const positional = [];
   const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
   while (args.length > 0) {
-    if (args[0] === "--") {
-      args.shift();
+    if (positional[0] === "resume" && positional.length >= 2) {
       positional.push(...args);
       break;
     }
-    if (positional[0] === "resume" && positional.length >= 2) {
+    if (args[0] === "--") {
+      args.shift();
       positional.push(...args);
       break;
     }

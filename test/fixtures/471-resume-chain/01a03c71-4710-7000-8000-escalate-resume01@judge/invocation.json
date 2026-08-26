@@ -1,0 +1,16 @@
+{
+  "role": "judge",
+  "runId": "01a03c71-4710-7000-8000-escalate-resume01",
+  "bookKey": "work",
+  "projectRoot": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/work",
+  "runDirectory": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/.ak-roles/books/work/runs/01a03c71-4710-7000-8000-escalate-resume01@judge",
+  "sessionDirectory": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/.ak-roles/books/work/runs/01a03c71-4710-7000-8000-escalate-resume01@judge/session",
+  "sessionFile": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/.ak-roles/books/work/runs/01a03c71-4710-7000-8000-escalate-resume01@judge/session/session.jsonl",
+  "provider": "ak-471-chain",
+  "model": "faux-1",
+  "thinking": "off",
+  "roleEntry": "/private/tmp/roles-471/extensions/role-runtime.ts",
+  "rolePackageRoot": "/private/tmp/roles-471",
+  "rolePackageVersion": "0.1.0",
+  "entryMode": "public-cli"
+}
