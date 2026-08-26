@@ -302,6 +302,7 @@ async function traceJudgeInfrastructureFailure(input: {
   readonly runId: string;
   readonly childEnv?: NodeJS.ProcessEnv;
   readonly poisonRunDir?: boolean;
+  readonly expectMenxiaAbsent?: boolean;
   readonly expectDetails: Record<string, unknown>;
 }): Promise<void> {
   const home = await mkdtemp(join(tmpdir(), `ak-public-cli-judge-${input.name}-`));
@@ -361,6 +362,9 @@ async function traceJudgeInfrastructureFailure(input: {
     assert.equal(outcome.kind, "failure");
     if (outcome.kind !== "failure") throw new Error("expected failure");
     assert.equal(outcome.cause, "output");
+    if (input.expectMenxiaAbsent) {
+      assert.equal(result.terminal!.menxia, undefined, `${input.name}: no accepted Menxia cycle`);
+    }
 
     const runDir = join(
       home,
@@ -416,7 +420,7 @@ async function traceJudgeInfrastructureFailure(input: {
   }
 }
 
-/** #475: audited-role materials + Menxia unusable submission — four cases, one harness. */
+/** #475: audited-role materials + Menxia unusable submission — one parameterized harness. */
 for (const scenario of [
   {
     name: "missing-dossier",
@@ -456,6 +460,17 @@ for (const scenario of [
       submission: { status: "ok-enough" },
     },
   },
+  {
+    name: "notary-no-pass",
+    runId: "run-e2e-judge-menxia-notary-001",
+    childEnv: { AK_MENXIA_MODE: "notary-no-pass" },
+    expectMenxiaAbsent: true,
+    expectDetails: {
+      stage: "notary",
+      reason: "decision 无显式 pass/bounce",
+      submission: { status: "ok-enough" },
+    },
+  },
 ] as const) {
   test(
     `ak-role Judge public failure-evidence tracer: ${scenario.name}`,
@@ -467,6 +482,9 @@ for (const scenario of [
         expectDetails: scenario.expectDetails,
         ...("poisonRunDir" in scenario ? { poisonRunDir: scenario.poisonRunDir } : {}),
         ...("childEnv" in scenario ? { childEnv: scenario.childEnv } : {}),
+        ...("expectMenxiaAbsent" in scenario
+          ? { expectMenxiaAbsent: scenario.expectMenxiaAbsent }
+          : {}),
       });
     },
   );
