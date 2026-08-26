@@ -2095,24 +2095,27 @@ export async function trySettleComplianceAuditIncompleteTerminalResult(
     outputToolName,
   );
   if (extracted === undefined) return undefined;
+  // Catch covers publication only — menxia read errors keep their session/JSONL identity
+  // and must not be washed into the publication-failure label.
+  let evidence: TerminalArtifactRef;
   try {
-    const evidence = await publishComplianceAuditIncompleteEvidence(
+    evidence = await publishComplianceAuditIncompleteEvidence(
       admitted,
       extracted.outcome,
-    );
-    return withOptionalMenxiaProjection(
-      {
-        roleOutcome: extracted.outcome,
-        navigator: extractNavigatorFact(entries),
-        artifacts: [evidence],
-        runId: admitted.runId,
-      },
-      admitted.sessionDirectory,
     );
   } catch (error) {
     // Publication failure is a non-lawful terminal, never an accepted audit result.
     return auditPublicationFailureTerminal(admitted, entries, extracted.outcome, error);
   }
+  return withOptionalMenxiaProjection(
+    {
+      roleOutcome: extracted.outcome,
+      navigator: extractNavigatorFact(entries),
+      artifacts: [evidence],
+      runId: admitted.runId,
+    },
+    admitted.sessionDirectory,
+  );
 }
 
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
@@ -2311,18 +2314,37 @@ export async function extractMenxiaFactFromSessionDirectory(
 
 /**
  * Attach optional menxia projection onto a settled Terminal base.
- * Shared by every lawful settle path so auditor-roles is scanned once here only.
+ * Shared by every settle path so auditor-roles is scanned once here only.
+ * `runId` is not required — resumable failures omit it by contract.
  */
 async function withOptionalMenxiaProjection<
   T extends {
     roleOutcome: TerminalRoleOutcome;
     navigator: TerminalNavigatorFact;
     artifacts: readonly TerminalArtifactRef[];
-    runId: string;
   },
 >(base: T, sessionDirectory: string): Promise<T & { menxia?: TerminalMenxiaFact }> {
   const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
   return menxia === undefined ? base : { ...base, menxia };
+}
+
+/**
+ * Failure-path menxia attach. Lawful success paths keep menxia damage loud; on a
+ * controlled failure the original cause stays authoritative — a secondary read
+ * error must not replace it (no-gate stays absent via undefined menxia only).
+ */
+async function withOptionalMenxiaProjectionForFailure<
+  T extends {
+    roleOutcome: TerminalRoleOutcome;
+    navigator: TerminalNavigatorFact;
+    artifacts: readonly TerminalArtifactRef[];
+  },
+>(base: T, sessionDirectory: string): Promise<T & { menxia?: TerminalMenxiaFact }> {
+  try {
+    return await withOptionalMenxiaProjection(base, sessionDirectory);
+  } catch {
+    return base;
+  }
 }
 
 export function extractNavigatorFact(
@@ -4270,10 +4292,16 @@ export async function settleFailureTerminalResult(
           const facts = parseNoReceiptLifecycleFacts(raw);
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
             const decisiveFacts: NoReceiptLifecycleFacts = facts;
-            return {
-              roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
-              navigator: await extractNavigatorFactFromAdmittedSession(admitted), artifacts: [], runId: admitted.runId,
-            };
+            // #478: no_receipt is still a public Terminal — project accepted gate facts.
+            return withOptionalMenxiaProjectionForFailure(
+              {
+                roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
+                navigator: await extractNavigatorFactFromAdmittedSession(admitted),
+                artifacts: [],
+                runId: admitted.runId,
+              },
+              admitted.sessionDirectory,
+            );
           }
         } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
       }
@@ -4313,12 +4341,16 @@ export async function settleFailureTerminalResult(
       diagnostic: publicDiagnostic,
       decisiveFacts: publicFacts,
     };
-    return {
-      roleOutcome,
-      navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
-      artifacts: [],
-      resume: options.resume,
-    };
+    // #478: resume desensitization stays; menxia is additive typed fact only.
+    return withOptionalMenxiaProjectionForFailure(
+      {
+        roleOutcome,
+        navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
+        artifacts: [],
+        resume: options.resume,
+      },
+      admitted.sessionDirectory,
+    );
   }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",
@@ -4327,12 +4359,16 @@ export async function settleFailureTerminalResult(
     diagnostic: failure.diagnostic,
     decisiveFacts,
   };
-  return {
-    roleOutcome,
-    navigator,
-    artifacts,
-    runId: admitted.runId,
-  };
+  // #478: ordinary controlled failure still surfaces accepted gate facts.
+  return withOptionalMenxiaProjectionForFailure(
+    {
+      roleOutcome,
+      navigator,
+      artifacts,
+      runId: admitted.runId,
+    },
+    admitted.sessionDirectory,
+  );
 }
 
 /** Judge-named alias retained for #107 call sites. */
