@@ -466,9 +466,8 @@ function statusListMatchesSettlement(
   settlementStatus: string,
 ): boolean {
   if (candidateStatuses.includes(settlementStatus)) return true;
-  const settlementBase = (settlementStatus);
   return candidateStatuses.some(
-    (status) => status === settlementBase,
+    (status) => status === settlementStatus,
   );
 }
 

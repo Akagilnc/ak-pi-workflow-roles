@@ -69,10 +69,9 @@ export function validateMergerOutput(value, expectedAttemptId) {
     if (!record(value) || (expectedAttemptId !== undefined && value.attemptId !== expectedAttemptId))
         throw new Error("Merger output attempt mismatch");
     const status = typeof value.status === "string" ? value.status : undefined;
-    const statusBase = status !== undefined ? (status) : undefined;
-    if (statusBase === "completed" && isFullGitObjectId(value.mergeCommitId))
+    if (status === "completed" && isFullGitObjectId(value.mergeCommitId))
         return structuredClone(value);
-    if (statusBase === "escalate")
+    if (status === "escalate")
         return structuredClone(value);
     throw new Error("Merger output has no recognized execution discriminator");
 }

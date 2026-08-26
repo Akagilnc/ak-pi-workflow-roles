@@ -199,7 +199,7 @@ test(
   async () => {
     for (const row of [
       { label: "empty-output", body: "#!/bin/sh\nprintf '  \\n\\t  '\nexit 0\n" },
-      { label: "nonzero-exit", body: "#!/bin/sh\nprintf 'partial output'\nprintf 'engine cause' >&2\nexit 23\n" },
+      { label: "nonzero-exit", body: "#!/bin/sh\nprintf 'partial output'\nprintf 'engine cause' >&2\nexit 23\n", expectedCause: "engine cause" },
     ]) {
       const home = await mkdtemp(join(tmpdir(), `ak-engine-detour-${row.label}-`));
       try {
@@ -223,6 +223,9 @@ test(
         if (result.terminal?.roleOutcome.kind !== "failure") assert.fail(row.label);
         assert.equal(result.terminal.roleOutcome.cause, "output", row.label);
         assert.equal(result.terminal.roleOutcome.diagnostic.trim().length > 0, true, row.label);
+        if (row.expectedCause !== undefined) {
+          assert.equal(result.terminal.roleOutcome.diagnostic.includes(row.expectedCause), true, row.label);
+        }
       } finally {
         await rm(home, { recursive: true, force: true });
       }

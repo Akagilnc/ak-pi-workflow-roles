@@ -44,7 +44,7 @@ export function validateNotaryOutput(value) {
     if (statusRaw === undefined) {
         throw new Error("Notary output has no recognized execution discriminator");
     }
-    const status = (statusRaw);
+    const status = statusRaw;
     if (status === "bounce") {
         const clone = structuredClone(value);
         if (clone.disposition === undefined)
@@ -64,11 +64,8 @@ export function validateNotaryOutput(value) {
 export function validateRecordedNotaryOutput(value) {
     return validateNotaryOutput(value);
 }
-export function withNotaryAcceptedDetails(output) {
-    return output;
-}
 export function notaryDecisiveFacts(output) {
-    const status = (String(output.status));
+    const status = String(output.status);
     const facts = { status, officer: "notary" };
     if (status === "pass" || status === "bounce") {
         const findings = output.findings;

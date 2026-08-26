@@ -97,15 +97,13 @@ function isRecord(value: unknown): value is Record<string, unknown> { return typ
 function read(value: unknown, key: string): unknown { if (!isRecord(value)) return undefined; try { return value[key]; } catch { return undefined; } }
 export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission {
   const status = read(value, "status");
-  const base = typeof status === "string" ? (status) : status;
-  if (base !== "completed" && base !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
   return value as DoctorSubmission;
 }
 export function validateRecordedDoctorOutput(value: unknown): DoctorOutput {
   const output = validateDoctorSubmissionShape(value);
   const status = read(output, "status");
-  const base = typeof status === "string" ? (status) : status;
-  if (base === "completed" && read(output, "cost") === undefined) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+  if (status === "completed" && read(output, "cost") === undefined) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
   return output as DoctorOutput;
 }
 
