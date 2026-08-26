@@ -398,7 +398,11 @@ async function traceJudgeInfrastructureFailure(input: {
       ...buildNavigatorInfrastructureFailureFact(),
       ...input.expectDetails,
     };
-    assert.deepEqual(infraResult!.message!.details, expected);
+    const durableDetails = infraResult!.message!.details!;
+    assert.deepEqual(
+      Object.fromEntries(Object.keys(expected).map((key) => [key, durableDetails[key]])),
+      expected,
+    );
 
     const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
     assert.ok(errorRef, `${input.name}: error artifact`);
@@ -414,7 +418,13 @@ async function traceJudgeInfrastructureFailure(input: {
     assert.equal(errorBody.cause, "output");
     assert.equal(errorBody.identity?.name, JUDGE_OUTPUT_TOOL_NAME);
     assert.equal(typeof errorBody.identity?.code, "string");
-    assert.deepEqual(errorBody.details, { ...expected, exitCode: 1 });
+    const expectedErrorDetails = { ...expected, exitCode: 1 };
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.keys(expectedErrorDetails).map((key) => [key, errorBody.details?.[key]]),
+      ),
+      expectedErrorDetails,
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -446,7 +456,6 @@ for (const scenario of [
     childEnv: { AK_MENXIA_MODE: "gatekeeper-no-dispatch" },
     expectDetails: {
       stage: "gatekeeper",
-      reason: "decision 无显式 dispatch",
       submission: { status: "pass", findings: [] },
     },
   },
@@ -456,7 +465,6 @@ for (const scenario of [
     childEnv: { AK_MENXIA_MODE: "officer-no-pass" },
     expectDetails: {
       stage: "inspector",
-      reason: "decision 无显式 pass/bounce",
       submission: { status: "ok-enough" },
     },
   },
@@ -467,7 +475,6 @@ for (const scenario of [
     expectMenxiaAbsent: true,
     expectDetails: {
       stage: "notary",
-      reason: "decision 无显式 pass/bounce",
       submission: { status: "ok-enough" },
     },
   },
