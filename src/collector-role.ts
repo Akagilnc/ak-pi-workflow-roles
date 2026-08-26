@@ -5,10 +5,6 @@ import type {
 import type { Static } from "typebox";
 
 import {
-  readActivationEngineLaborFallbackField,
-  withEngineLaborFallbackField,
-} from "./engine-labor-fallback.ts";
-import {
   COLLECTOR_FIXED_KICKOFF,
   emptyCollectorManifest,
   loadCollectorManifest,
@@ -422,10 +418,7 @@ export function createCollectorRoleRuntime(
           );
           activation.ledger.markOutputAccepted();
           activation.ledger.completeOperational(toolCallId);
-          const acceptedDetails = withEngineLaborFallbackField(
-            receipt,
-            readActivationEngineLaborFallbackField(),
-          );
+          const acceptedDetails = receipt;
           return {
             content: [{
               type: "text" as const,

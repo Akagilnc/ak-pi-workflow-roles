@@ -1,6 +1,5 @@
 import { Type } from "typebox";
 import { canonicalJson } from "./canonical-json.js";
-import { seatFallbackBaseStatus, seatFallbackStatusHasLawfulEvidence, } from "./engine-labor-fallback.js";
 import { openToolObjectFromUnion } from "./open-tool-schema.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -67,19 +66,15 @@ catch {
 } }
 export function validateDoctorSubmissionShape(value) {
     const status = read(value, "status");
-    const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
+    const base = typeof status === "string" ? (status) : status;
     if (base !== "completed" && base !== "refused")
         throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
-    // ADR 0071: tainted status requires latch-shaped engineLaborFallback evidence.
-    if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, value)) {
-        throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
-    }
     return value;
 }
 export function validateRecordedDoctorOutput(value) {
     const output = validateDoctorSubmissionShape(value);
     const status = read(output, "status");
-    const base = typeof status === "string" ? seatFallbackBaseStatus(status) : status;
+    const base = typeof status === "string" ? (status) : status;
     if (base === "completed" && read(output, "cost") === undefined)
         throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
     return output;

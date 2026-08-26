@@ -2,9 +2,8 @@
  * Package-owned engine detour tool (#357 T2 / #378 / #380).
  * Registered by shared role-runtime when any role + engine activation signal is present.
  * Evidence-child legs install the same definition via customTools (no spawn in role modules).
- * #380: engine process failure soft-returns so the seat rejoins the main road; declaration
- * is recorded once via engine-labor-fallback (no fail-closed reject-leg).
- * Caller AbortSignal cancel propagates without fallback.
+ * Engine process failures stop through the host infrastructure-failure seam.
+ * Caller AbortSignal cancellation propagates unchanged.
  */
 import type {
   AgentToolResult,
@@ -22,11 +21,6 @@ import {
   isEngineDetourFailure,
   runEngineDetourOnce,
 } from "./engine-detour.ts";
-import {
-  activationEngineLaborFallbackLatch,
-  recordEngineLaborFallback,
-  type EngineLaborFallbackField,
-} from "./engine-labor-fallback.ts";
 
 const engineDetourArgsSchema = Type.Object(
   {
@@ -56,27 +50,7 @@ export type EngineDetourToolRegistration = {
 
 type EngineDetourLatch = { used: boolean };
 
-function seatFallbackToolResult(
-  field: EngineLaborFallbackField,
-  failure: string,
-): AgentToolResult<unknown> {
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text:
-          `Engine detour failed: ${failure}. Perform the labor in this session (seat main road) and submit via the existing typed path. A mechanical fallback declaration will attach to the typed receipt.`,
-      },
-    ],
-    details: {
-      tool: ENGINE_DETOUR_TOOL_NAME,
-      detourFailed: true,
-      ...field,
-    },
-  };
-}
-
-/** Caller/upper-layer cancel must propagate; process failure is seat-fallback, not cancel. */
+/** Caller/upper-layer cancellation must propagate unchanged. */
 function isCallerCancellation(
   error: unknown,
   signal: AbortSignal | undefined,
@@ -96,8 +70,8 @@ function isCallerCancellation(
  * Build one once-latch detour tool definition for a configured engine name.
  * `latch` is shared so parent registration can reset between activations.
  * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only.
- * Engine process failure (nonzero/empty/spawn) soft-returns seat fallback (#380).
- * Caller AbortSignal cancel propagates without writing fallback.
+ * Engine process failures (nonzero/empty/spawn) stop via `fail` with their cause.
+ * Caller AbortSignal cancellation propagates unchanged.
  */
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
@@ -116,7 +90,7 @@ export function createEngineDetourToolDefinition(input: {
       `Use ${ENGINE_DETOUR_TOOL_NAME} exactly once for the configured engine (${engineName}). Optional packaged notes are guidance when present; a bare engine name alone is also a valid call path.`,
       "Pass argv for the host CLI of this engine name — first element is the executable name on PATH. Follow optional packaged notes when delivered; otherwise act from the engine name and the host CLI actual interface. Do not invent package flags.",
       "On success, use the returned stdout as labor content for the existing typed submission / report path.",
-      "On engine failure the tool returns a soft failure: continue labor in this session and submit via the existing typed path. Do not treat engine failure as a reason to withhold the typed receipt.",
+      "An engine process failure stops this activation; do not continue labor in this session.",
     ],
     parameters: engineDetourArgsSchema,
     async execute(
@@ -145,17 +119,6 @@ export function createEngineDetourToolDefinition(input: {
         );
       }
 
-      const softFail = (failure: string): AgentToolResult<unknown> => {
-        // Activation-scoped latch is the sole shared recorder (parent seat + legs).
-        const fallbackLatch =
-          activationEngineLaborFallbackLatch() ?? { field: undefined };
-        const field = recordEngineLaborFallback(fallbackLatch, {
-          engine: engineName,
-          failure,
-        });
-        return seatFallbackToolResult(field, failure);
-      };
-
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
       try {
         result = await runEngineDetourOnce({
@@ -164,17 +127,19 @@ export function createEngineDetourToolDefinition(input: {
           ...(signal === undefined ? {} : { signal }),
         });
       } catch (error) {
-        // Caller cancel: propagate. Spawn/engine failure: seat fallback.
-        if (isCallerCancellation(error, signal)) {
-          throw error;
-        }
-        const failure =
-          error instanceof Error ? error.message : String(error);
-        return softFail(failure.trim() === "" ? "engine detour spawn failed" : failure);
+        if (isCallerCancellation(error, signal)) throw error;
+        const cause = error instanceof Error
+          ? error
+          : new Error(String(error).trim() || "engine detour spawn failed");
+        input.fail(cause, toolCallId, ctx);
       }
 
       if (isEngineDetourFailure(result)) {
-        return softFail(engineDetourFailureDiagnostic(result));
+        input.fail(
+          new Error(engineDetourFailureDiagnostic(result)),
+          toolCallId,
+          ctx,
+        );
       }
 
       return {

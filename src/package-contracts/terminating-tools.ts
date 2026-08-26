@@ -25,10 +25,6 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { isAuditEscalationResult } from "../audit-escalation.ts";
-import {
-  seatFallbackBaseStatus,
-  seatFallbackStatusHasLawfulEvidence,
-} from "../engine-labor-fallback.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
@@ -171,16 +167,11 @@ export function validateAcceptedDetails(
     [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
-  const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
-  // ADR 0071: `-by-fallback` is not independently lawful — require latch-shaped evidence.
-  const taintedWithoutEvidence =
-    typeof discriminator === "string" &&
-    !seatFallbackStatusHasLawfulEvidence(discriminator, details);
+  const baseDiscriminator = discriminator;
   const runtimeBindingMissing =
     (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
     (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
   if (
-    taintedWithoutEvidence ||
     runtimeBindingMissing ||
     (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator as string)))
   ) {
@@ -219,12 +210,12 @@ export function validateAcceptedLifecycle(
   const details = validateAcceptedDetails(toolName, detailsValue);
   if (toolName === DOCTOR_OUTPUT_TOOL_NAME) {
     const testimony = validateDoctorSubmissionShape(argumentsValue);
-    if (seatFallbackBaseStatus(String(testimony.status)) === "refused") {
+    if ((String(testimony.status)) === "refused") {
       if (!deepEqual(testimony, details)) throw new Error("accepted tool lifecycle details mismatch");
       return details;
     }
     const receipt = details as DoctorOutput & { cost?: unknown };
-    if (seatFallbackBaseStatus(String(receipt.status)) !== "completed") {
+    if ((String(receipt.status)) !== "completed") {
       throw new Error("accepted tool lifecycle details mismatch");
     }
     const { cost: _runtimeCost, ...projected } = receipt;
@@ -253,7 +244,7 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case MERGER_OUTPUT_TOOL_NAME: {
       const output = details as unknown as Record<string, unknown>;
       const status = output.status as string;
-      return { status, ...(seatFallbackBaseStatus(status) === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
+      return { status, ...(status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
     }
     case COLLECTOR_OUTPUT_TOOL:
       return { status: "collected" };
