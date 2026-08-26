@@ -1,7 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 
 import type {
-  ComplianceAuditIncomplete,
   ComplianceDecision,
 } from "./compliance-transport.ts";
 
@@ -31,13 +30,6 @@ export type AuditEscalationResult = {
 export type AuditEscalationToolResult = {
   content: [{ type: "text"; text: string }];
   details: AuditEscalationResult;
-  terminate: true;
-  usage?: Usage;
-};
-
-export type AuditIncompleteToolResult = {
-  content: [{ type: "text"; text: string }];
-  details: ComplianceAuditIncomplete;
   terminate: true;
   usage?: Usage;
 };
@@ -119,17 +111,6 @@ export function projectAuditEscalation(
   };
 }
 
-export function projectAuditIncomplete(
-  decision: ComplianceAuditIncomplete,
-): AuditIncompleteToolResult {
-  return {
-    content: [{ type: "text", text: "Compliance audit incomplete; no role receipt was formed." }],
-    details: decision,
-    terminate: true,
-    ...(decision.usage === undefined ? {} : { usage: decision.usage }),
-  };
-}
-
 /**
  * Discriminator-only recognition (ADR 0040). Shape of conflicts/options/gate
  * is not a reject gate — element types and cardinality are delivery content.
@@ -152,7 +133,6 @@ export type ComplianceDecisionHandlers<T> = {
   ) => T | PromiseLike<T>;
   revise: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
-  auditIncomplete?: (result: AuditIncompleteToolResult) => T | PromiseLike<T>;
 };
 
 /**
@@ -183,10 +163,5 @@ export async function disposeComplianceDecision<T>(
       return await handlers.escalate(
         projectAuditEscalation(decision, deliveredOutput),
       );
-    case "audit-incomplete":
-      if (handlers.auditIncomplete === undefined) {
-        throw new Error("Compliance audit-incomplete handler is unavailable");
-      }
-      return await handlers.auditIncomplete(projectAuditIncomplete(decision));
   }
 }

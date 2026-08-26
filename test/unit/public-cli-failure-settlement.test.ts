@@ -1,7 +1,7 @@
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -15,8 +15,7 @@ import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { ExplicitInternalActivationError } from "../../src/public-cli/explicit-internal.ts";
-import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, CONCISE_DIAGNOSTIC_MAX_CHARS, exitCodeForTerminalOutcome, extractComplianceAuditIncompleteRoleOutcome, extractDoctorRoleOutcome, extractJudgeRoleOutcome, extractReviewerRoleOutcome, isChildDiagnosticFloodLine, isChildDiagnosticHelpFooterLine, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import { buildAuditIncompleteTerminalOutcome } from "../../src/public-cli/terminal.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, CONCISE_DIAGNOSTIC_MAX_CHARS, exitCodeForTerminalOutcome, extractDoctorRoleOutcome, extractJudgeRoleOutcome, extractReviewerRoleOutcome, isChildDiagnosticFloodLine, isChildDiagnosticHelpFooterLine, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -628,214 +627,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     assert.equal(stderr[0]!.includes("\n"), true);
   });
 });
-test("shared audit-incomplete extraction binds every audited seat and rejects ambiguous evidence", () => {
-  const outputTools = {
-    judge: "ak_judge_output",
-    reviewer: "ak_reviewer_output",
-    doctor: "ak_doctor_output",
-  } as const;
-  const auditTools = {
-    judge: JUDGE_AUDIT_TOOL_NAME,
-    reviewer: REVIEWER_AUDIT_TOOL_NAME,
-    doctor: DOCTOR_AUDIT_TOOL_NAME,
-  } as const;
-  const extract = (
-    entries: readonly unknown[],
-    role: (typeof AUDITOR_SOUL_ROLES)[number],
-    outputTool: string = outputTools[role],
-  ) => extractComplianceAuditIncompleteRoleOutcome(
-    entries as Parameters<typeof extractComplianceAuditIncompleteRoleOutcome>[0],
-    role,
-    outputTool,
-  );
-
-  for (const role of AUDITOR_SOUL_ROLES) {
-    const roleCallId = `${role}-role-call`;
-    const roleCandidate = { role, status: "candidate" };
-    const auditCandidate = [`malformed-${role}`];
-    const roleCall = {
-      type: "message",
-      message: {
-        role: "assistant",
-        content: [{
-          type: "toolCall",
-          id: roleCallId,
-          name: outputTools[role],
-          arguments: roleCandidate,
-        }],
-      },
-    } as const;
-    const retained = {
-      type: "custom",
-      customType: "ak_compliance_response",
-      data: {
-        version: 1,
-        response: {
-          content: [{
-            type: "toolCall",
-            id: `${role}-audit-call`,
-            name: auditTools[role],
-            arguments: auditCandidate,
-          }],
-        },
-      },
-    } as const;
-    const roleResult = {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolCallId: roleCallId,
-        toolName: outputTools[role],
-        isError: false,
-        details: {
-          status: "audit-incomplete",
-          observation: { kind: "non-object-arguments", type: "array" },
-          candidate: auditCandidate,
-        },
-      },
-    } as const;
-    const base = [roleCall, retained, roleResult] as const;
-    const bound = extract(base, role);
-    assert.ok(bound);
-    assert.equal(bound.outcome.kind, "audit_incomplete");
-    assert.equal(bound.outcome.status, "audit-incomplete");
-    assert.equal(bound.outcome.decision, "no-usable-decision");
-    assert.deepEqual(bound.outcome.roleCandidate, roleCandidate);
-    assert.deepEqual(bound.outcome.audit.candidate, auditCandidate);
-    assert.deepEqual(bound.outcome.audit.observation, {
-      kind: "non-object-arguments",
-      type: "array",
-    });
-    assert.equal(bound.outcome.acceptedReceipt, false);
-    assert.deepEqual(bound.outcome.decisiveFacts.roleCandidate, roleCandidate);
-    assert.deepEqual(bound.outcome.decisiveFacts.auditCandidate, auditCandidate);
-
-    const replace = (index: number, entry: unknown): unknown[] =>
-      base.map((current, currentIndex) => currentIndex === index ? entry : current);
-    const wrongAudit = {
-      ...retained,
-      data: { response: { content: [{ type: "toolCall", name: "wrong_audit_tool", arguments: auditCandidate }] } },
-    };
-    assert.equal(extract(replace(1, wrongAudit), role), undefined);
-    assert.equal(extract(base, role, "wrong_output_tool"), undefined);
-    assert.equal(
-      extract(base, role === "judge" ? "reviewer" : "judge"),
-      undefined,
-    );
-
-    // The retained response must be inside this role call/result interval;
-    // an unrelated same-value response before or after it cannot bind.
-    assert.equal(extract([retained, roleCall, roleResult], role), undefined);
-    assert.equal(extract([roleCall, roleResult, retained], role), undefined);
-    assert.equal(
-      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolCallId: `${roleCallId}-missing` } }), role),
-      undefined,
-    );
-    assert.equal(
-      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolCallId: undefined } }), role),
-      undefined,
-    );
-    assert.equal(
-      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolName: "wrong_output_tool" } }), role),
-      undefined,
-    );
-
-    // The one-to-one binding rejects duplicate role calls, results, and
-    // retained custom entries rather than choosing one by position or value.
-    assert.equal(extract([roleCall, roleCall, retained, roleResult], role), undefined);
-    assert.equal(extract([roleCall, retained, roleResult, roleResult], role), undefined);
-    assert.equal(
-      extract([
-        roleCall,
-        retained,
-        { ...retained, data: { response: { content: [{ type: "toolCall", name: auditTools[role], arguments: auditCandidate }] } } },
-        roleResult,
-      ], role),
-      undefined,
-    );
-  }
-});
-test("missing-dossier and missing-subject settle as audit_incomplete with no lawful Receipt", () => {
-  const cases = [
-    {
-      observation: { kind: "missing-dossier" as const },
-      observationType: "missing-dossier",
-    },
-    {
-      observation: { kind: "missing-subject" as const, subject: "candidate-verdict" },
-      observationType: "candidate-verdict",
-    },
-  ] as const;
-
-  for (const role of AUDITOR_SOUL_ROLES) {
-    // Active auditor seats only (#242 retired fixer LLM auditor).
-    const outputTool = {
-      judge: JUDGE_OUTPUT_TOOL_NAME,
-      reviewer: REVIEWER_OUTPUT_TOOL_NAME,
-      doctor: DOCTOR_OUTPUT_TOOL_NAME,
-    }[role];
-    for (const fixture of cases) {
-      const roleCandidate = { role, status: "candidate" };
-      const audit = {
-        status: "audit-incomplete" as const,
-        observation: fixture.observation,
-        candidate: undefined,
-      };
-      // Terminal builder projects dossier discriminators (terminal.ts observationType).
-      const built = buildAuditIncompleteTerminalOutcome({
-        role,
-        roleCandidate,
-        audit,
-      });
-      assert.equal(built.kind, "audit_incomplete");
-      assert.equal(built.acceptedReceipt, false);
-      assert.equal(built.decisiveFacts.acceptedReceipt, false);
-      assert.equal(built.decisiveFacts.observationKind, fixture.observation.kind);
-      assert.equal(built.decisiveFacts.observationType, fixture.observationType);
-      assert.equal(isLawfulTypedTerminalOutcome(built), false);
-      assert.equal(exitCodeForTerminalOutcome(built), 1);
-
-      // Settlement extract binds preflight incomplete from role tool details alone
-      // (no retained auditor response — provider was never contacted).
-      const roleCallId = `${role}-${fixture.observation.kind}-call`;
-      const entries = [
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            content: [{
-              type: "toolCall",
-              id: roleCallId,
-              name: outputTool,
-              arguments: roleCandidate,
-            }],
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolCallId: roleCallId,
-            toolName: outputTool,
-            isError: false,
-            details: audit,
-          },
-        },
-      ] as const;
-      const bound = extractComplianceAuditIncompleteRoleOutcome(
-        entries as Parameters<typeof extractComplianceAuditIncompleteRoleOutcome>[0],
-        role,
-        outputTool,
-      );
-      assert.ok(bound, `${role} ${fixture.observation.kind} must bind`);
-      assert.equal(bound.outcome.kind, "audit_incomplete");
-      assert.equal(bound.outcome.acceptedReceipt, false);
-      assert.deepEqual(bound.outcome.audit.observation, fixture.observation);
-      assert.equal(isLawfulTypedTerminalOutcome(bound.outcome), false);
-      assert.equal(exitCodeForTerminalOutcome(bound.outcome), 1);
-    }
-  }
-});
 test("audit escalation requires the retained seat-bound response across all audited seats", () => {
   const seats = {
     judge: { output: JUDGE_OUTPUT_TOOL_NAME, audit: JUDGE_AUDIT_TOOL_NAME },
@@ -986,158 +777,7 @@ test("audit escalation requires the retained seat-bound response across all audi
     assert.equal(outcomeKind(extract(role, [retained, roleCall, result])), undefined, `${role}: outside interval`);
   }
 });
-test("#419 symlink planted at audit evidence destination fails loudly and never writes through", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    // Pre-planted variant: the symlink already occupies the destination when
-    // the publication lstat looks, so the lstat fast-path branch rejects it
-    // before the open seam. The genuine lstat→open swap window has its own
-    // mechanical regression in public-cli-audit-evidence-race-419.test.ts.
-    const victimPath = join(home, "victim-audit-incomplete.json");
-    const victimSentinel = `${JSON.stringify({ sentinel: "symlink-target-must-stay-intact" })}\n`;
-    await writeFile(victimPath, victimSentinel, "utf8");
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "audit evidence symlink"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-audit-artifact-symlink-001",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          await mkdir(join(runDir, "artifacts"), { recursive: true });
-          const evidenceLink = join(runDir, "artifacts", "audit-incomplete.json");
-          try {
-            await symlink(victimPath, evidenceLink);
-          } catch (error) {
-            // Idempotent across the scene's multiple pi legs.
-            if ((error as { code?: string }).code !== "EEXIST") throw error;
-          }
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            auditIncompleteSessionRows("role-1", ["retained"]),
-            "utf8",
-          );
-          return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
-        },
-      },
-    );
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
-    assert.ok(result.terminal);
-    const outcome = result.terminal!.roleOutcome;
-    assert.equal(outcome.kind, "failure");
-    if (outcome.kind !== "failure") throw new Error("expected publication failure");
-    assert.equal(outcome.cause, "unrecognized");
-    assert.equal(outcome.decisiveFacts.errorCode, "ELOOP");
-    assert.equal(outcome.auditResidual?.acceptedReceipt, false);
-    assert.deepEqual(outcome.auditResidual?.roleCandidate, { judgeStatus: "converged" });
-    assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"]);
-    assert.equal(result.terminal!.artifacts.length, 0);
-    // Nothing may be written through the link to its target.
-    assert.equal(await readFile(victimPath, "utf8"), victimSentinel);
-  });
-});
 
-function auditIncompleteSessionRows(callId: string, candidate: unknown): string {
-  return [
-    JSON.stringify({
-      type: "message",
-      message: {
-        role: "assistant",
-        content: [{ type: "toolCall", id: callId, name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
-      },
-    }),
-    JSON.stringify({
-      type: "custom",
-      customType: "ak_compliance_response",
-      data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: candidate }] } },
-    }),
-    JSON.stringify({
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolCallId: callId,
-        toolName: JUDGE_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: "array" }, candidate: ["ignored"] },
-      },
-    }),
-  ].join("\n") + "\n";
-}
-
-async function readAttemptHistory(sessionFile: string): Promise<Array<{ data: { sequence?: number; outcome?: { kind?: string; diagnostic?: string; audit?: { candidate?: unknown }; roleCandidate?: unknown }; }; }>> {
-  const rows = (await readFile(sessionFile, "utf8"))
-    .split("\n").filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as any);
-  return rows.filter((row) => row.type === "custom" && row.customType === ATTEMPT_HISTORY_ENTRY_TYPE);
-}
-
-test("#419 same-run auto-resume attempts each append complete history without overwriting earlier attempts", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    let calls = 0;
-    let sessionFile = "";
-    const result = await runAkRole(
-      ["judge", "--project", project, "append per-attempt history"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-419-history-append-001",
-        io,
-        piRunner: async (args) => {
-          calls += 1;
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          sessionFile = join(sessionDir, "session.jsonl");
-          await mkdir(sessionDir, { recursive: true });
-          // Resume legs share one session principal: append, never rewrite.
-          const prior = calls === 1 ? "" : await readFile(sessionFile, "utf8");
-          const candidate = calls === 1 ? ["retained-one"] : calls === 2 ? ["retained-two"] : ["retained-three"];
-          await writeFile(
-            sessionFile,
-            `${prior}${auditIncompleteSessionRows(`role-${calls}`, candidate)}`,
-            "utf8",
-          );
-          return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
-        },
-      },
-    );
-    assert.equal(calls, 3, stderr.join(""));
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "audit_incomplete");
-    assert.equal(result.terminal!.autoResumeCount, 2);
-
-    const history = await readAttemptHistory(sessionFile);
-    assert.equal(history.length, 3, "each attempt appends exactly one history entry");
-    assert.equal(history[0]!.data.sequence, 1);
-    assert.deepEqual(history[0]!.data.outcome?.audit?.candidate, ["retained-one"]);
-    assert.deepEqual(history[0]!.data.outcome?.roleCandidate, { judgeStatus: "converged" });
-    assert.equal(history[1]!.data.sequence, 2);
-    assert.deepEqual(history[1]!.data.outcome?.audit?.candidate, ["retained-two"]);
-    assert.equal(history[2]!.data.sequence, 3);
-    assert.deepEqual(history[2]!.data.outcome?.audit?.candidate, ["retained-three"]);
-
-    // Pointer stays last-write-wins; the overwritten earlier views are
-    // rebuildable from history entries sequences 1 and 2.
-    const evidenceRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "evidence");
-    assert.ok(evidenceRef);
-    const pointer = JSON.parse(await readFile(evidenceRef!.path, "utf8")) as { audit?: { candidate?: unknown } };
-    assert.deepEqual(pointer.audit?.candidate, ["retained-three"]);
-    assert.equal(stdout.length, 1);
-  });
-});
 
 test("#419 failed attempt joins history and a later accepted attempt overwrites only pointer views", async () => {
   await withTempHome(async (home) => {
@@ -1179,7 +819,12 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.autoResumeCount, 1);
 
-    const history = await readAttemptHistory(sessionFile);
+    const history = (await readFile(sessionFile, "utf8"))
+      .split("\n").filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as any)
+      .filter((row) => row.type === "custom" && row.customType === ATTEMPT_HISTORY_ENTRY_TYPE) as Array<{
+        data: { sequence?: number; outcome?: { kind?: string; diagnostic?: string } };
+      }>;
     assert.equal(history.length, 2);
     assert.equal(history[0]!.data.outcome?.kind, "failure", "failed leg's complete result is retained");
     assert.equal(typeof history[0]!.data.outcome?.diagnostic, "string");

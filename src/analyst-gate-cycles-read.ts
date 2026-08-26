@@ -14,10 +14,9 @@
  * An accepted gate terminating receipt (isError:false pair on dispatch/officer
  * tool) whose required typed facts are unusable — status, dispatch officer, or
  * first/last span missing/unknown/unparseable/inverted — also fails loudly via
- * the same throw→ledger `auditor-roles` unreadable seam. Lawful Gatekeeper
- * typed `incomplete` is a recognizable terminal (omit from pairing, leg stays
- * readable) — only unknown/non-contract dispatch status stays loud. True
- * non-gate volumes (soul-audit noise, etc.) stay omitted from pairing.
+ * the same throw→ledger `auditor-roles` unreadable seam. Unknown/non-contract
+ * dispatch status stays loud (#475 abolished Gatekeeper incomplete special-case).
+ * True non-gate volumes (soul-audit noise, etc.) stay omitted from pairing.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -34,7 +33,7 @@ export type AnalystGateCycleRound = {
   readonly roundIndex: number;
   /** Current English officer face after historical alias fold. */
   readonly officer: "inspector" | "notary";
-  /** Typed officer terminal status (pass / bounce / incomplete / …). */
+  /** Typed officer terminal status (pass / bounce / …). */
   readonly status: string;
   /** Officer subsession first→last usable timestamp delta (ms). */
   readonly officerWallMs: number;
@@ -204,9 +203,7 @@ async function classifyAuditorVolume(
   const findingsCount = Array.isArray(findings) ? findings.length : 0;
 
   if (DISPATCH_TOOLS.has(call.toolName)) {
-    // Gatekeeper contract terminals: dispatch | incomplete. Incomplete is a
-    // lawful zero-pair terminal (#434-436 / #458) — never wash the parent leg.
-    if (status === "incomplete") return undefined;
+    // Gatekeeper contract terminal is dispatch only (#475).
     if (status !== "dispatch") {
       throw new Error(
         `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`,

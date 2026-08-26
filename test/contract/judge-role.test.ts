@@ -211,6 +211,7 @@ function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
     cwd: process.cwd(), model,
     modelRegistry: {
       getProvider(name: string) { return name === model.provider ? provider : undefined; },
+      find(_providerName: string, _modelId: string) { return model; },
       async getProviderAuth() { return { auth: {} }; },
       async getApiKeyAndHeaders() { return { ok: true }; },
     },
@@ -222,18 +223,18 @@ function workerCompletionGatekeeperHarness(options: {
   execute: (id: string, output: unknown, context: ExtensionContext) => Promise<unknown>;
   toolName: string;
   output: unknown;
-  incompleteReason: string;
+  unusableSubmission?: Record<string, unknown>;
   officer?: "inspector" | "notary";
-  officerIncompleteReason?: string;
+  officerUnusableSubmission?: Record<string, unknown>;
   passingRuns?: number;
 }) {
   const {
     execute,
     toolName,
     output,
-    incompleteReason,
+    unusableSubmission = { status: "not-a-release" } as Record<string, unknown>,
     officer = "inspector",
-    officerIncompleteReason = `officer ${incompleteReason}`,
+    officerUnusableSubmission = { status: "not-a-release", stage: "officer" } as Record<string, unknown>,
     passingRuns = 1,
   } = options;
   const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
@@ -241,14 +242,14 @@ function workerCompletionGatekeeperHarness(options: {
   const model = faux.getModel();
   const responses: Array<AssistantMessage | Error> = [
     new Error("provider disconnected"),
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "incomplete", reason: incompleteReason })),
+    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, unusableSubmission)),
     fauxAssistantMessage("not a receipt"),
     fauxAssistantMessage("still not a receipt"),
     fauxAssistantMessage("settled without a receipt"),
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     new Error("officer provider disconnected"),
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
-    fauxAssistantMessage(fauxToolCall(officerTool, { status: "incomplete", reason: officerIncompleteReason })),
+    fauxAssistantMessage(fauxToolCall(officerTool, officerUnusableSubmission)),
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage("officer did not submit a receipt"),
     fauxAssistantMessage("officer still did not submit a receipt"),
@@ -280,6 +281,7 @@ function workerCompletionGatekeeperHarness(options: {
         cwd: process.cwd(), model,
         modelRegistry: {
           getProvider(name: string) { return name === model.provider ? provider : undefined; },
+          find(_providerName: string, _modelId: string) { return model; },
           async getProviderAuth() { return { auth: {} }; },
           async getApiKeyAndHeaders() { return { ok: true }; },
         },
@@ -294,16 +296,12 @@ function workerCompletionGatekeeperHarness(options: {
           return true;
         });
       };
-      // Transport is plain Error via failInfrastructure — typed path is not GatekeeperDecisionError.
+      // Transport / unusable release are plain Error via failInfrastructure — not GatekeeperDecisionError.
       await reject("transport", (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
-      await reject("incomplete", (error) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "incomplete");
-        if (error.result.status === "incomplete") {
-          assert.equal(error.result.stage, "gatekeeper");
-          assert.equal(error.result.reason, incompleteReason);
-          assert.deepEqual(error.result.submission, { status: "incomplete", reason: incompleteReason });
-        }
+      await reject("unusable-release", (error) => {
+        assert.equal(error instanceof GatekeeperDecisionError, false);
+        assert.match(error.message, /transport failure|无显式/);
+        assert.deepEqual((error as Error & { submission?: unknown }).submission, unusableSubmission);
       });
       await reject("no-receipt", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -315,14 +313,10 @@ function workerCompletionGatekeeperHarness(options: {
         }
       });
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
-      await reject(`${officer}-incomplete`, (error) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "incomplete");
-        if (error.result.status === "incomplete") {
-          assert.equal(error.result.stage, officer);
-          assert.equal(error.result.reason, officerIncompleteReason);
-          assert.deepEqual(error.result.submission, { status: "incomplete", reason: officerIncompleteReason });
-        }
+      await reject(`${officer}-unusable-release`, (error) => {
+        assert.equal(error instanceof GatekeeperDecisionError, false);
+        assert.match(error.message, /transport failure|无显式/);
+        assert.deepEqual((error as Error & { submission?: unknown }).submission, officerUnusableSubmission);
       });
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -1263,6 +1257,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
       model,
       modelRegistry: {
         getProvider(name: string) { return name === model.provider ? provider : undefined; },
+        find(_providerName: string, _modelId: string) { return model; },
         async getProviderAuth() { return { auth: {} }; },
         async getApiKeyAndHeaders() { return { ok: true }; },
       },
@@ -1327,7 +1322,6 @@ test("coder completed submissions traverse the real Gatekeeper provider gate unt
     execute: (id, output, context) => tool.execute(id, output as typeof completed, undefined, undefined, context),
     toolName: CODER_OUTPUT_TOOL_NAME,
     output: completed,
-    incompleteReason: "missing completion evidence",
   });
   await tracer.assertRejectSequence();
   const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
@@ -1361,7 +1355,6 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
     execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
     toolName: FIXER_OUTPUT_TOOL_NAME,
     output: completed,
-    incompleteReason: "missing repair evidence",
     passingRuns: 2,
   });
   const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
@@ -1412,7 +1405,6 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
     execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
     toolName: JUDGE_OUTPUT_TOOL_NAME,
     output: continueVerdict,
-    incompleteReason: "missing draft evidence",
     officer: "notary",
   });
   await tracer.assertRejectSequence();
@@ -1436,7 +1428,6 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
     execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
     toolName: JUDGE_OUTPUT_TOOL_NAME,
     output: convergedVerdict,
-    incompleteReason: "missing draft evidence",
     officer: "notary",
     passingRuns: 0,
   });
@@ -1767,6 +1758,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         model: harness.model,
         modelRegistry: {
           getProvider: () => harness.provider,
+          find: () => harness.model,
           async getProviderAuth() { return { auth: {} }; },
           async getApiKeyAndHeaders() { return { ok: true }; },
         },

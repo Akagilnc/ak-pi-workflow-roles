@@ -7,15 +7,11 @@ import {
 } from "../../src/notary-contracts.ts";
 import { createNotaryRoleRuntime } from "../../src/notary-role.ts";
 
-test("validateNotaryOutput accepts pass bounce incomplete and rejects residual shapes", () => {
+test("validateNotaryOutput accepts pass bounce and rejects non-release shapes", () => {
   assert.equal(validateNotaryOutput({ status: "pass", findings: [] }).status, "pass");
   const bounce = validateNotaryOutput({ status: "bounce", findings: ["x"] });
   assert.equal(bounce.status, "bounce");
-  assert.equal(
-    validateNotaryOutput({ status: "incomplete", reason: "missing draft" }).status,
-    "incomplete",
-  );
-  assert.throws(() => validateNotaryOutput({ status: "incomplete", reason: "  " }));
+  assert.throws(() => validateNotaryOutput({ status: "incomplete", reason: "missing draft" }));
   assert.throws(() => validateNotaryOutput({ status: "maybe" }));
   assert.throws(() => validateNotaryOutput(null));
 });

@@ -109,7 +109,7 @@ export async function runPublicNotary(
     extraArgs,
     adapters: {
       trySettle: trySettleNotaryTerminalResult,
-      // Accepted receipts and residual incomplete share one present path.
+      // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true,
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

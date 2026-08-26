@@ -59,7 +59,7 @@ export type OneShotRunEnv = {
 /**
  * Role-specific settlement hooks. Lifecycle coordination stays in this module.
  * - Doctor: present only lawful typed outcomes; optional compliance-audit secondary.
- * - Notary: present any settled terminal (accepted + residual incomplete).
+ * - Notary: present any settled terminal (accepted or failure).
  */
 export type OneShotSettlementAdapters<A extends AdmittedRoleInvocation> = {
   trySettle: (admitted: A) => Promise<TerminalResult | undefined>;

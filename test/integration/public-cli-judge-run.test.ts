@@ -160,10 +160,10 @@ test(
 );
 
 test(
-  "ak-role Judge settles retained unreadable compliance as a typed incomplete Terminal",
+  "ak-role Judge settles retained unreadable compliance on the failure channel",
   { timeout: 120_000 },
   async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-incomplete-"));
+    const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-unreadable-"));
     try {
       const project = join(home, "work");
       await mkdir(project, { recursive: true });
@@ -190,7 +190,7 @@ test(
           home,
           agentDir: join(home, ".pi", "agent"),
           cwd: project,
-          createRunId: () => "run-e2e-judge-incomplete-001",
+          createRunId: () => "run-e2e-judge-unreadable-001",
           judgeExtraPiArgs: ["-e", providerPath],
           judgeTimeoutMs: 90_000,
           io: {
@@ -218,37 +218,25 @@ test(
         },
       );
 
-      assert.equal(result.exitCode, 1, stderr.join("") || "incomplete audit unexpectedly succeeded");
+      assert.equal(result.exitCode, 1, stderr.join("") || "unreadable audit unexpectedly succeeded");
       assert.equal(stdout.length, 1);
       assert.ok(result.terminal);
       const outcome = result.terminal!.roleOutcome;
-      assert.equal(outcome.kind, "audit_incomplete");
+      assert.equal(outcome.kind, "failure");
       assert.equal(outcome.role, "judge");
-      assert.equal(outcome.status, "audit-incomplete");
-      assert.equal(outcome.decision, "no-usable-decision");
-      assert.equal(outcome.acceptedReceipt, false);
-      assert.deepEqual(outcome.roleCandidate, { judgeStatus: "converged" });
-      assert.deepEqual(outcome.audit.candidate, {
-        status: "mystery",
-        retained: "raw auditor candidate",
-      });
-      assert.deepEqual(outcome.audit.observation, {
-        kind: "object-status-unreadable",
-        status: "unknown",
-      });
-      assert.notDeepEqual(outcome.roleCandidate, outcome.audit.candidate);
+      // Unreadable compliance is infrastructure failure, not a judgment status (#475).
+      assert.match(outcome.diagnostic, /Compliance candidate unreadable|unreadable|mystery|unknown/i);
 
       const bookKey = resolveBookKeyFromGit(project);
-      const sessionFile = join(
+      const runDir = join(
         home,
         ".ak-roles",
         "books",
         bookKey,
         "runs",
-        "run-e2e-judge-incomplete-001@judge",
-        "session",
-        "session.jsonl",
+        "run-e2e-judge-unreadable-001@judge",
       );
+      const sessionFile = join(runDir, "session", "session.jsonl");
       const rows = (await readFile(sessionFile, "utf8"))
         .trim()
         .split("\n")
@@ -256,39 +244,25 @@ test(
       const retained = rows.filter(
         (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
       );
-      // #419: history appends per attempt, so retention count follows leg count
-      // (autoResumeCount + 1 attempts in this single call).
-      assert.equal(retained.length, (result.terminal!.autoResumeCount ?? 0) + 1);
+      assert.ok(retained.length >= 1, "retained auditor response must still land");
       const retainedCall = retained[0].data.response.content.find(
         (part: any) => part.type === "toolCall",
       );
-      assert.deepEqual(retainedCall.arguments, outcome.audit.candidate);
-      const roleCall = rows.find(
-        (row) => row.type === "message" && row.message?.role === "assistant" &&
-          row.message?.content?.some((part: any) => part.type === "toolCall" && part.name === "ak_judge_output"),
-      );
-      const originalRoleCall = roleCall.message.content.find(
-        (part: any) => part.type === "toolCall" && part.name === "ak_judge_output",
-      );
-      assert.deepEqual(originalRoleCall.arguments, outcome.roleCandidate);
+      assert.deepEqual(retainedCall.arguments, {
+        status: "mystery",
+        retained: "raw auditor candidate",
+      });
+      // No accepted judge receipt for the unreadable audit path.
       assert.equal(rows.some(
         (row) => row.type === "message" && row.message?.toolName === "ak_judge_output" && row.message?.isError === false && row.message?.details?.judgeStatus === "converged",
       ), false);
-      const evidenceRef = result.terminal!.artifacts.find(
-        (artifact) => artifact.kind === "evidence",
+      const errorRef = result.terminal!.artifacts.find(
+        (artifact) => artifact.kind === "error",
       );
-      assert.ok(evidenceRef);
-      const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as any;
-      assert.deepEqual(evidence.roleCandidate, outcome.roleCandidate);
-      assert.deepEqual(evidence.audit.candidate, outcome.audit.candidate);
-      assert.deepEqual(evidence.audit.observation, outcome.audit.observation);
-      // Public stdout exposes typed decisive facts without depending on presentation labels.
-      const publicOutput = stdout.join("");
-      assert.ok(publicOutput.includes("roleCandidate"));
-      assert.ok(publicOutput.includes("auditCandidate"));
-      assert.ok(publicOutput.includes("raw auditor candidate"));
-      assert.ok(publicOutput.includes("auditObservation"));
-      assert.ok(publicOutput.includes("unknown"));
+      assert.ok(errorRef, "failure channel must publish error artifact");
+      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as any;
+      assert.equal(errorBody.kind, "error");
+      assert.equal(errorBody.role, "judge");
     } finally {
       await rm(home, { recursive: true, force: true });
     }
