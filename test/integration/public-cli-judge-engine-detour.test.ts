@@ -11,7 +11,6 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC } from "../../src/engine-detour.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/role-runtime.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
@@ -195,45 +194,41 @@ test(
 );
 
 test(
-  "trim-empty engine output stops without a Receipt and exposes the cause",
+  "engine process failures stop at the public entry without a Receipt",
   { timeout: 120_000 },
   async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-fail-b-"));
-    try {
-      const project = join(home, "work");
-      const binDir = join(home, "bin");
-      await mkdir(project, { recursive: true });
-      await mkdir(binDir, { recursive: true });
-      seedGitProject(project);
-      await writeExecutable(
-        join(binDir, "kimi"),
-        "#!/bin/sh\nprintf '  \\n\\t  '\nexit 0\n",
-      );
+    for (const row of [
+      { label: "empty-output", body: "#!/bin/sh\nprintf '  \\n\\t  '\nexit 0\n" },
+      { label: "nonzero-exit", body: "#!/bin/sh\nprintf 'partial output'\nprintf 'engine cause' >&2\nexit 23\n" },
+    ]) {
+      const home = await mkdtemp(join(tmpdir(), `ak-engine-detour-${row.label}-`));
+      try {
+        const project = join(home, "work");
+        const binDir = join(home, "bin");
+        await mkdir(project, { recursive: true });
+        await mkdir(binDir, { recursive: true });
+        seedGitProject(project);
+        await writeExecutable(join(binDir, "kimi"), row.body);
 
-      const result = await runJudgeWithEngine({
-        home,
-        project,
-        binDir,
-        runId: "run-engine-detour-fail-b-001",
-        engine: "kimi",
-      });
+        const result = await runJudgeWithEngine({
+          home,
+          project,
+          binDir,
+          runId: `run-engine-detour-${row.label}-001`,
+          engine: "kimi",
+        });
 
-      assert.equal(result.exitCode, 1);
-      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(
-        result.stderr.join("").includes(ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC),
-        true,
-        "infrastructure failure must retain the engine cause",
-      );
-    } finally {
-      await rm(home, { recursive: true, force: true });
+        assert.equal(result.exitCode, 1, row.label);
+        assert.equal(result.terminal?.roleOutcome.kind, "failure", row.label);
+        if (result.terminal?.roleOutcome.kind !== "failure") assert.fail(row.label);
+        assert.equal(result.terminal.roleOutcome.cause, "output", row.label);
+        assert.equal(result.terminal.roleOutcome.diagnostic.trim().length > 0, true, row.label);
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
     }
   },
 );
-
-  // 尺②同根收拢（#420 类一）：whitespace-only-stderr 变体与上方「B1 trim-empty
-  // stdout」经同一真入口产出同一 fallback.failure（ENGINE_DETOUR_EMPTY_STDOUT_
-  // DIAGNOSTIC），属同根重复，删此留彼；stderr trim 归一逻辑由同一分类路径承载。
 
 
 test(
