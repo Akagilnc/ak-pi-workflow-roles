@@ -27,7 +27,7 @@ Exit status reports lifecycle honesty, not business success: every lawful typed 
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
-Global overrides work before or after the role: `ak-role --model xai/grok-4.5:high resume <runId>`.
+Global overrides work before or after the role: `ak-role --model <provider/model[:thinking]> resume <runId>`.
 
 Every run also prepares Navigator advice in the same Terminal. Configure seats like this:
 
