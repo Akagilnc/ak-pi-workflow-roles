@@ -21969,6 +21969,7 @@ async function extractMenxiaFactFromSessionDirectory(sessionDirectory) {
   return projectTerminalMenxiaFact(rounds);
 }
 async function withOptionalMenxiaProjection(base, sessionDirectory) {
+  if (base.roleOutcome.kind === "failure") return base;
   const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
   return menxia === void 0 ? base : { ...base, menxia };
 }
