@@ -249,5 +249,3 @@ test("no-receipt uses its own projection leg instead of collapsing into pass", a
   assert.equal(result.auditNoReceipt.rejectedReceipts[0]?.reason, "未观察到 commit");
   assert.equal(result.auditNoReceipt.attemptPointer, "attempt-1");
 });
-
-

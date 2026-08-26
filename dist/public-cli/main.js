@@ -20258,11 +20258,16 @@ var init_work_subject_identity = __esm({
 });
 
 // src/navigator-invocation-identity.ts
-function isNavigatorInfrastructureFailureFact(value) {
+function buildNavigatorInfrastructureFailureFact() {
+  return {
+    kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
+    source: "shared-role-lifecycle",
+    reasonCode: "host_failure"
+  };
+}
+function hasNavigatorInfrastructureFailureBase(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record4 = value;
-  const keys = Object.keys(record4);
-  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
     if (!Object.hasOwn(record4, key)) return false;
   }
@@ -20293,7 +20298,8 @@ function parseInvocationMarkerIdentity(data) {
 function classifyPackagedRoleTerminalResult(message) {
   if (typeof message.toolName !== "string") return { kind: "nonterminal" };
   if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
-  const infraFact = isNavigatorInfrastructureFailureFact(message.details) ? message.details : void 0;
+  const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
+  const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : void 0;
   if (message.isError === true) {
     if (infraFact === void 0) return { kind: "nonterminal" };
     return { kind: "infrastructure", fact: infraFact };
@@ -20814,27 +20820,6 @@ async function readBoundAuditorProviderStopFallback(sessionFile) {
   if (volumes === void 0) return void 0;
   return providerStopFallbackFromAuditorVolumes(volumes);
 }
-function unreadableComplianceFromAttempt(attemptEntries, resultIndex) {
-  const retained = [];
-  for (let index = 0; index < resultIndex; index += 1) {
-    const entry = attemptEntries[index];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
-    if (!isRecord6(entry.data) || !isRecord6(entry.data.response) || !Array.isArray(entry.data.response.content)) continue;
-    const calls = entry.data.response.content.filter(
-      (part) => isRecord6(part) && part.type === "toolCall"
-    );
-    if (calls.length !== 1) continue;
-    retained.push(calls[0]?.arguments);
-  }
-  if (retained.length !== 1) return void 0;
-  try {
-    readComplianceCandidate(retained[0]);
-    return void 0;
-  } catch (error) {
-    if (!(error instanceof ComplianceCandidateUnreadableError)) return void 0;
-    return { observation: error.observation, candidate: error.candidate };
-  }
-}
 function typedFailedTerminatingToolKnownFailure(entries) {
   let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -20853,16 +20838,12 @@ function typedFailedTerminatingToolKnownFailure(entries) {
     if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
     const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord6(part) && part.type === "text" && typeof part.text === "string") : void 0;
     const diagnostic = isRecord6(textPart) ? textPart.text : void 0;
-    const unreadable = unreadableComplianceFromAttempt(attemptEntries, i);
+    const details = isRecord6(message.details) ? message.details : classification.fact;
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
       ...typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {},
-      details: unreadable === void 0 ? classification.fact : {
-        ...classification.fact,
-        observation: unreadable.observation,
-        candidate: unreadable.candidate
-      }
+      details
     };
   }
   return void 0;

@@ -220,6 +220,7 @@ import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-r
 export {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
+  hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   isDurablePackagedRoleTerminalResult,
   isNavigatorInfrastructureFailureFact,
@@ -550,6 +551,44 @@ function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
   throw error;
 }
 
+/** Typed failure evidence keys projected from host Error onto durable tool_result details (#475). */
+const INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
+  "observation",
+  "candidate",
+  "submission",
+  "stage",
+  "reason",
+] as const;
+
+/**
+ * Envelope-owned pending infrastructure failure: closed fact + original Error evidence.
+ * tool_result projects once from this record; settlement consumes durable details as-is.
+ */
+type PendingInfrastructureFailure = {
+  readonly details: Record<string, unknown>;
+};
+
+function extractInfrastructureFailureEvidence(error: unknown): Record<string, unknown> {
+  if (typeof error !== "object" || error === null) return {};
+  const record = error as Record<string, unknown>;
+  const evidence: Record<string, unknown> = {};
+  for (const key of INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS) {
+    if (!Object.hasOwn(record, key)) continue;
+    // undefined → null so JSON durable details retain the empty-candidate key.
+    evidence[key] = record[key] === undefined ? null : record[key];
+  }
+  return evidence;
+}
+
+function buildPendingInfrastructureFailure(error: unknown): PendingInfrastructureFailure {
+  return {
+    details: {
+      ...buildNavigatorInfrastructureFailureFact(),
+      ...extractInfrastructureFailureEvidence(error),
+    },
+  };
+}
+
 function navigatorPhase(pi: ExtensionAPI, role: string): NavigatorPhase {
   const metadata = packagedRoleMetadata(role);
   if (metadata === undefined || metadata.phases[0] === null) return null;
@@ -616,7 +655,8 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
-    const pendingInfrastructureToolCallIds = new Set<string>();
+    /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
+    const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for Gatekeeper non-pass (ADR 0018).
     const pendingGatekeeperNonPassByToolCallId = new Map<string, GatekeeperNonPassResult>();
     // #357 T2 / #378 / #380 / #391: engine detour once-latch + seat-fallback latch (any role+engine).
@@ -705,11 +745,11 @@ export function createRoleRuntimeExtension(
     pi.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined) return;
-      const isRoleInfrastructureFailure = pendingInfrastructureToolCallIds.delete(event.toolCallId);
-      // Overlay typed infra fact so live settlement and durable session entry agree.
-      const infrastructureDetails = isRoleInfrastructureFailure
-        ? buildNavigatorInfrastructureFailureFact()
-        : undefined;
+      const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
+      const isRoleInfrastructureFailure = pendingInfra !== undefined;
+      if (pendingInfra !== undefined) pendingInfrastructureFailures.delete(event.toolCallId);
+      // One-shot project fact + typed evidence so live settlement and durable session agree.
+      const infrastructureDetails = pendingInfra?.details;
       const classified = infrastructureDetails === undefined
         ? event
         : { ...event, details: infrastructureDetails };
@@ -878,7 +918,7 @@ export function createRoleRuntimeExtension(
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       pendingNavigatorSettlement = undefined;
-      pendingInfrastructureToolCallIds.clear();
+      pendingInfrastructureFailures.clear();
       pendingGatekeeperNonPassByToolCallId.clear();
       observationFace.reset();
     });
@@ -886,7 +926,7 @@ export function createRoleRuntimeExtension(
     const hostActions = {
       failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never {
         if (toolCallId !== undefined) {
-          pendingInfrastructureToolCallIds.add(toolCallId);
+          pendingInfrastructureFailures.set(toolCallId, buildPendingInfrastructureFailure(error));
         }
         failInfrastructure(error, ctx);
       },
@@ -1105,7 +1145,7 @@ export function createRoleRuntimeExtension(
       observationFace.reset();
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
-      pendingInfrastructureToolCallIds.clear();
+      pendingInfrastructureFailures.clear();
       pendingGatekeeperNonPassByToolCallId.clear();
       engineLaborFallbackLatch = createEngineLaborFallbackLatch();
       // #380 resume: restore sole-built fallback from durable same-session detour results.
