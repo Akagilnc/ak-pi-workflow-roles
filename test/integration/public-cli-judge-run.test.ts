@@ -223,9 +223,18 @@ test(
       assert.ok(result.terminal);
       const outcome = result.terminal!.roleOutcome;
       assert.equal(outcome.kind, "failure");
+      if (outcome.kind !== "failure") throw new Error("expected failure outcome");
       assert.equal(outcome.role, "judge");
-      // Unreadable compliance is infrastructure failure, not a judgment status (#475).
-      assert.match(outcome.diagnostic, /Compliance candidate unreadable|unreadable|mystery|unknown/i);
+      // Unreadable compliance is infrastructure/output failure, not a judgment status (#475).
+      assert.equal(outcome.cause, "output");
+      assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
+        kind: "role_infrastructure_failure",
+        source: "shared-role-lifecycle",
+        reasonCode: "host_failure",
+        observation: { kind: "object-status-unreadable", status: "unknown" },
+        candidate: { status: "mystery", retained: "raw auditor candidate" },
+        exitCode: 1,
+      });
 
       const bookKey = resolveBookKeyFromGit(project);
       const runDir = join(
@@ -260,9 +269,23 @@ test(
         (artifact) => artifact.kind === "error",
       );
       assert.ok(errorRef, "failure channel must publish error artifact");
-      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as any;
+      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+        kind: string;
+        role: string;
+        cause: string;
+        details?: Record<string, unknown>;
+      };
       assert.equal(errorBody.kind, "error");
       assert.equal(errorBody.role, "judge");
+      assert.equal(errorBody.cause, "output");
+      assert.deepEqual(errorBody.details, {
+        kind: "role_infrastructure_failure",
+        source: "shared-role-lifecycle",
+        reasonCode: "host_failure",
+        observation: { kind: "object-status-unreadable", status: "unknown" },
+        candidate: { status: "mystery", retained: "raw auditor candidate" },
+        exitCode: 1,
+      });
     } finally {
       await rm(home, { recursive: true, force: true });
     }

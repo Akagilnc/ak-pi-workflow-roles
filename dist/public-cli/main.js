@@ -20814,6 +20814,27 @@ async function readBoundAuditorProviderStopFallback(sessionFile) {
   if (volumes === void 0) return void 0;
   return providerStopFallbackFromAuditorVolumes(volumes);
 }
+function unreadableComplianceFromAttempt(attemptEntries, resultIndex) {
+  const retained = [];
+  for (let index = 0; index < resultIndex; index += 1) {
+    const entry = attemptEntries[index];
+    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
+    if (!isRecord6(entry.data) || !isRecord6(entry.data.response) || !Array.isArray(entry.data.response.content)) continue;
+    const calls = entry.data.response.content.filter(
+      (part) => isRecord6(part) && part.type === "toolCall"
+    );
+    if (calls.length !== 1) continue;
+    retained.push(calls[0]?.arguments);
+  }
+  if (retained.length !== 1) return void 0;
+  try {
+    readComplianceCandidate(retained[0]);
+    return void 0;
+  } catch (error) {
+    if (!(error instanceof ComplianceCandidateUnreadableError)) return void 0;
+    return { observation: error.observation, candidate: error.candidate };
+  }
+}
 function typedFailedTerminatingToolKnownFailure(entries) {
   let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -20832,11 +20853,16 @@ function typedFailedTerminatingToolKnownFailure(entries) {
     if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
     const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord6(part) && part.type === "text" && typeof part.text === "string") : void 0;
     const diagnostic = isRecord6(textPart) ? textPart.text : void 0;
+    const unreadable = unreadableComplianceFromAttempt(attemptEntries, i);
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
       ...typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {},
-      details: classification.fact
+      details: unreadable === void 0 ? classification.fact : {
+        ...classification.fact,
+        observation: unreadable.observation,
+        candidate: unreadable.candidate
+      }
     };
   }
   return void 0;
