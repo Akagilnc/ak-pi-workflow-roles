@@ -88,6 +88,22 @@ export type RoleRunRecord = {
 /** Package-owned turn trigger for resume. Not caller instruction and not semantic task content. */
 export const RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]" as const;
 
+/** Public manual resume request after the unique CLI parser owns runId + optional message. */
+export type PublicResumeRequest = {
+  readonly runId: string;
+  /** Present when the caller supplied the post-runId argv (including empty string). */
+  readonly message?: string;
+};
+
+/**
+ * Unique continuation-prompt selector for manual/auto resume (#471).
+ * Message present → return bytes unchanged; absent → package transport envelope.
+ * Zero parse, zero classify, zero narrow.
+ */
+export function selectResumeContinuationPrompt(message?: string): string {
+  return message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
+}
+
 const RUN_STATE_FILE = "run-state.json";
 const WRITER_LOCK_FILE = "writer.lock";
 

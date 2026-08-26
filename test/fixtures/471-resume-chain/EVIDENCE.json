@@ -1,0 +1,20 @@
+{
+  "purpose": "#471 escalate → owner ruling resume → same-session converged",
+  "runId": "01a03c71-4710-7000-8000-escalate-resume01",
+  "role": "judge",
+  "bookKey": "work",
+  "frozenRunDirectory": "test/fixtures/471-resume-chain/01a03c71-4710-7000-8000-escalate-resume01@judge",
+  "sessionFile": "test/fixtures/471-resume-chain/01a03c71-4710-7000-8000-escalate-resume01@judge/session/session.jsonl",
+  "ownerRuling": "Owner rules: accept the plan and converge.",
+  "firstStatus": "escalate",
+  "resumeStatus": "converged",
+  "resumeLastArgv": "Owner rules: accept the plan and converge.",
+  "sameSession": true,
+  "observedInSession": {
+    "hasRuling": true,
+    "hasEscalate": true,
+    "hasConverged": true
+  },
+  "resumeSessionArgFrozen": "test/fixtures/471-resume-chain/01a03c71-4710-7000-8000-escalate-resume01@judge/session/session.jsonl",
+  "note": "Shortest live case via real Pi + ephemeral scripted provider (probe deleted after freeze). Frozen run is the real dossier copy after escalate→resume(message)→converged on one session principal. Not a permanent synthetic piRunner tracer. Essential files only."
+}
