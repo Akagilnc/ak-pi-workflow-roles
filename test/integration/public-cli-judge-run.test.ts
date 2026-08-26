@@ -296,275 +296,178 @@ test(
   },
 );
 
-/** #475: one public audited-role tracer covers missing-dossier + missing-subject. */
+/** #475 public Judge failure tracer: one harness, scenario data only. */
+async function traceJudgeInfrastructureFailure(input: {
+  readonly name: string;
+  readonly runId: string;
+  readonly childEnv?: NodeJS.ProcessEnv;
+  readonly poisonRunDir?: boolean;
+  readonly expectDetails: Record<string, unknown>;
+}): Promise<void> {
+  const home = await mkdtemp(join(tmpdir(), `ak-public-cli-judge-${input.name}-`));
+  try {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const providerPath = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
+    const result = await runAkRole(
+      [
+        "judge",
+        "--model",
+        "ak-audit-failure/faux-1",
+        "--thinking",
+        "off",
+        "--project",
+        project,
+        `Exercise ${input.name} failure evidence.`,
+      ],
+      {
+        packageRoot,
+        home,
+        agentDir: join(home, ".pi", "agent"),
+        cwd: project,
+        createRunId: () => input.runId,
+        judgeExtraPiArgs: ["-e", providerPath],
+        judgeTimeoutMs: 90_000,
+        io: { stdout() {}, stderr() {} },
+        piRunner: async (args, options) => {
+          const env: NodeJS.ProcessEnv = {
+            ...options.env,
+            PI_OFFLINE: "1",
+            ...input.childEnv,
+          };
+          if (input.poisonRunDir) {
+            env.AK_ROLE_RUN_DIR = join(home, "missing-dossier-does-not-exist");
+          }
+          const subprocess = await runPiSubprocess([...args], {
+            cwd: options.cwd,
+            env,
+            timeoutMs: options.timeoutMs ?? 90_000,
+          });
+          return {
+            code: subprocess.code,
+            stdout: subprocess.stdout,
+            stderr: subprocess.stderr,
+            timedOut: subprocess.localTimeout,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1, `${input.name} must exit nonzero`);
+    assert.ok(result.terminal);
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure");
+    if (outcome.kind !== "failure") throw new Error("expected failure");
+    assert.equal(outcome.cause, "output");
+
+    const runDir = join(
+      home,
+      ".ak-roles",
+      "books",
+      resolveBookKeyFromGit(project),
+      "runs",
+      `${input.runId}@judge`,
+    );
+    const rows = (await readFile(join(runDir, "session", "session.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        message?: {
+          role?: string;
+          toolName?: string;
+          isError?: boolean;
+          details?: Record<string, unknown>;
+        };
+      });
+    const infraResult = [...rows].reverse().find(
+      (row) =>
+        row.type === "message"
+        && row.message?.role === "toolResult"
+        && row.message?.toolName === JUDGE_OUTPUT_TOOL_NAME
+        && row.message?.isError === true,
+    );
+    assert.ok(infraResult?.message?.details, `${input.name}: durable infra toolResult`);
+    const expected = {
+      ...buildNavigatorInfrastructureFailureFact(),
+      ...input.expectDetails,
+    };
+    assert.deepEqual(infraResult!.message!.details, expected);
+
+    const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
+    assert.ok(errorRef, `${input.name}: error artifact`);
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      kind: string;
+      role: string;
+      cause: string;
+      identity?: { name?: string; code?: string | number };
+      details?: Record<string, unknown>;
+    };
+    assert.equal(errorBody.kind, "error");
+    assert.equal(errorBody.role, "judge");
+    assert.equal(errorBody.cause, "output");
+    assert.equal(errorBody.identity?.name, JUDGE_OUTPUT_TOOL_NAME);
+    assert.equal(typeof errorBody.identity?.code, "string");
+    assert.deepEqual(errorBody.details, { ...expected, exitCode: 1 });
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+/** #475: audited-role materials + Menxia unusable submission — four cases, one harness. */
 for (const scenario of [
   {
     name: "missing-dossier",
     runId: "run-e2e-judge-missing-dossier-001",
-    observation: { kind: "missing-dossier" as const },
-    env: { poisonRunDir: true, missingSubject: false },
+    poisonRunDir: true,
+    expectDetails: {
+      observation: { kind: "missing-dossier" },
+      candidate: null,
+    },
   },
   {
     name: "missing-subject",
     runId: "run-e2e-judge-missing-subject-001",
-    observation: { kind: "missing-subject" as const, subject: "candidate-verdict" as const },
-    env: { poisonRunDir: false, missingSubject: true },
-  },
-] as const) {
-  test(
-    `ak-role Judge public audited-role tracer: ${scenario.name} lands on durable details + error artifact`,
-    { timeout: 120_000 },
-    async () => {
-      const home = await mkdtemp(join(tmpdir(), `ak-public-cli-judge-${scenario.name}-`));
-      try {
-        const project = join(home, "work");
-        await mkdir(project, { recursive: true });
-        seedGitProject(project);
-        const providerPath = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
-        const result = await runAkRole(
-          [
-            "judge",
-            "--model",
-            "ak-audit-failure/faux-1",
-            "--thinking",
-            "off",
-            "--project",
-            project,
-            `Retain materials for ${scenario.name} failure evidence.`,
-          ],
-          {
-          packageRoot,
-          home,
-          agentDir: join(home, ".pi", "agent"),
-          cwd: project,
-          createRunId: () => scenario.runId,
-          judgeExtraPiArgs: ["-e", providerPath],
-          judgeTimeoutMs: 90_000,
-          io: { stdout() {}, stderr() {} },
-          piRunner: async (args, options) => {
-            const env: NodeJS.ProcessEnv = {
-              ...options.env,
-              PI_OFFLINE: "1",
-              ...(scenario.env.missingSubject ? { AK_AUDIT_MISSING_SUBJECT: "1" } : {}),
-            };
-            if (scenario.env.poisonRunDir) {
-              env.AK_ROLE_RUN_DIR = join(home, "missing-dossier-does-not-exist");
-            }
-            const subprocess = await runPiSubprocess([...args], {
-              cwd: options.cwd,
-              env,
-              timeoutMs: options.timeoutMs ?? 90_000,
-            });
-            return {
-              code: subprocess.code,
-              stdout: subprocess.stdout,
-              stderr: subprocess.stderr,
-              timedOut: subprocess.localTimeout,
-              args: [...args],
-            };
-          },
-        },
-        );
-
-        assert.equal(result.exitCode, 1, `${scenario.name} must exit nonzero`);
-        assert.ok(result.terminal);
-        const outcome = result.terminal!.roleOutcome;
-        assert.equal(outcome.kind, "failure");
-        if (outcome.kind !== "failure") throw new Error("expected failure");
-        assert.equal(outcome.cause, "output");
-
-        const bookKey = resolveBookKeyFromGit(project);
-        const runDir = join(home, ".ak-roles", "books", bookKey, "runs", `${scenario.runId}@judge`);
-        const sessionFile = join(runDir, "session", "session.jsonl");
-        const rows = (await readFile(sessionFile, "utf8"))
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as {
-            type?: string;
-            message?: {
-              role?: string;
-              toolName?: string;
-              toolCallId?: string;
-              isError?: boolean;
-              details?: Record<string, unknown>;
-            };
-          });
-        const infraResult = [...rows].reverse().find(
-          (row) =>
-            row.type === "message"
-            && row.message?.role === "toolResult"
-            && row.message?.toolName === JUDGE_OUTPUT_TOOL_NAME
-            && row.message?.isError === true,
-        );
-        assert.ok(infraResult?.message?.details, `${scenario.name}: durable infra toolResult`);
-        const durable = infraResult!.message!.details!;
-        assert.deepEqual(
-          {
-            kind: durable.kind,
-            source: durable.source,
-            reasonCode: durable.reasonCode,
-          },
-          buildNavigatorInfrastructureFailureFact(),
-        );
-        assert.deepEqual(durable.observation, scenario.observation);
-        assert.equal(durable.candidate, null);
-
-        const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
-        assert.ok(errorRef, `${scenario.name}: error artifact`);
-        const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-          kind: string;
-          role: string;
-          cause: string;
-          identity?: { name?: string; code?: string | number };
-          details?: Record<string, unknown>;
-        };
-        assert.equal(errorBody.kind, "error");
-        assert.equal(errorBody.role, "judge");
-        assert.equal(errorBody.cause, "output");
-        assert.equal(errorBody.identity?.name, JUDGE_OUTPUT_TOOL_NAME);
-        assert.equal(typeof errorBody.identity?.code, "string");
-        assert.deepEqual(errorBody.details?.observation, scenario.observation);
-        assert.equal(errorBody.details?.candidate, null);
-        assert.equal(errorBody.details?.kind, "role_infrastructure_failure");
-      } finally {
-        await rm(home, { recursive: true, force: true });
-      }
+    childEnv: { AK_AUDIT_MISSING_SUBJECT: "1" },
+    expectDetails: {
+      observation: { kind: "missing-subject", subject: "candidate-verdict" },
+      candidate: null,
     },
-  );
-}
-
-/** #475: one public Menxia tracer covers Gatekeeper no-dispatch + Officer no pass/bounce. */
-for (const scenario of [
+  },
   {
     name: "gatekeeper-no-dispatch",
     runId: "run-e2e-judge-menxia-gk-001",
-    menxiaMode: "gatekeeper-no-dispatch",
-    stage: "gatekeeper",
-    reason: "decision 无显式 dispatch",
-    submission: { status: "pass", findings: [] },
+    childEnv: { AK_MENXIA_MODE: "gatekeeper-no-dispatch" },
+    expectDetails: {
+      stage: "gatekeeper",
+      reason: "decision 无显式 dispatch",
+      submission: { status: "pass", findings: [] },
+    },
   },
   {
     name: "officer-no-pass",
     runId: "run-e2e-judge-menxia-officer-001",
-    menxiaMode: "officer-no-pass",
-    stage: "inspector",
-    reason: "decision 无显式 pass/bounce",
-    submission: { status: "ok-enough" },
+    childEnv: { AK_MENXIA_MODE: "officer-no-pass" },
+    expectDetails: {
+      stage: "inspector",
+      reason: "decision 无显式 pass/bounce",
+      submission: { status: "ok-enough" },
+    },
   },
 ] as const) {
   test(
-    `ak-role Judge public Menxia tracer: ${scenario.name} lands submission/stage/reason on durable details + error artifact`,
+    `ak-role Judge public failure-evidence tracer: ${scenario.name}`,
     { timeout: 120_000 },
     async () => {
-      const home = await mkdtemp(join(tmpdir(), `ak-public-cli-judge-menxia-${scenario.name}-`));
-      try {
-        const project = join(home, "work");
-        await mkdir(project, { recursive: true });
-        seedGitProject(project);
-        const providerPath = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
-        const result = await runAkRole(
-          [
-            "judge",
-            "--model",
-            "ak-audit-failure/faux-1",
-            "--thinking",
-            "off",
-            "--project",
-            project,
-            "Exercise Menxia unusable submission failure evidence.",
-          ],
-          {
-            packageRoot,
-            home,
-            agentDir: join(home, ".pi", "agent"),
-            cwd: project,
-            createRunId: () => scenario.runId,
-            judgeExtraPiArgs: ["-e", providerPath],
-            judgeTimeoutMs: 90_000,
-            io: { stdout() {}, stderr() {} },
-            piRunner: async (args, options) => {
-              const subprocess = await runPiSubprocess([...args], {
-                cwd: options.cwd,
-                env: {
-                  ...options.env,
-                  PI_OFFLINE: "1",
-                  AK_MENXIA_MODE: scenario.menxiaMode,
-                },
-                timeoutMs: options.timeoutMs ?? 90_000,
-              });
-              return {
-                code: subprocess.code,
-                stdout: subprocess.stdout,
-                stderr: subprocess.stderr,
-                timedOut: subprocess.localTimeout,
-                args: [...args],
-              };
-            },
-          },
-        );
-
-        assert.equal(result.exitCode, 1, `${scenario.name} must exit nonzero`);
-        assert.ok(result.terminal);
-        const outcome = result.terminal!.roleOutcome;
-        assert.equal(outcome.kind, "failure");
-        if (outcome.kind !== "failure") throw new Error("expected failure");
-        assert.equal(outcome.cause, "output");
-
-        const bookKey = resolveBookKeyFromGit(project);
-        const runDir = join(home, ".ak-roles", "books", bookKey, "runs", `${scenario.runId}@judge`);
-        const sessionFile = join(runDir, "session", "session.jsonl");
-        const rows = (await readFile(sessionFile, "utf8"))
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as {
-            type?: string;
-            message?: {
-              role?: string;
-              toolName?: string;
-              isError?: boolean;
-              details?: Record<string, unknown>;
-            };
-          });
-        const infraResult = [...rows].reverse().find(
-          (row) =>
-            row.type === "message"
-            && row.message?.role === "toolResult"
-            && row.message?.toolName === JUDGE_OUTPUT_TOOL_NAME
-            && row.message?.isError === true,
-        );
-        assert.ok(infraResult?.message?.details, `${scenario.name}: durable infra toolResult`);
-        const durable = infraResult!.message!.details!;
-        assert.deepEqual(
-          {
-            kind: durable.kind,
-            source: durable.source,
-            reasonCode: durable.reasonCode,
-          },
-          buildNavigatorInfrastructureFailureFact(),
-        );
-        assert.equal(durable.stage, scenario.stage);
-        assert.equal(durable.reason, scenario.reason);
-        assert.deepEqual(durable.submission, scenario.submission);
-
-        const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
-        assert.ok(errorRef, `${scenario.name}: error artifact`);
-        const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-          kind: string;
-          role: string;
-          cause: string;
-          identity?: { name?: string; code?: string | number };
-          details?: Record<string, unknown>;
-        };
-        assert.equal(errorBody.kind, "error");
-        assert.equal(errorBody.role, "judge");
-        assert.equal(errorBody.cause, "output");
-        assert.equal(errorBody.identity?.name, JUDGE_OUTPUT_TOOL_NAME);
-        assert.equal(errorBody.details?.stage, scenario.stage);
-        assert.equal(errorBody.details?.reason, scenario.reason);
-        assert.deepEqual(errorBody.details?.submission, scenario.submission);
-      } finally {
-        await rm(home, { recursive: true, force: true });
-      }
+      await traceJudgeInfrastructureFailure({
+        name: scenario.name,
+        runId: scenario.runId,
+        expectDetails: scenario.expectDetails,
+        ...("poisonRunDir" in scenario ? { poisonRunDir: scenario.poisonRunDir } : {}),
+        ...("childEnv" in scenario ? { childEnv: scenario.childEnv } : {}),
+      });
     },
   );
 }

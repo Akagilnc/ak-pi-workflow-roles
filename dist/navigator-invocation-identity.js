@@ -8,6 +8,17 @@ const NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
   "source",
   "reasonCode"
 ];
+const NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
+  "observation",
+  "candidate",
+  "submission",
+  "stage",
+  "reason"
+];
+const NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS = /* @__PURE__ */ new Set([
+  ...NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS,
+  ...NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS
+]);
 function buildNavigatorInfrastructureFailureFact() {
   return {
     kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
@@ -21,7 +32,13 @@ function hasNavigatorInfrastructureFailureBase(value) {
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
     if (!Object.hasOwn(record, key)) return false;
   }
-  return record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record.source === "shared-role-lifecycle" && record.reasonCode === "host_failure";
+  if (record.kind !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND || record.source !== "shared-role-lifecycle" || record.reasonCode !== "host_failure") {
+    return false;
+  }
+  for (const key of Object.keys(record)) {
+    if (!NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS.has(key)) return false;
+  }
+  return true;
 }
 function isNavigatorInfrastructureFailureFact(value) {
   if (!hasNavigatorInfrastructureFailureBase(value)) return false;
@@ -204,6 +221,7 @@ function currentInvocationMarkerFromSession(entries, beforeIndex = entries.lengt
   return void 0;
 }
 export {
+  NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
   NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
   NAVIGATOR_INVOCATION_ENTRY,
   bindCurrentDurableTerminalToMarker,

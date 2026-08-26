@@ -40,6 +40,23 @@ const NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
   "reasonCode",
 ] as const;
 
+/**
+ * Typed failure evidence keys that may ride durable infrastructure details (#475).
+ * Unknown extras keep classification nonterminal (closed identity + whitelist only).
+ */
+export const NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
+  "observation",
+  "candidate",
+  "submission",
+  "stage",
+  "reason",
+] as const;
+
+const NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS = new Set<string>([
+  ...NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS,
+  ...NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
+]);
+
 export type NavigatorInfrastructureFailureFact = {
   kind: typeof NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND;
   source: "shared-role-lifecycle";
@@ -55,9 +72,9 @@ export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructu
 }
 
 /**
- * Base infrastructure-failure identity on durable details.
- * Typed evidence extensions (observation/candidate/submission/…) are allowed;
- * wrong/missing base values still fail closed.
+ * Infrastructure-failure identity on durable details.
+ * Base keys must match exactly; only typed evidence whitelist keys may extend;
+ * any unknown key fails closed.
  */
 export function hasNavigatorInfrastructureFailureBase(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -65,16 +82,22 @@ export function hasNavigatorInfrastructureFailureBase(value: unknown): boolean {
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
     if (!Object.hasOwn(record, key)) return false;
   }
-  return (
-    record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND &&
-    record.source === "shared-role-lifecycle" &&
-    record.reasonCode === "host_failure"
-  );
+  if (
+    record.kind !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND
+    || record.source !== "shared-role-lifecycle"
+    || record.reasonCode !== "host_failure"
+  ) {
+    return false;
+  }
+  for (const key of Object.keys(record)) {
+    if (!NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS.has(key)) return false;
+  }
+  return true;
 }
 
 /**
  * Exact closed infrastructure-failure fact (no evidence extensions).
- * Classifier uses {@link hasNavigatorInfrastructureFailureBase} so enriched
+ * Classifier uses {@link hasNavigatorInfrastructureFailureBase} so whitelist-enriched
  * durable details still complete as infrastructure (#475).
  */
 export function isNavigatorInfrastructureFailureFact(

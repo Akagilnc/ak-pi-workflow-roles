@@ -161,9 +161,9 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       assert.equal(isDurablePackagedRoleTerminalResult(stringFalseIsErrorMsg), false, `${entry.role}:${String(phase)}:string-false-isError`);
       assert.equal(isDurablePackagedRoleTerminalResult(zeroIsErrorMsg), false, `${entry.role}:${String(phase)}:zero-isError`);
       assert.equal(isDurablePackagedRoleTerminalResult(contradictoryAcceptedInfraMsg), false, `${entry.role}:${String(phase)}:contradictory-accepted-infra`);
-      // Typed evidence extras keep infrastructure durable completion (#475); exact closed fact still rejects extras.
-      assert.equal(isDurablePackagedRoleTerminalResult(extraKeyInfraMsg), true, `${entry.role}:${String(phase)}:extra-key-infra-durable`);
-      assert.equal(classifyPackagedRoleTerminalResult(extraKeyInfraMsg).kind, "infrastructure", `${entry.role}:${String(phase)}:extra-key-infra-classify`);
+      // Unknown extras stay nonterminal; exact closed fact still rejects extras (#475 whitelist).
+      assert.equal(isDurablePackagedRoleTerminalResult(extraKeyInfraMsg), false, `${entry.role}:${String(phase)}:extra-key-infra`);
+      assert.equal(classifyPackagedRoleTerminalResult(extraKeyInfraMsg).kind, "nonterminal", `${entry.role}:${String(phase)}:extra-key-infra-classify`);
       assert.equal(isDurablePackagedRoleTerminalResult(malformedInfraMsg), false, `${entry.role}:${String(phase)}:malformed-infra`);
       assert.equal(isNavigatorInfrastructureFailureFact(extraKeyInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-extras`);
       assert.equal(isNavigatorInfrastructureFailureFact(malformedInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-wrong-source`);
@@ -203,9 +203,9 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         undefined,
         `${entry.role}:${String(phase)}:settlement-contradictory-accepted-infra`,
       );
-      assert.deepEqual(
+      assert.equal(
         publicNavigatorSettlement(entry.role, phase, extraKeyInfraMsg),
-        { kind: "role_infrastructure_failure", role: entry.role, phase },
+        undefined,
         `${entry.role}:${String(phase)}:settlement-extra-key-infra`,
       );
       assert.equal(
