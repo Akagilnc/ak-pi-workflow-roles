@@ -241,11 +241,11 @@ test("registry public extractors and settlement share one closed terminal classi
   const infraFact = buildNavigatorInfrastructureFailureFact();
   assert.equal(isNavigatorInfrastructureFailureFact(infraFact), true);
   assert.equal(
-    isNavigatorInfrastructureFailureFact({ ...infraFact, observation: { kind: "missing-dossier" } }),
+    isNavigatorInfrastructureFailureFact({ ...infraFact, extra: true }),
     false,
-    "exact closed fact rejects evidence extensions",
+    "exact closed fact rejects extras",
   );
-  // Whitelisted typed evidence keeps infrastructure terminal; unknown extras stay nonterminal (#475).
+  // Extra durable fields keep infrastructure terminal — base kind/source/reasonCode only (#475 / ADR 0040).
   assert.equal(
     classifyPackagedRoleTerminalResult({
       toolName: "ak_judge_output",
@@ -253,7 +253,7 @@ test("registry public extractors and settlement share one closed terminal classi
       details: { ...infraFact, observation: { kind: "missing-dossier" }, candidate: null },
     }).kind,
     "infrastructure",
-    "typed evidence extensions keep infrastructure terminal",
+    "evidence extensions keep infrastructure terminal",
   );
   assert.equal(
     classifyPackagedRoleTerminalResult({
@@ -261,8 +261,8 @@ test("registry public extractors and settlement share one closed terminal classi
       isError: true,
       details: { ...infraFact, extra: true },
     }).kind,
-    "nonterminal",
-    "unknown extras fail closed",
+    "infrastructure",
+    "unknown extras do not change infrastructure classification",
   );
 
   const rolesSeen = new Set<string>();
@@ -347,11 +347,6 @@ test("registry public extractors and settlement share one closed terminal classi
           details: infraFact,
         },
         {
-          name: "unknown-extra-infra",
-          isError: true,
-          details: { ...infraFact, extra: "not-whitelisted" },
-        },
-        {
           name: "malformed-infra",
           isError: true,
           details: {
@@ -362,22 +357,15 @@ test("registry public extractors and settlement share one closed terminal classi
         },
       ];
 
-      // Whitelisted typed evidence stays infrastructure terminal (#475).
+      // Extra fields stay infrastructure terminals (not negatives) (#475 / ADR 0040).
       assert.equal(
         classifyPackagedRoleTerminalResult({
           toolName: tool,
           isError: true,
-          details: {
-            ...infraFact,
-            observation: { kind: "missing-dossier" },
-            candidate: null,
-            submission: { status: "pass" },
-            stage: "gatekeeper",
-            reason: "decision 无显式 dispatch",
-          },
+          details: { ...infraFact, extra: "typed-evidence" },
         }).kind,
         "infrastructure",
-        `${label}:typed-evidence-infra-terminal`,
+        `${label}:extra-key-infra-still-terminal`,
       );
       assert.deepEqual(
         publicNavigatorSettlement(registryEntry.role, phase, {
@@ -390,7 +378,7 @@ test("registry public extractors and settlement share one closed terminal classi
           role: registryEntry.role,
           phase,
         },
-        `${label}:typed-evidence-infra-settlement`,
+        `${label}:extra-key-infra-settlement`,
       );
 
       for (const negative of negatives) {
