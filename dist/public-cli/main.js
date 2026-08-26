@@ -20704,7 +20704,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
   }
   return void 0;
 }
-async function readBoundAuditorKnownFailure(sessionFile) {
+async function loadBoundAuditorVolumes(sessionFile) {
   let parentEntries;
   try {
     parentEntries = await readBoundSessionEntries(sessionFile);
@@ -20741,7 +20741,7 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     if (isMissingPathError2(error)) return void 0;
     throw sessionReadFailure(error, "failed to read bound auditor session directory");
   }
-  const validAuditorFiles = [];
+  const valid = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
@@ -20756,9 +20756,17 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-    validAuditorFiles.push({ file, entries, ...attemptEntryId === void 0 ? {} : { attemptEntryId } });
+    valid.push({
+      entries,
+      parentId,
+      sessionFile,
+      ...attemptEntryId === void 0 ? {} : { attemptEntryId }
+    });
   }
-  for (const { entries, attemptEntryId } of validAuditorFiles) {
+  return valid;
+}
+function complianceFailureFromAuditorVolumes(volumes) {
+  for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -20779,7 +20787,10 @@ async function readBoundAuditorKnownFailure(sessionFile) {
       };
     }
   }
-  for (const { entries } of validAuditorFiles) {
+  return void 0;
+}
+function providerStopFallbackFromAuditorVolumes(volumes) {
+  for (const { entries } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
@@ -20792,6 +20803,16 @@ async function readBoundAuditorKnownFailure(sessionFile) {
     };
   }
   return void 0;
+}
+async function readBoundAuditorComplianceFailure(sessionFile) {
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  if (volumes === void 0) return void 0;
+  return complianceFailureFromAuditorVolumes(volumes);
+}
+async function readBoundAuditorProviderStopFallback(sessionFile) {
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  if (volumes === void 0) return void 0;
+  return providerStopFallbackFromAuditorVolumes(volumes);
 }
 function typedFailedTerminatingToolKnownFailure(entries) {
   let attemptStart = 0;
@@ -20843,8 +20864,8 @@ async function resolveAuditedRunnerFailureResolution(input) {
     }
   }
   try {
-    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
-    if (auditorFailure !== void 0) return resolutionOf(auditorFailure);
+    const auditorCompliance = await readBoundAuditorComplianceFailure(input.sessionFile);
+    if (auditorCompliance !== void 0) return resolutionOf(auditorCompliance);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return resolutionOf({
@@ -20867,6 +20888,17 @@ async function resolveAuditedRunnerFailureResolution(input) {
         diagnostic: failure.message || failure.name
       });
     }
+  }
+  try {
+    const auditorStop = await readBoundAuditorProviderStopFallback(input.sessionFile);
+    if (auditorStop !== void 0) return resolutionOf(auditorStop);
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound auditor provider stop");
+    return resolutionOf({
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name
+    });
   }
   try {
     const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
