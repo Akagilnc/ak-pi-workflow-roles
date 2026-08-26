@@ -124,7 +124,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       assert.equal(isDurablePackagedRoleTerminalResult(retryableMsg), false, `${entry.role}:${String(phase)}:retryable`);
       assert.equal(isDurablePackagedRoleTerminalResult(infraMsg), true, `${entry.role}:${String(phase)}:infra`);
 
-      // Typed negative regressions: missing / non-boolean / zero / contradictory / extra-key infra fail closed.
+      // Typed negative regressions: missing / non-boolean / zero / contradictory / malformed infra fail closed.
       const missingIsErrorMsg = {
         toolName: entry.outputTool,
         details: acceptedDetails,
@@ -161,9 +161,9 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       assert.equal(isDurablePackagedRoleTerminalResult(stringFalseIsErrorMsg), false, `${entry.role}:${String(phase)}:string-false-isError`);
       assert.equal(isDurablePackagedRoleTerminalResult(zeroIsErrorMsg), false, `${entry.role}:${String(phase)}:zero-isError`);
       assert.equal(isDurablePackagedRoleTerminalResult(contradictoryAcceptedInfraMsg), false, `${entry.role}:${String(phase)}:contradictory-accepted-infra`);
-      // Unknown extras stay nonterminal; exact closed fact still rejects extras (#475 whitelist).
-      assert.equal(isDurablePackagedRoleTerminalResult(extraKeyInfraMsg), false, `${entry.role}:${String(phase)}:extra-key-infra`);
-      assert.equal(classifyPackagedRoleTerminalResult(extraKeyInfraMsg).kind, "nonterminal", `${entry.role}:${String(phase)}:extra-key-infra-classify`);
+      // Extra fields keep infrastructure durable completion; exact closed fact still rejects extras (#475 / ADR 0040).
+      assert.equal(isDurablePackagedRoleTerminalResult(extraKeyInfraMsg), true, `${entry.role}:${String(phase)}:extra-key-infra-durable`);
+      assert.equal(classifyPackagedRoleTerminalResult(extraKeyInfraMsg).kind, "infrastructure", `${entry.role}:${String(phase)}:extra-key-infra-classify`);
       assert.equal(isDurablePackagedRoleTerminalResult(malformedInfraMsg), false, `${entry.role}:${String(phase)}:malformed-infra`);
       assert.equal(isNavigatorInfrastructureFailureFact(extraKeyInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-extras`);
       assert.equal(isNavigatorInfrastructureFailureFact(malformedInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-wrong-source`);
@@ -203,9 +203,9 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         undefined,
         `${entry.role}:${String(phase)}:settlement-contradictory-accepted-infra`,
       );
-      assert.equal(
+      assert.deepEqual(
         publicNavigatorSettlement(entry.role, phase, extraKeyInfraMsg),
-        undefined,
+        { kind: "role_infrastructure_failure", role: entry.role, phase },
         `${entry.role}:${String(phase)}:settlement-extra-key-infra`,
       );
       assert.equal(

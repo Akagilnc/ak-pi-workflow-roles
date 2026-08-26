@@ -15,7 +15,7 @@
  * One shared typed terminal classifier owns durable completion for lifecycle,
  * publicNavigatorSettlement, and every public CLI Receipt extractor:
  *   - accepted/human: isError exactly false and no infrastructure-failure fact
- *   - infrastructure: isError exactly true plus exact closed infrastructure fact
+ *   - infrastructure: isError exactly true plus base kind/source/reasonCode identity
  *   - retryable/missing/nonboolean/contradictory/malformed: nonterminal
  *
  * One truth table also owns marker↔terminal cardinality:
@@ -41,8 +41,8 @@ const NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
 ] as const;
 
 /**
- * Typed failure evidence keys that may ride durable infrastructure details (#475).
- * Unknown extras keep classification nonterminal (closed identity + whitelist only).
+ * Known typed failure evidence keys projected onto durable infrastructure details (#475).
+ * Extraction whitelist only — classification does not reject unknown extras (ADR 0040).
  */
 export const NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
   "observation",
@@ -51,11 +51,6 @@ export const NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
   "stage",
   "reason",
 ] as const;
-
-const NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS = new Set<string>([
-  ...NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS,
-  ...NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
-]);
 
 export type NavigatorInfrastructureFailureFact = {
   kind: typeof NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND;
@@ -72,9 +67,9 @@ export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructu
 }
 
 /**
- * Infrastructure-failure identity on durable details.
- * Base keys must match exactly; only typed evidence whitelist keys may extend;
- * any unknown key fails closed.
+ * Base infrastructure-failure identity on durable details.
+ * Only kind/source/reasonCode discriminate; extra fields are allowed and retained
+ * (ADR 0040 — discriminators select the branch, they do not ban extras).
  */
 export function hasNavigatorInfrastructureFailureBase(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -82,22 +77,16 @@ export function hasNavigatorInfrastructureFailureBase(value: unknown): boolean {
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
     if (!Object.hasOwn(record, key)) return false;
   }
-  if (
-    record.kind !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND
-    || record.source !== "shared-role-lifecycle"
-    || record.reasonCode !== "host_failure"
-  ) {
-    return false;
-  }
-  for (const key of Object.keys(record)) {
-    if (!NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS.has(key)) return false;
-  }
-  return true;
+  return (
+    record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND &&
+    record.source === "shared-role-lifecycle" &&
+    record.reasonCode === "host_failure"
+  );
 }
 
 /**
  * Exact closed infrastructure-failure fact (no evidence extensions).
- * Classifier uses {@link hasNavigatorInfrastructureFailureBase} so whitelist-enriched
+ * Classifier uses {@link hasNavigatorInfrastructureFailureBase} so enriched
  * durable details still complete as infrastructure (#475).
  */
 export function isNavigatorInfrastructureFailureFact(

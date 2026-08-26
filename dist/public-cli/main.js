@@ -20271,13 +20271,7 @@ function hasNavigatorInfrastructureFailureBase(value) {
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
     if (!Object.hasOwn(record4, key)) return false;
   }
-  if (record4.kind !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND || record4.source !== "shared-role-lifecycle" || record4.reasonCode !== "host_failure") {
-    return false;
-  }
-  for (const key of Object.keys(record4)) {
-    if (!NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS.has(key)) return false;
-  }
-  return true;
+  return record4.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record4.source === "shared-role-lifecycle" && record4.reasonCode === "host_failure";
 }
 function invocationPhaseFromUnknown(value) {
   if (value === null || value === "plan" || value === "apply") return value;
@@ -20390,7 +20384,7 @@ function bindCurrentDurableTerminalToMarker(entries) {
 function isReceiptSettlementBindingClear(entries) {
   return bindCurrentDurableTerminalToMarker(entries).kind !== "ambiguous";
 }
-var NAVIGATOR_INVOCATION_ENTRY, NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS, NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS, NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS, PACKAGED_ROLE_OUTPUT_TOOLS;
+var NAVIGATOR_INVOCATION_ENTRY, NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS, PACKAGED_ROLE_OUTPUT_TOOLS;
 var init_navigator_invocation_identity = __esm({
   "src/navigator-invocation-identity.ts"() {
     "use strict";
@@ -20404,17 +20398,6 @@ var init_navigator_invocation_identity = __esm({
       "source",
       "reasonCode"
     ];
-    NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
-      "observation",
-      "candidate",
-      "submission",
-      "stage",
-      "reason"
-    ];
-    NAVIGATOR_INFRASTRUCTURE_FAILURE_ALLOWED_KEYS = /* @__PURE__ */ new Set([
-      ...NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS,
-      ...NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS
-    ]);
     PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
       PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
     );
