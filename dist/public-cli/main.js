@@ -14101,15 +14101,13 @@ function read2(value, key) {
 }
 function validateDoctorSubmissionShape(value) {
   const status = read2(value, "status");
-  const base = typeof status === "string" ? status : status;
-  if (base !== "completed" && base !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
   return value;
 }
 function validateRecordedDoctorOutput(value) {
   const output = validateDoctorSubmissionShape(value);
   const status = read2(output, "status");
-  const base = typeof status === "string" ? status : status;
-  if (base === "completed" && read2(output, "cost") === void 0) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+  if (status === "completed" && read2(output, "cost") === void 0) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
   return output;
 }
 var DOCTOR_OUTPUT_TOOL_NAME, DOCTOR_TARGET_KINDS, nonblank, count, evidenceIds, guardrail, lastRealBite, assetKinds, findingBody, finding, caseIdentity, cost, doctorSubmissionVariants, doctorSubmissionSchema, doctorOutputSchema, doctorEvidenceReadSchema, DoctorSubmissionContractError;
@@ -14262,9 +14260,8 @@ function validateMergerInput(value) {
 function validateMergerOutput(value, expectedAttemptId) {
   if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch");
   const status = typeof value.status === "string" ? value.status : void 0;
-  const statusBase = status !== void 0 ? status : void 0;
-  if (statusBase === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
-  if (statusBase === "escalate") return structuredClone(value);
+  if (status === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
+  if (status === "escalate") return structuredClone(value);
   throw new Error("Merger output has no recognized execution discriminator");
 }
 var oidPattern, materialSchema, checkSchema, mergerInputSchema, mergerOutputVariants, mergerOutputSchema, MERGER_OUTPUT_TOOL_NAME, record, blank, MergerInputContractError;

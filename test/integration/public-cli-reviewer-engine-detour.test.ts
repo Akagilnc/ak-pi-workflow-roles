@@ -264,6 +264,46 @@ async function assertDetourLaborOnCase(
 
 
 test(
+  "engine failure in evidence legs terminates the public Reviewer run with its cause",
+  { timeout: 180_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-reviewer-engine-failure-"));
+    const engineCause = "reviewer-engine-process-cause-483";
+    try {
+      const project = join(home, "work");
+      const binDir = join(home, "bin");
+      await mkdir(project, { recursive: true });
+      await mkdir(binDir, { recursive: true });
+      const base = seedGitProject(project);
+      await writeExecutable(
+        join(binDir, "kimi"),
+        `#!/bin/sh\nprintf '%s\\n' '${engineCause}' >&2\nexit 23\n`,
+      );
+
+      const result = await runReviewerWithEngine({
+        home,
+        project,
+        binDir,
+        runId: "run-reviewer-engine-failure-001",
+        base,
+        engine: "cursor",
+      });
+
+      assert.notEqual(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "failure");
+      if (result.terminal?.roleOutcome.kind !== "failure") assert.fail("expected typed failure");
+      assert.equal(
+        result.terminal.roleOutcome.diagnostic.includes(engineCause),
+        true,
+        result.terminal.roleOutcome.diagnostic,
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   "AC with-notes: cursor engine → leg detour → typed reviewer receipt",
   { timeout: 180_000 },
   async () => {

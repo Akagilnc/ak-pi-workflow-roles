@@ -259,9 +259,8 @@ function createNavigatorPrepareTool(onOutput) {
 }
 function statusListMatchesSettlement(candidateStatuses, settlementStatus) {
   if (candidateStatuses.includes(settlementStatus)) return true;
-  const settlementBase = settlementStatus;
   return candidateStatuses.some(
-    (status) => status === settlementBase
+    (status) => status === settlementStatus
   );
 }
 function selectNavigatorCandidate(candidates, settlement) {

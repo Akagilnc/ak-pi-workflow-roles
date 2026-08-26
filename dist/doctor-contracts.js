@@ -66,16 +66,14 @@ catch {
 } }
 export function validateDoctorSubmissionShape(value) {
     const status = read(value, "status");
-    const base = typeof status === "string" ? (status) : status;
-    if (base !== "completed" && base !== "refused")
+    if (status !== "completed" && status !== "refused")
         throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
     return value;
 }
 export function validateRecordedDoctorOutput(value) {
     const output = validateDoctorSubmissionShape(value);
     const status = read(output, "status");
-    const base = typeof status === "string" ? (status) : status;
-    if (base === "completed" && read(output, "cost") === undefined)
+    if (status === "completed" && read(output, "cost") === undefined)
         throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
     return output;
 }
