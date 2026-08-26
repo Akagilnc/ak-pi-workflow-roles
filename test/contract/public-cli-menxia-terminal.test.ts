@@ -210,10 +210,28 @@ function assertMenxiaNotaryRound(
       false,
     );
   } else {
+    // Durable typed reason field — fixture bytes projected as written.
     assert.equal(round.dispatch.reason, reason);
   }
   assert.equal(round.officer.seat, "notary");
   assert.equal(round.officer.status, "pass");
+  assert.ok(Array.isArray(round.officer.findings));
+  assert.ok(round.officer.findings.every((item) => typeof item === "string"));
+}
+
+/** Typed oracle: menxia/session JSONL damage surfaces as LedgerSessionJsonlError, not publication failure. */
+function assertLoudMenxiaReadFailure(terminal: TerminalResult): void {
+  assert.equal(terminal.roleOutcome.kind, "failure");
+  if (terminal.roleOutcome.kind !== "failure") {
+    throw new Error("expected failure terminal for menxia read damage");
+  }
+  assert.equal(terminal.roleOutcome.cause, "unrecognized");
+  assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "LedgerSessionJsonlError");
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(terminal.roleOutcome.decisiveFacts, "publicationFailure"),
+    false,
+  );
+  assert.equal(terminal.menxia, undefined);
 }
 
 async function runJudgePublic(input: {
@@ -263,7 +281,9 @@ test("public CLI projects normal menxia dispatch + officer findings", async () =
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const reason = "judge draft requires document fidelity";
+    const reason = "reason-token-normal";
+    // Opaque durable tokens — assert typed projection structure, not prose wording.
+    const findings = ["finding-token-a", "finding-token-b"] as const;
     const { terminal, exitCode } = await runJudgePublic({
       home,
       project,
@@ -273,7 +293,7 @@ test("public CLI projects normal menxia dispatch + officer findings", async () =
         await seedMenxiaPair(sessionDir, {
           officer: "notary",
           reason,
-          findings: ["quote matches source", "ticket axes aligned"],
+          findings: [...findings],
         });
       },
     });
@@ -281,10 +301,8 @@ test("public CLI projects normal menxia dispatch + officer findings", async () =
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.ok(terminal.menxia !== undefined);
     assertMenxiaNotaryRound(terminal.menxia!, reason);
-    assert.deepEqual(terminal.menxia!.rounds[0]!.officer.findings, [
-      "quote matches source",
-      "ticket axes aligned",
-    ]);
+    assert.equal(terminal.menxia!.rounds[0]!.officer.findings.length, findings.length);
+    assert.deepEqual(terminal.menxia!.rounds[0]!.officer.findings, [...findings]);
   }, { prefix: "ak-menxia-normal-" });
 });
 
@@ -358,12 +376,9 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
       },
     });
     // Settlement read fails loud — public entry settles a failure carrying the
-    // JSONL cause, never an accepted Terminal that pretends no gate ran.
+    // typed JSONL error identity, never an accepted Terminal that pretends no gate ran.
     assert.equal(exitCode, 1);
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
-    assert.match(terminal.roleOutcome.diagnostic, /malformed JSONL record/);
-    assert.equal(terminal.menxia, undefined);
+    assertLoudMenxiaReadFailure(terminal);
   }, { prefix: "ak-menxia-damaged-" });
 });
 
@@ -373,7 +388,7 @@ test("public CLI keeps non-empty dispatch reason bytes as written", async () => 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     // Leading/trailing whitespace is durable content — trim only decides emptiness.
-    const reason = "  padded seat-reduction reason  ";
+    const reason = "  reason-token-padded  ";
     const { terminal } = await runJudgePublic({
       home,
       project,
@@ -393,7 +408,7 @@ test("public CLI failure Terminal still projects accepted menxia gate facts", as
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const reason = "prior gate before main failure";
+    const reason = "reason-token-fail";
     const { terminal, exitCode } = await runJudgePublic({
       home,
       project,
@@ -418,7 +433,7 @@ test("public CLI no_receipt Terminal projects accepted menxia gate facts", async
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-menxia-no-receipt";
-    const reason = "gate before no-receipt";
+    const reason = "reason-token-no-receipt";
     const { terminal, exitCode } = await runJudgePublic({
       home,
       project,
@@ -463,7 +478,7 @@ test("public CLI resumable failure projects menxia without re-disclosing runId o
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-menxia-resume-429";
-    const reason = "gate before 429";
+    const reason = "reason-token-resume";
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
       [
@@ -564,21 +579,10 @@ test("public CLI audit-incomplete keeps menxia read damage off the publication-f
         await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
       },
     });
-    // Menxia read throws after successful publication → auto-resume exhausts with
-    // the JSONL identity. Must not be labeled publication failure.
+    // Menxia read throws after successful publication → typed JSONL error identity.
+    // Must not carry publicationFailure decisive fact.
     assert.equal(exitCode, 1);
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind !== "failure") {
-      throw new Error("expected failure terminal carrying JSONL read cause");
-    }
-    assert.equal(
-      terminal.roleOutcome.diagnostic.includes(
-        "audit-incomplete evidence publication failed",
-      ),
-      false,
-    );
-    assert.match(terminal.roleOutcome.diagnostic, /malformed JSONL record/);
-    assert.equal(terminal.menxia, undefined);
+    assertLoudMenxiaReadFailure(terminal);
   }, { prefix: "ak-menxia-audit-read-" });
 });
 
@@ -599,14 +603,9 @@ test("public CLI failure path keeps damaged auditor-roles loud (not silent no-ga
         await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
       },
     });
-    // Failure settlement projects menxia loud: damaged volumes surface their
-    // JSONL cause rather than a silent no-gate omission on the failure Terminal.
+    // Failure settlement projects menxia loud: damaged volumes surface typed
+    // JSONL error identity rather than a silent no-gate omission.
     assert.equal(exitCode, 1);
-    assert.equal(terminal.roleOutcome.kind, "failure");
-    if (terminal.roleOutcome.kind !== "failure") {
-      throw new Error("expected failure");
-    }
-    assert.match(terminal.roleOutcome.diagnostic, /malformed JSONL record/);
-    assert.equal(terminal.menxia, undefined);
+    assertLoudMenxiaReadFailure(terminal);
   }, { prefix: "ak-menxia-fail-damaged-" });
 });
