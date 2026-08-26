@@ -101,13 +101,13 @@ function asStringFindings(value: unknown): readonly string[] {
 }
 
 /**
- * Optional non-empty dispatch reason. Empty / non-string stays absent so
- * Terminal projection can show seat-reduction without a written reason.
+ * Optional non-empty dispatch reason. Trim only decides emptiness; a non-empty
+ * durable reason is returned as written (gatekeeper keeps reason as-is).
  */
 function optionalDispatchReason(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
-  const trimmed = raw.trim();
-  return trimmed === "" ? undefined : trimmed;
+  if (raw.trim() === "") return undefined;
+  return raw;
 }
 
 type AcceptedGateToolCall = {
