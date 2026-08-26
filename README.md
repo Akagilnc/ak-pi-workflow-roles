@@ -23,11 +23,11 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId>` reopens that run's exact Pi session. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector and Doctor remain one-shot. The package never auto-switches providers; override the model for one run with the global flags.
+`ak-role resume <runId> [message]` reopens that run's exact Pi session. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector and Doctor remain one-shot. The package never auto-switches providers; override the model for one run with the global flags. An optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope.
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
-Global overrides work before or after the role: `ak-role --model xai/grok-4.5:high resume <runId>`.
+Global overrides work before the opaque message segment: `ak-role --model xai/grok-4.5:high resume <runId>` or `ak-role resume --model xai/grok-4.5:high <runId>`.
 
 Every run also prepares Navigator advice in the same Terminal. Configure it like any other seat:
 

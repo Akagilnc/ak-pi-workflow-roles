@@ -64,7 +64,11 @@ import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
-import { AUTO_RESUME_LIMIT, peekRoleRunRole } from "./run-lifecycle.ts";
+import {
+  AUTO_RESUME_LIMIT,
+  peekRoleRunRole,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   isAutomaticConfigurableSeat,
@@ -270,9 +274,15 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
   // Global flags may appear before or after the subcommand
   // (`ak-role --model x roles` and `ak-role roles --model x`).
   // Grammar authority: shared typed consumer over PUBLIC_OPTION_TABLE.global.
+  // #471: after `resume <runId>`, remaining argv is the opaque message segment
+  // and must not re-enter the global-option consumer.
   while (args.length > 0) {
     if (args[0] === "--") {
       args.shift();
+      positional.push(...args);
+      break;
+    }
+    if (positional[0] === "resume" && positional.length >= 2) {
       positional.push(...args);
       break;
     }
@@ -324,6 +334,24 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
     ...(engine === undefined ? {} : { engine }),
     help,
   };
+}
+
+/**
+ * Unique public resume request parser (#471).
+ * One optional argv after runId is the opaque message; no further positionals.
+ */
+function parseResumeRequest(args: readonly string[]): PublicResumeRequest {
+  const runId = args[0];
+  if (runId === undefined || runId.trim() === "" || runId.startsWith("-")) {
+    throw new CliUsageError("usage: ak-role resume <runId> [message]");
+  }
+  if (args.length > 2) {
+    throw new CliUsageError("usage: ak-role resume <runId> [message]");
+  }
+  if (args.length === 2) {
+    return { runId, message: args[1]! };
+  }
+  return { runId };
 }
 
 function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | undefined {
@@ -784,17 +812,15 @@ export async function runAkRole(
 
     // Resume reopens an exact Role run (#416): caller decides; session principal
     // must still exist. Seat and dispatch follow the durable admitted role.
+    // #471: unique parser owns {runId, message?}; five role paths only consume it.
     if (parsed.command === "resume") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
       const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
-      const resumeRunId = parsed.args[0];
-      const resumeRole =
-        resumeRunId === undefined || resumeRunId.trim() === ""
-          ? undefined
-          : await peekRoleRunRole(home, resumeRunId);
+      const resumeRequest = parseResumeRequest(parsed.args);
+      const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
       if (resumeRole === "collector") {
         throw new CliUsageError(
           "collector role runs are one-shot and cannot be resumed",
@@ -824,7 +850,7 @@ export async function runAkRole(
       );
       if (resumeRole === "coder") {
         const result = await runPublicCoderResume(
-          parsed.args,
+          resumeRequest,
           {
             home,
             agentDir,
@@ -852,7 +878,7 @@ export async function runAkRole(
       }
       if (resumeRole === "fixer") {
         const result = await runPublicFixerResume(
-          parsed.args,
+          resumeRequest,
           {
             home,
             agentDir,
@@ -880,7 +906,7 @@ export async function runAkRole(
       }
       if (resumeRole === "reviewer") {
         const result = await runPublicReviewerResume(
-          parsed.args,
+          resumeRequest,
           {
             home,
             agentDir,
@@ -908,7 +934,7 @@ export async function runAkRole(
       }
       if (resumeRole === "merger") {
         const result = await runPublicMergerResume(
-          parsed.args,
+          resumeRequest,
           {
             home,
             agentDir,
@@ -935,7 +961,7 @@ export async function runAkRole(
         };
       }
       const result = await runPublicResume(
-        parsed.args,
+        resumeRequest,
         {
           home,
           agentDir,

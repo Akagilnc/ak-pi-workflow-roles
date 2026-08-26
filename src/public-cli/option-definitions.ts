@@ -1146,8 +1146,11 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary: "Reopen an exact role run whose Pi session principal still exists.",
-    usage: ["ak-role resume <runId>"],
-    examples: ["ak-role resume 01abc…"],
+    usage: ["ak-role resume <runId> [message]"],
+    examples: [
+      "ak-role resume 01abc…",
+      "ak-role resume 01abc… \"owner ruling\"",
+    ],
   },
 } as const satisfies Record<string, PublicCommandHelpFacts>;
 
