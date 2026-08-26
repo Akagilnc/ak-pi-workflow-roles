@@ -6,7 +6,6 @@
  * extra rows or shift column boundaries (note / fix.summary / decision question / reason).
  */
 import { renderPublicAkRoleCommand } from "./command-renderer.ts";
-import type { ComplianceAuditIncomplete } from "../compliance-transport.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 
@@ -41,9 +40,10 @@ export type TerminalRoleName =
   | "merger"
   | "notary";
 
+/** Merger/Collector residual only — Notary/audit residual abolished (#475). */
 export type ResidualIncompleteTerminalOutcome = {
   kind: "incomplete";
-  role: "merger" | "collector" | "notary";
+  role: "merger" | "collector";
   status: "incomplete";
   decision: "no-usable-result";
   candidate: unknown;
@@ -51,35 +51,6 @@ export type ResidualIncompleteTerminalOutcome = {
   acceptedReceipt: false;
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
-
-export type AuditIncompleteTerminalOutcome = {
-  kind: "audit_incomplete";
-  role: TerminalRoleName;
-  status: "audit-incomplete";
-  decision: "no-usable-decision";
-  /** The original role submission arguments, retained independently. */
-  roleCandidate: unknown;
-  /** The malformed auditor candidate and observation retained by compliance transport. */
-  audit: ComplianceAuditIncomplete;
-  acceptedReceipt: false;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
-
-/** JSON-safe public stand-in for an omitted tool-call `arguments` member. */
-export const JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
-  kind: "json-safe-sentinel",
-  type: "undefined",
-} as const);
-
-export type AuditIncompleteResidual = {
-  readonly roleCandidate: unknown;
-  readonly audit: ComplianceAuditIncomplete;
-  readonly acceptedReceipt: false;
-};
-
-export function jsonSafeComplianceCandidate(value: unknown): unknown {
-  return value === undefined ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
-}
 
 export type NoReceiptTerminalOutcome = NoReceiptLifecycleFacts & {
   kind: "no_receipt";
@@ -102,7 +73,6 @@ export type TerminalRoleOutcome =
       status: "audit_escalation";
       decisiveFacts: Readonly<Record<string, unknown>>;
     }
-  | AuditIncompleteTerminalOutcome
   | ResidualIncompleteTerminalOutcome
   | NoReceiptTerminalOutcome
   | {
@@ -113,8 +83,6 @@ export type TerminalRoleOutcome =
       /** Original diagnostic identity retained for the caller. */
       diagnostic: string;
       decisiveFacts: Readonly<Record<string, unknown>>;
-      /** Retained audit residual when publication itself failed. */
-      auditResidual?: AuditIncompleteResidual;
     };
 
 /** Lawful typed terminal results exit zero (including audit_escalation). */
@@ -131,7 +99,7 @@ export function exitCodeForTerminalOutcome(
 }
 
 export function buildResidualIncompleteTerminalOutcome(input: {
-  role: "merger" | "collector" | "notary";
+  role: "merger" | "collector";
   candidate: unknown;
   diagnostic: string;
 }): ResidualIncompleteTerminalOutcome {
@@ -147,42 +115,6 @@ export function buildResidualIncompleteTerminalOutcome(input: {
       decision: "no-usable-result",
       candidate: input.candidate,
       diagnostic: input.diagnostic,
-      acceptedReceipt: false,
-    },
-  };
-}
-
-export function buildAuditIncompleteTerminalOutcome(input: {
-  role: TerminalRoleName;
-  roleCandidate: unknown;
-  audit: ComplianceAuditIncomplete;
-}): AuditIncompleteTerminalOutcome {
-  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
-  const audit = {
-    ...input.audit,
-    candidate: jsonSafeComplianceCandidate(input.audit.candidate),
-  };
-  return {
-    kind: "audit_incomplete",
-    role: input.role,
-    status: "audit-incomplete",
-    decision: "no-usable-decision",
-    roleCandidate,
-    audit,
-    acceptedReceipt: false,
-    decisiveFacts: {
-      decision: "no-usable-decision",
-      roleCandidate,
-      auditCandidate: audit.candidate,
-      auditObservation: audit.observation,
-      observationKind: audit.observation.kind,
-      observationType: audit.observation.kind === "non-object-arguments"
-        ? audit.observation.type
-        : audit.observation.kind === "object-status-unreadable"
-          ? audit.observation.status
-          : audit.observation.kind === "missing-subject"
-            ? audit.observation.subject
-            : audit.observation.kind,
       acceptedReceipt: false,
     },
   };

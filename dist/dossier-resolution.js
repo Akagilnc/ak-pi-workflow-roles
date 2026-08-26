@@ -98,6 +98,25 @@ export function readDoctorAuditSubjects(context) {
     }
     return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-testimony" } };
 }
-export function toAuditIncomplete(observation) {
-    return { status: "audit-incomplete", observation, candidate: undefined };
+/**
+ * Missing dossier/subject is infrastructure failure, not a judgment status (#475).
+ * Observation + empty candidate ride the existing failInfrastructure → error artifact path.
+ */
+export class AuditMaterialsUnavailableError extends Error {
+    observation;
+    candidate;
+    constructor(observation) {
+        const detail = observation.kind === "missing-subject"
+            ? `${observation.kind}:${observation.subject}`
+            : observation.kind;
+        super(`Audit materials unavailable: ${detail}`);
+        this.name = "AuditMaterialsUnavailableError";
+        this.observation = observation;
+        this.candidate = undefined;
+    }
+}
+export function requireAuditMaterials(resolution) {
+    if (resolution.status === "incomplete") {
+        throw new AuditMaterialsUnavailableError(resolution.observation);
+    }
 }

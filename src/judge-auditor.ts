@@ -10,8 +10,8 @@ import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { loadAuditorSoul } from "./auditor-soul.ts";
 import {
   readJudgeAuditSubjects,
+  requireAuditMaterials,
   resolveAuditDossier,
-  toAuditIncomplete,
 } from "./dossier-resolution.ts";
 
 export const JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
@@ -37,9 +37,9 @@ export function createPiJudgeAuditor(
 ): (options: JudgeAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
     const dossier = resolveAuditDossier();
-    if (dossier.status === "incomplete") return toAuditIncomplete(dossier.observation);
+    requireAuditMaterials(dossier);
     const subjects = readJudgeAuditSubjects(options.context);
-    if (subjects.status === "incomplete") return toAuditIncomplete(subjects.observation);
+    requireAuditMaterials(subjects);
 
     return runComplianceAudit({
       tool: auditDecisionTool,

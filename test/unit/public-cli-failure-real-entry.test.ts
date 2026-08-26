@@ -420,45 +420,10 @@ test("public CLI multi-turn audit escalate covers three seats; named revises sta
 });
 // Publication errno matrix: lawful session, then publication fails on a hostile
 // destination — the errno identity must survive, never washed into output absence.
-test("public audit evidence publication failures retain typed errno identity", async () => {
-  // EEXIST: destination occupied as a directory; EISDIR: report.json occupied
-  // as a directory. ELOOP stays in the #419 symlink family (unique safety
-  // semantics: victim sentinel byte readback).
+test("public report publication failures retain typed errno identity", async () => {
+  // EISDIR: report.json occupied as a directory. Audit-incomplete publication
+  // path was abolished (#475); error-artifact publication stays on failure channel.
   const rows = [
-    {
-      label: "EEXIST collision on audit evidence",
-      // Destination occupied as a directory ahead of audit-evidence publication.
-      plant: async (runDir: string) => {
-        await mkdir(join(runDir, "artifacts", "audit-incomplete.json"), { recursive: true });
-      },
-      seedSession: async (sessionFile: string) => {
-        await writeFile(
-          sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "assistant",
-              content: [{ type: "toolCall", id: "role-1", name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
-            },
-          })}\n${JSON.stringify({
-            type: "custom",
-            customType: "ak_compliance_response",
-            data: { response: { content: [{ type: "toolCall", name: JUDGE_AUDIT_TOOL_NAME, arguments: ["retained"] }] } },
-          })}\n${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolCallId: "role-1",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: "array" }, candidate: ["ignored"] },
-            },
-          })}\n`,
-          "utf8",
-        );
-      },
-      expectedCode: "EEXIST",
-    },
     {
       label: "EISDIR on report publication",
       // Converged session is lawful; report.json as a directory makes writeFile EISDIR.
@@ -519,23 +484,16 @@ test("public audit evidence publication failures retain typed errno identity", a
       assert.equal(outcome.cause, "unrecognized", row.label);
       assert.notEqual(outcome.cause, "output", row.label);
       assert.equal(outcome.decisiveFacts.errorCode, row.expectedCode, row.label);
-      if (row.expectedCode === "EEXIST") {
-        assert.equal(outcome.auditResidual?.acceptedReceipt, false, row.label);
-        assert.deepEqual(outcome.auditResidual?.roleCandidate, { judgeStatus: "converged" }, row.label);
-        assert.deepEqual(outcome.auditResidual?.audit.candidate, ["retained"], row.label);
-        assert.equal(result.terminal!.artifacts.length, 0, row.label);
-      } else {
-        const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
-        assert.ok(errorRef, row.label);
-        const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-          cause: string;
-          identity?: { name?: string; code?: string | number };
-          diagnostic: string;
-        };
-        assert.equal(errorBody.cause, "unrecognized", row.label);
-        assert.equal(errorBody.identity?.code, "EISDIR", row.label);
-        assert.ok(errorBody.diagnostic.length > 0, row.label);
-      }
+      const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
+      assert.ok(errorRef, row.label);
+      const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+        cause: string;
+        identity?: { name?: string; code?: string | number };
+        diagnostic: string;
+      };
+      assert.equal(errorBody.cause, "unrecognized", row.label);
+      assert.equal(errorBody.identity?.code, "EISDIR", row.label);
+      assert.ok(errorBody.diagnostic.length > 0, row.label);
     });
   }
 });

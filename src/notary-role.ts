@@ -86,7 +86,7 @@ export function createNotaryRoleRuntime(
           name: NOTARY_OUTPUT_TOOL_NAME,
           label: "Notary Output",
           description:
-            "Submit one typed pass, bounce, or incomplete decision on quote fidelity and ticket alignment.",
+            "Submit one typed pass or bounce decision on quote fidelity and ticket alignment.",
           promptSnippet: "Submit the Notary decision",
           promptGuidelines: [
             `Use ${NOTARY_OUTPUT_TOOL_NAME} as the sole final action.`,
@@ -109,7 +109,7 @@ export function createNotaryRoleRuntime(
               output = validateNotaryOutput(parameters);
             } catch (error) {
               // Non-explicit release stays a rejected terminating call so public
-              // settlement can project residual incomplete (layer ②).
+              // settlement can map it to the existing non-zero failure channel (#475).
               throw error instanceof Error
                 ? error
                 : new Error(String(error));

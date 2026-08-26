@@ -14384,13 +14384,6 @@ function validateNotaryOutput(value) {
     throw new Error("Notary output has no recognized execution discriminator");
   }
   const status = seatFallbackBaseStatus(statusRaw);
-  if (status === "incomplete") {
-    const reason = value.reason;
-    if (typeof reason !== "string" || reason.trim() === "") {
-      throw new Error("Notary incomplete requires a non-empty reason");
-    }
-    return structuredClone(value);
-  }
   if (status === "bounce") {
     const clone = structuredClone(value);
     if (clone.disposition === void 0) clone.disposition = "rewrite";
@@ -14417,9 +14410,6 @@ function notaryDecisiveFacts(output) {
   if (status === "bounce") {
     facts.disposition = "rewrite";
   }
-  if (status === "incomplete") {
-    facts.reason = output.reason;
-  }
   return facts;
 }
 var NOTARY_OUTPUT_TOOL_NAME, NOTARY_FIXED_KICKOFF, notaryOutputSchema;
@@ -14434,13 +14424,10 @@ var init_notary_contracts = __esm({
     notaryOutputSchema = openToolObject(
       typebox_exports.Object({
         status: typebox_exports.Unknown({
-          description: "pass | bounce | incomplete \u2014 guidance, not a schema gate."
+          description: "pass | bounce \u2014 guidance, not a schema gate."
         }),
         findings: typebox_exports.Unknown({
           description: "string[] findings retained with pass or bounce."
-        }),
-        reason: typebox_exports.Unknown({
-          description: "Why the notary decision is incomplete."
         })
       })
     );
@@ -15444,7 +15431,7 @@ function validateAcceptedDetails(toolName, details) {
     [COLLECTOR_OUTPUT_TOOL]: [],
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
-    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce", "incomplete"]
+    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"]
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;
@@ -19893,9 +19880,6 @@ var init_command_renderer = __esm({
 function encodeTerminalField(value) {
   return JSON.stringify(value);
 }
-function jsonSafeComplianceCandidate(value) {
-  return value === void 0 ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
-}
 function isLawfulTypedTerminalOutcome(outcome) {
   return outcome.kind === "accepted" || outcome.kind === "audit_escalation" || outcome.kind === "no_receipt";
 }
@@ -19915,31 +19899,6 @@ function buildResidualIncompleteTerminalOutcome(input) {
       decision: "no-usable-result",
       candidate: input.candidate,
       diagnostic: input.diagnostic,
-      acceptedReceipt: false
-    }
-  };
-}
-function buildAuditIncompleteTerminalOutcome(input) {
-  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
-  const audit = {
-    ...input.audit,
-    candidate: jsonSafeComplianceCandidate(input.audit.candidate)
-  };
-  return {
-    kind: "audit_incomplete",
-    role: input.role,
-    status: "audit-incomplete",
-    decision: "no-usable-decision",
-    roleCandidate,
-    audit,
-    acceptedReceipt: false,
-    decisiveFacts: {
-      decision: "no-usable-decision",
-      roleCandidate,
-      auditCandidate: audit.candidate,
-      auditObservation: audit.observation,
-      observationKind: audit.observation.kind,
-      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.kind === "object-status-unreadable" ? audit.observation.status : audit.observation.kind === "missing-subject" ? audit.observation.subject : audit.observation.kind,
       acceptedReceipt: false
     }
   };
@@ -20015,15 +19974,11 @@ function formatTerminalResult(result2) {
   return `${lines.join("\n")}
 `;
 }
-var JSON_SAFE_UNDEFINED_ARGUMENT, REDACTED_RUN_ID_TOKEN;
+var REDACTED_RUN_ID_TOKEN;
 var init_terminal = __esm({
   "src/public-cli/terminal.ts"() {
     "use strict";
     init_command_renderer();
-    JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
-      kind: "json-safe-sentinel",
-      type: "undefined"
-    });
     REDACTED_RUN_ID_TOKEN = "[run-id]";
   }
 });
@@ -20038,16 +19993,10 @@ var init_session_opening_materials = __esm({
 });
 
 // src/auditor-soul.ts
-var AUDITOR_SOUL_ROLES;
 var init_auditor_soul = __esm({
   "src/auditor-soul.ts"() {
     "use strict";
     init_session_opening_materials();
-    AUDITOR_SOUL_ROLES = [
-      "judge",
-      "reviewer",
-      "doctor"
-    ];
   }
 });
 
@@ -20142,21 +20091,44 @@ function readListField(value) {
   return Array.isArray(value) ? value : value === void 0 ? [] : [value];
 }
 function readComplianceCandidate(arguments_, usage) {
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) return { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ }, candidate: arguments_, ...usage === void 0 ? {} : { usage } };
+  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
+    throw new ComplianceCandidateUnreadableError(
+      { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ },
+      arguments_,
+      usage
+    );
+  }
   const args = arguments_;
   const status = args.status;
   if (status === "pass") return { status, ...usage === void 0 ? {} : { usage } };
   if (status === "revise") return { status, violations: readListField(args.violations), ...usage === void 0 ? {} : { usage } };
   if (status === "escalate") return { status, ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}, ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}, ...usage === void 0 ? {} : { usage } };
-  return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" }, candidate: arguments_, ...usage === void 0 ? {} : { usage } };
+  throw new ComplianceCandidateUnreadableError(
+    { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" },
+    arguments_,
+    usage
+  );
 }
-var nonblank2, decisionGateSchema, complianceDecisionSchema, COMPLIANCE_RESPONSE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE;
+var ComplianceCandidateUnreadableError, nonblank2, decisionGateSchema, complianceDecisionSchema, COMPLIANCE_RESPONSE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE;
 var init_compliance_transport = __esm({
   "src/compliance-transport.ts"() {
     "use strict";
     init_build();
     init_evidence_child_executor();
     init_auditor_dossier_tool();
+    ComplianceCandidateUnreadableError = class extends Error {
+      observation;
+      candidate;
+      usage;
+      constructor(observation, candidate, usage) {
+        const detail = observation.kind === "non-object-arguments" ? `${observation.kind}:${observation.type}` : observation.kind === "object-status-unreadable" ? `${observation.kind}:${observation.status}` : observation.kind === "missing-subject" ? `${observation.kind}:${observation.subject}` : observation.kind;
+        super(`Compliance candidate unreadable: ${detail}`);
+        this.name = "ComplianceCandidateUnreadableError";
+        this.observation = observation;
+        this.candidate = candidate;
+        if (usage !== void 0) this.usage = usage;
+      }
+    };
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
     complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
@@ -20428,8 +20400,7 @@ var init_navigator_invocation_identity = __esm({
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
-import { appendFile, lstat as lstat4, mkdir as mkdir3, open as open2, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
+import { appendFile, readFile as readFile9, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
 import { dirname as dirname7, join as join12 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
@@ -21302,29 +21273,6 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
     );
   }
 }
-function isComplianceAuditIncomplete(value) {
-  if (!isRecord6(value) || value.status !== "audit-incomplete") return false;
-  const observation = value.observation;
-  if (!isRecord6(observation)) return false;
-  if (observation.kind === "missing-dossier") return true;
-  if (observation.kind === "missing-subject") {
-    return typeof observation.subject === "string" && observation.subject.length > 0;
-  }
-  if (observation.kind === "object-status-unreadable") {
-    return observation.status === "missing" || observation.status === "unknown";
-  }
-  return observation.kind === "non-object-arguments" && [
-    "null",
-    "array",
-    "undefined",
-    "string",
-    "number",
-    "boolean",
-    "bigint",
-    "symbol",
-    "function"
-  ].includes(observation.type);
-}
 function auditToolNameForRole(role) {
   switch (role) {
     case "judge":
@@ -21333,16 +21281,6 @@ function auditToolNameForRole(role) {
       return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
       return DOCTOR_AUDIT_TOOL_NAME;
-  }
-}
-function outputToolNameForAuditedRole(role) {
-  switch (role) {
-    case "judge":
-      return JUDGE_OUTPUT_TOOL_NAME;
-    case "reviewer":
-      return REVIEWER_OUTPUT_TOOL_NAME;
-    case "doctor":
-      return DOCTOR_OUTPUT_TOOL_NAME;
   }
 }
 function boundRoleToolCallForResult(entries, resultIndex, message, outputToolName) {
@@ -21439,10 +21377,6 @@ function isUnboundAuditEscalationFace(details) {
   const kind = safelyRead(details, "kind");
   return kind.readable && kind.value === "audit_escalation";
 }
-function auditIncompleteFromCandidate(candidate) {
-  const decision = readComplianceCandidate(candidate);
-  return decision.status === "audit-incomplete" ? decision : void 0;
-}
 function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
   const matches = [];
   for (let index = callIndex + 1; index < resultIndex; index += 1) {
@@ -21460,92 +21394,6 @@ function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolNa
     matches.push({ candidate: calls[0]?.arguments });
   }
   return matches.length === 1 ? matches[0] : void 0;
-}
-function extractComplianceAuditIncompleteRoleOutcome(entries, role, outputToolName) {
-  if (outputToolName !== outputToolNameForAuditedRole(role)) return void 0;
-  const auditToolName = auditToolNameForRole(role);
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const message = entries[index]?.message;
-    if (entries[index]?.type !== "message" || message?.role !== "toolResult" || message.toolName !== outputToolName || message.isError === true || !isComplianceAuditIncomplete(message.details)) {
-      continue;
-    }
-    const roleCall = boundRoleToolCallForResult(
-      entries,
-      index,
-      message,
-      outputToolName
-    );
-    if (roleCall === void 0) continue;
-    const details = message.details;
-    if (details.observation.kind === "missing-dossier" || details.observation.kind === "missing-subject") {
-      return {
-        outcome: buildAuditIncompleteTerminalOutcome({
-          role,
-          roleCandidate: roleCall.candidate,
-          audit: details
-        })
-      };
-    }
-    const retained = boundRetainedAuditResponse(
-      entries,
-      roleCall.callIndex,
-      index,
-      auditToolName
-    );
-    if (retained === void 0) continue;
-    const audit = auditIncompleteFromCandidate(retained.candidate);
-    if (audit === void 0) continue;
-    return {
-      outcome: buildAuditIncompleteTerminalOutcome({
-        role,
-        roleCandidate: roleCall.candidate,
-        audit
-      })
-    };
-  }
-  return void 0;
-}
-function auditArtifactPublicationError(message, code) {
-  const error = new Error(message);
-  error.name = "ArtifactPublicationError";
-  error.code = code;
-  return error;
-}
-async function ensureAuditEvidenceDirectory(runDirectory) {
-  const artifactsDir = join12(runDirectory, "artifacts");
-  const runStat = await lstat4(runDirectory);
-  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
-    throw auditArtifactPublicationError(
-      "audit evidence run directory is not a real directory",
-      "ELOOP"
-    );
-  }
-  try {
-    const existing = await lstat4(artifactsDir);
-    if (existing.isSymbolicLink()) {
-      throw auditArtifactPublicationError(
-        "audit evidence artifacts directory is a symlink",
-        "ELOOP"
-      );
-    }
-    if (!existing.isDirectory()) {
-      throw auditArtifactPublicationError(
-        "audit evidence artifacts path is not a directory",
-        "EEXIST"
-      );
-    }
-  } catch (error) {
-    if (!isMissingPathError2(error)) throw error;
-    await mkdir3(artifactsDir, { recursive: true });
-    const created = await lstat4(artifactsDir);
-    if (created.isSymbolicLink() || !created.isDirectory()) {
-      throw auditArtifactPublicationError(
-        "audit evidence artifacts directory is not a real directory",
-        "ELOOP"
-      );
-    }
-  }
-  return artifactsDir;
 }
 async function appendRunAttemptHistory(admitted, outcome) {
   const entries = await readBoundSessionEntries(admitted.sessionFile);
@@ -21574,115 +21422,6 @@ async function appendRunAttemptHistory(admitted, outcome) {
   })}
 `;
   await appendFile(admitted.sessionFile, line2, "utf8");
-}
-async function publishComplianceAuditIncompleteEvidence(admitted, outcome) {
-  await appendRunAttemptHistory(admitted, outcome);
-  if (typeof fsConstants.O_NOFOLLOW !== "number" || typeof fsConstants.O_NONBLOCK !== "number") {
-    throw auditArtifactPublicationError(
-      "audit evidence publication requires O_NOFOLLOW|O_NONBLOCK open-flag support (anti-symlink/anti-planted protection must not be silently dropped); refusing to publish",
-      "ENOSYS"
-    );
-  }
-  const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
-  const evidencePath = join12(artifactsDir, "audit-incomplete.json");
-  let existing;
-  try {
-    existing = await lstat4(evidencePath);
-  } catch (error) {
-    if (!isMissingPathError2(error)) throw error;
-  }
-  if (existing?.isSymbolicLink()) {
-    throw auditArtifactPublicationError(
-      "audit evidence destination is a symlink",
-      "ELOOP"
-    );
-  }
-  if (existing && !existing.isFile()) {
-    throw auditArtifactPublicationError(
-      "audit evidence destination is not a regular file",
-      "EEXIST"
-    );
-  }
-  const handle = await open2(
-    evidencePath,
-    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
-    384
-  );
-  try {
-    if (!(await handle.stat()).isFile()) {
-      throw auditArtifactPublicationError(
-        "audit evidence destination is not a regular file",
-        "EEXIST"
-      );
-    }
-    await handle.writeFile(`${JSON.stringify(outcome, null, 2)}
-`, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  return { kind: "evidence", path: evidencePath };
-}
-function auditPublicationFailureTerminal(admitted, entries, outcome, error) {
-  const attempt = publicationAttemptFromError(
-    join12(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
-    error
-  );
-  const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
-  const decisiveFacts = {
-    ...outcome.decisiveFacts,
-    cause: "unrecognized",
-    diagnostic,
-    publicationFailure: attempt
-  };
-  if (attempt.identity?.name !== void 0) decisiveFacts.errorName = attempt.identity.name;
-  if (attempt.identity?.code !== void 0) decisiveFacts.errorCode = attempt.identity.code;
-  const auditResidual = {
-    roleCandidate: outcome.roleCandidate,
-    audit: outcome.audit,
-    acceptedReceipt: false
-  };
-  return {
-    roleOutcome: {
-      kind: "failure",
-      role: admitted.role,
-      cause: "unrecognized",
-      diagnostic,
-      decisiveFacts,
-      auditResidual
-    },
-    navigator: extractNavigatorFact(entries),
-    artifacts: [],
-    runId: admitted.runId
-  };
-}
-async function trySettleComplianceAuditIncompleteTerminalResult(admitted) {
-  if (!AUDITOR_SOUL_ROLES.includes(admitted.role)) {
-    return void 0;
-  }
-  const outputToolName = admitted.role === "judge" ? JUDGE_OUTPUT_TOOL_NAME : admitted.role === "reviewer" ? REVIEWER_OUTPUT_TOOL_NAME : DOCTOR_OUTPUT_TOOL_NAME;
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractComplianceAuditIncompleteRoleOutcome(
-    entries,
-    admitted.role,
-    outputToolName
-  );
-  if (extracted === void 0) return void 0;
-  try {
-    const evidence = await publishComplianceAuditIncompleteEvidence(
-      admitted,
-      extracted.outcome
-    );
-    return {
-      roleOutcome: extracted.outcome,
-      navigator: extractNavigatorFact(entries),
-      artifacts: [evidence],
-      runId: admitted.runId
-    };
-  } catch (error) {
-    return auditPublicationFailureTerminal(admitted, entries, extracted.outcome, error);
-  }
 }
 function extractJudgeRoleOutcome(entries) {
   if (!isReceiptSettlementBindingClear(entries)) return void 0;
@@ -22478,16 +22217,11 @@ async function settleLawfulNotaryTerminalResult(admitted) {
         NOTARY_OUTPUT_TOOL_NAME
       );
       if (residual === void 0) continue;
-      return {
-        roleOutcome: buildResidualIncompleteTerminalOutcome({
-          role: "notary",
-          candidate: residual.candidate,
-          diagnostic: residual.diagnostic
-        }),
-        navigator: extractNavigatorFact(entries),
-        artifacts: [],
-        runId: admitted.runId
-      };
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: residual.diagnostic,
+        details: { candidate: residual.candidate, acceptedReceipt: false }
+      });
     }
     return void 0;
   }
@@ -23190,9 +22924,9 @@ var init_settlement = __esm({
 });
 
 // src/public-cli/auto-resume.ts
-import { constants as fsConstants2 } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open3, readFile as readFile10 } from "node:fs/promises";
+import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open2, readFile as readFile10 } from "node:fs/promises";
 import { join as join13 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
@@ -23310,10 +23044,10 @@ async function retainDispatchError(admitted, attempt, error) {
     2
   )}
 `;
-  const noFollowFlag = typeof fsConstants2.O_NOFOLLOW === "number" ? fsConstants2.O_NOFOLLOW : 0;
-  const handle = await open3(
+  const noFollowFlag = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+  const handle = await open2(
     filePath,
-    fsConstants2.O_WRONLY | fsConstants2.O_CREAT | fsConstants2.O_EXCL | noFollowFlag,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag,
     384
   );
   try {
@@ -24376,8 +24110,7 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     extraArgs,
     adapters: {
       trySettle: trySettleDoctorTerminalResult,
-      shouldPresentSettled: (terminal) => isLawfulTypedTerminalOutcome(terminal.roleOutcome),
-      trySettleSecondary: trySettleComplianceAuditIncompleteTerminalResult
+      shouldPresentSettled: (terminal) => isLawfulTypedTerminalOutcome(terminal.roleOutcome)
     },
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
@@ -24603,20 +24336,6 @@ async function dispatchAdmittedFixer(input) {
         exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
         admitted,
         terminal: lawful
-      };
-    }
-    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
-    if (auditIncomplete !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      if (auditIncomplete.roleOutcome.kind === "failure") {
-        presentFailureTerminal(auditIncomplete, io);
-      } else {
-        io.stdout(formatTerminalResult(auditIncomplete));
-      }
-      return {
-        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
-        admitted,
-        terminal: auditIncomplete
       };
     }
     const credentialFailure = postRunMissingCredentialFailure(
@@ -24849,7 +24568,7 @@ async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
     extraArgs,
     adapters: {
       trySettle: trySettleNotaryTerminalResult,
-      // Accepted receipts and residual incomplete share one present path.
+      // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true
     },
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
@@ -25045,20 +24764,6 @@ async function dispatchAdmittedJudge(input) {
         exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
         admitted,
         terminal: lawful
-      };
-    }
-    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
-    if (auditIncomplete !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      if (auditIncomplete.roleOutcome.kind === "failure") {
-        presentFailureTerminal(auditIncomplete, io);
-      } else {
-        io.stdout(formatTerminalResult(auditIncomplete));
-      }
-      return {
-        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
-        admitted,
-        terminal: auditIncomplete
       };
     }
     const infrastructureFailure = await readEngineDetourInfrastructureFailure(
@@ -25866,20 +25571,6 @@ async function dispatchAdmittedReviewer(input) {
         terminal: lawful
       };
     }
-    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
-    if (auditIncomplete !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      if (auditIncomplete.roleOutcome.kind === "failure") {
-        presentFailureTerminal(auditIncomplete, io);
-      } else {
-        io.stdout(formatTerminalResult(auditIncomplete));
-      }
-      return {
-        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
-        admitted,
-        terminal: auditIncomplete
-      };
-    }
     const infrastructureFailure = await readEngineDetourInfrastructureFailure(
       admitted.sessionFile
     );
@@ -26114,7 +25805,7 @@ var init_atomic_write = __esm({
 });
 
 // src/analyst-index.ts
-import { open as open4, readFile as readFile11, unlink as unlink4 } from "node:fs/promises";
+import { open as open3, readFile as readFile11, unlink as unlink4 } from "node:fs/promises";
 import { dirname as dirname9, join as join22 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve9) => {
@@ -26129,7 +25820,7 @@ async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   const startedAt = Date.now();
   while (true) {
     try {
-      const handle = await open4(lockPath, "wx");
+      const handle = await open3(lockPath, "wx");
       try {
         await handle.writeFile(`${process.pid}
 `, "utf8");
@@ -26561,8 +26252,8 @@ function extractSessionToolIntervals(rows) {
       if (resultTimestamp === void 0 || resultTimestamp.length === 0) {
         throw new Error(`toolResult ${message.toolCallId} missing timestamp`);
       }
-      const open5 = openById.get(message.toolCallId);
-      if (open5 === void 0) {
+      const open4 = openById.get(message.toolCallId);
+      if (open4 === void 0) {
         const toolName = typeof message.toolName === "string" && message.toolName.length > 0 ? message.toolName : "unknown";
         order.push({
           toolCallId: message.toolCallId,
@@ -26572,10 +26263,10 @@ function extractSessionToolIntervals(rows) {
         });
         continue;
       }
-      if (open5.endedAt !== void 0) {
+      if (open4.endedAt !== void 0) {
         throw new Error(`duplicate toolResult for toolCallId ${message.toolCallId}`);
       }
-      open5.endedAt = resultTimestamp;
+      open4.endedAt = resultTimestamp;
     }
   }
   return order.map((interval) => {
@@ -26826,7 +26517,6 @@ async function classifyAuditorVolume(filePath) {
   const findings = call.args?.findings;
   const findingsCount = Array.isArray(findings) ? findings.length : 0;
   if (DISPATCH_TOOLS.has(call.toolName)) {
-    if (status === "incomplete") return void 0;
     if (status !== "dispatch") {
       throw new Error(
         `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`

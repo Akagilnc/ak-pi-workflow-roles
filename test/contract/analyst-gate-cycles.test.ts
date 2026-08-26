@@ -426,108 +426,31 @@ async function assertAuditorRolesUnreadable(
   );
 }
 
-/**
- * #458: lawful Gatekeeper typed incomplete is a recognizable terminal — omit from
- * pairing, never wash the parent leg unreadable. A later successful pair still
- * counts; officer-layer typed incomplete keeps pairing (status retained on the round).
- */
-async function writeLawfulIncompleteThenSuccessFixture(auditorDir: string): Promise<void> {
-  await mkdir(auditorDir, { recursive: true });
-  // Older lawful Gatekeeper incomplete — must not poison the leg.
-  await writeFile(
-    join(auditorDir, "d01_gatekeeper_incomplete.jsonl"),
-    sessionLines({
-      id: "disp-incomplete",
-      startedAt: iso(0),
-      endedAt: iso(1_000),
-      toolName: "ak_gatekeeper_output",
-      args: { status: "incomplete", reason: "subject not ready" },
-    }),
-    "utf8",
-  );
-  // Subsequent lawful inspector bounce pair → round 1.
-  await writeFile(
-    join(auditorDir, "d02_gatekeeper.jsonl"),
-    sessionLines({
-      id: "disp-ok",
-      startedAt: iso(10_000),
-      endedAt: iso(11_000),
-      toolName: "ak_gatekeeper_output",
-      args: { status: "dispatch", officer: "inspector" },
-    }),
-    "utf8",
-  );
-  await writeFile(
-    join(auditorDir, "o03_inspector.jsonl"),
-    sessionLines({
-      id: "off-bounce",
-      startedAt: iso(11_000),
-      endedAt: iso(21_000),
-      toolName: "ak_inspector_output",
-      args: { status: "bounce", findings: ["x"] },
-    }),
-    "utf8",
-  );
-  // Officer-layer typed incomplete still pairs (distinct from Gatekeeper incomplete).
-  await writeFile(
-    join(auditorDir, "d04_gatekeeper.jsonl"),
-    sessionLines({
-      id: "disp-off-incomplete",
-      startedAt: iso(30_000),
-      endedAt: iso(31_000),
-      toolName: "ak_gatekeeper_output",
-      args: { status: "dispatch", officer: "notary" },
-    }),
-    "utf8",
-  );
-  await writeFile(
-    join(auditorDir, "o05_notary_incomplete.jsonl"),
-    sessionLines({
-      id: "off-incomplete",
-      startedAt: iso(31_000),
-      endedAt: iso(41_000),
-      toolName: "ak_notary_output",
-      args: { status: "incomplete", reason: "evidence gap", findings: [] },
-    }),
-    "utf8",
-  );
-}
-
-test("analyst gate-cycles via runAnalyst: lawful Gatekeeper incomplete omits round; later pair readable", async () => {
+test("analyst gate-cycles via runAnalyst: accepted non-dispatch Gatekeeper status is loud unreadable", async () => {
   await withTempHome(async (home) => {
-    await writeLawfulIncompleteThenSuccessFixture(judgeAuditorDir(home));
+    const auditorDir = judgeAuditorDir(home);
+    await mkdir(auditorDir, { recursive: true });
+    await writeFile(
+      join(auditorDir, "d01_gatekeeper_non_dispatch.jsonl"),
+      sessionLines({
+        id: "disp-bad",
+        startedAt: iso(0),
+        endedAt: iso(1_000),
+        toolName: "ak_gatekeeper_output",
+        args: { status: "incomplete", reason: "abolished status" },
+      }),
+      "utf8",
+    );
 
     const result = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
     });
-    const section = gateSection(result.page);
 
-    assert.equal(
+    assert.ok(
       result.page.unreadable.some((row) => row.runId === GATE_JUDGE_RUN),
-      false,
-      "lawful Gatekeeper incomplete must not mark the leg unreadable",
+      "accepted non-dispatch Gatekeeper status must mark the leg unreadable",
     );
-
-    const gateLeg = section.legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
-    assert.ok(gateLeg, "leg with lawful incomplete + later pairs must stay readable");
-    assert.equal(gateLeg.roundCount, 2, "only paired rounds count; Gatekeeper incomplete forms none");
-    assert.deepEqual(gateLeg.rounds, [
-      {
-        roundIndex: 1,
-        officer: "inspector",
-        status: "bounce",
-        officerWallMs: 10_000,
-        findingsCount: 1,
-      },
-      {
-        roundIndex: 2,
-        officer: "notary",
-        status: "incomplete",
-        officerWallMs: 10_000,
-        findingsCount: 0,
-      },
-    ]);
   });
 });
 

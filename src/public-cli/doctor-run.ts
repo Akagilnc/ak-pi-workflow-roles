@@ -21,7 +21,6 @@ import {
 } from "./one-shot-dispatch.ts";
 import {
   presentStructuralRejection,
-  trySettleComplianceAuditIncompleteTerminalResult,
   trySettleDoctorTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -122,7 +121,6 @@ export async function runPublicDoctor(
       trySettle: trySettleDoctorTerminalResult,
       shouldPresentSettled: (terminal) =>
         isLawfulTypedTerminalOutcome(terminal.roleOutcome),
-      trySettleSecondary: trySettleComplianceAuditIncompleteTerminalResult,
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

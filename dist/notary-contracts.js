@@ -1,7 +1,7 @@
 /**
  * Public Notary (符宝郎) terminating receipt contracts.
- * Lawful explicit releases: pass | bounce | incomplete(with non-empty reason).
- * Residual incomplete (no explicit release) is projected by public settlement, not here.
+ * Lawful explicit releases: pass | bounce.
+ * No usable result is infrastructure failure via public settlement, not a judgment status (#475).
  */
 import { Type } from "typebox";
 import { readActivationEngineLaborFallbackField, seatFallbackBaseStatus, seatFallbackStatusHasLawfulEvidence, withEngineLaborFallbackField, } from "./engine-labor-fallback.js";
@@ -19,13 +19,10 @@ export const NOTARY_SOURCE_RUN_FLAG = {
 export const NOTARY_FIXED_KICKOFF = "Notary review. Bound source-run locator is on the session materials; fetch authoritative ticket, git, and dossier evidence yourself; submit one typed decision.";
 export const notaryOutputSchema = openToolObject(Type.Object({
     status: Type.Unknown({
-        description: "pass | bounce | incomplete — guidance, not a schema gate.",
+        description: "pass | bounce — guidance, not a schema gate.",
     }),
     findings: Type.Unknown({
         description: "string[] findings retained with pass or bounce.",
-    }),
-    reason: Type.Unknown({
-        description: "Why the notary decision is incomplete.",
     }),
 }));
 function isRecord(value) {
@@ -38,7 +35,7 @@ function asStringArray(value) {
 }
 /**
  * Project one explicit Notary release. Throws when there is no lawful explicit
- * pass / bounce / incomplete(reason) — callers map that to residual incomplete.
+ * pass / bounce — callers map that to the existing non-zero failure channel.
  */
 export function validateNotaryOutput(value) {
     if (!isRecord(value)) {
@@ -49,13 +46,6 @@ export function validateNotaryOutput(value) {
         throw new Error("Notary output has no recognized execution discriminator");
     }
     const status = seatFallbackBaseStatus(statusRaw);
-    if (status === "incomplete") {
-        const reason = value.reason;
-        if (typeof reason !== "string" || reason.trim() === "") {
-            throw new Error("Notary incomplete requires a non-empty reason");
-        }
-        return structuredClone(value);
-    }
     if (status === "bounce") {
         const clone = structuredClone(value);
         if (clone.disposition === undefined)
@@ -88,9 +78,6 @@ export function notaryDecisiveFacts(output) {
     }
     if (status === "bounce") {
         facts.disposition = "rewrite";
-    }
-    if (status === "incomplete") {
-        facts.reason = output.reason;
     }
     return facts;
 }

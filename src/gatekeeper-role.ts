@@ -24,18 +24,18 @@ export type GatekeeperResult =
       readonly findings: readonly string[];
       readonly submission: unknown;
     }
+  | { readonly status: "no_receipt"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
   | {
-      readonly status: "incomplete";
+      readonly status: "transport_failure";
       readonly stage: "gatekeeper" | "inspector" | "notary";
       readonly reason: string;
+      /** Original unusable submission retained for the failure channel. */
       readonly submission?: unknown;
-    }
-  | { readonly status: "no_receipt"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
-  | { readonly status: "transport_failure"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string };
+    };
 
 export type GatekeeperNonPassResult = Extract<
   GatekeeperResult,
-  { status: "bounce" | "incomplete" | "no_receipt" }
+  { status: "bounce" | "no_receipt" }
 >;
 
 function nonPassMessage(result: GatekeeperNonPassResult): string {
@@ -74,15 +74,13 @@ export type GatekeeperPassHostActions = {
 // Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
 // Opening goes through the sole openToolObject owner — no parallel transport helper.
 const officerDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "pass | bounce | incomplete — guidance, not a schema gate." }),
+  status: Type.Unknown({ description: "pass | bounce — guidance, not a schema gate." }),
   findings: Type.Unknown({ description: "string[] findings retained with pass or bounce." }),
-  reason: Type.Unknown({ description: "Why the officer decision is incomplete." }),
 }));
 
 const gatekeeperDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "dispatch | incomplete — guidance, not a schema gate." }),
+  status: Type.Unknown({ description: "dispatch — guidance, not a schema gate." }),
   officer: Type.Unknown({ description: "inspector | notary when status is dispatch." }),
-  reason: Type.Unknown({ description: "Why Gatekeeper dispatch is incomplete." }),
 }));
 
 const INVOCATION_OVERLAY = "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
@@ -104,7 +102,7 @@ function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
 export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
   return {
     name,
-    description: "Submit one typed pass, bounce, or incomplete decision.",
+    description: "Submit one typed pass or bounce decision.",
     parameters: officerDecisionSchema,
     async execute(_id, args) { return result(`accepted ${String((args as { status?: unknown })?.status)}`, args); },
   };
@@ -114,7 +112,7 @@ export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
 export function createGatekeeperOutputTool(): AuditorDecisionTool {
   return {
     name: GATEKEEPER_OUTPUT_TOOL,
-    description: "Dispatch the admitted subject to one officer, or report incomplete.",
+    description: "Dispatch the admitted subject to one officer.",
     parameters: gatekeeperDecisionSchema,
     async execute(_id, args) { return result(`accepted ${String((args as { status?: unknown })?.status)}`, args); },
   };
@@ -143,15 +141,18 @@ function retainedSubmission(decision: unknown): unknown {
   return decision === undefined ? MISSING_ARGUMENTS_SUBMISSION : decision;
 }
 
-/** Neutral bookkeeping when no explicit release path is present — no format judgment. */
-function noExplicitReleaseIncomplete(
+/**
+ * No usable explicit release is infrastructure failure, not a judgment status.
+ * Original submission is retained for the failure channel (#475).
+ */
+function noUsableReleaseFailure(
   stage: "gatekeeper" | "inspector" | "notary",
   decision: unknown,
-): Extract<GatekeeperResult, { status: "incomplete" }> {
+): Extract<GatekeeperResult, { status: "transport_failure" }> {
   return {
-    status: "incomplete",
+    status: "transport_failure",
     stage,
-    reason: stage === "gatekeeper" ? "decision 无显式 dispatch" : "decision 无显式 pass",
+    reason: stage === "gatekeeper" ? "decision 无显式 dispatch" : "decision 无显式 pass/bounce",
     submission: retainedSubmission(decision),
   };
 }
@@ -163,19 +164,11 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 
 function projectProvinceDecision(decision: unknown): GatekeeperResult | { status: "dispatch"; officer: "inspector" | "notary" } {
   const record = readRecord(decision);
-  if (record === undefined) return noExplicitReleaseIncomplete("gatekeeper", decision);
-  if (record.status === "incomplete") {
-    const reason = record.reason;
-    if (typeof reason === "string" && reason.trim() !== "") {
-      // Role's own incomplete reason is kept as-is; machine does not rewrite it.
-      return { status: "incomplete", stage: "gatekeeper", reason, submission: retainedSubmission(decision) };
-    }
-    return noExplicitReleaseIncomplete("gatekeeper", decision);
-  }
+  if (record === undefined) return noUsableReleaseFailure("gatekeeper", decision);
   if (record.status === "dispatch" && (record.officer === "inspector" || record.officer === "notary")) {
     return { status: "dispatch", officer: record.officer };
   }
-  return noExplicitReleaseIncomplete("gatekeeper", decision);
+  return noUsableReleaseFailure("gatekeeper", decision);
 }
 
 function projectOfficerDecision(
@@ -183,15 +176,7 @@ function projectOfficerDecision(
   decision: unknown,
 ): GatekeeperResult {
   const record = readRecord(decision);
-  if (record === undefined) return noExplicitReleaseIncomplete(officer, decision);
-  if (record.status === "incomplete") {
-    const reason = record.reason;
-    if (typeof reason === "string" && reason.trim() !== "") {
-      // Role's own incomplete reason is kept as-is; machine does not rewrite it.
-      return { status: "incomplete", stage: officer, reason, submission: retainedSubmission(decision) };
-    }
-    return noExplicitReleaseIncomplete(officer, decision);
-  }
+  if (record === undefined) return noUsableReleaseFailure(officer, decision);
   if (record.status === "bounce") {
     return {
       status: "bounce",
@@ -208,7 +193,7 @@ function projectOfficerDecision(
       findings: asStringArray(record.findings),
     };
   }
-  return noExplicitReleaseIncomplete(officer, decision);
+  return noUsableReleaseFailure(officer, decision);
 }
 
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
@@ -221,7 +206,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       roleLabel: "Gatekeeper",
       menxiaSeat: "gatekeeper",
       systemPrompt: `${await loadSoul("gatekeeper")}\n\n${INVOCATION_OVERLAY}`,
-      prompt: "Read the admitted subject with ak_gatekeeper_subject, then dispatch it or submit typed incomplete.",
+      prompt: "Read the admitted subject with ak_gatekeeper_subject, then dispatch it to one officer.",
       tool: createGatekeeperOutputTool(),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -259,7 +244,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   }
 }
 
-/** Project GatekeeperResult onto a submit path: transport→failInfrastructure; bounce/incomplete/no_receipt→typed throw; pass silent. */
+/** Project GatekeeperResult onto a submit path: transport→failInfrastructure; bounce/no_receipt→typed throw; pass silent. */
 export async function requireGatekeeperPass(options: {
   readonly context: ExtensionContext;
   readonly subject: GatekeeperSubject;
@@ -274,11 +259,11 @@ export async function requireGatekeeperPass(options: {
   });
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {
-    options.hostActions.failInfrastructure(
-      new Error(`Gatekeeper transport failure at ${gatekeeper.stage}: ${gatekeeper.reason}`),
-      options.context,
-      options.toolCallId,
-    );
+    const error = new Error(`Gatekeeper transport failure at ${gatekeeper.stage}: ${gatekeeper.reason}`) as Error & {
+      submission?: unknown;
+    };
+    if (gatekeeper.submission !== undefined) error.submission = gatekeeper.submission;
+    options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
   }
   // Envelope owns the execute→tool_result bridge; this module only projects + throws.
   options.hostActions.bindGatekeeperNonPass(options.toolCallId, gatekeeper);

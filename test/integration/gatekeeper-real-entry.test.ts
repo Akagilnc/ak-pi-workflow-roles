@@ -27,6 +27,7 @@ async function withParent(run: (context: any) => Promise<void>) {
         model,
         modelRegistry: {
           getProvider() { return undefined; },
+          find() { return model; },
           async getProviderAuth() { return { auth: {} }; },
           async getApiKeyAndHeaders() { return { ok: true }; },
         },
@@ -124,21 +125,20 @@ test("scripted officer bounce projects rewrite disposition and loads that office
   });
 });
 
-test("Gatekeeper lets the role report typed incomplete for insufficient subject", async () => {
+test("Gatekeeper maps non-dispatch submission to transport_failure with original retained", async () => {
   await withParent(async (context) => {
-    const incompleteSubmission = { status: "incomplete", reason: "missing completion evidence" };
+    const badSubmission = { status: "incomplete", reason: "missing completion evidence" };
     const result = await runGatekeeper({
       context,
       subject: { kind: "worker_completion", material: "" },
       runCompletion: completion([
-        { tool: GATEKEEPER_OUTPUT_TOOL, args: incompleteSubmission },
+        { tool: GATEKEEPER_OUTPUT_TOOL, args: badSubmission },
       ], []),
     });
-    assert.equal(result.status, "incomplete");
-    if (result.status === "incomplete") {
+    assert.equal(result.status, "transport_failure");
+    if (result.status === "transport_failure") {
       assert.equal(result.stage, "gatekeeper");
-      assert.equal(result.reason, "missing completion evidence");
-      assert.deepEqual(result.submission, incompleteSubmission);
+      assert.deepEqual(result.submission, badSubmission);
     }
   });
 });
@@ -241,7 +241,7 @@ test("Gatekeeper and shared officer decision tools accept malformed object submi
   );
 });
 
-test("province submission without explicit dispatch is typed incomplete with original retained, never dispatch or pass", async () => {
+test("province submission without explicit dispatch is transport_failure with original retained, never dispatch or pass", async () => {
   await withParent(async (context) => {
     const submission = { status: "pass", findings: [] };
     const result = await runGatekeeper({
@@ -249,15 +249,15 @@ test("province submission without explicit dispatch is typed incomplete with ori
       subject: { kind: "worker_completion", material: "completion" },
       runCompletion: completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: submission }], []),
     });
-    assert.equal(result.status, "incomplete");
-    if (result.status === "incomplete") {
+    assert.equal(result.status, "transport_failure");
+    if (result.status === "transport_failure") {
       assert.equal(result.stage, "gatekeeper");
       assert.deepEqual(result.submission, submission);
     }
   });
 });
 
-test("officer submission without explicit pass is typed incomplete at officer stage with original retained", async () => {
+test("officer submission without explicit pass is transport_failure at officer stage with original retained", async () => {
   await withParent(async (context) => {
     const submission = { status: "ok-enough" };
     const result = await runGatekeeper({
@@ -268,15 +268,15 @@ test("officer submission without explicit pass is typed incomplete at officer st
         { tool: INSPECTOR_OUTPUT_TOOL, args: submission },
       ], []),
     });
-    assert.equal(result.status, "incomplete");
-    if (result.status === "incomplete") {
+    assert.equal(result.status, "transport_failure");
+    if (result.status === "transport_failure") {
       assert.equal(result.stage, "inspector");
       assert.deepEqual(result.submission, submission);
     }
   });
 });
 
-test("missing arguments is one-shot incomplete with serializable typed observation", async () => {
+test("missing arguments is one-shot transport_failure with serializable typed observation", async () => {
   await withParent(async (context) => {
     let turns = 0;
     const result = await runGatekeeper({
@@ -288,8 +288,8 @@ test("missing arguments is one-shot incomplete with serializable typed observati
         return completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: undefined }], [])(model, ctx);
       },
     });
-    assert.equal(result.status, "incomplete");
-    if (result.status === "incomplete") {
+    assert.equal(result.status, "transport_failure");
+    if (result.status === "transport_failure") {
       assert.equal(result.stage, "gatekeeper");
       assert.deepEqual(result.submission, MISSING_ARGUMENTS_SUBMISSION);
     }
