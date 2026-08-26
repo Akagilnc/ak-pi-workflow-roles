@@ -20,6 +20,7 @@ import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
+import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -51,73 +52,6 @@ function iso(msFromBase: number): string {
   return new Date(Date.parse("2026-08-24T04:00:00.000Z") + msFromBase).toISOString();
 }
 
-function sessionLines(input: {
-  readonly id: string;
-  readonly startedAt: string;
-  readonly endedAt: string;
-  readonly toolName: string;
-  readonly args: Record<string, unknown>;
-  /** Default accepted receipt. `true` = rejected; `omit` = no toolResult row. */
-  readonly receipt?: "accepted" | "rejected" | "omit";
-}): string {
-  const receipt = input.receipt ?? "accepted";
-  const header = {
-    type: "session",
-    version: 3,
-    id: input.id,
-    timestamp: input.startedAt,
-    cwd: ISSUE_PROJECT_ROOT,
-  };
-  const call = {
-    type: "message",
-    id: `${input.id}-call`,
-    parentId: null,
-    timestamp: input.endedAt,
-    message: {
-      role: "assistant",
-      timestamp: input.endedAt,
-      content: [
-        {
-          type: "toolCall",
-          id: `call_${input.id}`,
-          name: input.toolName,
-          arguments: input.args,
-        },
-      ],
-    },
-  };
-  if (receipt === "omit") {
-    // Tail keeps span endedAt without a toolResult — unpaired call is not a receipt.
-    const tail = {
-      type: "message",
-      id: `${input.id}-tail`,
-      parentId: `${input.id}-call`,
-      timestamp: input.endedAt,
-      message: {
-        role: "user",
-        timestamp: input.endedAt,
-        content: [{ type: "text", text: "no-result" }],
-      },
-    };
-    return [header, call, tail].map((row) => JSON.stringify(row)).join("\n") + "\n";
-  }
-  const tail = {
-    type: "message",
-    id: `${input.id}-tail`,
-    parentId: `${input.id}-call`,
-    timestamp: input.endedAt,
-    message: {
-      role: "toolResult",
-      toolCallId: `call_${input.id}`,
-      toolName: input.toolName,
-      timestamp: input.endedAt,
-      isError: receipt === "rejected",
-      content: [{ type: "text", text: receipt === "rejected" ? "rejected" : "ok" }],
-    },
-  };
-  return [header, call, tail].map((row) => JSON.stringify(row)).join("\n") + "\n";
-}
-
 async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<void> {
   await mkdir(auditorDir, { recursive: true });
   const rounds: Array<{
@@ -143,7 +77,7 @@ async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<voi
     fileSeq += 1;
     await writeFile(
       join(auditorDir, `d${String(fileSeq).padStart(2, "0")}_menxia.jsonl`),
-      sessionLines({
+      gateToolSessionJsonl({
         id: `disp-${index + 1}`,
         startedAt: iso(round.dStart),
         endedAt: iso(round.dEnd),
@@ -155,7 +89,7 @@ async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<voi
     fileSeq += 1;
     await writeFile(
       join(auditorDir, `o${String(fileSeq).padStart(2, "0")}_fubaolang.jsonl`),
-      sessionLines({
+      gateToolSessionJsonl({
         id: `off-${index + 1}`,
         startedAt: iso(round.oStart),
         endedAt: iso(round.oEnd),
@@ -169,7 +103,7 @@ async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<voi
       fileSeq += 1;
       await writeFile(
         join(auditorDir, `s${String(fileSeq).padStart(2, "0")}_soul.jsonl`),
-        sessionLines({
+        gateToolSessionJsonl({
           id: "soul-noise",
           startedAt: iso(196_000),
           endedAt: iso(199_000),
@@ -186,7 +120,7 @@ async function writeCurrentNameSingleRound(auditorDir: string): Promise<void> {
   await mkdir(auditorDir, { recursive: true });
   await writeFile(
     join(auditorDir, "d01_gatekeeper.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "disp-cur",
       startedAt: iso(0),
       endedAt: iso(1_000),
@@ -197,7 +131,7 @@ async function writeCurrentNameSingleRound(auditorDir: string): Promise<void> {
   );
   await writeFile(
     join(auditorDir, "o02_inspector.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "off-cur",
       startedAt: iso(1_000),
       endedAt: iso(11_000),
@@ -214,7 +148,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
   // Lawful round 1 (current English faces)
   await writeFile(
     join(auditorDir, "d01_gatekeeper.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "disp-ok",
       startedAt: iso(0),
       endedAt: iso(1_000),
@@ -225,7 +159,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
   );
   await writeFile(
     join(auditorDir, "o02_inspector.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "off-ok",
       startedAt: iso(1_000),
       endedAt: iso(11_000),
@@ -237,7 +171,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
   // Rejected dispatch — must not open a round even with a later officer
   await writeFile(
     join(auditorDir, "d03_gatekeeper_rejected.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "disp-rej",
       startedAt: iso(20_000),
       endedAt: iso(21_000),
@@ -249,7 +183,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
   );
   await writeFile(
     join(auditorDir, "o04_inspector_after_rej.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "off-after-rej",
       startedAt: iso(21_000),
       endedAt: iso(31_000),
@@ -261,7 +195,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
   // Accepted dispatch + officer toolCall with no toolResult — unpaired, not a round
   await writeFile(
     join(auditorDir, "d05_gatekeeper_orphan.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "disp-orphan",
       startedAt: iso(40_000),
       endedAt: iso(41_000),
@@ -272,7 +206,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
   );
   await writeFile(
     join(auditorDir, "o06_notary_no_result.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "off-no-result",
       startedAt: iso(41_000),
       endedAt: iso(51_000),
@@ -436,7 +370,7 @@ async function writeLawfulIncompleteThenSuccessFixture(auditorDir: string): Prom
   // Older lawful Gatekeeper incomplete — must not poison the leg.
   await writeFile(
     join(auditorDir, "d01_gatekeeper_incomplete.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "disp-incomplete",
       startedAt: iso(0),
       endedAt: iso(1_000),
@@ -448,7 +382,7 @@ async function writeLawfulIncompleteThenSuccessFixture(auditorDir: string): Prom
   // Subsequent lawful inspector bounce pair → round 1.
   await writeFile(
     join(auditorDir, "d02_gatekeeper.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "disp-ok",
       startedAt: iso(10_000),
       endedAt: iso(11_000),
@@ -459,7 +393,7 @@ async function writeLawfulIncompleteThenSuccessFixture(auditorDir: string): Prom
   );
   await writeFile(
     join(auditorDir, "o03_inspector.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "off-bounce",
       startedAt: iso(11_000),
       endedAt: iso(21_000),
@@ -471,7 +405,7 @@ async function writeLawfulIncompleteThenSuccessFixture(auditorDir: string): Prom
   // Officer-layer typed incomplete still pairs (distinct from Gatekeeper incomplete).
   await writeFile(
     join(auditorDir, "d04_gatekeeper.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "disp-off-incomplete",
       startedAt: iso(30_000),
       endedAt: iso(31_000),
@@ -482,7 +416,7 @@ async function writeLawfulIncompleteThenSuccessFixture(auditorDir: string): Prom
   );
   await writeFile(
     join(auditorDir, "o05_notary_incomplete.jsonl"),
-    sessionLines({
+    gateToolSessionJsonl({
       id: "off-incomplete",
       startedAt: iso(31_000),
       endedAt: iso(41_000),
@@ -549,7 +483,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "o01_inspector_inverted_span.jsonl"),
-      sessionLines({
+      gateToolSessionJsonl({
         id: "off-inverted",
         startedAt: iso(20_000),
         endedAt: iso(10_000),
@@ -565,7 +499,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "o01_inspector_blank_status.jsonl"),
-      sessionLines({
+      gateToolSessionJsonl({
         id: "off-blank-status",
         startedAt: iso(0),
         endedAt: iso(10_000),
@@ -581,7 +515,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "d01_gatekeeper_unknown_officer.jsonl"),
-      sessionLines({
+      gateToolSessionJsonl({
         id: "disp-unknown-officer",
         startedAt: iso(0),
         endedAt: iso(1_000),
@@ -597,7 +531,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "d01_gatekeeper_non_dispatch_status.jsonl"),
-      sessionLines({
+      gateToolSessionJsonl({
         id: "disp-non-dispatch",
         startedAt: iso(0),
         endedAt: iso(1_000),
