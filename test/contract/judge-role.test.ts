@@ -57,6 +57,7 @@ import {
   setPersistentSeatConfig,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
+import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -209,11 +210,7 @@ function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
   };
   return Object.assign(context, {
     cwd: process.cwd(), model,
-    modelRegistry: {
-      getProvider(name: string) { return name === model.provider ? provider : undefined; },
-      async getProviderAuth() { return { auth: {} }; },
-      async getApiKeyAndHeaders() { return { ok: true }; },
-    },
+    modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
     thinkingLevel: "off",
   });
 }
@@ -278,11 +275,7 @@ function workerCompletionGatekeeperHarness(options: {
     context(id: string, toolName: string) {
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(), model,
-        modelRegistry: {
-          getProvider(name: string) { return name === model.provider ? provider : undefined; },
-          async getProviderAuth() { return { auth: {} }; },
-          async getApiKeyAndHeaders() { return { ok: true }; },
-        },
+        modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
         thinkingLevel: "off",
       });
     },
@@ -1765,11 +1758,9 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       Object.assign(toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]), {
         cwd: process.cwd(),
         model: harness.model,
-        modelRegistry: {
-          getProvider: () => harness.provider,
-          async getProviderAuth() { return { auth: {} }; },
-          async getApiKeyAndHeaders() { return { ok: true }; },
-        },
+        modelRegistry: scriptedGatekeeperModelRegistry(harness.model, harness.provider, {
+          matchProvider: false,
+        }),
         thinkingLevel: "off",
       }),
     );
