@@ -211,11 +211,11 @@ test("cold-installed package audits active auditor seats from editable Souls", a
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = await loadRawPackageManifest();
-  // #443: judge session materials = constitution + soul + output guide (trim whole).
-  // #470 御批二: judge 主会话 roster 不动；法典只装三审计席。
+  // #443/#470 御批四: judge session materials = constitution + soul + audit-law + output guide.
   const judgeSoul = [
     await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
     await readFile(resolve(packageRoot, "souls/judge.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/audit-law.md"), "utf8"),
     await readFile(resolve(packageRoot, "souls/judge-output-guide.md"), "utf8"),
   ].join("\n\n").trim();
   await withActivationHome(
