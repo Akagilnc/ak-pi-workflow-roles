@@ -79,6 +79,9 @@ ak-role doctor --issue 115 "Diagnose this retained case."
 # merger — resolve one merge already in conflict (start it first with Git’s ort)
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 # hands new intent/authority questions back instead of inventing authority
+
+# after escalate: feed the owner ruling into the same session (standard chain; see resume under Reading results)
+ak-role resume <runId> "<ruling>"
 ```
 
 ## Names
