@@ -20203,7 +20203,7 @@ var init_judge_auditor = __esm({
     JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
     auditDecisionTool = createComplianceDecisionTool(
       JUDGE_AUDIT_TOOL_NAME,
-      "Return whether the proposed verdict demonstrably follows the judge soul and dossier evidence."
+      "Return whether the proposed verdict demonstrably follows the audit law and Judge role boundaries from the dossier evidence."
     );
   }
 });
