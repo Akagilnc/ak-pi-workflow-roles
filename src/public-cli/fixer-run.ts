@@ -47,7 +47,8 @@ import {
   markRunRunning,
   markRunTerminal,
   renderResumeCommand,
-  RESUME_TRANSPORT_ENVELOPE,
+  type PublicResumeRequest,
+  selectResumeContinuationPrompt,
   RunWriterLeaseHeldError,
   type RunWriterLease,
   type TypedProviderHttpObservation,
@@ -161,6 +162,7 @@ export function buildFixerResumeActivationExtraArgs(
     packageRoot: string;
     model?: SeatModelConfig;
     extraPiArgs?: readonly string[];
+    message?: string;
   },
 ): string[] {
   const diagnosisSkillPath = resolvePackagedMethodSkillPath(
@@ -196,7 +198,7 @@ export function buildFixerResumeActivationExtraArgs(
     "--mode",
     "json",
     ...buildSeatModelCliArgs(options.model),
-    RESUME_TRANSPORT_ENVELOPE,
+    selectResumeContinuationPrompt(options.message),
   ];
 }
 
@@ -532,7 +534,7 @@ export async function runPublicFixer(
  * Restores role/phase/packet/prerequisites/session identity; model override is temporary.
  */
 export async function runPublicFixerResume(
-  argv: readonly string[],
+  request: PublicResumeRequest,
   env: FixerRunEnv,
   io: CliIo,
 ): Promise<{
@@ -540,25 +542,9 @@ export async function runPublicFixerResume(
   admitted?: AdmittedFixerInvocation;
   terminal?: TerminalResult;
 }> {
-  const runId = argv[0];
-  if (runId === undefined || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io,
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io,
-    );
-    return { exitCode: 2 };
-  }
-
   let loaded;
   try {
-    loaded = await loadResumableFixerRun(env.home, runId);
+    loaded = await loadResumableFixerRun(env.home, request.runId);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -601,6 +587,7 @@ export async function runPublicFixerResume(
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    ...(request.message === undefined ? {} : { message: request.message }),
   });
 
   const result = await dispatchAdmittedFixer({

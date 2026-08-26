@@ -23,11 +23,11 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId>` 重开该次运行的同一 Pi session。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。门下省、太医署仍为一次性，无 resume。包绝不自动换 provider；临时换模型用全局旗标。
+`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。门下省、太医署仍为一次性，无 resume。包绝不自动换 provider；临时换模型用全局旗标。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。
 
 大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
-全局覆盖前后皆可：`ak-role --model xai/grok-4.5:high resume <runId>`。
+全局覆盖须在 opaque message 段之前：`ak-role --model xai/grok-4.5:high resume <runId>` 或 `ak-role resume --model xai/grok-4.5:high <runId>`。
 
 每次运行游奕使自动出席，建议随同一 Terminal 给出。配置：
 
