@@ -18,12 +18,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 /** Ticket #443 What-to-build oracles — not imported from production tables. */
 const TICKET_MAIN_MATERIALS = {
-  judge: [
-    "CLAUDE.md",
-    "souls/judge.md",
-    "souls/audit-law.md",
-    "souls/judge-output-guide.md",
-  ],
+  judge: ["CLAUDE.md", "souls/judge.md", "souls/judge-output-guide.md"],
   fixer: [
     "CLAUDE.md",
     "souls/fixer.md",
