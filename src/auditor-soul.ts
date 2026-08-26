@@ -21,7 +21,12 @@ function auditorSoulRelativePath(role: AuditorSoulRole): string {
  * not (御批四: 参审四席 = 大理寺/御史台主会话 + 两审计席; 太医线不动).
  */
 export const AUDITOR_SESSION_MATERIALS = {
-  judge: ["CLAUDE.md", "souls/judge-auditor.md", "souls/audit-law.md"],
+  judge: [
+    "CLAUDE.md",
+    "souls/judge-auditor.md",
+    "souls/audit-law.md",
+    "souls/quality-law.md",
+  ],
   reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md", "souls/audit-law.md"],
   doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
 } as const satisfies Record<
