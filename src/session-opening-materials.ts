@@ -29,7 +29,7 @@ export async function joinPackageMaterials(
 
 /** Seven public main roles + Navigator. Ticket #443 injection roster. */
 export const MAIN_ROLE_SESSION_MATERIALS = {
-  judge: ["CLAUDE.md", "souls/judge.md", "souls/judge-output-guide.md"],
+  judge: ["CLAUDE.md", "souls/judge.md", "souls/audit-law.md", "souls/judge-output-guide.md"],
   fixer: [
     "CLAUDE.md",
     "souls/fixer.md",
@@ -42,11 +42,11 @@ export const MAIN_ROLE_SESSION_MATERIALS = {
     "souls/quality-law.md",
     "souls/coder-output-guide.md",
   ],
-  reviewer: ["CLAUDE.md", "souls/reviewer.md"],
+  reviewer: ["CLAUDE.md", "souls/reviewer.md", "souls/audit-law.md"],
   collector: ["CLAUDE.md", "souls/collector.md"],
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],
-  notary: ["CLAUDE.md", "souls/notary.md"],
+  notary: ["CLAUDE.md", "souls/notary.md", "souls/menxia-output-guide.md"],
   navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
 
@@ -60,9 +60,14 @@ export function loadMainRoleSessionMaterials(
 
 /** Gatekeeper province + Inspector/Notary officer sessions. */
 export const GATEKEEPER_SESSION_MATERIALS = {
-  gatekeeper: ["CLAUDE.md", "souls/gatekeeper.md"],
-  inspector: ["CLAUDE.md", "souls/inspector.md", "souls/quality-law.md"],
-  notary: ["CLAUDE.md", "souls/notary.md"],
+  gatekeeper: ["CLAUDE.md", "souls/gatekeeper.md", "souls/menxia-output-guide.md"],
+  inspector: [
+    "CLAUDE.md",
+    "souls/inspector.md",
+    "souls/quality-law.md",
+    "souls/menxia-output-guide.md",
+  ],
+  notary: ["CLAUDE.md", "souls/notary.md", "souls/menxia-output-guide.md"],
 } as const;
 
 export type GatekeeperSessionRole = keyof typeof GATEKEEPER_SESSION_MATERIALS;
