@@ -79,6 +79,9 @@ ak-role doctor --issue 115 "Diagnose this retained case."
 # 校书郎——雠校一个已在冲突的 merge（先用 Git ort 起动）
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 # 遇新意图/权限问题交回调用者，不捏造 authority
+
+# escalate 后：把 owner 裁定喂回同一 session（标准链；细则见上方「读结果」resume 段）
+ak-role resume <runId> "<裁定>"
 ```
 
 ## 班子（唐宋官署命名）
