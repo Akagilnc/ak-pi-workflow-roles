@@ -1,0 +1,11 @@
+{
+  "runId": "01a03c71-4710-7000-8000-escalate-resume01",
+  "role": "judge",
+  "state": "terminal",
+  "bookKey": "work",
+  "projectRoot": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/work",
+  "sessionDirectory": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/.ak-roles/books/work/runs/01a03c71-4710-7000-8000-escalate-resume01@judge/session",
+  "sessionFile": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/.ak-roles/books/work/runs/01a03c71-4710-7000-8000-escalate-resume01@judge/session/session.jsonl",
+  "admittedRequestPath": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/.ak-roles/books/work/runs/01a03c71-4710-7000-8000-escalate-resume01@judge/admitted-request.json",
+  "runDirectory": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ak-471-chain-home-AYylTX/.ak-roles/books/work/runs/01a03c71-4710-7000-8000-escalate-resume01@judge"
+}

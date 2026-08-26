@@ -275,14 +275,15 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
   // (`ak-role --model x roles` and `ak-role roles --model x`).
   // Grammar authority: shared typed consumer over PUBLIC_OPTION_TABLE.global.
   // #471: after `resume <runId>`, remaining argv is the opaque message segment
-  // and must not re-enter the global-option consumer.
+  // and must not re-enter the global-option consumer — including bare `--`,
+  // which is a legal opaque message token, not an argv delimiter here.
   while (args.length > 0) {
-    if (args[0] === "--") {
-      args.shift();
+    if (positional[0] === "resume" && positional.length >= 2) {
       positional.push(...args);
       break;
     }
-    if (positional[0] === "resume" && positional.length >= 2) {
+    if (args[0] === "--") {
+      args.shift();
       positional.push(...args);
       break;
     }
