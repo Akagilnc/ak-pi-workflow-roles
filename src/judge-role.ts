@@ -8,10 +8,6 @@ import { Type, type Static } from "typebox";
 
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import {
-  readActivationEngineLaborFallbackField,
-  withEngineLaborFallbackField,
-} from "./engine-labor-fallback.ts";
 import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
 
 import {
@@ -137,9 +133,7 @@ export function createJudgeRoleRuntime(
             } catch (error) {
               hostActions.failInfrastructure(error, ctx, toolCallId);
             }
-            // #380: attach sole-built engineLaborFallback when detour fell back to seat labor.
-            const laborFallback = readActivationEngineLaborFallbackField();
-            const acceptedDetails = withEngineLaborFallbackField(verdict, laborFallback);
+            const acceptedDetails = verdict;
             return disposeComplianceDecision<AgentToolResult<unknown>>(
               audit,
               {

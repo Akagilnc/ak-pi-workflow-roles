@@ -9,7 +9,6 @@
  * - success rate den = success-eligible accepted legs (no-receipt out; planned out)
  * - planned = plan-duty acceptance; never success numerator or denominator
  */
-import { seatFallbackBaseStatus } from "../engine-labor-fallback.ts";
 import type { AnalystReadableRunFacts, AnalystRunTerminalFace } from "../analyst-ledger.ts";
 import { medianNumber } from "../analyst-median.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
@@ -186,10 +185,8 @@ function mapTerminal(
     };
   }
 
-  // Seat-fallback taint is visible on the label; acceptance/success use base semantics.
-  const statusBase = seatFallbackBaseStatus(status);
   const acceptedSet = ACCEPTED_STATUS[role];
-  if (acceptedSet === undefined || !acceptedSet.has(statusBase)) {
+  if (acceptedSet === undefined || !acceptedSet.has(status)) {
     return {
       terminalLabel: status,
       accepted: false,
@@ -199,9 +196,9 @@ function mapTerminal(
     };
   }
 
-  const plannedDuty = WORKER_ROLES.has(role) && statusBase === "planned";
+  const plannedDuty = WORKER_ROLES.has(role) && status === "planned";
   const successSet = SUCCESS_STATUS[role] ?? new Set<string>();
-  const success = !plannedDuty && successSet.has(statusBase);
+  const success = !plannedDuty && successSet.has(status);
   const successEligible = !plannedDuty;
 
   return {

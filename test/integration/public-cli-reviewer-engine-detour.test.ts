@@ -264,6 +264,46 @@ async function assertDetourLaborOnCase(
 
 
 test(
+  "engine failure in evidence legs terminates the public Reviewer run with its cause",
+  { timeout: 180_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-reviewer-engine-failure-"));
+    const engineCause = "reviewer-engine-process-cause-483";
+    try {
+      const project = join(home, "work");
+      const binDir = join(home, "bin");
+      await mkdir(project, { recursive: true });
+      await mkdir(binDir, { recursive: true });
+      const base = seedGitProject(project);
+      await writeExecutable(
+        join(binDir, "kimi"),
+        `#!/bin/sh\nprintf '%s\\n' '${engineCause}' >&2\nexit 23\n`,
+      );
+
+      const result = await runReviewerWithEngine({
+        home,
+        project,
+        binDir,
+        runId: "run-reviewer-engine-failure-001",
+        base,
+        engine: "cursor",
+      });
+
+      assert.notEqual(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "failure");
+      if (result.terminal?.roleOutcome.kind !== "failure") assert.fail("expected typed failure");
+      assert.equal(
+        result.terminal.roleOutcome.diagnostic.includes(engineCause),
+        true,
+        result.terminal.roleOutcome.diagnostic,
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   "AC with-notes: cursor engine → leg detour → typed reviewer receipt",
   { timeout: 180_000 },
   async () => {
@@ -318,8 +358,3 @@ test(
     }
   },
 );
-
-  // 尺②同根收拢（#420 类一）：detour 失败 → seat labor + engineLaborFallback 的
-  // 机制与 stderr 逐字传播由快档 test/unit/reviewer-child-failure-projection.test.ts
-  // 的 #380 tracer 在进程内承接；真入口失败味的唯一 e2e 留在 judge 侧
-  // （trim-empty stdout → 常量诊断）。本条与其同根同断言，删此留彼。

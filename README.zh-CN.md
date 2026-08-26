@@ -53,7 +53,7 @@ ak-role config set-auto-resume-limit 3
 
 完成侧交卷时，包可能在本局结算前起门下省：`gatekeeper` 读受审物并派官（`inspector` 给事中或 `notary` 符宝郎）；既有审刑院挂钩仍在原位。闸在交卷 session 内运行；封驳＝当场重写重交，不是角色失败；最终回执即过闸产物。`planned`／`refused`／`unfinished` 不调省。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。闸史已投影进 typed 回执：可选 menxia 段列出实际在场席位、每轮派官（officer 与逐字 reason）与各官报告（席位/判决/findings）；无闸调用时该段缺席。勿刮 session 散文当闸状态——读 typed 段。
 
-当劳务引擎绕行失败、座席回到主路继续劳务时，typed 回执可带机械字段 `engineLaborFallback`：`{ engine, failure, laborBy: "seat" }`。仅在真实绕行失败并座席顶班后出现——成功绕行或调用方 cancel 不出现。同一次 activation 内先到先得；无包内 latch 时剥离模型伪造的 `engineLaborFallback` 键。唯一构造点：`src/engine-labor-fallback.ts`；决策记录：[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)。本文只投影该契约。
+劳务引擎绕行进程无法启动、非零退出或未产生可用输出时，角色运行沿既有基础设施失败路径立即停止并保留可见真因；座席不继续顶班，也不产出 typed 回执。调用方 cancel 仍原样传播。见 [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)。
 
 ## 调用百官
 

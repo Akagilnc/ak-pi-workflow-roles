@@ -23,13 +23,6 @@ import {
 } from "./tool-execution-observation.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
-import {
-  createEngineLaborFallbackLatch,
-  installActivationEngineLaborFallbackLatch,
-  restoreEngineLaborFallbackFromSessionEntries,
-  seatFallbackBaseStatus,
-  seatFallbackStatusHasLawfulEvidence,
-} from "./engine-labor-fallback.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
 
@@ -614,12 +607,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   const status = typeof details.status === "string"
     ? details.status
     : typeof details.judgeStatus === "string" ? details.judgeStatus : undefined;
-  // ADR 0071: `-by-fallback` without latch-shaped evidence is not a lawful terminal.
-  if (status !== undefined && !seatFallbackStatusHasLawfulEvidence(status, event.details)) {
-    return undefined;
-  }
-  // Seat-fallback taint keeps escalate semantics (base) while preserving the polluted token.
-  if (status !== undefined && seatFallbackBaseStatus(status) === "escalate") {
+  if (status !== undefined && status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
   return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };
@@ -652,9 +640,7 @@ export function createRoleRuntimeExtension(
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for Gatekeeper non-pass (ADR 0018).
     const pendingGatekeeperNonPassByToolCallId = new Map<string, GatekeeperNonPassResult>();
-    // #357 T2 / #378 / #380 / #391: engine detour once-latch + seat-fallback latch (any role+engine).
     let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
-    let engineLaborFallbackLatch = createEngineLaborFallbackLatch();
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
@@ -1140,18 +1126,6 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
       pendingGatekeeperNonPassByToolCallId.clear();
-      engineLaborFallbackLatch = createEngineLaborFallbackLatch();
-      // #380 resume: restore sole-built fallback from durable same-session detour results.
-      const sessionEntries =
-        typeof ctx.sessionManager?.getEntries === "function"
-          ? ctx.sessionManager.getEntries()
-          : [];
-      restoreEngineLaborFallbackFromSessionEntries(
-        engineLaborFallbackLatch,
-        sessionEntries,
-        ENGINE_DETOUR_TOOL_NAME,
-      );
-      installActivationEngineLaborFallbackLatch(engineLaborFallbackLatch);
       engineDetourRegistration?.resetLatch();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
@@ -1267,7 +1241,6 @@ export function createRoleRuntimeExtension(
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
         // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
-        // Seat-fallback latch is activation-scoped (installed at session_start) so legs share it.
         if (engineDetourRegistration === undefined) {
           engineDetourRegistration = registerEngineDetourTool(pi, hostActions);
           if (!engineDetourRegistration.registered) {

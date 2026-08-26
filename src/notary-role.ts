@@ -14,7 +14,6 @@ import {
   NOTARY_SOURCE_RUN_FLAG,
   notaryOutputSchema,
   validateNotaryOutput,
-  withNotaryAcceptedDetails,
   type NotarySourceRunLocator,
 } from "./notary-contracts.ts";
 
@@ -114,10 +113,9 @@ export function createNotaryRoleRuntime(
                 ? error
                 : new Error(String(error));
             }
-            const acceptedDetails = withNotaryAcceptedDetails(output);
             return {
               content: [{ type: "text" as const, text: NOTARY_ACCEPTED_TEXT }],
-              details: acceptedDetails,
+              details: output,
               terminate: true as const,
             };
           },

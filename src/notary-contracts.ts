@@ -5,13 +5,6 @@
  */
 import { Type } from "typebox";
 
-import {
-  readActivationEngineLaborFallbackField,
-  seatFallbackBaseStatus,
-  seatFallbackStatusHasLawfulEvidence,
-  withEngineLaborFallbackField,
-  type WithEngineLaborFallback,
-} from "./engine-labor-fallback.ts";
 import { openToolObject } from "./open-tool-schema.ts";
 
 export const NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
@@ -45,18 +38,13 @@ export type NotarySourceRunLocator = {
   readonly role: string;
 };
 
-type NotaryOutputClean =
+export type NotaryOutput =
   | { readonly status: "pass"; readonly findings: readonly string[] }
   | {
       readonly status: "bounce";
       readonly disposition: "rewrite";
       readonly findings: readonly string[];
     };
-
-/** Clean submission or seat-fallback tainted accepted receipt (ADR 0071). */
-export type NotaryOutput =
-  | NotaryOutputClean
-  | WithEngineLaborFallback<NotaryOutputClean>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -76,10 +64,10 @@ export function validateNotaryOutput(value: unknown): NotaryOutput {
     throw new Error("Notary output has no recognized execution discriminator");
   }
   const statusRaw = typeof value.status === "string" ? value.status : undefined;
-  if (statusRaw === undefined || !seatFallbackStatusHasLawfulEvidence(statusRaw, value)) {
+  if (statusRaw === undefined) {
     throw new Error("Notary output has no recognized execution discriminator");
   }
-  const status = seatFallbackBaseStatus(statusRaw);
+  const status = statusRaw;
   if (status === "bounce") {
     const clone = structuredClone(value) as Record<string, unknown>;
     if (clone.disposition === undefined) clone.disposition = "rewrite";
@@ -94,20 +82,12 @@ export function validateNotaryOutput(value: unknown): NotaryOutput {
   throw new Error("Notary output has no recognized execution discriminator");
 }
 
-/** Shape check for recorded accepted details (may include engineLaborFallback). */
 export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
   return validateNotaryOutput(value);
 }
 
-export function withNotaryAcceptedDetails(output: NotaryOutput): NotaryOutput {
-  return withEngineLaborFallbackField(
-    output,
-    readActivationEngineLaborFallbackField(),
-  ) as NotaryOutput;
-}
-
 export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknown> {
-  const status = seatFallbackBaseStatus(String(output.status));
+  const status = String(output.status);
   const facts: Record<string, unknown> = { status, officer: "notary" };
   if (status === "pass" || status === "bounce") {
     const findings = (output as { findings?: unknown }).findings;
