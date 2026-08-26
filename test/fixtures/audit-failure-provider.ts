@@ -113,9 +113,12 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
           { stopReason: "toolUse" },
         );
       }
-      if (menxiaMode === "officer-no-pass") {
+      if (menxiaMode === "officer-no-pass" || menxiaMode === "notary-no-pass") {
         return fauxAssistantMessage(
-          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }),
+          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, {
+            status: "dispatch",
+            officer: menxiaMode === "notary-no-pass" ? "notary" : "inspector",
+          }),
           { stopReason: "toolUse" },
         );
       }
@@ -138,7 +141,12 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     }
     if (names.includes(NOTARY_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
-        fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        fauxToolCall(
+          NOTARY_OUTPUT_TOOL,
+          menxiaMode === "notary-no-pass"
+            ? { status: "ok-enough" }
+            : { status: "pass", findings: [] },
+        ),
         { stopReason: "toolUse" },
       );
     }

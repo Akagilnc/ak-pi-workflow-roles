@@ -2079,7 +2079,11 @@ async function withOptionalMenxiaProjection<
   if (
     isRecord(secondaryEvidence)
     && secondaryEvidence.kind === "role_infrastructure_failure"
-    && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector")
+    && (
+      secondaryEvidence.stage === "gatekeeper"
+      || secondaryEvidence.stage === "inspector"
+      || secondaryEvidence.stage === "notary"
+    )
   ) return base;
   const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
   return menxia === undefined ? base : { ...base, menxia };
