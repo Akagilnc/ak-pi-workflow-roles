@@ -135,11 +135,16 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)({ context }) },
         { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)({ context }) },
       ] as const;
-      // #470: auditor session = factory constitution + role auditor soul + audit-law.
+      // #470: judge/reviewer = constitution + soul + audit-law; doctor omits audit-law.
       const installedConstitution = await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8");
       const installedAuditLaw = await readFile(resolve(installedRoot, "souls/audit-law.md"), "utf8");
-      const expectedAuditorPrompt = async (soulPath: string) =>
-        `${installedConstitution}\n\n${await readFile(soulPath, "utf8")}\n\n${installedAuditLaw}`;
+      const expectedAuditorPrompt = async (name: string, soulPath: string) => {
+        const soul = await readFile(soulPath, "utf8");
+        if (name === "doctor") {
+          return `${installedConstitution}\n\n${soul}`;
+        }
+        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}`;
+      };
       const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
         let prompt = "";
@@ -154,7 +159,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         assert.equal(calls, 1, `${role.name} audit must make one decision call`);
         assert.equal(
           prompt,
-          await expectedAuditorPrompt(role.soulPath),
+          await expectedAuditorPrompt(role.name, role.soulPath),
           `${role.name} must load constitution + installed Soul on this call`,
         );
         return prompt;
@@ -171,7 +176,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         assert.equal(edited, `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}`);
         for (const role of roles.slice(1)) {
           const unchanged = await run(role);
-          assert.equal(unchanged, await expectedAuditorPrompt(role.soulPath));
+          assert.equal(unchanged, await expectedAuditorPrompt(role.name, role.soulPath));
           assert.equal(unchanged.includes(editedSoul), false);
         }
       } finally {

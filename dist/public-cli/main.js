@@ -20180,7 +20180,7 @@ var init_doctor_auditor = __esm({
     DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
     tool = createComplianceDecisionTool(
       DOCTOR_AUDIT_TOOL_NAME,
-      "Return whether the proposed Doctor testimony demonstrably follows the audit law and Doctor role boundaries from the dossier frozen evidence record. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
+      "Return whether the proposed Doctor testimony demonstrably follows the Doctor Soul and frozen evidence record from the dossier. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
     );
   }
 });
