@@ -1,11 +1,5 @@
 /** Package-owned Reviewer intent and runtime-receipt leaves — no role registration surface. */
 
-import {
-  seatFallbackBaseStatus,
-  seatFallbackStatusHasLawfulEvidence,
-  type SeatFallbackTaintedStatus,
-  type WithEngineLaborFallback,
-} from "../engine-labor-fallback.ts";
 import type { ReviewerAcceptedEvidence, ReviewerFailureClassification, ReviewerWorkspaceDisposition } from "../reviewer-execution-ledger.ts";
 
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
@@ -55,14 +49,7 @@ type RuntimeReviewerReceiptV2Clean = Readonly<{
     target?: ReviewerAcceptedEvidence["target"];
   }>;
 }>;
-/** Clean runtime receipt or seat-fallback tainted accepted receipt (ADR 0071). */
-export type RuntimeReviewerReceiptV2 =
-  | RuntimeReviewerReceiptV2Clean
-  | WithEngineLaborFallback<
-      Omit<RuntimeReviewerReceiptV2Clean, "status"> & {
-        status: SeatFallbackTaintedStatus<"completed" | "refused">;
-      }
-    >;
+export type RuntimeReviewerReceiptV2 = RuntimeReviewerReceiptV2Clean;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -102,10 +89,6 @@ export function validateReviewerIntent(output: unknown): ReviewerIntent {
 /** Validate runtime-owned facts at their real identity seams (target pins + plain text). */
 export function validateRuntimeReviewerReceipt(output: unknown): RuntimeReviewerReceiptV2 {
   const status = read(output, "status");
-  // ADR 0071: tainted top-level status requires latch-shaped engineLaborFallback evidence.
-  if (typeof status === "string" && !seatFallbackStatusHasLawfulEvidence(status, output)) {
-    throw new Error("Reviewer receipt has no recognized execution discriminator");
-  }
   const acceptedBatch = read(output, "acceptedBatch");
   const identities = read(output, "identities");
   const construction = read(identities, "construction");
@@ -173,7 +156,7 @@ export function projectReviewerIntentToReceipt(intentValue: unknown, receiptValu
   const intent = validateReviewerIntent(intentValue);
   const receipt = validateRuntimeReviewerReceipt(receiptValue);
   const receiptStatus = String(receipt.status);
-  const receiptBase = seatFallbackBaseStatus(receiptStatus);
+  const receiptBase = (receiptStatus);
   if (receiptBase !== intent.status || (intent.status === "completed" ? receipt.diagnostic !== undefined : receipt.diagnostic !== intent.diagnostic)) {
     throw new Error("Reviewer intent and runtime receipt disagree");
   }

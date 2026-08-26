@@ -1,11 +1,6 @@
 import { Type, type Static } from "typebox";
 import { isFullGitObjectId } from "./git-object-id.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
-import {
-  seatFallbackBaseStatus,
-  seatFallbackStatusHasLawfulEvidence,
-  type WithEngineLaborFallback,
-} from "./engine-labor-fallback.ts";
 import { sha256Hex } from "./sha256.ts";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
@@ -32,10 +27,7 @@ export type MergerInput = DeepReadonly<Static<typeof mergerInputSchema>>;
 type MergerOutputClean =
   | { status: "completed"; attemptId: string; report: string; mergeCommitId: string }
   | { status: "escalate"; attemptId: string; diagnosis: string; report: string };
-/** Clean submission shape or seat-fallback tainted accepted receipt (ADR 0071). */
-export type MergerOutput =
-  | MergerOutputClean
-  | WithEngineLaborFallback<MergerOutputClean>;
+export type MergerOutput = MergerOutputClean;
 export const MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
 export const MERGER_ACCEPTED_TEXT = "Merger output accepted";
 
@@ -75,11 +67,7 @@ export function validateMergerInput(value: unknown): MergerInput {
 export function validateMergerOutput(value: unknown, expectedAttemptId?: string): MergerOutput {
   if (!record(value) || (expectedAttemptId !== undefined && value.attemptId !== expectedAttemptId)) throw new Error("Merger output attempt mismatch");
   const status = typeof value.status === "string" ? value.status : undefined;
-  const statusBase = status !== undefined ? seatFallbackBaseStatus(status) : undefined;
-  // ADR 0071: tainted status requires latch-shaped engineLaborFallback evidence.
-  if (status !== undefined && !seatFallbackStatusHasLawfulEvidence(status, value)) {
-    throw new Error("Merger output has no recognized execution discriminator");
-  }
+  const statusBase = status !== undefined ? (status) : undefined;
   if (statusBase === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value) as MergerOutput;
   if (statusBase === "escalate") return structuredClone(value) as MergerOutput;
   throw new Error("Merger output has no recognized execution discriminator");

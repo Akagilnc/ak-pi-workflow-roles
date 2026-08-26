@@ -1,7 +1,6 @@
 import { Type } from "typebox";
 import { isFullGitObjectId } from "./git-object-id.js";
 import { exactUtf8 } from "./exact-utf8.js";
-import { seatFallbackBaseStatus, seatFallbackStatusHasLawfulEvidence, } from "./engine-labor-fallback.js";
 import { sha256Hex } from "./sha256.js";
 import { openToolObjectFromUnion } from "./open-tool-schema.js";
 const oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
@@ -70,11 +69,7 @@ export function validateMergerOutput(value, expectedAttemptId) {
     if (!record(value) || (expectedAttemptId !== undefined && value.attemptId !== expectedAttemptId))
         throw new Error("Merger output attempt mismatch");
     const status = typeof value.status === "string" ? value.status : undefined;
-    const statusBase = status !== undefined ? seatFallbackBaseStatus(status) : undefined;
-    // ADR 0071: tainted status requires latch-shaped engineLaborFallback evidence.
-    if (status !== undefined && !seatFallbackStatusHasLawfulEvidence(status, value)) {
-        throw new Error("Merger output has no recognized execution discriminator");
-    }
+    const statusBase = status !== undefined ? (status) : undefined;
     if (statusBase === "completed" && isFullGitObjectId(value.mergeCommitId))
         return structuredClone(value);
     if (statusBase === "escalate")

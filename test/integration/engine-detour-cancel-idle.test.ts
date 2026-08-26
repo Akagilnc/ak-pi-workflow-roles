@@ -1,5 +1,5 @@
 /**
- * Detour cancel propagation + soft-fail for process failures.
+ * Detour cancellation propagation + terminal process failures.
  * Package-owned tool idle backstop removed — no 183s execute kill path here.
  */
 import assert from "node:assert/strict";
@@ -15,12 +15,6 @@ import { runEngineDetourOnce } from "../../src/engine-detour.ts";
 import {
   createEngineDetourToolDefinition,
 } from "../../src/engine-detour-tool.ts";
-import {
-  clearActivationEngineLaborFallbackLatch,
-  createEngineLaborFallbackLatch,
-  installActivationEngineLaborFallbackLatch,
-  readEngineLaborFallbackField,
-} from "../../src/engine-labor-fallback.ts";
 
 const hangScript = `
 import { setTimeout as sleep } from "node:timers/promises";
@@ -57,81 +51,40 @@ test("runEngineDetourOnce abort rejects with signal reason and terminates child"
   });
 });
 
-test("detour caller AbortSignal cancel propagates and does not record fallback", async () => {
+test("detour caller AbortSignal cancel propagates unchanged", async () => {
   await withHangCwd(async (cwd, argv) => {
-    const latch = createEngineLaborFallbackLatch();
-    installActivationEngineLaborFallbackLatch(latch);
-    try {
-      const tool = createEngineDetourToolDefinition({
-        engineName: "kimi",
-        fail(error) {
-          throw error;
-        },
-      });
-      const controller = new AbortController();
-      const pending = tool.execute(
-        "call-1",
-        { argv },
-        controller.signal,
-        undefined,
-        fakeCtx(cwd),
-      );
-      const reason = new Error("upper-layer-cancel");
-      controller.abort(reason);
-      await assert.rejects(pending, (error: unknown) => error === reason);
-      assert.equal(
-        readEngineLaborFallbackField(latch),
-        undefined,
-        "caller cancel must not write engineLaborFallback",
-      );
-    } finally {
-      clearActivationEngineLaborFallbackLatch();
-    }
+    const tool = createEngineDetourToolDefinition({
+      engineName: "kimi",
+      fail(error) { throw error; },
+    });
+    const controller = new AbortController();
+    const pending = tool.execute("call-1", { argv }, controller.signal, undefined, fakeCtx(cwd));
+    const reason = new Error("upper-layer-cancel");
+    controller.abort(reason);
+    await assert.rejects(pending, (error: unknown) => error === reason);
   });
 });
 
-test("detour spawn failure soft-fails via seat fallback and records latch", async () => {
-  const latch = createEngineLaborFallbackLatch();
-  installActivationEngineLaborFallbackLatch(latch);
+test("detour spawn failure stops through the cause-bearing failure seam", async () => {
+  const tool = createEngineDetourToolDefinition({
+    engineName: "kimi",
+    fail(error) { throw error; },
+  });
+  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-spawn-miss-"));
   try {
-    const tool = createEngineDetourToolDefinition({
-      engineName: "kimi",
-      fail(error) {
-        throw error;
-      },
-    });
-    const cwd = await mkdtemp(join(tmpdir(), "ak-detour-spawn-miss-"));
-    try {
-      const result = await tool.execute(
-        "call-spawn-miss",
-        { argv: ["ak-engine-definitely-missing-binary-xyz"] },
-        undefined,
-        undefined,
-        fakeCtx(cwd),
-      );
-      assert.equal(
-        (result.details as { detourFailed?: boolean } | undefined)?.detourFailed,
-        true,
-      );
-      const field = readEngineLaborFallbackField(latch);
-      assert.ok(field, "spawn miss must record seat-fallback declaration");
-      assert.equal(field.engineLaborFallback.engine, "kimi");
-      assert.equal(field.engineLaborFallback.laborBy, "seat");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+    await assert.rejects(
+      tool.execute("call-spawn-miss", { argv: ["ak-engine-definitely-missing-binary-xyz"] }, undefined, undefined, fakeCtx(cwd)),
+      (error: unknown) => error instanceof Error && error.message.includes("ak-engine-definitely-missing-binary-xyz"),
+    );
   } finally {
-    clearActivationEngineLaborFallbackLatch();
+    await rm(cwd, { recursive: true, force: true });
   }
 });
 
 test("silent detour child is not cut by a package-owned tool idle backstop", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   await withHangCwd(async (cwd, argv) => {
-    const latch = createEngineLaborFallbackLatch();
-    installActivationEngineLaborFallbackLatch(latch);
-    try {
-      const tool = createEngineDetourToolDefinition({
+    const tool = createEngineDetourToolDefinition({
         engineName: "opus",
         fail(error) {
           throw error;
@@ -165,19 +118,10 @@ test("silent detour child is not cut by a package-owned tool idle backstop", asy
         undefined,
         "silent detour must not be killed by a removed package-owned tool idle clock",
       );
-      assert.equal(
-        readEngineLaborFallbackField(latch),
-        undefined,
-        "no idle soft-fail declaration when the idle path is gone",
-      );
-
       // Cleanup via retained caller-cancel path.
       const reason = new Error("test-cleanup-cancel");
       controller.abort(reason);
       await assert.rejects(pending, (error: unknown) => error === reason);
-    } finally {
-      clearActivationEngineLaborFallbackLatch();
-    }
   });
 });
 

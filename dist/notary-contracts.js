@@ -4,7 +4,6 @@
  * No usable result is infrastructure failure via public settlement, not a judgment status (#475).
  */
 import { Type } from "typebox";
-import { readActivationEngineLaborFallbackField, seatFallbackBaseStatus, seatFallbackStatusHasLawfulEvidence, withEngineLaborFallbackField, } from "./engine-labor-fallback.js";
 import { openToolObject } from "./open-tool-schema.js";
 export const NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
 export const NOTARY_ACCEPTED_TEXT = "Notary output accepted";
@@ -42,10 +41,10 @@ export function validateNotaryOutput(value) {
         throw new Error("Notary output has no recognized execution discriminator");
     }
     const statusRaw = typeof value.status === "string" ? value.status : undefined;
-    if (statusRaw === undefined || !seatFallbackStatusHasLawfulEvidence(statusRaw, value)) {
+    if (statusRaw === undefined) {
         throw new Error("Notary output has no recognized execution discriminator");
     }
-    const status = seatFallbackBaseStatus(statusRaw);
+    const status = (statusRaw);
     if (status === "bounce") {
         const clone = structuredClone(value);
         if (clone.disposition === undefined)
@@ -62,15 +61,14 @@ export function validateNotaryOutput(value) {
     }
     throw new Error("Notary output has no recognized execution discriminator");
 }
-/** Shape check for recorded accepted details (may include engineLaborFallback). */
 export function validateRecordedNotaryOutput(value) {
     return validateNotaryOutput(value);
 }
 export function withNotaryAcceptedDetails(output) {
-    return withEngineLaborFallbackField(output, readActivationEngineLaborFallbackField());
+    return output;
 }
 export function notaryDecisiveFacts(output) {
-    const status = seatFallbackBaseStatus(String(output.status));
+    const status = (String(output.status));
     const facts = { status, officer: "notary" };
     if (status === "pass" || status === "bounce") {
         const findings = output.findings;

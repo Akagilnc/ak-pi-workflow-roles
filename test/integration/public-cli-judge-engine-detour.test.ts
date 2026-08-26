@@ -194,13 +194,8 @@ test(
   },
 );
 
-  // 尺②同根收拢（#420 类一）：detour 失败 → seat fallback 的真入口 tracer 留
-  // 两条——reviewer B2（引擎 stderr 逐字入 fallback.failure）与本文件 trim-empty
-  // stdout（空产出常量诊断）。nonzero-exit+stderr 变体与 reviewer B2 同根同断言，
-  // 删此留彼；失败味分类矩阵由 test/unit/engine-labor-fallback.test.ts 承接。
-
 test(
-  "B1 trim-empty stdout → seat fallback + engineLaborFallback on accepted receipt",
+  "trim-empty engine output stops without a Receipt and exposes the cause",
   { timeout: 120_000 },
   async () => {
     const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-fail-b-"));
@@ -223,16 +218,13 @@ test(
         engine: "kimi",
       });
 
-      assert.equal(result.exitCode, 0, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted");
-      const fallback = (result.terminal.roleOutcome.decisiveFacts as {
-        engineLaborFallback?: { engine?: string; failure?: string; laborBy?: string };
-      }).engineLaborFallback;
-      assert.ok(fallback, "accepted receipt must declare engineLaborFallback");
-      assert.equal(fallback.engine, "kimi");
-      assert.equal(fallback.laborBy, "seat");
-      assert.equal(fallback.failure, ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC);
+      assert.equal(result.exitCode, 1);
+      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(
+        result.stderr.join("").includes(ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC),
+        true,
+        "infrastructure failure must retain the engine cause",
+      );
     } finally {
       await rm(home, { recursive: true, force: true });
     }
