@@ -148,8 +148,7 @@ function validateAcceptedJudgeDetails(verdict) {
   if (typeof judgeStatus !== "string") {
     throw new Error("Judge verdict has no execution discriminator");
   }
-  const base = judgeStatus;
-  if (["converged", "continue", "escalate"].includes(base)) {
+  if (["converged", "continue", "escalate"].includes(judgeStatus)) {
     return verdict;
   }
   throw new Error("Judge verdict has no execution discriminator");
@@ -27077,9 +27076,8 @@ function mapTerminal(role, terminal) {
       noReceipt: false
     };
   }
-  const statusBase = status;
   const acceptedSet = ACCEPTED_STATUS[role];
-  if (acceptedSet === void 0 || !acceptedSet.has(statusBase)) {
+  if (acceptedSet === void 0 || !acceptedSet.has(status)) {
     return {
       terminalLabel: status,
       accepted: false,
@@ -27088,9 +27086,9 @@ function mapTerminal(role, terminal) {
       noReceipt: false
     };
   }
-  const plannedDuty = WORKER_ROLES.has(role) && statusBase === "planned";
+  const plannedDuty = WORKER_ROLES.has(role) && status === "planned";
   const successSet = SUCCESS_STATUS[role] ?? /* @__PURE__ */ new Set();
-  const success = !plannedDuty && successSet.has(statusBase);
+  const success = !plannedDuty && successSet.has(status);
   const successEligible = !plannedDuty;
   return {
     terminalLabel: status,

@@ -24,10 +24,9 @@ export const mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
 export type DeepReadonly<T> = T extends (...args: never[]) => unknown ? T : T extends readonly (infer U)[] ? readonly DeepReadonly<U>[] : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
 export type MergerMaterial = DeepReadonly<Static<typeof materialSchema>>;
 export type MergerInput = DeepReadonly<Static<typeof mergerInputSchema>>;
-type MergerOutputClean =
+export type MergerOutput =
   | { status: "completed"; attemptId: string; report: string; mergeCommitId: string }
   | { status: "escalate"; attemptId: string; diagnosis: string; report: string };
-export type MergerOutput = MergerOutputClean;
 export const MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
 export const MERGER_ACCEPTED_TEXT = "Merger output accepted";
 

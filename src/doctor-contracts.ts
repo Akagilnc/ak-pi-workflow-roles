@@ -37,10 +37,9 @@ export type DoctorFinding =
 export type DoctorSubmission =
   | { status: "completed"; case: DoctorCaseIdentity; findings: DoctorFinding[] }
   | { status: "refused"; reason: string; missingEvidence: Array<{ need: string; targetKeys: string[] }> };
-type DoctorOutputClean =
+export type DoctorOutput =
   | { status: "completed"; case: DoctorCaseIdentity; findings: DoctorFinding[]; cost: DoctorCaseCost }
   | Extract<DoctorSubmission, { status: "refused" }>;
-export type DoctorOutput = DoctorOutputClean;
 export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; contentLength: number; sha256: string; content: string };
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 

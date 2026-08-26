@@ -30,7 +30,7 @@ export type RuntimeReviewerAcceptedBatch = Readonly<{
 }>;
 /** Honest Spec-child disposition on the receipt face. */
 export type RuntimeReviewerSpecDisposition = "launched" | "skipped-missing";
-type RuntimeReviewerReceiptV2Clean = Readonly<{
+export type RuntimeReviewerReceiptV2 = Readonly<{
   version: 2;
   status: "completed" | "refused";
   diagnostic?: string;
@@ -49,7 +49,6 @@ type RuntimeReviewerReceiptV2Clean = Readonly<{
     target?: ReviewerAcceptedEvidence["target"];
   }>;
 }>;
-export type RuntimeReviewerReceiptV2 = RuntimeReviewerReceiptV2Clean;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -156,8 +155,7 @@ export function projectReviewerIntentToReceipt(intentValue: unknown, receiptValu
   const intent = validateReviewerIntent(intentValue);
   const receipt = validateRuntimeReviewerReceipt(receiptValue);
   const receiptStatus = String(receipt.status);
-  const receiptBase = (receiptStatus);
-  if (receiptBase !== intent.status || (intent.status === "completed" ? receipt.diagnostic !== undefined : receipt.diagnostic !== intent.diagnostic)) {
+  if (receiptStatus !== intent.status || (intent.status === "completed" ? receipt.diagnostic !== undefined : receipt.diagnostic !== intent.diagnostic)) {
     throw new Error("Reviewer intent and runtime receipt disagree");
   }
   return receipt;
