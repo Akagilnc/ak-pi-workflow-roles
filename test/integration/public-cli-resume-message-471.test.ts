@@ -71,12 +71,10 @@ async function materializeConflictedRepo(root: string): Promise<void> {
   git(root, ["checkout", "main"]);
   await writeFile(join(root, "same.txt"), "target\n", "utf8");
   git(root, ["commit", "-am", "target"]);
-  try {
-    git(root, ["merge", "--no-edit", "source"]);
-    throw new Error("expected conflicting merge");
-  } catch {
-    // conflicted working tree required for merger admit
-  }
+  // Merge must fail with conflict; unexpected success or infrastructure error fails the test.
+  assert.throws(() => git(root, ["merge", "--no-edit", "source"]));
+  const unmerged = git(root, ["diff", "--name-only", "--diff-filter=U"]);
+  assert.equal(unmerged, "same.txt", "fixture must leave same.txt unmerged");
 }
 
 function toolResultLine(toolName: string, details: unknown): string {
