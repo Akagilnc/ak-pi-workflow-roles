@@ -21969,7 +21969,8 @@ async function extractMenxiaFactFromSessionDirectory(sessionDirectory) {
   return projectTerminalMenxiaFact(rounds);
 }
 async function withOptionalMenxiaProjection(base, sessionDirectory) {
-  if (base.roleOutcome.kind === "failure") return base;
+  const secondaryEvidence = base.roleOutcome.kind === "failure" ? base.roleOutcome.decisiveFacts.secondaryEvidence : void 0;
+  if (isRecord8(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector")) return base;
   const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
   return menxia === void 0 ? base : { ...base, menxia };
 }
