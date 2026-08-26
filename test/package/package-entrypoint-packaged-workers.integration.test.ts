@@ -136,12 +136,17 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)({ context }) },
       ] as const;
       // #470: judge/reviewer = constitution + soul + audit-law; doctor omits audit-law.
+      // #467: judge auditor also loads quality-law; reviewer/doctor rosters unchanged.
       const installedConstitution = await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8");
       const installedAuditLaw = await readFile(resolve(installedRoot, "souls/audit-law.md"), "utf8");
+      const installedQualityLaw = await readFile(resolve(installedRoot, "souls/quality-law.md"), "utf8");
       const expectedAuditorPrompt = async (name: string, soulPath: string) => {
         const soul = await readFile(soulPath, "utf8");
         if (name === "doctor") {
           return `${installedConstitution}\n\n${soul}`;
+        }
+        if (name === "judge") {
+          return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}`;
         }
         return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}`;
       };
@@ -173,7 +178,10 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       await writeFile(judgeSoul, editedSoul, "utf8");
       try {
         const edited = await run(roles[0]);
-        assert.equal(edited, `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}`);
+        assert.equal(
+          edited,
+          `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}`,
+        );
         for (const role of roles.slice(1)) {
           const unchanged = await run(role);
           assert.equal(unchanged, await expectedAuditorPrompt(role.name, role.soulPath));
@@ -211,11 +219,12 @@ test("cold-installed package audits active auditor seats from editable Souls", a
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = await loadRawPackageManifest();
-  // #443/#470 御批四: judge session materials = constitution + soul + audit-law + output guide.
+  // #443/#470 御批四 + #467: judge session materials = constitution + soul + audit-law + quality-law + output guide.
   const judgeSoul = [
     await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
     await readFile(resolve(packageRoot, "souls/judge.md"), "utf8"),
     await readFile(resolve(packageRoot, "souls/audit-law.md"), "utf8"),
+    await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8"),
     await readFile(resolve(packageRoot, "souls/judge-output-guide.md"), "utf8"),
   ].join("\n\n").trim();
   await withActivationHome(
