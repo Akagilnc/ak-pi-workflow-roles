@@ -51,7 +51,7 @@ ak-role config set-auto-resume-limit 3
 
 ### 门下省交卷闸
 
-完成侧交卷时，包可能在本局结算前起门下省：`gatekeeper` 读受审物并派官（`inspector` 给事中或 `notary` 符宝郎）；既有审刑院挂钩仍在原位。封驳＝当场打回重写交卷，不是角色失败。`planned`／`refused`／`unfinished` 不调省。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。闸终局读 typed Terminal，勿刮 session 散文。
+完成侧交卷时，包可能在本局结算前起门下省：`gatekeeper` 读受审物并派官（`inspector` 给事中或 `notary` 符宝郎）；既有审刑院挂钩仍在原位。闸在交卷 session 内运行；封驳＝当场重写重交，不是角色失败；最终回执即过闸产物。`planned`／`refused`／`unfinished` 不调省。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。勿刮 session 散文当闸状态。
 
 当劳务引擎绕行失败、座席回到主路继续劳务时，typed 回执可带机械字段 `engineLaborFallback`：`{ engine, failure, laborBy: "seat" }`。仅在真实绕行失败并座席顶班后出现——成功绕行或调用方 cancel 不出现。同一次 activation 内先到先得；无包内 latch 时剥离模型伪造的 `engineLaborFallback` 键。唯一构造点：`src/engine-labor-fallback.ts`；决策记录：[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)。本文只投影该契约。
 
@@ -128,8 +128,8 @@ ak-role analyst --cohort \
 | --- | --- | --- | --- |
 | doctor | **太医署** | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建 |
 | analyst | **太史** | 司天台分析席：只读司天记录、出高阶指标；确定性机制，非 LLM，可单独调用 | 已建（[ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
-| — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担 |
-| — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建（机器面预留 `archivist`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
+| — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
+| — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建 |
 | — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 留档，需要时另立票 |
 | — | **主簿** | 合并后勾稽销案：核实确已合上、清理残留、报到达 | 未建 |
 
