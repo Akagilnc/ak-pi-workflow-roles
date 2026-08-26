@@ -72,7 +72,6 @@ import {
   readEngineDetourInfrastructureFailure,
   settleFailureTerminalResult,
   trySettleReviewerTerminalResult,
-  trySettleComplianceAuditIncompleteTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type {
@@ -398,20 +397,6 @@ async function dispatchAdmittedReviewer(input: {
       };
     }
 
-    const auditIncomplete = await trySettleComplianceAuditIncompleteTerminalResult(admitted);
-    if (auditIncomplete !== undefined) {
-      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-      if (auditIncomplete.roleOutcome.kind === "failure") {
-        presentFailureTerminal(auditIncomplete, io);
-      } else {
-        io.stdout(formatTerminalResult(auditIncomplete));
-      }
-      return {
-        exitCode: exitCodeForTerminalOutcome(auditIncomplete.roleOutcome),
-        admitted,
-        terminal: auditIncomplete,
-      };
-    }
 
     // Prefer engine-detour infrastructure failure already on the session principal
     // over a later secondary knownFailure / provider-stop after abort (#357 T2 / #378).

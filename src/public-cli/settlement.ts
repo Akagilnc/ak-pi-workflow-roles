@@ -4,8 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
-import { appendFile, lstat, mkdir, open, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -32,7 +31,6 @@ import {
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
   readComplianceCandidate,
-  type ComplianceAuditIncomplete,
   type ComplianceDecision,
 } from "../compliance-transport.ts";
 import {
@@ -118,10 +116,8 @@ import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   recommendationNavigatorFact,
-  buildAuditIncompleteTerminalOutcome,
   buildResidualIncompleteTerminalOutcome,
   redactExactRunId,
-  type AuditIncompleteResidual,
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalMenxiaFact,
@@ -728,10 +724,16 @@ export async function readBoundEvidenceChildKnownFailure(
   return undefined;
 }
 
-/** Recover a provider stop from the auditor child bound to the current parent attempt. */
-export async function readBoundAuditorKnownFailure(
+type BoundAuditorVolume = {
+  readonly entries: SessionEntry[];
+  readonly attemptEntryId?: string;
+  readonly parentId: string;
+  readonly sessionFile: string;
+};
+
+async function loadBoundAuditorVolumes(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<readonly BoundAuditorVolume[] | undefined> {
   let parentEntries: SessionEntry[];
   try {
     parentEntries = await readBoundSessionEntries(sessionFile);
@@ -773,7 +775,7 @@ export async function readBoundAuditorKnownFailure(
   // first attempt's child after resume advanced latest, losing retentionFailure
   // when retry had no compliance entry. Fix: ignore envelope for staleness and
   // prefer any valid compliance failure before falling back to primary.
-  const validAuditorFiles: Array<{ file: string; entries: SessionEntry[]; attemptEntryId?: string }> = [];
+  const valid: BoundAuditorVolume[] = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries: SessionEntry[];
     try {
@@ -788,10 +790,20 @@ export async function readBoundAuditorKnownFailure(
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
     const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-    validAuditorFiles.push({ file, entries, ...(attemptEntryId === undefined ? {} : { attemptEntryId }) });
+    valid.push({
+      entries,
+      parentId,
+      sessionFile,
+      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+    });
   }
-  // Prefer compliance failure (retention) from any valid attempt, newest first.
-  for (const { entries, attemptEntryId } of validAuditorFiles) {
+  return valid;
+}
+
+function complianceFailureFromAuditorVolumes(
+  volumes: readonly BoundAuditorVolume[],
+): ExplicitInternalKnownFailure | undefined {
+  for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -812,8 +824,13 @@ export async function readBoundAuditorKnownFailure(
       };
     }
   }
-  // No compliance failure: fall back to most recent provider stop (auto-resume latest attempt).
-  for (const { entries } of validAuditorFiles) {
+  return undefined;
+}
+
+function providerStopFallbackFromAuditorVolumes(
+  volumes: readonly BoundAuditorVolume[],
+): ExplicitInternalKnownFailure | undefined {
+  for (const { entries } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
     const primary = knownFailureFromProviderStop(stop)!;
@@ -826,6 +843,34 @@ export async function readBoundAuditorKnownFailure(
     };
   }
   return undefined;
+}
+
+/** Recover a provider stop from the auditor child bound to the current parent attempt. */
+export async function readBoundAuditorKnownFailure(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  if (volumes === undefined) return undefined;
+  return complianceFailureFromAuditorVolumes(volumes)
+    ?? providerStopFallbackFromAuditorVolumes(volumes);
+}
+
+/** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
+async function readBoundAuditorComplianceFailure(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  if (volumes === undefined) return undefined;
+  return complianceFailureFromAuditorVolumes(volumes);
+}
+
+/** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
+async function readBoundAuditorProviderStopFallback(
+  sessionFile: string,
+): Promise<ExplicitInternalKnownFailure | undefined> {
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  if (volumes === undefined) return undefined;
+  return providerStopFallbackFromAuditorVolumes(volumes);
 }
 
 function typedFailedTerminatingToolKnownFailure(
@@ -850,11 +895,14 @@ function typedFailedTerminatingToolKnownFailure(
       ? message.content.find((part) => isRecord(part) && part.type === "text" && typeof part.text === "string")
       : undefined;
     const diagnostic = isRecord(textPart) ? textPart.text : undefined;
+    // Durable details already carry fact + typed evidence from envelope one-shot projection (#475).
+    // Do not re-parse retained compliance responses here.
+    const details = isRecord(message.details) ? message.details : classification.fact;
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
       ...(typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {}),
-      details: classification.fact,
+      details,
     };
   }
   return undefined;
@@ -913,12 +961,13 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       });
     }
   }
-  // Bound auditor evidence outranks a parent failure that the auditor path itself
-  // caused (retention EISDIR race). A typed terminating-tool host failure is next:
-  // it outranks provider/credential and nonzero fallbacks, but not its recorded cause.
+  // Bound auditor compliance-failure retention outranks a parent failure that the
+  // auditor path itself caused (retention EISDIR race). A typed terminating-tool
+  // host failure is next — it outranks weaker auditor provider-stop fallback so
+  // parent failInfrastructure abort pollution cannot wash a real diagnostic (#475).
   try {
-    const auditorFailure = await readBoundAuditorKnownFailure(input.sessionFile);
-    if (auditorFailure !== undefined) return resolutionOf(auditorFailure);
+    const auditorCompliance = await readBoundAuditorComplianceFailure(input.sessionFile);
+    if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
     return resolutionOf({
@@ -941,6 +990,17 @@ export async function resolveAuditedRunnerFailureResolution(input: {
         diagnostic: failure.message || failure.name,
       });
     }
+  }
+  try {
+    const auditorStop = await readBoundAuditorProviderStopFallback(input.sessionFile);
+    if (auditorStop !== undefined) return resolutionOf(auditorStop);
+  } catch (error) {
+    const failure = sessionReadFailure(error, "failed to recover bound auditor provider stop");
+    return resolutionOf({
+      cause: "session",
+      identity: thrownIdentity(failure),
+      diagnostic: failure.message || failure.name,
+    });
   }
   // Reviewer axis evidence-children are next: fixed two-axis dispatch fails
   // during activation with only child stops durable. Parent stop remains the
@@ -1550,35 +1610,6 @@ export function assertCollectorReceiptMatchesAdmitted(
   }
 }
 
-/**
- * Shared audit-incomplete extraction for the four roles with Soul auditors.
- * The role submission and retained auditor response are separate evidence faces;
- * neither is converted into an accepted Receipt.
- */
-function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIncomplete {
-  if (!isRecord(value) || value.status !== "audit-incomplete") return false;
-  const observation = value.observation;
-  if (!isRecord(observation)) return false;
-  if (observation.kind === "missing-dossier") return true;
-  if (observation.kind === "missing-subject") {
-    return typeof observation.subject === "string" && observation.subject.length > 0;
-  }
-  if (observation.kind === "object-status-unreadable") {
-    return observation.status === "missing" || observation.status === "unknown";
-  }
-  return observation.kind === "non-object-arguments" && [
-    "null",
-    "array",
-    "undefined",
-    "string",
-    "number",
-    "boolean",
-    "bigint",
-    "symbol",
-    "function",
-  ].includes(observation.type as string);
-}
-
 function auditToolNameForRole(
   role: (typeof AUDITOR_SOUL_ROLES)[number],
 ): string {
@@ -1589,19 +1620,6 @@ function auditToolNameForRole(
       return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
       return DOCTOR_AUDIT_TOOL_NAME;
-  }
-}
-
-function outputToolNameForAuditedRole(
-  role: (typeof AUDITOR_SOUL_ROLES)[number],
-): string {
-  switch (role) {
-    case "judge":
-      return JUDGE_OUTPUT_TOOL_NAME;
-    case "reviewer":
-      return REVIEWER_OUTPUT_TOOL_NAME;
-    case "doctor":
-      return DOCTOR_OUTPUT_TOOL_NAME;
   }
 }
 
@@ -1757,13 +1775,6 @@ function isUnboundAuditEscalationFace(details: unknown): boolean {
   return kind.readable && kind.value === "audit_escalation";
 }
 
-function auditIncompleteFromCandidate(
-  candidate: unknown,
-): ComplianceAuditIncomplete | undefined {
-  const decision = readComplianceCandidate(candidate);
-  return decision.status === "audit-incomplete" ? decision : undefined;
-}
-
 function boundRetainedAuditResponse(
   entries: readonly SessionEntry[],
   callIndex: number,
@@ -1789,113 +1800,6 @@ function boundRetainedAuditResponse(
   // Unique seat-bound match binds even when multi-turn investigation retained
   // intermediate non-decision responses in the same call/result interval.
   return matches.length === 1 ? matches[0] : undefined;
-}
-
-export function extractComplianceAuditIncompleteRoleOutcome(
-  entries: readonly SessionEntry[],
-  role: (typeof AUDITOR_SOUL_ROLES)[number],
-  outputToolName: string,
-): { outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome> } | undefined {
-  if (outputToolName !== outputToolNameForAuditedRole(role)) return undefined;
-  const auditToolName = auditToolNameForRole(role);
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const message = entries[index]?.message;
-    if (
-      entries[index]?.type !== "message" ||
-      message?.role !== "toolResult" ||
-      message.toolName !== outputToolName ||
-      message.isError === true ||
-      !isComplianceAuditIncomplete(message.details)
-    ) {
-      continue;
-    }
-    const roleCall = boundRoleToolCallForResult(
-      entries,
-      index,
-      message,
-      outputToolName,
-    );
-    if (roleCall === undefined) continue;
-    // Preflight missing-dossier / missing-subject never contacts the provider, so
-    // there is no retained auditor response — the role tool details are the audit.
-    // details already narrowed by isComplianceAuditIncomplete at the loop gate.
-    const details = message.details;
-    if (
-      details.observation.kind === "missing-dossier"
-      || details.observation.kind === "missing-subject"
-    ) {
-      return {
-        outcome: buildAuditIncompleteTerminalOutcome({
-          role,
-          roleCandidate: roleCall.candidate,
-          audit: details,
-        }),
-      };
-    }
-    const retained = boundRetainedAuditResponse(
-      entries,
-      roleCall.callIndex,
-      index,
-      auditToolName,
-    );
-    if (retained === undefined) continue;
-    const audit = auditIncompleteFromCandidate(retained.candidate);
-    if (audit === undefined) continue;
-    return {
-      outcome: buildAuditIncompleteTerminalOutcome({
-        role,
-        roleCandidate: roleCall.candidate,
-        audit,
-      }),
-    };
-  }
-  return undefined;
-}
-
-function auditArtifactPublicationError(message: string, code: string): Error & {
-  code: string;
-} {
-  const error = new Error(message) as Error & { code: string };
-  error.name = "ArtifactPublicationError";
-  error.code = code;
-  return error;
-}
-
-async function ensureAuditEvidenceDirectory(runDirectory: string): Promise<string> {
-  const artifactsDir = join(runDirectory, "artifacts");
-  const runStat = await lstat(runDirectory);
-  if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
-    throw auditArtifactPublicationError(
-      "audit evidence run directory is not a real directory",
-      "ELOOP",
-    );
-  }
-  try {
-    const existing = await lstat(artifactsDir);
-    if (existing.isSymbolicLink()) {
-      throw auditArtifactPublicationError(
-        "audit evidence artifacts directory is a symlink",
-        "ELOOP",
-      );
-    }
-    if (!existing.isDirectory()) {
-      throw auditArtifactPublicationError(
-        "audit evidence artifacts path is not a directory",
-        "EEXIST",
-      );
-    }
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
-    await mkdir(artifactsDir, { recursive: true });
-    const created = await lstat(artifactsDir);
-    if (created.isSymbolicLink() || !created.isDirectory()) {
-      throw auditArtifactPublicationError(
-        "audit evidence artifacts directory is not a real directory",
-        "ELOOP",
-      );
-    }
-  }
-  return artifactsDir;
 }
 
 /**
@@ -1955,167 +1859,6 @@ export async function appendRunAttemptHistory(
     timestamp,
   })}\n`;
   await appendFile(admitted.sessionFile, line, "utf8");
-}
-
-/**
- * Publish the retained residual with complete-write semantics (#419: the
- * previous attempt's pointer file is a rebuildable view once this attempt's
- * complete result is in the appended history; planted symlinks/directories
- * still fail loudly with their #182-A identities).
- */
-export async function publishComplianceAuditIncompleteEvidence(
-  admitted: AdmittedRoleInvocation,
-  outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome>,
-): Promise<TerminalArtifactRef> {
-  await appendRunAttemptHistory(admitted, outcome);
-  if (
-    typeof fsConstants.O_NOFOLLOW !== "number" ||
-    typeof fsConstants.O_NONBLOCK !== "number"
-  ) {
-    // #418 fail-closed: on platforms without O_NOFOLLOW (e.g. Windows,
-    // nodejs/node#41590) the JS bitwise-or below would silently drop the flag
-    // and the #182-A anti-symlink protection would vanish. Refuse loudly via
-    // the existing publication-failure channel instead of publishing
-    // unprotected; the complete attempt result above stays in appended history.
-    throw auditArtifactPublicationError(
-      "audit evidence publication requires O_NOFOLLOW|O_NONBLOCK open-flag support (anti-symlink/anti-planted protection must not be silently dropped); refusing to publish",
-      "ENOSYS",
-    );
-  }
-  const artifactsDir = await ensureAuditEvidenceDirectory(admitted.runDirectory);
-  const evidencePath = join(artifactsDir, "audit-incomplete.json");
-  let existing: Awaited<ReturnType<typeof lstat>> | undefined;
-  try {
-    existing = await lstat(evidencePath);
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
-  }
-  if (existing?.isSymbolicLink()) {
-    throw auditArtifactPublicationError(
-      "audit evidence destination is a symlink",
-      "ELOOP",
-    );
-  }
-  if (existing && !existing.isFile()) {
-    throw auditArtifactPublicationError(
-      "audit evidence destination is not a regular file",
-      "EEXIST",
-    );
-  }
-  // #182-A protection restored atomically at this open seam: O_NOFOLLOW makes
-  // the open itself refuse symlinks (ELOOP), so one swapped in after the lstat
-  // above can never be followed or written through; O_NONBLOCK keeps a
-  // race-planted FIFO from blocking this open forever. The fstat below
-  // backstops any non-regular object that wins the window.
-  const handle = await open(
-    evidencePath,
-    fsConstants.O_WRONLY |
-      fsConstants.O_CREAT |
-      fsConstants.O_TRUNC |
-      fsConstants.O_NOFOLLOW |
-      fsConstants.O_NONBLOCK,
-    0o600,
-  );
-  try {
-    if (!(await handle.stat()).isFile()) {
-      throw auditArtifactPublicationError(
-        "audit evidence destination is not a regular file",
-        "EEXIST",
-      );
-    }
-    await handle.writeFile(`${JSON.stringify(outcome, null, 2)}\n`, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  return { kind: "evidence", path: evidencePath };
-}
-
-function auditPublicationFailureTerminal(
-  admitted: AdmittedRoleInvocation,
-  entries: readonly SessionEntry[],
-  outcome: ReturnType<typeof buildAuditIncompleteTerminalOutcome>,
-  error: unknown,
-): TerminalResult {
-  const attempt = publicationAttemptFromError(
-    join(admitted.runDirectory, "artifacts", "audit-incomplete.json"),
-    error,
-  );
-  const diagnostic = `audit-incomplete evidence publication failed: ${attempt.diagnostic}`;
-  const decisiveFacts: Record<string, unknown> = {
-    ...outcome.decisiveFacts,
-    cause: "unrecognized",
-    diagnostic,
-    publicationFailure: attempt,
-  };
-  if (attempt.identity?.name !== undefined) decisiveFacts.errorName = attempt.identity.name;
-  if (attempt.identity?.code !== undefined) decisiveFacts.errorCode = attempt.identity.code;
-  const auditResidual: AuditIncompleteResidual = {
-    roleCandidate: outcome.roleCandidate,
-    audit: outcome.audit,
-    acceptedReceipt: false,
-  };
-  return {
-    roleOutcome: {
-      kind: "failure",
-      role: admitted.role,
-      cause: "unrecognized",
-      diagnostic,
-      decisiveFacts,
-      auditResidual,
-    },
-    navigator: extractNavigatorFact(entries),
-    artifacts: [],
-    runId: admitted.runId,
-  };
-}
-
-/**
- * Settle the shared audit-incomplete Terminal for Judge/Fixer/Reviewer/Doctor.
- * Callers invoke this only after their ordinary lawful extractor found no result,
- * which preserves the no-other-lawful-result invariant without a second validator.
- */
-export async function trySettleComplianceAuditIncompleteTerminalResult(
-  admitted: AdmittedRoleInvocation,
-): Promise<TerminalResult | undefined> {
-  if (!(AUDITOR_SOUL_ROLES as readonly string[]).includes(admitted.role)) {
-    return undefined;
-  }
-  const outputToolName =
-    admitted.role === "judge"
-      ? JUDGE_OUTPUT_TOOL_NAME
-      : admitted.role === "reviewer"
-        ? REVIEWER_OUTPUT_TOOL_NAME
-        : DOCTOR_OUTPUT_TOOL_NAME;
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const extracted = extractComplianceAuditIncompleteRoleOutcome(
-    entries,
-    admitted.role as (typeof AUDITOR_SOUL_ROLES)[number],
-    outputToolName,
-  );
-  if (extracted === undefined) return undefined;
-  // Catch covers publication only — menxia read errors keep their session/JSONL identity
-  // and must not be washed into the publication-failure label.
-  let evidence: TerminalArtifactRef;
-  try {
-    evidence = await publishComplianceAuditIncompleteEvidence(
-      admitted,
-      extracted.outcome,
-    );
-  } catch (error) {
-    // Publication failure is a non-lawful terminal, never an accepted audit result.
-    return auditPublicationFailureTerminal(admitted, entries, extracted.outcome, error);
-  }
-  return withOptionalMenxiaProjection(
-    {
-      roleOutcome: extracted.outcome,
-      navigator: extractNavigatorFact(entries),
-      artifacts: [evidence],
-      runId: admitted.runId,
-    },
-    admitted.sessionDirectory,
-  );
 }
 
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
@@ -2327,6 +2070,21 @@ async function withOptionalMenxiaProjection<
     artifacts: readonly TerminalArtifactRef[];
   },
 >(base: T, sessionDirectory: string): Promise<T & { menxia?: TerminalMenxiaFact }> {
+  // A gate transport failure is already represented by typed evidence and has no
+  // accepted gate cycle to project. Re-reading that rejected receipt as an
+  // accepted cycle would replace the original failure with a projection error.
+  const secondaryEvidence = base.roleOutcome.kind === "failure"
+    ? base.roleOutcome.decisiveFacts.secondaryEvidence
+    : undefined;
+  if (
+    isRecord(secondaryEvidence)
+    && secondaryEvidence.kind === "role_infrastructure_failure"
+    && (
+      secondaryEvidence.stage === "gatekeeper"
+      || secondaryEvidence.stage === "inspector"
+      || secondaryEvidence.stage === "notary"
+    )
+  ) return base;
   const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
   return menxia === undefined ? base : { ...base, menxia };
 }
@@ -3314,7 +3072,7 @@ export async function trySettleDoctorTerminalResult(
   return settleLawfulDoctorTerminalResult(admitted);
 }
 
-/** Lawful Notary accepted outcome (pass/bounce/incomplete-with-reason). */
+/** Lawful Notary accepted outcome (pass/bounce). */
 export type LawfulNotaryRoleOutcome = {
   kind: "accepted";
   role: "notary";
@@ -3356,6 +3114,7 @@ async function settleLawfulNotaryTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === undefined) {
+    // No usable Notary release → existing non-zero failure channel with candidate (#475).
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
@@ -3366,16 +3125,11 @@ async function settleLawfulNotaryTerminalResult(
         NOTARY_OUTPUT_TOOL_NAME,
       );
       if (residual === undefined) continue;
-      return {
-        roleOutcome: buildResidualIncompleteTerminalOutcome({
-          role: "notary",
-          candidate: residual.candidate,
-          diagnostic: residual.diagnostic,
-        }),
-        navigator: extractNavigatorFact(entries),
-        artifacts: [],
-        runId: admitted.runId,
-      };
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: residual.diagnostic,
+        details: { candidate: residual.candidate, acceptedReceipt: false },
+      });
     }
     return undefined;
   }

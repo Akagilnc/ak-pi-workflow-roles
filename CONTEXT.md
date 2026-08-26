@@ -32,7 +32,7 @@ _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的可选请求不构成评审腿或身份期待。
 - **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。审刑院/御史台审计开庭材料=工厂宪法+己 auditor Soul+审刑院法典(`souls/audit-law.md`);太医审计暂=工厂宪法+己 Soul(御批四)。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
 - **卷宗(Dossier)**:一次 run 在候簿记录之家里的全部既落账材料；卷宗即真源,无投影副本。定位靠机器注入的 typed 指针(`cwd` 与 `AK_ROLE_RUN_DIR`),禁 latest-run/mtime/全局扫描猜测。
-- **先立卷后审卷**:被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象响亮 typed `audit-incomplete`(`missing-dossier` / `missing-subject`),public CLI 无合法 Receipt。
+- **先立卷后审卷**:被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象走既有非零故障通道(`missing-dossier` / `missing-subject` 真因落 error artifact),public CLI 无合法 Receipt。
 - **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。
 - **Navigator(游奕使)**:由共享角色生命周期自动旁听包角色结算的独立领航席；依据工作 subject、controlling authority 与自身路线记忆建议最低成本且安全的下一包角色/phase，并在首次或路线变化时给出完整简洁路线。不裁决、不授权、不执行，普通建议允许调用者偏离；角色推理、工具轨迹和施工细节不进入其上下文。
 - **路书(Route playbook)**:游奕使用于专业判断的一组非约束参考路线，按工作性质、风险与复杂度展示常见推进方式；既不规定游奕使必须照走，也不约束调用者采用建议。_Avoid_:默认工作流、路由表、自动编排规则。

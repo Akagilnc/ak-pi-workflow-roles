@@ -15,9 +15,30 @@ export type ComplianceAuditObservation =
   | { kind: "non-object-arguments"; type: ComplianceArgumentRootType }
   | { kind: "object-status-unreadable"; status: "missing" | "unknown" }
   | DossierObservation;
-export type ComplianceAuditIncomplete = { status: "audit-incomplete"; observation: ComplianceAuditObservation; candidate: unknown; usage?: Usage };
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
-export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceNoReceipt | ComplianceAuditIncomplete;
+export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceNoReceipt;
+
+/** Unreadable compliance candidate — infrastructure failure, not a judgment status (#475). */
+export class ComplianceCandidateUnreadableError extends Error {
+  readonly observation: ComplianceAuditObservation;
+  readonly candidate: unknown;
+  readonly usage?: Usage;
+  constructor(observation: ComplianceAuditObservation, candidate: unknown, usage?: Usage) {
+    const detail =
+      observation.kind === "non-object-arguments"
+        ? `${observation.kind}:${observation.type}`
+        : observation.kind === "object-status-unreadable"
+          ? `${observation.kind}:${observation.status}`
+          : observation.kind === "missing-subject"
+            ? `${observation.kind}:${observation.subject}`
+            : observation.kind;
+    super(`Compliance candidate unreadable: ${detail}`);
+    this.name = "ComplianceCandidateUnreadableError";
+    this.observation = observation;
+    this.candidate = candidate;
+    if (usage !== undefined) this.usage = usage;
+  }
+}
 export type ComplianceDispatch = { model: Model<Api>; auth: { apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> } };
 
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
@@ -25,8 +46,9 @@ export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier." as const;
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
-// Transport must retain malformed candidates so they can settle as typed
-// audit-incomplete outcomes; status values are guidance, not a schema gate.
+// Transport retains malformed candidates on ComplianceCandidateUnreadableError so
+// the existing failure channel can publish observation + candidate (#475).
+// Status values are guidance, not a schema gate.
 export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "Auditor decision status." }), violations: Type.Array(nonblank, { description: "Observed compliance violations." }), conflicts: Type.Array(nonblank, { description: "Unresolved authority or execution conflicts." }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
 
 export function createComplianceDecisionTool(name: string, description: string) {
@@ -93,12 +115,22 @@ function retainComplianceResponse(context: ExtensionContext, response: Assistant
 }
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) return { status: "audit-incomplete", observation: { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ as ComplianceArgumentRootType }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
+  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
+    throw new ComplianceCandidateUnreadableError(
+      { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ as ComplianceArgumentRootType },
+      arguments_,
+      usage,
+    );
+  }
   const args = arguments_ as Record<string, unknown>; const status = args.status;
   if (status === "pass") return { status, ...(usage === undefined ? {} : { usage }) };
   if (status === "revise") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") return { status, ...(Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}), ...(Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}), ...(usage === undefined ? {} : { usage }) };
-  return { status: "audit-incomplete", observation: { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" }, candidate: arguments_, ...(usage === undefined ? {} : { usage }) };
+  throw new ComplianceCandidateUnreadableError(
+    { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" },
+    arguments_,
+    usage,
+  );
 }
 
 export type RunComplianceAuditOptions = {

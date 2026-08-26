@@ -756,7 +756,7 @@ export async function executeAuditorChild(options) {
                             decision = part.arguments;
                             decisionCallId = part.id;
                             // Pi can reject malformed root arguments before invoking execute;
-                            // that remains the existing typed audit-incomplete candidate path.
+                            // that remains the existing unreadable-candidate failure path.
                             if (part.arguments === undefined)
                                 decisionSubmitted = true;
                         }

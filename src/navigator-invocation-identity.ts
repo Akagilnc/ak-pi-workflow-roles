@@ -15,7 +15,7 @@
  * One shared typed terminal classifier owns durable completion for lifecycle,
  * publicNavigatorSettlement, and every public CLI Receipt extractor:
  *   - accepted/human: isError exactly false and no infrastructure-failure fact
- *   - infrastructure: isError exactly true plus exact closed infrastructure fact
+ *   - infrastructure: isError exactly true plus base kind/source/reasonCode identity
  *   - retryable/missing/nonboolean/contradictory/malformed: nonterminal
  *
  * One truth table also owns marker↔terminal cardinality:
@@ -33,11 +33,23 @@ export const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation" as const;
 /** Typed durable infrastructure-failure fact on a packaged role output toolResult. */
 export const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure" as const;
 
-/** Closed fact keys — extras/missing/wrong keys fail closed. */
+/** Required base identity keys for infrastructure-failure recognition. */
 const NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
   "kind",
   "source",
   "reasonCode",
+] as const;
+
+/**
+ * Known typed failure evidence keys projected onto durable infrastructure details (#475).
+ * Extraction whitelist only — classification does not reject unknown extras (ADR 0040).
+ */
+export const NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
+  "observation",
+  "candidate",
+  "submission",
+  "stage",
+  "reason",
 ] as const;
 
 export type NavigatorInfrastructureFailureFact = {
@@ -55,16 +67,13 @@ export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructu
 }
 
 /**
- * Exact closed infrastructure-failure fact.
- * Rejects extras, missing keys, wrong values/types, and non-objects.
+ * Base infrastructure-failure identity on durable details.
+ * Only kind/source/reasonCode discriminate; extra fields are allowed and retained
+ * (ADR 0040 — discriminators select the branch, they do not ban extras).
  */
-export function isNavigatorInfrastructureFailureFact(
-  value: unknown,
-): value is NavigatorInfrastructureFailureFact {
+export function hasNavigatorInfrastructureFailureBase(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  const keys = Object.keys(record);
-  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
     if (!Object.hasOwn(record, key)) return false;
   }
@@ -73,6 +82,18 @@ export function isNavigatorInfrastructureFailureFact(
     record.source === "shared-role-lifecycle" &&
     record.reasonCode === "host_failure"
   );
+}
+
+/**
+ * Exact closed infrastructure-failure fact (no evidence extensions).
+ * Classifier uses {@link hasNavigatorInfrastructureFailureBase} so enriched
+ * durable details still complete as infrastructure (#475).
+ */
+export function isNavigatorInfrastructureFailureFact(
+  value: unknown,
+): value is NavigatorInfrastructureFailureFact {
+  if (!hasNavigatorInfrastructureFailureBase(value)) return false;
+  return Object.keys(value as object).length === NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length;
 }
 
 const PACKAGED_ROLE_OUTPUT_TOOLS: ReadonlyMap<string, string> = new Map(
@@ -191,11 +212,11 @@ export function classifyPackagedRoleTerminalResult(
   if (typeof message.toolName !== "string") return { kind: "nonterminal" };
   if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
 
-  const infraFact = isNavigatorInfrastructureFailureFact(message.details)
-    ? message.details
-    : undefined;
+  // Base identity is enough; durable details may carry typed failure evidence (#475).
+  const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
+  const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : undefined;
 
-  // Infrastructure completion: exact isError === true + exact closed infra fact.
+  // Infrastructure completion: exact isError === true + infra base identity.
   if (message.isError === true) {
     if (infraFact === undefined) return { kind: "nonterminal" };
     return { kind: "infrastructure", fact: infraFact };
