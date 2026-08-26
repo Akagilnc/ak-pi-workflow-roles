@@ -50,6 +50,7 @@ import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVEN
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
+  NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
@@ -224,6 +225,7 @@ export {
   isAcceptedPackagedRoleTerminalResult,
   isDurablePackagedRoleTerminalResult,
   isNavigatorInfrastructureFailureFact,
+  NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
   NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
   type NavigatorInfrastructureFailureFact,
   type PackagedRoleTerminalClassification,
@@ -551,15 +553,6 @@ function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
   throw error;
 }
 
-/** Typed failure evidence keys projected from host Error onto durable tool_result details (#475). */
-const INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
-  "observation",
-  "candidate",
-  "submission",
-  "stage",
-  "reason",
-] as const;
-
 /**
  * Envelope-owned pending infrastructure failure: closed fact + original Error evidence.
  * tool_result projects once from this record; settlement consumes durable details as-is.
@@ -572,7 +565,7 @@ function extractInfrastructureFailureEvidence(error: unknown): Record<string, un
   if (typeof error !== "object" || error === null) return {};
   const record = error as Record<string, unknown>;
   const evidence: Record<string, unknown> = {};
-  for (const key of INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS) {
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS) {
     if (!Object.hasOwn(record, key)) continue;
     // undefined → null so JSON durable details retain the empty-candidate key.
     evidence[key] = record[key] === undefined ? null : record[key];
