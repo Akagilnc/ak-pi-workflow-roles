@@ -2316,6 +2316,9 @@ export async function extractMenxiaFactFromSessionDirectory(
  * Attach optional menxia projection onto a settled Terminal base.
  * Shared by every settle path so auditor-roles is scanned once here only.
  * `runId` is not required — resumable failures omit it by contract.
+ * Menxia read damage propagates with its real identity (never washed to no-gate
+ * or swallowed); callers that already hold a controlled failure still surface the
+ * JSONL/session cause rather than pretend the gate was absent.
  */
 async function withOptionalMenxiaProjection<
   T extends {
@@ -2326,25 +2329,6 @@ async function withOptionalMenxiaProjection<
 >(base: T, sessionDirectory: string): Promise<T & { menxia?: TerminalMenxiaFact }> {
   const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
   return menxia === undefined ? base : { ...base, menxia };
-}
-
-/**
- * Failure-path menxia attach. Lawful success paths keep menxia damage loud; on a
- * controlled failure the original cause stays authoritative — a secondary read
- * error must not replace it (no-gate stays absent via undefined menxia only).
- */
-async function withOptionalMenxiaProjectionForFailure<
-  T extends {
-    roleOutcome: TerminalRoleOutcome;
-    navigator: TerminalNavigatorFact;
-    artifacts: readonly TerminalArtifactRef[];
-  },
->(base: T, sessionDirectory: string): Promise<T & { menxia?: TerminalMenxiaFact }> {
-  try {
-    return await withOptionalMenxiaProjection(base, sessionDirectory);
-  } catch {
-    return base;
-  }
 }
 
 export function extractNavigatorFact(
@@ -4293,7 +4277,7 @@ export async function settleFailureTerminalResult(
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
             const decisiveFacts: NoReceiptLifecycleFacts = facts;
             // #478: no_receipt is still a public Terminal — project accepted gate facts.
-            return withOptionalMenxiaProjectionForFailure(
+            return withOptionalMenxiaProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
                 navigator: await extractNavigatorFactFromAdmittedSession(admitted),
@@ -4342,7 +4326,7 @@ export async function settleFailureTerminalResult(
       decisiveFacts: publicFacts,
     };
     // #478: resume desensitization stays; menxia is additive typed fact only.
-    return withOptionalMenxiaProjectionForFailure(
+    return withOptionalMenxiaProjection(
       {
         roleOutcome,
         navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
@@ -4360,7 +4344,7 @@ export async function settleFailureTerminalResult(
     decisiveFacts,
   };
   // #478: ordinary controlled failure still surfaces accepted gate facts.
-  return withOptionalMenxiaProjectionForFailure(
+  return withOptionalMenxiaProjection(
     {
       roleOutcome,
       navigator,

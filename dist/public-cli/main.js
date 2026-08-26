@@ -22199,13 +22199,6 @@ async function withOptionalMenxiaProjection(base, sessionDirectory) {
   const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
   return menxia === void 0 ? base : { ...base, menxia };
 }
-async function withOptionalMenxiaProjectionForFailure(base, sessionDirectory) {
-  try {
-    return await withOptionalMenxiaProjection(base, sessionDirectory);
-  } catch {
-    return base;
-  }
-}
 function extractNavigatorFact(entries) {
   const terminal = findLatestDurablePackagedRoleTerminal(entries);
   if (terminal === void 0) {
@@ -23512,7 +23505,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
           const facts = parseNoReceiptLifecycleFacts(raw);
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
             const decisiveFacts2 = facts;
-            return withOptionalMenxiaProjectionForFailure(
+            return withOptionalMenxiaProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts: decisiveFacts2 },
                 navigator: await extractNavigatorFactFromAdmittedSession(admitted),
@@ -23555,7 +23548,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       diagnostic: publicDiagnostic,
       decisiveFacts: publicFacts
     };
-    return withOptionalMenxiaProjectionForFailure(
+    return withOptionalMenxiaProjection(
       {
         roleOutcome: roleOutcome2,
         navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
@@ -23572,7 +23565,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
     diagnostic: failure.diagnostic,
     decisiveFacts
   };
-  return withOptionalMenxiaProjectionForFailure(
+  return withOptionalMenxiaProjection(
     {
       roleOutcome,
       navigator,
