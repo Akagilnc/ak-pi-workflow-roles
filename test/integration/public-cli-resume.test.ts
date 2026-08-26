@@ -1531,54 +1531,13 @@ test("typed 429 without a session principal is not offered as resumable", async 
   });
 });
 
-/**
- * #471 unique contracts on the existing resume owner:
- * - optional opaque message is the last Pi argv (bytes unchanged)
- * - bare `--` after runId is message, not delimiter
- * - more than one post-runId token rejects with zero dispatch
- * Transport only: session principal + last argv. No parallel fixture file.
- */
+/** #471 transport on existing resume owner: opaque last-argv + bare -- + extras reject. */
 test("#471 resume opaque message is last argv; bare -- dispatches; extras reject", async () => {
   await withTempHome(async (home) => {
-    type DurableRole = "judge" | "coder" | "fixer" | "reviewer" | "merger";
-    type Scenario = {
-      readonly label: string;
-      readonly role: DurableRole;
-      readonly runId: string;
-      readonly message?: string;
-      readonly needsConflict?: boolean;
-    };
+    type Role = "judge" | "coder" | "fixer" | "reviewer" | "merger";
+    const creds = { "openai-codex": true, xai: true } as const;
 
-    const scenarios: readonly Scenario[] = [
-      { label: "judge plain", role: "judge", runId: "471-judge-plain", message: "owner says proceed" },
-      { label: "judge opaque --model", role: "judge", runId: "471-judge-flagish", message: "--model" },
-      { label: "judge empty", role: "judge", runId: "471-judge-empty", message: "" },
-      {
-        label: "judge whitespace/newline",
-        role: "judge",
-        runId: "471-judge-ws",
-        message: "  ruling with\nnewline  ",
-      },
-      { label: "judge bare --", role: "judge", runId: "471-judge-doubledash", message: "--" },
-      { label: "coder plain", role: "coder", runId: "471-coder-plain", message: "coder owner note" },
-      { label: "fixer plain", role: "fixer", runId: "471-fixer-plain", message: "fixer owner note" },
-      {
-        label: "reviewer plain",
-        role: "reviewer",
-        runId: "471-reviewer-plain",
-        message: "reviewer owner note",
-      },
-      {
-        label: "merger plain",
-        role: "merger",
-        runId: "471-merger-plain",
-        message: "merger owner note",
-        needsConflict: true,
-      },
-      { label: "judge bare resume envelope", role: "judge", runId: "471-judge-bare" },
-    ];
-
-    async function materializeConflictedRepo(root: string): Promise<void> {
+    async function conflicted(root: string): Promise<void> {
       seedGitProject(root);
       await writeFile(join(root, "same.txt"), "base\n", "utf8");
       execFileSync("git", ["add", "."], { cwd: root });
@@ -1589,159 +1548,136 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
       execFileSync("git", ["checkout", "main"], { cwd: root });
       await writeFile(join(root, "same.txt"), "target\n", "utf8");
       execFileSync("git", ["commit", "-am", "target"], { cwd: root });
-      assert.throws(() =>
-        execFileSync("git", ["merge", "--no-edit", "source"], { cwd: root }),
+      assert.throws(() => execFileSync("git", ["merge", "--no-edit", "source"], { cwd: root }));
+      assert.equal(
+        execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], {
+          cwd: root,
+          encoding: "utf8",
+        }).trim(),
+        "same.txt",
       );
-      const unmerged = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], {
-        cwd: root,
-        encoding: "utf8",
-      }).trim();
-      assert.equal(unmerged, "same.txt");
     }
 
-    function admitArgv(role: DurableRole, project: string): string[] {
-      switch (role) {
-        case "judge":
-          return ["judge", "--project", project, "admit 471"];
-        case "coder":
-          return ["coder", "plan", "--project", project, "admit 471"];
-        case "fixer":
-          return ["fixer", "plan", "--project", project, "admit 471"];
-        case "reviewer":
-          return ["reviewer", "--project", project, "--base", "main", "admit 471"];
-        case "merger":
-          return ["merger", "--project", project, "admit 471"];
-      }
+    function admitArgs(role: Role, project: string): string[] {
+      if (role === "judge") return ["judge", "--project", project, "admit"];
+      if (role === "coder") return ["coder", "plan", "--project", project, "admit"];
+      if (role === "fixer") return ["fixer", "plan", "--project", project, "admit"];
+      if (role === "reviewer") return ["reviewer", "--project", project, "--base", "main", "admit"];
+      return ["merger", "--project", project, "admit"];
     }
 
-    for (const scenario of scenarios) {
-      const project = join(home, `work-${scenario.runId}`);
-      await mkdir(project, { recursive: true });
-      if (scenario.needsConflict) {
-        await materializeConflictedRepo(project);
-      } else {
-        seedGitProject(project);
-      }
-
-      const { io: admitIo } = captureIo();
-      const first = await runAkRole(admitArgv(scenario.role, project), {
+    async function admit429(role: Role, runId: string, project: string): Promise<{
+      sessionFile: string;
+      sessionDirectory: string;
+    }> {
+      const { io } = captureIo();
+      const first = await runAkRole(admitArgs(role, project), {
         packageRoot,
         home,
         cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => scenario.runId,
-        io: admitIo,
+        credentials: creds,
+        createRunId: () => runId,
+        io,
         piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          const sd = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sd, { recursive: true });
+          await writeFile(join(sd, "session.jsonl"), "", "utf8");
           await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
+            runDirectory: join(sd, ".."),
             provider: "xai",
           });
           return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
         },
       });
-      assert.ok(first.terminal?.resume, `${scenario.label}: admit must be resumable`);
-
-      const bookKey = resolveBookKeyFromGit(project);
-      const runDirectory = join(
+      assert.ok(first.terminal?.resume, `${role}/${runId} must be resumable`);
+      const sessionDirectory = join(
         home,
         ".ak-roles",
         "books",
-        bookKey,
+        resolveBookKeyFromGit(project),
         "runs",
-        `${scenario.runId}@${scenario.role}`,
+        `${runId}@${role}`,
+        "session",
       );
-      const sessionDirectory = join(runDirectory, "session");
-      const sessionFile = join(sessionDirectory, "session.jsonl");
+      return { sessionDirectory, sessionFile: join(sessionDirectory, "session.jsonl") };
+    }
 
+    const cases: ReadonlyArray<{
+      role: Role;
+      runId: string;
+      message?: string;
+      conflict?: true;
+    }> = [
+      { role: "judge", runId: "471-j-plain", message: "owner says proceed" },
+      { role: "judge", runId: "471-j-model", message: "--model" },
+      { role: "judge", runId: "471-j-empty", message: "" },
+      { role: "judge", runId: "471-j-ws", message: "  ruling with\nnewline  " },
+      { role: "judge", runId: "471-j-dd", message: "--" },
+      { role: "coder", runId: "471-c", message: "coder owner note" },
+      { role: "fixer", runId: "471-f", message: "fixer owner note" },
+      { role: "reviewer", runId: "471-r", message: "reviewer owner note" },
+      { role: "merger", runId: "471-m", message: "merger owner note", conflict: true },
+      { role: "judge", runId: "471-j-bare" },
+    ];
+
+    for (const c of cases) {
+      const project = join(home, `p-${c.runId}`);
+      await mkdir(project, { recursive: true });
+      if (c.conflict) await conflicted(project);
+      else seedGitProject(project);
+      const admitted = await admit429(c.role, c.runId, project);
       const resumeArgv =
-        scenario.message === undefined
-          ? (["resume", scenario.runId] as string[])
-          : (["resume", scenario.runId, scenario.message] as string[]);
+        c.message === undefined ? ["resume", c.runId] : ["resume", c.runId, c.message];
       const { io, stderr } = captureIo();
-      let resumeArgs: string[] | undefined;
-      let dispatches = 0;
+      let seen: string[] | undefined;
+      let n = 0;
       await runAkRole(resumeArgv, {
         packageRoot,
         home,
         cwd: project,
-        credentials: { "openai-codex": true, xai: true },
+        credentials: creds,
         io,
         piRunner: async (args) => {
-          dispatches += 1;
-          resumeArgs = [...args];
+          n += 1;
+          seen = [...args];
           return { code: 0, stderr: "", timedOut: false, args: [...args] };
         },
       });
-
-      assert.equal(dispatches, 1, `${scenario.label}: must dispatch once; err=${stderr.join("")}`);
-      assert.ok(resumeArgs, `${scenario.label}: piRunner must observe argv`);
+      assert.equal(n, 1, `${c.runId}: dispatch; ${stderr.join("")}`);
+      assert.ok(seen);
+      assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
+      assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
       assert.equal(
-        resumeArgs[resumeArgs.indexOf("--session") + 1],
-        sessionFile,
-        `${scenario.label}: exact --session`,
-      );
-      assert.equal(
-        resumeArgs[resumeArgs.indexOf("--session-dir") + 1],
-        sessionDirectory,
-        `${scenario.label}: exact --session-dir`,
-      );
-      const expectedLast =
-        scenario.message === undefined ? RESUME_TRANSPORT_ENVELOPE : scenario.message;
-      assert.equal(
-        resumeArgs.at(-1),
-        expectedLast,
-        `${scenario.label}: last argv must equal continuation prompt`,
+        seen.at(-1),
+        c.message === undefined ? RESUME_TRANSPORT_ENVELOPE : c.message,
       );
     }
 
-    // Extra post-runId tokens: usage reject, zero dispatch (including `-- extra`).
+    // extras → usage reject, dispatch=0 (including `-- extra`)
     {
-      const project = join(home, "work-471-extra");
+      const project = join(home, "p-extra");
       await mkdir(project, { recursive: true });
       seedGitProject(project);
-      const runId = "471-extra-reject";
-      const { io: admitIo } = captureIo();
-      const first = await runAkRole(["judge", "--project", project, "admit extra"], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io: admitIo,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "xai",
-          });
-          return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
-        },
-      });
-      assert.ok(first.terminal?.resume);
-
+      const runId = "471-extra";
+      await admit429("judge", runId, project);
       for (const bad of [
         ["resume", runId, "one", "two"],
         ["resume", runId, "--", "extra"],
       ] as const) {
         const { io, stderr } = captureIo();
-        let dispatches = 0;
+        let n = 0;
         const rejected = await runAkRole([...bad], {
           packageRoot,
           home,
           cwd: project,
-          credentials: { "openai-codex": true, xai: true },
+          credentials: creds,
           io,
           piRunner: async (args) => {
-            dispatches += 1;
+            n += 1;
             return { code: 0, stderr: "", timedOut: false, args: [...args] };
           },
         });
-        assert.equal(dispatches, 0, `extras must not dispatch: ${bad.join(" ")}`);
+        assert.equal(n, 0, bad.join(" "));
         assert.notEqual(rejected.exitCode, 0);
         assert.match(stderr.join(""), /usage: ak-role resume/);
       }
