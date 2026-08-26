@@ -25,7 +25,6 @@ import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
-  ComplianceCandidateUnreadableError,
   readComplianceCandidate,
   type ComplianceDecision,
 } from "../compliance-transport.ts";
@@ -867,33 +866,6 @@ async function readBoundAuditorProviderStopFallback(
   return providerStopFallbackFromAuditorVolumes(volumes);
 }
 
-function unreadableComplianceFromAttempt(
-  attemptEntries: readonly SessionEntry[],
-  resultIndex: number,
-): { observation: unknown; candidate: unknown } | undefined {
-  // Prefer the unique retained auditor response that sits before this host failure.
-  const retained: unknown[] = [];
-  for (let index = 0; index < resultIndex; index += 1) {
-    const entry = attemptEntries[index];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
-    if (!isRecord(entry.data) || !isRecord(entry.data.response) || !Array.isArray(entry.data.response.content)) continue;
-    const calls = entry.data.response.content.filter(
-      (part): part is Record<string, unknown> =>
-        isRecord(part) && part.type === "toolCall",
-    );
-    if (calls.length !== 1) continue;
-    retained.push(calls[0]?.arguments);
-  }
-  if (retained.length !== 1) return undefined;
-  try {
-    readComplianceCandidate(retained[0]);
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof ComplianceCandidateUnreadableError)) return undefined;
-    return { observation: error.observation, candidate: error.candidate };
-  }
-}
-
 function typedFailedTerminatingToolKnownFailure(
   entries: readonly SessionEntry[],
 ): ExplicitInternalKnownFailure | undefined {
@@ -916,18 +888,14 @@ function typedFailedTerminatingToolKnownFailure(
       ? message.content.find((part) => isRecord(part) && part.type === "text" && typeof part.text === "string")
       : undefined;
     const diagnostic = isRecord(textPart) ? textPart.text : undefined;
-    const unreadable = unreadableComplianceFromAttempt(attemptEntries, i);
+    // Durable details already carry fact + typed evidence from envelope one-shot projection (#475).
+    // Do not re-parse retained compliance responses here.
+    const details = isRecord(message.details) ? message.details : classification.fact;
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
       ...(typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {}),
-      details: unreadable === undefined
-        ? classification.fact
-        : {
-            ...classification.fact,
-            observation: unreadable.observation,
-            candidate: unreadable.candidate,
-          },
+      details,
     };
   }
   return undefined;

@@ -15,15 +15,17 @@ function buildNavigatorInfrastructureFailureFact() {
     reasonCode: "host_failure"
   };
 }
-function isNavigatorInfrastructureFailureFact(value) {
+function hasNavigatorInfrastructureFailureBase(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value;
-  const keys = Object.keys(record);
-  if (keys.length !== NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length) return false;
   for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
     if (!Object.hasOwn(record, key)) return false;
   }
   return record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record.source === "shared-role-lifecycle" && record.reasonCode === "host_failure";
+}
+function isNavigatorInfrastructureFailureFact(value) {
+  if (!hasNavigatorInfrastructureFailureBase(value)) return false;
+  return Object.keys(value).length === NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS.length;
 }
 const PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
   PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
@@ -68,7 +70,8 @@ function markerMatchesExpectedIdentity(marker, expected) {
 function classifyPackagedRoleTerminalResult(message) {
   if (typeof message.toolName !== "string") return { kind: "nonterminal" };
   if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
-  const infraFact = isNavigatorInfrastructureFailureFact(message.details) ? message.details : void 0;
+  const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
+  const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : void 0;
   if (message.isError === true) {
     if (infraFact === void 0) return { kind: "nonterminal" };
     return { kind: "infrastructure", fact: infraFact };
@@ -209,6 +212,7 @@ export {
   currentInvocationMarkerFromSession,
   currentInvocationPrincipalFromSession,
   findLatestDurablePackagedRoleTerminal,
+  hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   isDurablePackagedRoleTerminalResult,
   isNavigatorInfrastructureFailureFact,

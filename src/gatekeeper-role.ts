@@ -259,9 +259,14 @@ export async function requireGatekeeperPass(options: {
   });
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {
+    // Typed stage/reason/submission ride failInfrastructure → durable tool_result (#475).
     const error = new Error(`Gatekeeper transport failure at ${gatekeeper.stage}: ${gatekeeper.reason}`) as Error & {
+      stage: typeof gatekeeper.stage;
+      reason: string;
       submission?: unknown;
     };
+    error.stage = gatekeeper.stage;
+    error.reason = gatekeeper.reason;
     if (gatekeeper.submission !== undefined) error.submission = gatekeeper.submission;
     options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
   }
