@@ -3,7 +3,7 @@
 > 只放术语,零实现细节。决策的为什么在 `docs/adr/`。
 
 - **角色(Role)**:有明确职掌、受门禁约束、以 typed 交卷物为唯一法定出口的**车间内**治理单元。角色只管一次调用的内政,永不派发 worker、永不含编排拓扑。**实现不限于 LLM**:确定性机制同样可以是角色(如司天第一期,[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md) 不设 LLM 角色)。soul 与工具门禁是 LLM 角色的形态,不是角色的定义。
-- **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分两层:**通用层**(本包内,零业务词)与**业务 overlay**(宿主项目附加)。审刑院与门下省的共享执法准绳不进 Soul,而在独立法典(`souls/audit-law.md`、`souls/quality-law.md`);判官与三席审计同读审刑院法典([#470](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/470))。确定性角色无 soul。
+- **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分两层:**通用层**(本包内,零业务词)与**业务 overlay**(宿主项目附加)。审刑院与门下省的共享执法准绳另立法典(`souls/audit-law.md`、`souls/quality-law.md`);审刑院法典仅装三审计席开庭材料,与各角色 Soul 内同义句并行([#470](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/470))。确定性角色无 soul。
 - **角色方法 Skill(Role method Skill)**:供一个角色执行具体任务方法的包版本化材料；Soul 持有不可约职责与判断原则，Skill 持有可替换的方法步骤。强制 Skill 是包的运行依赖，不是用户 home 目录的隐含前提。
 - **角色门禁(Role gating)**:车间内的机械限制——对 LLM 角色是工具集收窄与工具调用拦截,对确定性角色是其自身的能力边界。区别于 soul 的文本约束:门禁是拦得住的,不靠自觉。
 - **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其 typed 产物,是角色劳动成果的唯一法定出口;散文不构成交卷。无回执终局是生命周期对「未获接受回执」的 typed 事实陈述,不是回执,也不伪造角色劳动成果。并非每个角色都有交卷工具。
