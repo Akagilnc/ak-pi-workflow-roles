@@ -1,4 +1,5 @@
 import {
+  joinPackageMaterials,
   readPackageMaterial,
 } from "./session-opening-materials.ts";
 
@@ -16,15 +17,15 @@ function auditorSoulRelativePath(role: AuditorSoulRole): string {
 }
 
 /**
- * Load one complete auditor session (constitution + soul) afresh for each
- * audit invocation. Sole auditor opening-materials authority (#443): one
- * relative path source, one soul read, shared package material reader.
+ * Load one complete auditor session afresh for each audit invocation.
+ * Roster (#470): factory constitution + role auditor soul + audit-law.
+ * Blank-soul identity stays owned here; composition reuses joinPackageMaterials.
  */
 export async function loadAuditorSoul(role: AuditorSoulRole): Promise<string> {
-  const soul = await readPackageMaterial(auditorSoulRelativePath(role));
+  const soulPath = auditorSoulRelativePath(role);
+  const soul = await readPackageMaterial(soulPath);
   if (soul.trim().length === 0) {
     throw new Error(`The ${role} auditor Soul is blank`);
   }
-  const constitution = await readPackageMaterial("CLAUDE.md");
-  return `${constitution}\n\n${soul}`;
+  return joinPackageMaterials(["CLAUDE.md", soulPath, "souls/audit-law.md"]);
 }

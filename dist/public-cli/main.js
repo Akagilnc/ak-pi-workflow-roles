@@ -20180,7 +20180,7 @@ var init_doctor_auditor = __esm({
     DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
     tool = createComplianceDecisionTool(
       DOCTOR_AUDIT_TOOL_NAME,
-      "Return whether the proposed Doctor testimony demonstrably follows the Doctor Soul and frozen evidence record from the dossier. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
+      "Return whether the proposed Doctor testimony demonstrably follows the audit law and Doctor role boundaries from the dossier frozen evidence record. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
     );
   }
 });
@@ -20197,7 +20197,7 @@ var init_judge_auditor = __esm({
     JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
     auditDecisionTool = createComplianceDecisionTool(
       JUDGE_AUDIT_TOOL_NAME,
-      "Return whether the proposed verdict demonstrably follows the judge soul and dossier evidence."
+      "Return whether the proposed verdict demonstrably follows the audit law and Judge role boundaries from the dossier evidence."
     );
   }
 });

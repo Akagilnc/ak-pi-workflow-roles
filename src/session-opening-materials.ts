@@ -29,7 +29,12 @@ export async function joinPackageMaterials(
 
 /** Seven public main roles + Navigator. Ticket #443 injection roster. */
 export const MAIN_ROLE_SESSION_MATERIALS = {
-  judge: ["CLAUDE.md", "souls/judge.md", "souls/judge-output-guide.md"],
+  judge: [
+    "CLAUDE.md",
+    "souls/judge.md",
+    "souls/audit-law.md",
+    "souls/judge-output-guide.md",
+  ],
   fixer: [
     "CLAUDE.md",
     "souls/fixer.md",
