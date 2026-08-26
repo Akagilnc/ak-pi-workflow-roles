@@ -318,7 +318,3 @@ test(
     }
   },
 );
-
-  // 机制与 stderr 逐字传播由快档 test/unit/reviewer-child-failure-projection.test.ts
-  // 的 #380 tracer 在进程内承接；真入口失败味的唯一 e2e 留在 judge 侧
-  // （trim-empty stdout → 常量诊断）。本条与其同根同断言，删此留彼。
