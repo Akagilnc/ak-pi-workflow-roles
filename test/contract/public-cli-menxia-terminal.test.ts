@@ -1,6 +1,9 @@
 /**
  * #478 Terminal menxia projection — real public CLI entry (runAkRole).
  *
+ * Size: mid-tier contract (temp HOME/git + public runner), not a unit micro-test.
+ * Owned under test/contract so daily `pnpm test` still covers it with unit+contract.
+ *
  * External contracts only:
  *   1. normal dispatch + officer findings on accepted Terminal
  *   2. seat reduction without written reason (reason key absent)
