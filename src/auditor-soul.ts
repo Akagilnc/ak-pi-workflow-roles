@@ -18,7 +18,7 @@ function auditorSoulRelativePath(role: AuditorSoulRole): string {
 
 /**
  * #470 auditor session materials. Judge/reviewer carry audit-law; doctor does
- * not (owner scope: 审刑院 + 御史台 only until doctor line is live).
+ * not (御批四: 参审四席 = 大理寺/御史台主会话 + 两审计席; 太医线不动).
  */
 export const AUDITOR_SESSION_MATERIALS = {
   judge: ["CLAUDE.md", "souls/judge-auditor.md", "souls/audit-law.md"],

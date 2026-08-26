@@ -42,7 +42,7 @@ export function createPiDoctorAuditor(
     return runComplianceAudit({
       tool,
       systemPrompt: await loadAuditorSoul("doctor"),
-      roleLabel: "Doctor compliance audit",
+      roleLabel: "Doctor Soul compliance audit",
       invalidDecisionLabel: "invalid Doctor audit decision",
       context: options.context,
       ...(auditorRunDirectory(options.context) === undefined ? {} : { runDirectory: auditorRunDirectory(options.context) }),
