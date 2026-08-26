@@ -18,3 +18,16 @@ Status: accepted
 | `souls/fixer-auditor.md` | 仅「明确违反 Soul 则 `revise` 并逐条指出」，缺后半句 | 补齐后半句 |
 | `souls/doctor-auditor.md` | 同 fixer，缺后半句 | 补齐后半句 |
 | `souls/reviewer-auditor.md` | 「须指出具体条目与证据」，措辞另成一套 | 与其余三席对齐措辞 |
+
+## Amendment (#470) — 两规则分立与 roster 勘正
+
+上表是迁移前补法清单，把两条不同规则并写成一句，且仍按四席现役书写。本 amendment 只勘正法源布局，**不改**已 #470 御批通过的 soul 字节。
+
+两条规则分立，不得混为一谈、不得互删：
+
+1. **`revise` 必须逐条给出违反条目与原因**——由各 auditor soul 承担（`judge-auditor` / `reviewer-auditor` / `doctor-auditor`；以及磁盘留存的 dormant `fixer-auditor`）。此条不是 audit-law 的无证连续打回规则。
+2. **没有具体证据不得连续打回**——由 `souls/audit-law.md` 单一承接，judge / reviewer 审计会话经 `src/auditor-soul.ts` 装入法典；doctor 因太医线不动仍留本席 soul。
+
+### Roster 勘正
+
+现役审计席为 `judge` / `reviewer` / `doctor`（`AUDITOR_SOUL_ROLES`）。fixer LLM auditor 已 retired（#242），`souls/fixer-auditor.md` 仅 dormant 留盘，不在现役装载表。原第 13、17–20 行的「四席」与并写措辞以本 amendment 为准。
