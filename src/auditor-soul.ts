@@ -17,15 +17,28 @@ function auditorSoulRelativePath(role: AuditorSoulRole): string {
 }
 
 /**
+ * #470 auditor session materials. Judge/reviewer carry audit-law; doctor does
+ * not (owner scope: 审刑院 + 御史台 only until doctor line is live).
+ */
+export const AUDITOR_SESSION_MATERIALS = {
+  judge: ["CLAUDE.md", "souls/judge-auditor.md", "souls/audit-law.md"],
+  reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md", "souls/audit-law.md"],
+  doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
+} as const satisfies Record<
+  AuditorSoulRole,
+  readonly [string, string, ...(readonly string[])]
+>;
+
+/**
  * Load one complete auditor session afresh for each audit invocation.
- * Roster (#470): factory constitution + role auditor soul + audit-law.
  * Blank-soul identity stays owned here; composition reuses joinPackageMaterials.
  */
 export async function loadAuditorSoul(role: AuditorSoulRole): Promise<string> {
+  const materials = AUDITOR_SESSION_MATERIALS[role];
   const soulPath = auditorSoulRelativePath(role);
   const soul = await readPackageMaterial(soulPath);
   if (soul.trim().length === 0) {
     throw new Error(`The ${role} auditor Soul is blank`);
   }
-  return joinPackageMaterials(["CLAUDE.md", soulPath, "souls/audit-law.md"]);
+  return joinPackageMaterials(materials);
 }
