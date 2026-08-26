@@ -15904,6 +15904,9 @@ var init_typed_provider_http = __esm({
 // src/public-cli/run-lifecycle.ts
 import { chmod, lstat, open, readdir as readdir2, readFile as readFile5, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join7 } from "node:path";
+function selectResumeContinuationPrompt(message) {
+  return message !== void 0 ? message : RESUME_TRANSPORT_ENVELOPE;
+}
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
 }
@@ -17486,8 +17489,11 @@ var init_option_definitions = __esm({
       resume: {
         command: "resume",
         summary: "Reopen an exact role run whose Pi session principal still exists.",
-        usage: ["ak-role resume <runId>"],
-        examples: ["ak-role resume 01abc\u2026"]
+        usage: ["ak-role resume <runId> [message]"],
+        examples: [
+          "ak-role resume 01abc\u2026",
+          'ak-role resume 01abc\u2026 "owner ruling"'
+        ]
       }
     };
     PUBLIC_COMMAND_HELP = {
@@ -23571,7 +23577,7 @@ function buildCoderResumeActivationExtraArgs(admitted, options) {
     "--mode",
     "json",
     ...buildSeatModelCliArgs(options.model),
-    RESUME_TRANSPORT_ENVELOPE
+    selectResumeContinuationPrompt(options.message)
   ];
 }
 async function presentControlledFailure2(admitted, failureInput, io) {
@@ -23806,25 +23812,10 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     })
   });
 }
-async function runPublicCoderResume(argv, env, io) {
-  const runId = argv[0];
-  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io
-    );
-    return { exitCode: 2 };
-  }
+async function runPublicCoderResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableCoderRun(env.home, runId);
+    loaded = await loadResumableCoderRun(env.home, request.runId);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -23869,7 +23860,8 @@ async function runPublicCoderResume(argv, env, io) {
   const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
+    ...request.message === void 0 ? {} : { message: request.message }
   });
   const result2 = await dispatchAdmittedCoder({
     admitted,
@@ -24475,7 +24467,7 @@ function buildFixerResumeActivationExtraArgs(admitted, options) {
     "--mode",
     "json",
     ...buildSeatModelCliArgs(options.model),
-    RESUME_TRANSPORT_ENVELOPE
+    selectResumeContinuationPrompt(options.message)
   ];
 }
 async function presentControlledFailure5(admitted, failureInput, io) {
@@ -24723,25 +24715,10 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     })
   });
 }
-async function runPublicFixerResume(argv, env, io) {
-  const runId = argv[0];
-  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io
-    );
-    return { exitCode: 2 };
-  }
+async function runPublicFixerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableFixerRun(env.home, runId);
+    loaded = await loadResumableFixerRun(env.home, request.runId);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -24779,7 +24756,8 @@ async function runPublicFixerResume(argv, env, io) {
   const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
+    ...request.message === void 0 ? {} : { message: request.message }
   });
   const result2 = await dispatchAdmittedFixer({
     admitted,
@@ -24932,7 +24910,7 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
     "--mode",
     "json",
     ...buildSeatModelCliArgs(options.model),
-    RESUME_TRANSPORT_ENVELOPE
+    selectResumeContinuationPrompt(options.message)
   ];
 }
 async function presentControlledFailure6(admitted, failureInput, io) {
@@ -25164,25 +25142,10 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     })
   });
 }
-async function runPublicResume(argv, env, io) {
-  const runId = argv[0];
-  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io
-    );
-    return { exitCode: 2 };
-  }
+async function runPublicResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableJudgeRun(env.home, runId);
+    loaded = await loadResumableJudgeRun(env.home, request.runId);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -25203,7 +25166,8 @@ async function runPublicResume(argv, env, io) {
   }
   const extraArgs = buildJudgeResumeActivationExtraArgs(admitted, {
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
+    ...request.message === void 0 ? {} : { message: request.message }
   });
   const result2 = await dispatchAdmittedJudge({
     admitted,
@@ -25294,7 +25258,7 @@ function buildMergerResumeActivationExtraArgs(admitted, options) {
     "--mode",
     "json",
     ...buildSeatModelCliArgs(options.model),
-    RESUME_TRANSPORT_ENVELOPE
+    selectResumeContinuationPrompt(options.message)
   ];
 }
 async function presentControlledFailure7(admitted, failureInput, io) {
@@ -25615,25 +25579,10 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     })
   });
 }
-async function runPublicMergerResume(argv, env, io) {
-  const runId = argv[0];
-  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io
-    );
-    return { exitCode: 2 };
-  }
+async function runPublicMergerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableMergerRun(env.home, runId);
+    loaded = await loadResumableMergerRun(env.home, request.runId);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -25672,7 +25621,8 @@ async function runPublicMergerResume(argv, env, io) {
   const extraArgs = buildMergerResumeActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
+    ...request.message === void 0 ? {} : { message: request.message }
   });
   const result2 = await dispatchAdmittedMerger({
     admitted,
@@ -25777,7 +25727,7 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     "--mode",
     "json",
     ...buildSeatModelCliArgs(options.model),
-    RESUME_TRANSPORT_ENVELOPE
+    selectResumeContinuationPrompt(options.message)
   ];
 }
 async function presentControlledFailure8(admitted, failureInput, io) {
@@ -26033,25 +25983,10 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     })
   });
 }
-async function runPublicReviewerResume(argv, env, io) {
-  const runId = argv[0];
-  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io
-    );
-    return { exitCode: 2 };
-  }
+async function runPublicReviewerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableReviewerRun(env.home, runId);
+    loaded = await loadResumableReviewerRun(env.home, request.runId);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -26089,7 +26024,8 @@ async function runPublicReviewerResume(argv, env, io) {
   const extraArgs = buildReviewerResumeActivationExtraArgs(admitted, {
     packageRoot: env.packageRoot,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
+    ...request.message === void 0 ? {} : { message: request.message }
   });
   const result2 = await dispatchAdmittedReviewer({
     admitted,
@@ -28729,6 +28665,10 @@ function parseArgv(argv) {
   const positional = [];
   const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
   while (args.length > 0) {
+    if (positional[0] === "resume" && positional.length >= 2) {
+      positional.push(...args);
+      break;
+    }
     if (args[0] === "--") {
       args.shift();
       positional.push(...args);
@@ -28778,6 +28718,19 @@ function parseArgv(argv) {
     ...engine === void 0 ? {} : { engine },
     help
   };
+}
+function parseResumeRequest(args) {
+  const runId = args[0];
+  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
+    throw new CliUsageError("usage: ak-role resume <runId> [message]");
+  }
+  if (args.length > 2) {
+    throw new CliUsageError("usage: ak-role resume <runId> [message]");
+  }
+  if (args.length === 2) {
+    return { runId, message: args[1] };
+  }
+  return { runId };
 }
 function invocationFromParsed(parsed) {
   if (parsed.model === void 0 && parsed.thinking === void 0 && parsed.engine === void 0) {
@@ -29149,8 +29102,8 @@ async function runAkRole(argv, env) {
       const cwd = env.cwd ?? process.cwd();
       const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
-      const resumeRunId = parsed.args[0];
-      const resumeRole = resumeRunId === void 0 || resumeRunId.trim() === "" ? void 0 : await peekRoleRunRole(home, resumeRunId);
+      const resumeRequest = parseResumeRequest(parsed.args);
+      const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
       if (resumeRole === "collector") {
         throw new CliUsageError(
           "collector role runs are one-shot and cannot be resumed"
@@ -29170,7 +29123,7 @@ async function runAkRole(argv, env) {
       );
       if (resumeRole === "coder") {
         const result3 = await runPublicCoderResume(
-          parsed.args,
+          resumeRequest,
           {
             home,
             agentDir,
@@ -29192,7 +29145,7 @@ async function runAkRole(argv, env) {
       }
       if (resumeRole === "fixer") {
         const result3 = await runPublicFixerResume(
-          parsed.args,
+          resumeRequest,
           {
             home,
             agentDir,
@@ -29214,7 +29167,7 @@ async function runAkRole(argv, env) {
       }
       if (resumeRole === "reviewer") {
         const result3 = await runPublicReviewerResume(
-          parsed.args,
+          resumeRequest,
           {
             home,
             agentDir,
@@ -29236,7 +29189,7 @@ async function runAkRole(argv, env) {
       }
       if (resumeRole === "merger") {
         const result3 = await runPublicMergerResume(
-          parsed.args,
+          resumeRequest,
           {
             home,
             agentDir,
@@ -29257,7 +29210,7 @@ async function runAkRole(argv, env) {
         };
       }
       const result2 = await runPublicResume(
-        parsed.args,
+        resumeRequest,
         {
           home,
           agentDir,

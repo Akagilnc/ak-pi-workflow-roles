@@ -1,0 +1,13 @@
+{
+  "role": "judge",
+  "runId": "01a03c71-4710-7000-8000-escalate-resume01",
+  "outcome": {
+    "kind": "accepted",
+    "role": "judge",
+    "status": "converged",
+    "decisiveFacts": {
+      "judgeStatus": "converged",
+      "note": "owner ruling applied on same session"
+    }
+  }
+}

@@ -50,7 +50,8 @@ import {
   markRunRunning,
   markRunTerminal,
   renderResumeCommand,
-  RESUME_TRANSPORT_ENVELOPE,
+  type PublicResumeRequest,
+  selectResumeContinuationPrompt,
   RunWriterLeaseHeldError,
   type RunWriterLease,
   type TypedProviderHttpObservation,
@@ -152,6 +153,7 @@ export function buildMergerResumeActivationExtraArgs(
     packageRoot: string;
     model?: SeatModelConfig;
     extraPiArgs?: readonly string[];
+    message?: string;
   },
 ): string[] {
   const skillPath = resolvePackagedMethodSkillPath(
@@ -177,7 +179,7 @@ export function buildMergerResumeActivationExtraArgs(
     "--mode",
     "json",
     ...buildSeatModelCliArgs(options.model),
-    RESUME_TRANSPORT_ENVELOPE,
+    selectResumeContinuationPrompt(options.message),
   ];
 }
 
@@ -613,7 +615,7 @@ export async function runPublicMerger(
  * Restores derived input/session identity; model override is temporary.
  */
 export async function runPublicMergerResume(
-  argv: readonly string[],
+  request: PublicResumeRequest,
   env: MergerRunEnv,
   io: CliIo,
 ): Promise<{
@@ -621,25 +623,9 @@ export async function runPublicMergerResume(
   admitted?: AdmittedMergerInvocation;
   terminal?: TerminalResult;
 }> {
-  const runId = argv[0];
-  if (runId === undefined || runId.trim() === "" || runId.startsWith("-")) {
-    presentStructuralRejection(
-      new CliUsageError("usage: ak-role resume <runId>"),
-      io,
-    );
-    return { exitCode: 2 };
-  }
-  if (argv.length > 1) {
-    presentStructuralRejection(
-      new CliUsageError("resume takes exactly one run id"),
-      io,
-    );
-    return { exitCode: 2 };
-  }
-
   let loaded;
   try {
-    loaded = await loadResumableMergerRun(env.home, runId);
+    loaded = await loadResumableMergerRun(env.home, request.runId);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -683,6 +669,7 @@ export async function runPublicMergerResume(
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    ...(request.message === undefined ? {} : { message: request.message }),
   });
 
   const result = await dispatchAdmittedMerger({
