@@ -82,7 +82,7 @@ export function validateAcceptedDetails(toolName, details) {
         [COLLECTOR_OUTPUT_TOOL]: [],
         [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
         [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
-        [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce", "incomplete"],
+        [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
     };
     const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
     const baseDiscriminator = typeof discriminator === "string" ? seatFallbackBaseStatus(discriminator) : discriminator;

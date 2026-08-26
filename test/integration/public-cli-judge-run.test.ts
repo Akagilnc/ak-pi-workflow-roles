@@ -14,6 +14,10 @@ import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.t
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
+import {
+  buildNavigatorInfrastructureFailureFact,
+  JUDGE_OUTPUT_TOOL_NAME,
+} from "../../src/role-runtime.ts";
 
 import {
   packageRoot,
@@ -160,10 +164,10 @@ test(
 );
 
 test(
-  "ak-role Judge settles retained unreadable compliance as a typed incomplete Terminal",
+  "ak-role Judge settles retained unreadable compliance on the failure channel",
   { timeout: 120_000 },
   async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-incomplete-"));
+    const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-unreadable-"));
     try {
       const project = join(home, "work");
       await mkdir(project, { recursive: true });
@@ -190,7 +194,7 @@ test(
           home,
           agentDir: join(home, ".pi", "agent"),
           cwd: project,
-          createRunId: () => "run-e2e-judge-incomplete-001",
+          createRunId: () => "run-e2e-judge-unreadable-001",
           judgeExtraPiArgs: ["-e", providerPath],
           judgeTimeoutMs: 90_000,
           io: {
@@ -218,37 +222,34 @@ test(
         },
       );
 
-      assert.equal(result.exitCode, 1, stderr.join("") || "incomplete audit unexpectedly succeeded");
+      assert.equal(result.exitCode, 1, stderr.join("") || "unreadable audit unexpectedly succeeded");
       assert.equal(stdout.length, 1);
       assert.ok(result.terminal);
       const outcome = result.terminal!.roleOutcome;
-      assert.equal(outcome.kind, "audit_incomplete");
+      assert.equal(outcome.kind, "failure");
+      if (outcome.kind !== "failure") throw new Error("expected failure outcome");
       assert.equal(outcome.role, "judge");
-      assert.equal(outcome.status, "audit-incomplete");
-      assert.equal(outcome.decision, "no-usable-decision");
-      assert.equal(outcome.acceptedReceipt, false);
-      assert.deepEqual(outcome.roleCandidate, { judgeStatus: "converged" });
-      assert.deepEqual(outcome.audit.candidate, {
-        status: "mystery",
-        retained: "raw auditor candidate",
+      // Unreadable compliance is infrastructure/output failure, not a judgment status (#475).
+      assert.equal(outcome.cause, "output");
+      assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
+        kind: "role_infrastructure_failure",
+        source: "shared-role-lifecycle",
+        reasonCode: "host_failure",
+        observation: { kind: "object-status-unreadable", status: "unknown" },
+        candidate: { status: "mystery", retained: "raw auditor candidate" },
+        exitCode: 1,
       });
-      assert.deepEqual(outcome.audit.observation, {
-        kind: "object-status-unreadable",
-        status: "unknown",
-      });
-      assert.notDeepEqual(outcome.roleCandidate, outcome.audit.candidate);
 
       const bookKey = resolveBookKeyFromGit(project);
-      const sessionFile = join(
+      const runDir = join(
         home,
         ".ak-roles",
         "books",
         bookKey,
         "runs",
-        "run-e2e-judge-incomplete-001@judge",
-        "session",
-        "session.jsonl",
+        "run-e2e-judge-unreadable-001@judge",
       );
+      const sessionFile = join(runDir, "session", "session.jsonl");
       const rows = (await readFile(sessionFile, "utf8"))
         .trim()
         .split("\n")
@@ -256,44 +257,245 @@ test(
       const retained = rows.filter(
         (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
       );
-      // #419: history appends per attempt, so retention count follows leg count
-      // (autoResumeCount + 1 attempts in this single call).
-      assert.equal(retained.length, (result.terminal!.autoResumeCount ?? 0) + 1);
+      assert.ok(retained.length >= 1, "retained auditor response must still land");
       const retainedCall = retained[0].data.response.content.find(
         (part: any) => part.type === "toolCall",
       );
-      assert.deepEqual(retainedCall.arguments, outcome.audit.candidate);
-      const roleCall = rows.find(
-        (row) => row.type === "message" && row.message?.role === "assistant" &&
-          row.message?.content?.some((part: any) => part.type === "toolCall" && part.name === "ak_judge_output"),
-      );
-      const originalRoleCall = roleCall.message.content.find(
-        (part: any) => part.type === "toolCall" && part.name === "ak_judge_output",
-      );
-      assert.deepEqual(originalRoleCall.arguments, outcome.roleCandidate);
+      assert.deepEqual(retainedCall.arguments, {
+        status: "mystery",
+        retained: "raw auditor candidate",
+      });
+      // No accepted judge receipt for the unreadable audit path.
       assert.equal(rows.some(
         (row) => row.type === "message" && row.message?.toolName === "ak_judge_output" && row.message?.isError === false && row.message?.details?.judgeStatus === "converged",
       ), false);
-      const evidenceRef = result.terminal!.artifacts.find(
-        (artifact) => artifact.kind === "evidence",
+      const errorRef = result.terminal!.artifacts.find(
+        (artifact) => artifact.kind === "error",
       );
-      assert.ok(evidenceRef);
-      const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as any;
-      assert.deepEqual(evidence.roleCandidate, outcome.roleCandidate);
-      assert.deepEqual(evidence.audit.candidate, outcome.audit.candidate);
-      assert.deepEqual(evidence.audit.observation, outcome.audit.observation);
-      // Public stdout exposes typed decisive facts without depending on presentation labels.
-      const publicOutput = stdout.join("");
-      assert.ok(publicOutput.includes("roleCandidate"));
-      assert.ok(publicOutput.includes("auditCandidate"));
-      assert.ok(publicOutput.includes("raw auditor candidate"));
-      assert.ok(publicOutput.includes("auditObservation"));
-      assert.ok(publicOutput.includes("unknown"));
+      assert.ok(errorRef, "failure channel must publish error artifact");
+      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+        kind: string;
+        role: string;
+        cause: string;
+        details?: Record<string, unknown>;
+      };
+      assert.equal(errorBody.kind, "error");
+      assert.equal(errorBody.role, "judge");
+      assert.equal(errorBody.cause, "output");
+      assert.deepEqual(errorBody.details, {
+        kind: "role_infrastructure_failure",
+        source: "shared-role-lifecycle",
+        reasonCode: "host_failure",
+        observation: { kind: "object-status-unreadable", status: "unknown" },
+        candidate: { status: "mystery", retained: "raw auditor candidate" },
+        exitCode: 1,
+      });
     } finally {
       await rm(home, { recursive: true, force: true });
     }
   },
 );
+
+/** #475 public Judge failure tracer: one harness, scenario data only. */
+async function traceJudgeInfrastructureFailure(input: {
+  readonly name: string;
+  readonly runId: string;
+  readonly childEnv?: NodeJS.ProcessEnv;
+  readonly poisonRunDir?: boolean;
+  readonly expectMenxiaAbsent?: boolean;
+  readonly expectDetails: Record<string, unknown>;
+}): Promise<void> {
+  const home = await mkdtemp(join(tmpdir(), `ak-public-cli-judge-${input.name}-`));
+  try {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const providerPath = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
+    const result = await runAkRole(
+      [
+        "judge",
+        "--model",
+        "ak-audit-failure/faux-1",
+        "--thinking",
+        "off",
+        "--project",
+        project,
+        `Exercise ${input.name} failure evidence.`,
+      ],
+      {
+        packageRoot,
+        home,
+        agentDir: join(home, ".pi", "agent"),
+        cwd: project,
+        createRunId: () => input.runId,
+        judgeExtraPiArgs: ["-e", providerPath],
+        judgeTimeoutMs: 90_000,
+        io: { stdout() {}, stderr() {} },
+        piRunner: async (args, options) => {
+          const env: NodeJS.ProcessEnv = {
+            ...options.env,
+            PI_OFFLINE: "1",
+            ...input.childEnv,
+          };
+          if (input.poisonRunDir) {
+            env.AK_ROLE_RUN_DIR = join(home, "missing-dossier-does-not-exist");
+          }
+          const subprocess = await runPiSubprocess([...args], {
+            cwd: options.cwd,
+            env,
+            timeoutMs: options.timeoutMs ?? 90_000,
+          });
+          return {
+            code: subprocess.code,
+            stdout: subprocess.stdout,
+            stderr: subprocess.stderr,
+            timedOut: subprocess.localTimeout,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1, `${input.name} must exit nonzero`);
+    assert.ok(result.terminal);
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure");
+    if (outcome.kind !== "failure") throw new Error("expected failure");
+    assert.equal(outcome.cause, "output");
+    if (input.expectMenxiaAbsent) {
+      assert.equal(result.terminal!.menxia, undefined, `${input.name}: no accepted Menxia cycle`);
+    }
+
+    const runDir = join(
+      home,
+      ".ak-roles",
+      "books",
+      resolveBookKeyFromGit(project),
+      "runs",
+      `${input.runId}@judge`,
+    );
+    const rows = (await readFile(join(runDir, "session", "session.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        message?: {
+          role?: string;
+          toolName?: string;
+          isError?: boolean;
+          details?: Record<string, unknown>;
+        };
+      });
+    const infraResult = [...rows].reverse().find(
+      (row) =>
+        row.type === "message"
+        && row.message?.role === "toolResult"
+        && row.message?.toolName === JUDGE_OUTPUT_TOOL_NAME
+        && row.message?.isError === true,
+    );
+    assert.ok(infraResult?.message?.details, `${input.name}: durable infra toolResult`);
+    const expected = {
+      ...buildNavigatorInfrastructureFailureFact(),
+      ...input.expectDetails,
+    };
+    const durableDetails = infraResult!.message!.details!;
+    assert.deepEqual(
+      Object.fromEntries(Object.keys(expected).map((key) => [key, durableDetails[key]])),
+      expected,
+    );
+
+    const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
+    assert.ok(errorRef, `${input.name}: error artifact`);
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      kind: string;
+      role: string;
+      cause: string;
+      identity?: { name?: string; code?: string | number };
+      details?: Record<string, unknown>;
+    };
+    assert.equal(errorBody.kind, "error");
+    assert.equal(errorBody.role, "judge");
+    assert.equal(errorBody.cause, "output");
+    assert.equal(errorBody.identity?.name, JUDGE_OUTPUT_TOOL_NAME);
+    assert.equal(typeof errorBody.identity?.code, "string");
+    const expectedErrorDetails = { ...expected, exitCode: 1 };
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.keys(expectedErrorDetails).map((key) => [key, errorBody.details?.[key]]),
+      ),
+      expectedErrorDetails,
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+/** #475: audited-role materials + Menxia unusable submission — one parameterized harness. */
+for (const scenario of [
+  {
+    name: "missing-dossier",
+    runId: "run-e2e-judge-missing-dossier-001",
+    poisonRunDir: true,
+    expectDetails: {
+      observation: { kind: "missing-dossier" },
+      candidate: null,
+    },
+  },
+  {
+    name: "missing-subject",
+    runId: "run-e2e-judge-missing-subject-001",
+    childEnv: { AK_AUDIT_MISSING_SUBJECT: "1" },
+    expectDetails: {
+      observation: { kind: "missing-subject", subject: "candidate-verdict" },
+      candidate: null,
+    },
+  },
+  {
+    name: "gatekeeper-no-dispatch",
+    runId: "run-e2e-judge-menxia-gk-001",
+    childEnv: { AK_MENXIA_MODE: "gatekeeper-no-dispatch" },
+    expectDetails: {
+      stage: "gatekeeper",
+      submission: { status: "pass", findings: [] },
+    },
+  },
+  {
+    name: "officer-no-pass",
+    runId: "run-e2e-judge-menxia-officer-001",
+    childEnv: { AK_MENXIA_MODE: "officer-no-pass" },
+    expectDetails: {
+      stage: "inspector",
+      submission: { status: "ok-enough" },
+    },
+  },
+  {
+    name: "notary-no-pass",
+    runId: "run-e2e-judge-menxia-notary-001",
+    childEnv: { AK_MENXIA_MODE: "notary-no-pass" },
+    expectMenxiaAbsent: true,
+    expectDetails: {
+      stage: "notary",
+      submission: { status: "ok-enough" },
+    },
+  },
+] as const) {
+  test(
+    `ak-role Judge public failure-evidence tracer: ${scenario.name}`,
+    { timeout: 120_000 },
+    async () => {
+      await traceJudgeInfrastructureFailure({
+        name: scenario.name,
+        runId: scenario.runId,
+        expectDetails: scenario.expectDetails,
+        ...("poisonRunDir" in scenario ? { poisonRunDir: scenario.poisonRunDir } : {}),
+        ...("childEnv" in scenario ? { childEnv: scenario.childEnv } : {}),
+        ...("expectMenxiaAbsent" in scenario
+          ? { expectMenxiaAbsent: scenario.expectMenxiaAbsent }
+          : {}),
+      });
+    },
+  );
+}
 
 test(
   "ak-role judge reaches Judge gate and settles Terminal with registry command",

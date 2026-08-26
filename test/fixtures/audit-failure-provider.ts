@@ -14,6 +14,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
@@ -21,6 +22,41 @@ import {
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 export default function auditFailureProvider(pi: ExtensionAPI): void {
+  // #475 missing-subject public tracer: keep the live leaf for singleton execute,
+  // but hide candidate toolCalls from getEntries so audit materials fail closed.
+  if (process.env.AK_AUDIT_MISSING_SUBJECT === "1") {
+    pi.on("session_start", (_event, ctx) => {
+      const manager = ctx.sessionManager as {
+        getEntries?: () => readonly unknown[];
+      };
+      if (typeof manager.getEntries !== "function") return;
+      const original = manager.getEntries.bind(manager);
+      manager.getEntries = () =>
+        original().map((entry) => {
+          if (
+            typeof entry !== "object"
+            || entry === null
+            || (entry as { type?: unknown }).type !== "message"
+          ) {
+            return entry;
+          }
+          const message = (entry as { message?: {
+            role?: unknown;
+            content?: unknown;
+          } }).message;
+          if (message?.role !== "assistant" || !Array.isArray(message.content)) return entry;
+          const content = message.content.filter(
+            (part) =>
+              !(typeof part === "object"
+                && part !== null
+                && (part as { type?: unknown }).type === "toolCall"
+                && (part as { name?: unknown }).name === JUDGE_OUTPUT_TOOL_NAME),
+          );
+          if (content.length === message.content.length) return entry;
+          return { ...entry, message: { ...message, content } };
+        });
+    });
+  }
   const faux = fauxProvider({
     api: "ak-audit-failure",
     provider: "ak-audit-failure",
@@ -65,18 +101,52 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
   let inputReleasedAt = "";
+  /** #475 Menxia unusable-submission modes via existing fixture (no parallel fixtures). */
+  const menxiaMode = process.env.AK_MENXIA_MODE;
   const response = async (context: Context, options?: { timeoutMs?: number }) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     // Judge draft province gate runs before auditor; script pass so MALFORMED stays on auditor.
     if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+      if (menxiaMode === "gatekeeper-no-dispatch") {
+        return fauxAssistantMessage(
+          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "pass", findings: [] }),
+          { stopReason: "toolUse" },
+        );
+      }
+      if (menxiaMode === "officer-no-pass" || menxiaMode === "notary-no-pass") {
+        return fauxAssistantMessage(
+          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, {
+            status: "dispatch",
+            officer: menxiaMode === "notary-no-pass" ? "notary" : "inspector",
+          }),
+          { stopReason: "toolUse" },
+        );
+      }
       return fauxAssistantMessage(
         fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
         { stopReason: "toolUse" },
       );
     }
+    if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
+      if (menxiaMode === "officer-no-pass") {
+        return fauxAssistantMessage(
+          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "ok-enough" }),
+          { stopReason: "toolUse" },
+        );
+      }
+      return fauxAssistantMessage(
+        fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        { stopReason: "toolUse" },
+      );
+    }
     if (names.includes(NOTARY_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
-        fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        fauxToolCall(
+          NOTARY_OUTPUT_TOOL,
+          menxiaMode === "notary-no-pass"
+            ? { status: "ok-enough" }
+            : { status: "pass", findings: [] },
+        ),
         { stopReason: "toolUse" },
       );
     }

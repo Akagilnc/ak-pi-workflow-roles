@@ -130,8 +130,29 @@ export function readDoctorAuditSubjects(context: ExtensionContext): SubjectResol
   return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-testimony" } };
 }
 
-export function toAuditIncomplete<TObservation extends DossierObservation>(
-  observation: TObservation,
-): { status: "audit-incomplete"; observation: TObservation; candidate: undefined } {
-  return { status: "audit-incomplete", observation, candidate: undefined };
+/**
+ * Missing dossier/subject is infrastructure failure, not a judgment status (#475).
+ * Observation + empty candidate ride the existing failInfrastructure → error artifact path.
+ */
+export class AuditMaterialsUnavailableError extends Error {
+  readonly observation: DossierObservation;
+  readonly candidate: undefined;
+  constructor(observation: DossierObservation) {
+    const detail =
+      observation.kind === "missing-subject"
+        ? `${observation.kind}:${observation.subject}`
+        : observation.kind;
+    super(`Audit materials unavailable: ${detail}`);
+    this.name = "AuditMaterialsUnavailableError";
+    this.observation = observation;
+    this.candidate = undefined;
+  }
+}
+
+export function requireAuditMaterials(
+  resolution: DossierResolution | SubjectResolution,
+): asserts resolution is DossierOk | SubjectOk {
+  if (resolution.status === "incomplete") {
+    throw new AuditMaterialsUnavailableError(resolution.observation);
+  }
 }

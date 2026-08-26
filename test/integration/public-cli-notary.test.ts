@@ -466,7 +466,7 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
   });
 });
 
-test("layer ① accepted pass/bounce/incomplete-with-reason exit 0 via public entry", async () => {
+test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -480,7 +480,6 @@ test("layer ① accepted pass/bounce/incomplete-with-reason exit 0 via public en
         findings: ["quote has no source"],
         disposition: "rewrite",
       },
-      { status: "incomplete", reason: "source run missing draft" },
     ] as const;
 
     for (const [index, receipt] of receipts.entries()) {
@@ -511,7 +510,7 @@ test("layer ① accepted pass/bounce/incomplete-with-reason exit 0 via public en
   });
 });
 
-test("layer ② residual incomplete keeps candidate and exits non-zero via public entry", async () => {
+test("layer ② no usable Notary release keeps candidate on failure channel and exits non-zero", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -534,11 +533,18 @@ test("layer ② residual incomplete keeps candidate and exits non-zero via publi
 
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal.roleOutcome.kind, "incomplete");
-    if (result.terminal.roleOutcome.kind === "incomplete") {
+    assert.equal(result.terminal.roleOutcome.kind, "failure");
+    if (result.terminal.roleOutcome.kind === "failure") {
       assert.equal(result.terminal.roleOutcome.role, "notary");
-      assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
-      assert.deepEqual(result.terminal.roleOutcome.candidate, bad);
+      assert.equal(result.terminal.roleOutcome.cause, "output");
+      assert.deepEqual(result.terminal.roleOutcome.decisiveFacts.secondaryEvidence, {
+        candidate: bad,
+        acceptedReceipt: false,
+      });
+      assert.ok(
+        result.terminal.artifacts.some((artifact) => artifact.kind === "error"),
+        "failure channel must publish error artifact",
+      );
     }
     assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), false);
   });

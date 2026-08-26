@@ -243,7 +243,26 @@ test("registry public extractors and settlement share one closed terminal classi
   assert.equal(
     isNavigatorInfrastructureFailureFact({ ...infraFact, extra: true }),
     false,
-    "closed fact rejects extras",
+    "exact closed fact rejects extras",
+  );
+  // Extra durable fields keep infrastructure terminal — base kind/source/reasonCode only (#475 / ADR 0040).
+  assert.equal(
+    classifyPackagedRoleTerminalResult({
+      toolName: "ak_judge_output",
+      isError: true,
+      details: { ...infraFact, observation: { kind: "missing-dossier" }, candidate: null },
+    }).kind,
+    "infrastructure",
+    "evidence extensions keep infrastructure terminal",
+  );
+  assert.equal(
+    classifyPackagedRoleTerminalResult({
+      toolName: "ak_judge_output",
+      isError: true,
+      details: { ...infraFact, extra: true },
+    }).kind,
+    "infrastructure",
+    "unknown extras do not change infrastructure classification",
   );
 
   const rolesSeen = new Set<string>();
@@ -328,11 +347,6 @@ test("registry public extractors and settlement share one closed terminal classi
           details: infraFact,
         },
         {
-          name: "extra-key-infra",
-          isError: true,
-          details: { ...infraFact, extra: "not-closed" },
-        },
-        {
           name: "malformed-infra",
           isError: true,
           details: {
@@ -342,6 +356,30 @@ test("registry public extractors and settlement share one closed terminal classi
           },
         },
       ];
+
+      // Extra fields stay infrastructure terminals (not negatives) (#475 / ADR 0040).
+      assert.equal(
+        classifyPackagedRoleTerminalResult({
+          toolName: tool,
+          isError: true,
+          details: { ...infraFact, extra: "typed-evidence" },
+        }).kind,
+        "infrastructure",
+        `${label}:extra-key-infra-still-terminal`,
+      );
+      assert.deepEqual(
+        publicNavigatorSettlement(registryEntry.role, phase, {
+          toolName: tool,
+          isError: true,
+          details: { ...infraFact, observation: { kind: "missing-dossier" } },
+        }),
+        {
+          kind: "role_infrastructure_failure",
+          role: registryEntry.role,
+          phase,
+        },
+        `${label}:extra-key-infra-settlement`,
+      );
 
       for (const negative of negatives) {
         const message = {

@@ -8,7 +8,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
+import { AuditMaterialsUnavailableError, JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 
 function auditContext(sessionManager: SessionManager): ExtensionContext {
   const faux = fauxProvider({ provider: "test" });
@@ -77,7 +77,7 @@ test("judge auditor bare-Pi seam proceeds without AK_ROLE_RUN_DIR when subjects 
   }
 });
 
-test("judge auditor returns missing-dossier when AK_ROLE_RUN_DIR points at a nonexistent path", async () => {
+test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a nonexistent path", async () => {
   const previous = process.env.AK_ROLE_RUN_DIR;
   process.env.AK_ROLE_RUN_DIR = join(tmpdir(), "ak-missing-run-dir-does-not-exist");
   let calls = 0;
@@ -86,11 +86,14 @@ test("judge auditor returns missing-dossier when AK_ROLE_RUN_DIR points at a non
       calls += 1;
       throw new Error("model must not run");
     });
-    const decision = await auditor({ context: auditContext(SessionManager.inMemory()) });
-    assert.equal(decision.status, "audit-incomplete");
-    if (decision.status === "audit-incomplete") {
-      assert.deepEqual(decision.observation, { kind: "missing-dossier" });
-    }
+    await assert.rejects(
+      () => auditor({ context: auditContext(SessionManager.inMemory()) }),
+      (error: unknown) => {
+        assert.ok(error instanceof AuditMaterialsUnavailableError);
+        assert.deepEqual(error.observation, { kind: "missing-dossier" });
+        return true;
+      },
+    );
     assert.equal(calls, 0);
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
@@ -98,7 +101,7 @@ test("judge auditor returns missing-dossier when AK_ROLE_RUN_DIR points at a non
   }
 });
 
-test("judge auditor returns missing-subject when candidate verdict is not on the books", async () => {
+test("judge auditor throws missing-subject when candidate verdict is not on the books", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-judge-missing-subject-"));
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
@@ -116,11 +119,14 @@ test("judge auditor returns missing-subject when candidate verdict is not on the
       calls += 1;
       throw new Error("model must not run");
     });
-    const decision = await auditor({ context: auditContext(sessionManager) });
-    assert.equal(decision.status, "audit-incomplete");
-    if (decision.status === "audit-incomplete") {
-      assert.deepEqual(decision.observation, { kind: "missing-subject", subject: "candidate-verdict" });
-    }
+    await assert.rejects(
+      () => auditor({ context: auditContext(sessionManager) }),
+      (error: unknown) => {
+        assert.ok(error instanceof AuditMaterialsUnavailableError);
+        assert.deepEqual(error.observation, { kind: "missing-subject", subject: "candidate-verdict" });
+        return true;
+      },
+    );
     assert.equal(calls, 0);
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;

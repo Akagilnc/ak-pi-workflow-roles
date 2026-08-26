@@ -17,7 +17,12 @@ import {
   AuditorTurnLimitError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
 } from "../../src/evidence-child-executor.ts";
-import { COMPLIANCE_RESPONSE_ENTRY_TYPE, createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
+import {
+  COMPLIANCE_RESPONSE_ENTRY_TYPE,
+  ComplianceCandidateUnreadableError,
+  createComplianceDecisionTool,
+  runComplianceAudit,
+} from "../../src/compliance-transport.ts";
 import {
   StreamIdleTimeoutError,
   isStreamIdleTimeoutError,
@@ -337,11 +342,18 @@ test("accepted auditor arguments cannot forge machine-owned no-receipt provenanc
     };
     const faux = fauxProvider({ provider: "forged-no-receipt-test" });
     faux.setResponses([fauxAssistantMessage([fauxToolCall(tool.name, forged)], { stopReason: "toolUse" })]);
-    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
-      tool, systemPrompt: "Decide.", roleLabel: "Forgery auditor", invalidDecisionLabel: "invalid",
-      context: auditExtensionContext(cwd, sessionManager, faux),
-    }));
-    assert.equal(decision.status, "audit-incomplete");
+    await assert.rejects(
+      () => withRunDir(runDirectory, () => runComplianceAudit({
+        tool, systemPrompt: "Decide.", roleLabel: "Forgery auditor", invalidDecisionLabel: "invalid",
+        context: auditExtensionContext(cwd, sessionManager, faux),
+      })),
+      (error: unknown) => {
+        assert.ok(error instanceof ComplianceCandidateUnreadableError);
+        assert.equal(error.observation.kind, "object-status-unreadable");
+        assert.deepEqual(error.candidate, forged);
+        return true;
+      },
+    );
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
@@ -401,7 +413,7 @@ test("auditor exhaustion preserves a typed no-receipt leg and its measured usage
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("undefined decision candidate settles as typed audit-incomplete", async () => {
+test("undefined decision candidate fails as ComplianceCandidateUnreadableError", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-undefined-decision-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory);
@@ -409,24 +421,27 @@ test("undefined decision candidate settles as typed audit-incomplete", async () 
     const sessionManager = parentWithJudgeSubjects(cwd);
     const faux = fauxProvider({ provider: "undefined-decision-test" });
     const tool = createComplianceDecisionTool("ak_undefined_decision", "Submit.");
-    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
-      tool,
-      systemPrompt: "Submit the candidate.",
-      roleLabel: "Undefined decision auditor",
-      invalidDecisionLabel: "invalid undefined decision",
-      runCompletion: async () => fauxAssistantMessage([{
-        type: "toolCall",
-        id: "undefined-decision-call",
-        name: tool.name,
-        arguments: undefined as unknown as Record<string, any>,
-      }], { stopReason: "toolUse" }),
-      context: auditExtensionContext(cwd, sessionManager, faux),
-    }));
-    assert.equal(decision.status, "audit-incomplete");
-    if (decision.status === "audit-incomplete") {
-      assert.deepEqual(decision.observation, { kind: "non-object-arguments", type: "undefined" });
-      assert.equal(decision.candidate, undefined);
-    }
+    await assert.rejects(
+      () => withRunDir(runDirectory, () => runComplianceAudit({
+        tool,
+        systemPrompt: "Submit the candidate.",
+        roleLabel: "Undefined decision auditor",
+        invalidDecisionLabel: "invalid undefined decision",
+        runCompletion: async () => fauxAssistantMessage([{
+          type: "toolCall",
+          id: "undefined-decision-call",
+          name: tool.name,
+          arguments: undefined as unknown as Record<string, any>,
+        }], { stopReason: "toolUse" }),
+        context: auditExtensionContext(cwd, sessionManager, faux),
+      })),
+      (error: unknown) => {
+        assert.ok(error instanceof ComplianceCandidateUnreadableError);
+        assert.deepEqual(error.observation, { kind: "non-object-arguments", type: "undefined" });
+        assert.equal(error.candidate, undefined);
+        return true;
+      },
+    );
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

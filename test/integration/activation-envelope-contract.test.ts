@@ -302,7 +302,7 @@ test("packaged terminating tools expose the provider-open registration inventory
       case "collector": return [];
       case "doctor": return ["status", "case", "findings", "reason", "missingEvidence"];
       case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis"];
-      case "notary": return ["status", "findings", "reason"];
+      case "notary": return ["status", "findings"];
       default: throw new Error(`unexpected packaged role ${role}`);
     }
   };
