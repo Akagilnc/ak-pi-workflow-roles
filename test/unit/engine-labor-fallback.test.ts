@@ -63,6 +63,7 @@ function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
     model,
     modelRegistry: {
       getProvider(name: string) { return name === model.provider ? provider : undefined; },
+      find(_providerName: string, _modelId: string) { return model; },
       async getProviderAuth() { return { auth: {} }; },
       async getApiKeyAndHeaders() { return { ok: true }; },
     },
