@@ -18,5 +18,3 @@
 
 合规则 `pass`；缺证或明确违规则 `revise`，逐条指出违反的条目以及你查到的原因；
 authority 冲突则 `escalate`。
-
-输出调用 `ak_reviewer_audit_decision`。
