@@ -14,8 +14,7 @@ export function validateAcceptedJudgeDetails(verdict) {
     if (typeof judgeStatus !== "string") {
         throw new Error("Judge verdict has no execution discriminator");
     }
-    const base = judgeStatus;
-    if (["converged", "continue", "escalate"].includes(base)) {
+    if (["converged", "continue", "escalate"].includes(judgeStatus)) {
         return verdict;
     }
     throw new Error("Judge verdict has no execution discriminator");

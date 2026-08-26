@@ -113,8 +113,7 @@ export function projectReviewerIntentToReceipt(intentValue, receiptValue) {
     const intent = validateReviewerIntent(intentValue);
     const receipt = validateRuntimeReviewerReceipt(receiptValue);
     const receiptStatus = String(receipt.status);
-    const receiptBase = (receiptStatus);
-    if (receiptBase !== intent.status || (intent.status === "completed" ? receipt.diagnostic !== undefined : receipt.diagnostic !== intent.diagnostic)) {
+    if (receiptStatus !== intent.status || (intent.status === "completed" ? receipt.diagnostic !== undefined : receipt.diagnostic !== intent.diagnostic)) {
         throw new Error("Reviewer intent and runtime receipt disagree");
     }
     return receipt;

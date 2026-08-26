@@ -185,9 +185,8 @@ function mapTerminal(
     };
   }
 
-  const statusBase = (status);
   const acceptedSet = ACCEPTED_STATUS[role];
-  if (acceptedSet === undefined || !acceptedSet.has(statusBase)) {
+  if (acceptedSet === undefined || !acceptedSet.has(status)) {
     return {
       terminalLabel: status,
       accepted: false,
@@ -197,9 +196,9 @@ function mapTerminal(
     };
   }
 
-  const plannedDuty = WORKER_ROLES.has(role) && statusBase === "planned";
+  const plannedDuty = WORKER_ROLES.has(role) && status === "planned";
   const successSet = SUCCESS_STATUS[role] ?? new Set<string>();
-  const success = !plannedDuty && successSet.has(statusBase);
+  const success = !plannedDuty && successSet.has(status);
   const successEligible = !plannedDuty;
 
   return {

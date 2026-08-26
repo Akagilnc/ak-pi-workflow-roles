@@ -461,16 +461,6 @@ export type NavigatorCandidateSelection = {
   readonly matchedToSettlement: boolean;
 };
 
-function statusListMatchesSettlement(
-  candidateStatuses: readonly string[],
-  settlementStatus: string,
-): boolean {
-  if (candidateStatuses.includes(settlementStatus)) return true;
-  return candidateStatuses.some(
-    (status) => status === settlementStatus,
-  );
-}
-
 export function selectNavigatorCandidate(
   candidates: readonly NavigatorCandidate[],
   settlement: NavigatorSettlement,
@@ -489,7 +479,7 @@ export function selectNavigatorCandidate(
       const statusSpecific = rolePhaseMatched.find(
         (candidate) =>
           candidate.matches?.statuses !== undefined &&
-          statusListMatchesSettlement(candidate.matches.statuses, settlement.status!),
+          candidate.matches.statuses.includes(settlement.status!),
       );
       if (statusSpecific !== undefined) {
         return { candidate: statusSpecific, matchedToSettlement: true };

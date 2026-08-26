@@ -38,15 +38,13 @@ export type NotarySourceRunLocator = {
   readonly role: string;
 };
 
-type NotaryOutputClean =
+export type NotaryOutput =
   | { readonly status: "pass"; readonly findings: readonly string[] }
   | {
       readonly status: "bounce";
       readonly disposition: "rewrite";
       readonly findings: readonly string[];
     };
-
-export type NotaryOutput = NotaryOutputClean;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

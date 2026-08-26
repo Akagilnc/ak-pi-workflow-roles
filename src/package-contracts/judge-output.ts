@@ -11,7 +11,7 @@ export type JudgeClass = {
   disposition: string;
 };
 
-type JudgeVerdictClean =
+export type JudgeVerdict =
   | { judgeStatus: "converged"; note?: string; evidence?: unknown }
   | {
     judgeStatus: "continue";
@@ -27,8 +27,6 @@ type JudgeVerdictClean =
     evidence?: unknown;
   };
 
-export type JudgeVerdict = JudgeVerdictClean;
-
 export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
   if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) throw new Error("Judge verdict has no execution discriminator");
   let judgeStatus: unknown;
@@ -40,9 +38,8 @@ export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
   if (typeof judgeStatus !== "string") {
     throw new Error("Judge verdict has no execution discriminator");
   }
-  const base = judgeStatus;
   if (
-    ["converged", "continue", "escalate"].includes(base)
+    ["converged", "continue", "escalate"].includes(judgeStatus)
   ) {
     return verdict as JudgeVerdict;
   }
