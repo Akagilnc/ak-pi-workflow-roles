@@ -27,7 +27,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
-全局覆盖前后皆可：`ak-role --model xai/grok-4.5:high resume <runId>`。
+全局覆盖前后皆可：`ak-role --model <provider/model[:thinking]> resume <runId>`。
 
 每次运行游奕使自动出席，建议随同一 Terminal 给出。配置：
 
