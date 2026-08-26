@@ -2070,6 +2070,10 @@ async function withOptionalMenxiaProjection<
     artifacts: readonly TerminalArtifactRef[];
   },
 >(base: T, sessionDirectory: string): Promise<T & { menxia?: TerminalMenxiaFact }> {
+  // A failed gate is already represented by the role failure and has no accepted
+  // gate cycle to project. Re-reading its rejected receipt as an accepted cycle
+  // would replace the original typed failure with a projection error.
+  if (base.roleOutcome.kind === "failure") return base;
   const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
   return menxia === undefined ? base : { ...base, menxia };
 }
