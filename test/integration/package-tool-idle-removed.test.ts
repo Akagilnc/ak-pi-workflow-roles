@@ -19,7 +19,7 @@ import {
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
-import { toPiContext } from "../../src/pi/adapter.ts";
+import { resolvePiContextAtCompositionRoot } from "../../src/pi/adapter.ts";
 import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-executor.ts";
 import {
   createRoleRuntimeExtension,
@@ -223,7 +223,7 @@ test(
               transcriptFromContext: () => "adjudication evidence",
               auditSoulCompliance: (options) => auditSoulCompliance({
                 ...options,
-                context: toPiContext(options.context),
+                context: resolvePiContextAtCompositionRoot(options.context),
               }),
             }),
           ],

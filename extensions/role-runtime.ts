@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
-import { toPiContext } from "../src/pi/adapter.ts";
+import { resolvePiContextAtCompositionRoot } from "../src/pi/adapter.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
@@ -266,17 +266,17 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorCase,
     auditDoctorCompliance: (options) => createPiDoctorAuditor()({
       ...options,
-      context: toPiContext(options.context),
+      context: resolvePiContextAtCompositionRoot(options.context),
     }),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, {
       ...options,
-      context: toPiContext(options.context),
+      context: resolvePiContextAtCompositionRoot(options.context),
     }),
     createNavigatorAttendance: (options) => {
       return createNavigatorAttendance({
-        context: toPiContext(options.context),
+        context: resolvePiContextAtCompositionRoot(options.context),
         role: options.role,
         phase: options.phase,
         subjectKey: options.subjectKey,
@@ -310,13 +310,13 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     },
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, {
       ...options,
-      context: toPiContext(options.context),
+      context: resolvePiContextAtCompositionRoot(options.context),
     }),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
-    transcriptFromContext: (context) => transcriptFromContext(toPiContext(context)),
+    transcriptFromContext: (context) => transcriptFromContext(resolvePiContextAtCompositionRoot(context)),
     auditSoulCompliance: (options) => createPiJudgeAuditor()({
       ...options,
-      context: toPiContext(options.context),
+      context: resolvePiContextAtCompositionRoot(options.context),
     }),
   })(pi);
 }

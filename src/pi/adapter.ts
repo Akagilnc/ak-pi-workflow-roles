@@ -13,10 +13,22 @@ import type {
   RoleHost,
 } from "../host-contracts.ts";
 
-const piContexts = new WeakMap<HostContext, ExtensionContext>();
+const projectedPiContexts = new WeakMap<HostContext, ExtensionContext>();
+
+/** Composition-root-only native context resolution for Pi-backed dependencies. */
+export function resolvePiContextAtCompositionRoot(context: HostContext): ExtensionContext {
+  const native = projectedPiContexts.get(context);
+  if (native === undefined) throw new Error("Host context did not originate at a Pi adapter boundary");
+  return native;
+}
+
+type PiRoleHostAdapter = {
+  readonly host: RoleHost;
+  resolveContext(context: HostContext): ExtensionContext;
+};
 
 /** Project Pi's activation context onto the package-owned host contract. */
-export function fromPiContext(context: ExtensionContext): HostContext {
+function projectPiContext(context: ExtensionContext, contexts: WeakMap<HostContext, ExtensionContext>): HostContext {
   const host: HostContext = {
     cwd: context.cwd,
     mode: context.mode,
@@ -26,19 +38,22 @@ export function fromPiContext(context: ExtensionContext): HostContext {
       getEntries: () => context.sessionManager.getEntries() as ReturnType<HostContext["sessionManager"]["getEntries"]>,
       getSessionDir: () => context.sessionManager.getSessionDir(),
       getSessionFile: () => context.sessionManager.getSessionFile(),
+      getHeader: () => (context.sessionManager as any).getHeader(),
+      setSessionFile: (path) => (context.sessionManager as any).setSessionFile(path),
+      appendMessage: (message) => (context.sessionManager as any).appendMessage(message),
+      appendCustomEntry: (customType, data) => (context.sessionManager as any).appendCustomEntry(customType, data),
     },
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     abort: () => context.abort(),
   };
-  piContexts.set(host, context);
+  contexts.set(host, context);
+  projectedPiContexts.set(host, context);
   return host;
 }
 
-/** Recover the Pi context paired with a host projection at the composition boundary. */
-export function toPiContext(context: HostContext): ExtensionContext {
-  const pi = piContexts.get(context);
-  if (pi === undefined) throw new Error("Host context did not originate at the Pi adapter boundary");
-  return pi;
+/** Standalone projection for consumers that never need a reverse boundary conversion. */
+export function fromPiContext(context: ExtensionContext): HostContext {
+  return projectPiContext(context, new WeakMap());
 }
 
 function toPiResult<D>(result: HostToolResult<D>): AgentToolResult<D> {
@@ -46,7 +61,10 @@ function toPiResult<D>(result: HostToolResult<D>): AgentToolResult<D> {
 }
 
 /** Project a package-owned tool definition onto Pi's registration/custom-tool contract. */
-export function toPiToolDefinition<S extends TSchema, D>(tool: HostToolDefinition<S, D>): ToolDefinition<S, D> {
+export function toPiToolDefinition<S extends TSchema, D>(
+  tool: HostToolDefinition<S, D>,
+  projectContext: (context: ExtensionContext) => HostContext = fromPiContext,
+): ToolDefinition<S, D> {
   return {
     name: tool.name,
     label: tool.label,
@@ -59,17 +77,21 @@ export function toPiToolDefinition<S extends TSchema, D>(tool: HostToolDefinitio
         params as Static<S>,
         signal,
         update === undefined ? undefined : (result) => update(toPiResult(result)),
-        fromPiContext(context),
+        projectContext(context),
       )),
   };
 }
 
 /** Pi composition boundary. Each consumed capability is adapted explicitly. */
-export function createPiRoleHost(pi: ExtensionAPI): RoleHost {
-  return {
+export function createPiRoleHostAdapter(pi: ExtensionAPI): PiRoleHostAdapter {
+  const contexts = new WeakMap<HostContext, ExtensionContext>();
+  const host: RoleHost = {
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),
-    registerTool: (tool) => pi.registerTool(toPiToolDefinition(tool)),
+    registerTool: (tool) => pi.registerTool(toPiToolDefinition(
+      tool,
+      (context) => projectPiContext(context, contexts),
+    )),
     getAllTools: () => pi.getAllTools().map(({ name, sourceInfo }) => ({
       name,
       ...(sourceInfo?.path === undefined ? {} : { sourceInfo: { path: sourceInfo.path } }),
@@ -81,8 +103,20 @@ export function createPiRoleHost(pi: ExtensionAPI): RoleHost {
         event: K,
         handler: (event: HostEventMap[K], context: ExtensionContext) => unknown,
       ) => void;
-      register(event, (value, context) => handler(value, fromPiContext(context)));
+      register(event, (value, context) => handler(value, projectPiContext(context, contexts)));
     },
     getCommands: () => pi.getCommands().map(({ name }) => ({ name })),
   };
+  return {
+    host,
+    resolveContext(context) {
+      const native = contexts.get(context);
+      if (native === undefined) throw new Error("Host context did not originate at this Pi adapter boundary");
+      return native;
+    },
+  };
+}
+
+export function createPiRoleHost(pi: ExtensionAPI): RoleHost {
+  return createPiRoleHostAdapter(pi).host;
 }

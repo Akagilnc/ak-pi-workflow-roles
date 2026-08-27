@@ -14,8 +14,11 @@ import {
   createOfficerDecisionTool,
 } from "../../src/gatekeeper-role.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
+import { executeAuditorChild } from "../../src/evidence-child-executor.ts";
 import { packageRoot, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
+
+const executeChild = (request: any) => executeAuditorChild(request);
 
 async function withParent(run: (context: any) => Promise<void>) {
   await withActivationHome({ prefix: "ak-gatekeeper-real-entry-" }, async ({ agentDir, home }) => {
@@ -48,7 +51,7 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
   await withParent(async (context) => {
     const seen: string[] = [];
     // Subject kind is a fixture input only — officer choice is scripted, not an oracle on subject.
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "worker_completion", material: "implementation and test evidence" },
       runCompletion: completion([
@@ -74,7 +77,7 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
 
 test("Gatekeeper accepts its typed officer choice instead of machine-rejecting dispatch", async () => {
   await withParent(async (context) => {
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
       runCompletion: completion([
@@ -96,7 +99,7 @@ test("scripted officer bounce projects rewrite disposition and loads that office
     const seen: string[] = [];
     // Subject kind is a fixture input only — bounce→rewrite is the mechanical contract under test.
     const bounceSubmission = { status: "bounce", findings: ["quote has no source"] };
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
       runCompletion: completion([
@@ -128,7 +131,7 @@ test("scripted officer bounce projects rewrite disposition and loads that office
 test("Gatekeeper maps non-dispatch submission to transport_failure with original retained", async () => {
   await withParent(async (context) => {
     const badSubmission = { status: "incomplete", reason: "missing completion evidence" };
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "worker_completion", material: "" },
       runCompletion: completion([
@@ -145,7 +148,7 @@ test("Gatekeeper maps non-dispatch submission to transport_failure with original
 
 test("Gatekeeper stage settlement without an accepted receipt is loud typed no_receipt", async () => {
   await withParent(async (context) => {
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "worker_completion", material: "completion" },
       runCompletion: completion([
@@ -166,7 +169,7 @@ test("Gatekeeper stage settlement without an accepted receipt is loud typed no_r
 
 test("officer stage settlement without an accepted receipt is loud typed no_receipt", async () => {
   await withParent(async (context) => {
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "worker_completion", material: "completion" },
       runCompletion: completion([
@@ -186,7 +189,7 @@ test("officer stage settlement without an accepted receipt is loud typed no_rece
 
 test("Gatekeeper child transport failure is loud and typed, never pass", async () => {
   await withParent(async (context) => {
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "judge_draft", material: "draft" },
       runCompletion: async () => { throw new Error("provider disconnected"); },
@@ -205,7 +208,7 @@ test("Gatekeeper loadSoul native failure projects as typed transport_failure", a
       new Error("ENOENT: no such file or directory, open 'souls/__missing__.md'"),
       { code: "ENOENT" },
     );
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "judge_draft", material: "draft" },
       loadSoul: async () => {
@@ -245,7 +248,7 @@ test("Gatekeeper and shared officer decision tools accept malformed object submi
 test("province submission without explicit dispatch is transport_failure with original retained, never dispatch or pass", async () => {
   await withParent(async (context) => {
     const submission = { status: "pass", findings: [] };
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "worker_completion", material: "completion" },
       runCompletion: completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: submission }], []),
@@ -261,7 +264,7 @@ test("province submission without explicit dispatch is transport_failure with or
 test("officer submission without explicit pass is transport_failure at officer stage with original retained", async () => {
   await withParent(async (context) => {
     const submission = { status: "ok-enough" };
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "worker_completion", material: "completion" },
       runCompletion: completion([
@@ -280,10 +283,10 @@ test("officer submission without explicit pass is transport_failure at officer s
 test("missing arguments is one-shot transport_failure with serializable typed observation", async () => {
   await withParent(async (context) => {
     let turns = 0;
-    const result = await runGatekeeper({
+    const result = await runGatekeeper({ executeChild,
       context,
       subject: { kind: "worker_completion", material: "completion" },
-      runCompletion: async (model, ctx) => {
+      runCompletion: async (model: any, ctx: any) => {
         turns += 1;
         if (turns > 1) throw new Error("must not retry after missing-arguments submission");
         return completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: undefined }], [])(model, ctx);
