@@ -267,7 +267,7 @@ export function createFixerRoleRuntime(
           parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (packet === undefined || phase === undefined) {
-              throw new Error("Fixer repair packet and phase were not loaded");
+              throw new Error("修内司修理包与阶段未装载");
             }
             requireSingletonSubmissionCall(
               toolCallId,
@@ -314,7 +314,7 @@ export function createFixerRoleRuntime(
           };
         });
         pi.on("before_agent_start", (event) => {
-          if (soul === undefined) throw new Error("Fixer soul was not loaded");
+          if (soul === undefined) throw new Error("修内司职分未装载");
           return {
             systemPrompt:
               `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet?.instructions ?? ""}\n</fix_packet>\n\n<fixer_prerequisites>\n${JSON.stringify(packet?.prerequisites ?? [])}\n</fixer_prerequisites>`,
@@ -400,7 +400,7 @@ export function createCoderRoleRuntime(
           parameters: coderOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
             if (task === undefined || phase === undefined) {
-              throw new Error("Coder task and phase were not loaded");
+              throw new Error("将作监任务与阶段未装载");
             }
             requireSingletonSubmissionCall(
               toolCallId,
@@ -463,7 +463,7 @@ export function createCoderRoleRuntime(
           };
         });
         pi.on("before_agent_start", (event, ctx) => {
-          if (soul === undefined) throw new Error("Coder soul was not loaded");
+          if (soul === undefined) throw new Error("将作监职分未装载");
           if (phase === "apply") {
             if (binding === undefined) {
               hostActions.failInfrastructure(

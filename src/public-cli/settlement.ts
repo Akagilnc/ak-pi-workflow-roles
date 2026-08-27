@@ -3103,7 +3103,8 @@ async function settleLawfulNotaryTerminalResult(
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === undefined) {
     // No usable Notary release → existing non-zero failure channel with candidate (#475 / ADR 0055).
-    // Prefer errored residual when present; else accepted-once non-usable details as-is.
+    // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
+    let acceptedNonUsable: unknown | undefined;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
@@ -3113,28 +3114,32 @@ async function settleLawfulNotaryTerminalResult(
         message,
         NOTARY_OUTPUT_TOOL_NAME,
       );
-      if (residual === undefined) continue;
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: residual.diagnostic,
-        details: { candidate: residual.candidate, acceptedReceipt: false },
-      });
-    }
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      if (message.toolName !== NOTARY_OUTPUT_TOOL_NAME) continue;
-      if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-      // Accepted once but not a lawful pass/bounce — project typed output failure.
-      try {
-        validateRecordedNotaryOutput(message.details);
-      } catch {
+      if (residual !== undefined) {
         return settleFailureTerminalResult(admitted, {
           cause: "output",
-          diagnostic: "符宝郎回执无显式 pass/bounce",
-          details: { candidate: message.details, acceptedReceipt: false },
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false },
         });
       }
+      if (
+        acceptedNonUsable === undefined &&
+        message.toolName === NOTARY_OUTPUT_TOOL_NAME &&
+        isAcceptedPackagedRoleTerminalResult(message)
+      ) {
+        // Accepted once but not a lawful pass/bounce — hold as fallback.
+        try {
+          validateRecordedNotaryOutput(message.details);
+        } catch {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== undefined) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: "符宝郎回执无显式 pass/bounce",
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
+      });
     }
     return undefined;
   }

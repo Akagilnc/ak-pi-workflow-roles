@@ -416,7 +416,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal("通进司观察需要激活");
       }
       if (signal?.aborted) {
-        throw latchFatal("通进司观察失败", signal.reason);
+        const abortMessage = signal.reason instanceof Error
+          ? signal.reason.message
+          : String(signal.reason ?? "已中止");
+        throw latchFatal(`通进司观察失败：${abortMessage}`, signal.reason);
       }
       const observedAt = clock.wallNow().toISOString();
       const cutoff = pastCutoff(clock);
@@ -437,7 +440,8 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           }
         }
       } catch (error) {
-        throw latchFatal("通进司观察失败", error);
+        const message = error instanceof Error ? error.message : "未知失败";
+        throw latchFatal(`通进司观察失败：${message}`, error);
       }
 
       // First-sighting trust must not predate actual surface observation.
@@ -692,7 +696,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       attempt.status = "rejected";
       attempt.responseDiagnostics = result.diagnostics;
-      throw latchFatal("通进司请求被拒", result.diagnostics);
+      throw latchFatal(`通进司请求被拒：${result.diagnostics}`);
     },
 
     async wait(input, clock, signal) {

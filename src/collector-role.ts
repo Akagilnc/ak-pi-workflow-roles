@@ -287,7 +287,7 @@ export function createCollectorRoleRuntime(
       parameters: observeSchema,
       async execute(toolCallId, _params, signal, _onUpdate, ctx) {
         if (activation === undefined) {
-          throw new Error("Collector is not activated");
+          throw new Error("通进司未激活");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, toolCallId);
@@ -322,7 +322,7 @@ export function createCollectorRoleRuntime(
       parameters: requestSchema,
       async execute(toolCallId, params: RequestParams, signal, _onUpdate, ctx) {
         if (activation === undefined) {
-          throw new Error("Collector is not activated");
+          throw new Error("通进司未激活");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_REQUEST_TOOL, toolCallId);
@@ -354,7 +354,7 @@ export function createCollectorRoleRuntime(
       parameters: waitSchema,
       async execute(toolCallId, params: WaitParams, signal, _onUpdate, ctx) {
         if (activation === undefined) {
-          throw new Error("Collector is not activated");
+          throw new Error("通进司未激活");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_WAIT_TOOL, toolCallId);
@@ -385,7 +385,7 @@ export function createCollectorRoleRuntime(
       parameters: outputSchema,
       async execute(toolCallId, params: OutputParams, _signal, _onUpdate, ctx) {
         if (activation === undefined) {
-          throw new Error("Collector is not activated");
+          throw new Error("通进司未激活");
         }
         try {
           assertSoleFinalCollectorOutput(toolCallId, ctx);

@@ -96,7 +96,7 @@ export function createNotaryRoleRuntime(
             ctx,
           ): Promise<AgentToolResult<unknown>> {
             if (activation === undefined) {
-              throw new Error("Notary is not activated");
+              throw new Error("符宝郎未激活");
             }
             // Unique submission + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055): lawful pass/bounce projected; else params as-is.
@@ -112,7 +112,7 @@ export function createNotaryRoleRuntime(
         });
         pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
-            throw new Error("Notary is not activated");
+            throw new Error("符宝郎未激活");
           }
           // Locator only — never preload ticket/diff/draft body (self-fetch contract).
           const bound = {
