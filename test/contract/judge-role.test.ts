@@ -17,8 +17,8 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { createPiRoleHostAdapter, toPiContext, type HostGatekeeperActions, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import type { HostContext } from "../../src/host-contracts.ts";
+import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
+import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,

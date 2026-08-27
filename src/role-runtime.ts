@@ -565,11 +565,11 @@ function buildPendingInfrastructureFailure(error: unknown): PendingInfrastructur
   };
 }
 
-function navigatorPhase(pi: ExtensionAPI, role: string): NavigatorPhase {
+function navigatorPhase(roleHost: RoleHost, role: string): NavigatorPhase {
   const metadata = packagedRoleMetadata(role);
   if (metadata === undefined || metadata.phases[0] === null) return null;
   const phaseFlag = packagedRolePhaseFlag(role);
-  const requested = phaseFlag === undefined ? undefined : pi.getFlag(phaseFlag);
+  const requested = phaseFlag === undefined ? undefined : roleHost.getFlag(phaseFlag);
   return requested === "apply" ? "apply" : "plan";
 }
 
@@ -740,7 +740,7 @@ export function createRoleRuntimeExtension(
       }
       const settlement = publicNavigatorSettlement(
         role,
-        navigatorPhase(pi, role),
+        navigatorPhase(roleHost, role),
         classified,
       );
       if (settlement !== undefined) {
@@ -772,7 +772,7 @@ export function createRoleRuntimeExtension(
                 disposition: "unavailable",
                 invocationId: "post-role-grace-timeout",
                 role,
-                phase: navigatorPhase(pi, role),
+                phase: navigatorPhase(roleHost, role),
                 subjectKey: workContext?.subjectKey ?? "",
                 unavailableReason: "Navigator exceeded post-role delivery grace",
                 unavailableSource: "unknown",
@@ -1169,7 +1169,7 @@ export function createRoleRuntimeExtension(
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           } else {
             try {
-              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
+              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(roleHost, entry.role) });
               contextError = work.contextError;
             } catch (error) {
               // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
@@ -1184,7 +1184,7 @@ export function createRoleRuntimeExtension(
           // role/phase/subjectKey still match; mint for contradictory marker, malformed nearest,
           // missing marker, or terminal already completed.
           const sessionEntries = [...ctx.sessionManager.getEntries()];
-          const invocationPhase = navigatorPhase(pi, entry.role);
+          const invocationPhase = navigatorPhase(roleHost, entry.role);
           const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries, {
             role: entry.role,
             phase: invocationPhase,
