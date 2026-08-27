@@ -11,14 +11,16 @@ import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_E
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.js";
 import { engineNameFromEnv } from "./engine-detour.js";
 import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
+import { readPackageMaterial } from "./session-opening-materials.js";
 import { formatModelSpec, loadPublicCliConfig, resolveMenxiaOfficerModelSelection, } from "./public-cli/config.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus, projectConfirmedRemotePayload, } from "./upstream-error-testimony.js";
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
-function buildEvidenceChildSystemPrompt(engineMaterial) {
-    // ADR 0073: no instruction copy of soul; engine material is optional data only.
-    return appendEngineSessionMaterial([], engineMaterial).join("\n");
+async function buildEvidenceChildSystemPrompt(engineMaterial) {
+    // ADR 0073: verification cadence lives in owner material only; no machine prose copy.
+    const qualityLaw = await readPackageMaterial("souls/quality-law.md");
+    return appendEngineSessionMaterial([qualityLaw], engineMaterial).join("\n");
 }
 // ── shared constants / types ──────────────────────────────────────────────
 export const AUDITOR_TURN_LIMIT = 32;
@@ -489,7 +491,7 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
             model: inherited.model,
             thinkingLevel: context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
-            systemPrompt: buildEvidenceChildSystemPrompt(engineMaterial),
+            systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
             ...(engineDetourTool === undefined
                 ? {}
                 : { customTools: [engineDetourTool] }),

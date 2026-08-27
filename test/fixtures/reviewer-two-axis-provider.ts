@@ -1,4 +1,5 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -10,6 +11,18 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { REVIEWER_AXIS_OUTPUT_ADAPTER } from "../../src/reviewer-construction.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
+
+/** Path-fact oracle: evidence-child must carry souls/quality-law.md bytes (no wording pin). */
+const EVIDENCE_CHILD_QUALITY_LAW = readFileSync(
+  fileURLToPath(new URL("../../souls/quality-law.md", import.meta.url)),
+  "utf8",
+);
+
+function assertEvidenceChildQualityLawMaterial(context: Context): void {
+  if (!context.systemPrompt?.includes(EVIDENCE_CHILD_QUALITY_LAW)) {
+    throw new Error("evidence-child system prompt missing souls/quality-law.md material");
+  }
+}
 
 function axisFromPrompt(text: string): "standards" | "spec" | undefined {
   // Identity from typed package constant — no hard-coded version contract in the fixture.
@@ -109,6 +122,7 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
   const expectedAxes = expectedAxesFromEnv();
   const axisSeen = new Set<string>();
   const childResponse = (context: Context, label: string) => {
+    assertEvidenceChildQualityLawMaterial(context);
     const prompt = userText(context);
     const axis = axisFromPrompt(prompt);
     if (axis === undefined) throw new Error(`${label} has no recognized typed axis adapter`);

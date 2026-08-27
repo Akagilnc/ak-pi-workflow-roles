@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, type Context } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { engineDetourFailureDiagnostic } from "../../src/engine-detour.ts";
 import { executeReviewerChild, projectSharedChildFailure } from "../../src/reviewer-child-executor.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 test("shared child classifications project without relabeling unrelated errors", () => {
   for (const classification of ["provider", "child", "unknown"] as const) {
@@ -49,6 +50,33 @@ test("aborted evidence without remote testimony projects unknown, not child", as
         assert.equal(classified.reviewerFailure, "unknown");
         return true;
       },
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("evidence-child system prompt carries souls/quality-law.md material path", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-evidence-quality-law-"));
+  try {
+    const qualityLaw = await readFile(join(packageRoot, "souls/quality-law.md"), "utf8");
+    let seenSystemPrompt: string | undefined;
+    const faux = fauxProvider({ provider: "evidence-quality-law" });
+    faux.setResponses([
+      (context: Context) => {
+        seenSystemPrompt = context.systemPrompt;
+        return fauxAssistantMessage("Standards finding count: 0.");
+      },
+    ]);
+    await executeReviewerChild(
+      cwd,
+      { axis: "standards", prompt: "investigate" },
+      evidenceChildContext(cwd, faux),
+    );
+    assert.equal(
+      seenSystemPrompt?.includes(qualityLaw),
+      true,
+      "evidence-child system prompt must load souls/quality-law.md bytes",
     );
   } finally {
     await rm(cwd, { recursive: true, force: true });
