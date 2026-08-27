@@ -122,7 +122,6 @@ export function createPiRoleHostAdapter(
       tool,
       (context) => projectPiContext(context, options.transcriptFromContext),
     )),
-    registerNativeTool: (tool) => pi.registerTool(tool),
     getAllTools: () => pi.getAllTools().map(({ name, sourceInfo }) => ({
       name,
       ...(sourceInfo?.path === undefined ? {} : { sourceInfo: { path: sourceInfo.path } }),

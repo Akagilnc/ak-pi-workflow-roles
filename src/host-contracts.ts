@@ -16,7 +16,6 @@ type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLea
 /** Context supplied by a host for one activation and its interceptable events. */
 export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
 
-export type HostNativeToolContext = Pick<HostContext, "cwd" | "mode" | "abort">;
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; };
 
 type BeforeAgentStartEvent = { prompt: string; systemPrompt: string; systemPromptOptions: { skills?: readonly unknown[]; contextFiles?: readonly unknown[]; appendSystemPrompt?: string } };
@@ -30,7 +29,7 @@ type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
 type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };
 
-export type HostEventMap = {
+type HostEventMap = {
   before_agent_start: BeforeAgentStartEvent;
   input: InputEvent;
   tool_call: ToolCallEvent;
@@ -68,7 +67,6 @@ export interface RoleHost {
   registerFlag(name: string, definition: { description: string; type: "boolean" | "string"; default?: boolean | string }): void;
   getFlag(name: string): boolean | string | undefined;
   registerTool<S extends TSchema, D = unknown>(tool: HostToolDefinition<S, D>): void;
-  registerNativeTool<S extends TSchema, D = unknown>(tool: HostToolDefinition<S, D, HostNativeToolContext>): void;
   getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>;
   setActiveTools(names: string[]): void;
   getActiveTools(): string[];
