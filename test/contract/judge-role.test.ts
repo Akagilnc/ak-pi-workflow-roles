@@ -972,7 +972,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
           ...options,
-          context: options.context,
+          context: toPiContext(options.context),
           modelSettingPath: "/missing/navigator-model.json",
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
@@ -2246,7 +2246,7 @@ test(
         createNavigatorAttendance: async (options) => {
           attendance = createNavigatorAttendance({
             ...options,
-            context: options.context,
+            context: toPiContext(options.context),
             modelSettingPath,
             loadSoul: async () => "route law",
             loadRoutePlaybook: async () => {

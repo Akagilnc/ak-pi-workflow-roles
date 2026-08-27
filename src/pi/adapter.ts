@@ -9,7 +9,7 @@ import type { Static, TSchema } from "typebox";
 import { requireGatekeeperPass, type GatekeeperNonPassResult, type GatekeeperSubject } from "../gatekeeper-role.ts";
 import type {
   HostContext,
-  HostEventMap,
+  HostEventRegistration,
   HostToolDefinition,
   HostToolResult,
   RoleHost,
@@ -130,31 +130,31 @@ export function createPiRoleHostAdapter(
     })),
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
-    on(event, hostHandler) {
+    on(...registration: HostEventRegistration) {
       const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
-      if (event === "before_agent_start") {
-        const handler = hostHandler as (value: HostEventMap["before_agent_start"], context: HostContext) => unknown;
+      if (registration[0] === "before_agent_start") {
+        const [, handler] = registration;
         pi.on("before_agent_start", (value, ctx) => handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, context(ctx)));
-      } else if (event === "input") {
-        const handler = hostHandler as (value: HostEventMap["input"], context: HostContext) => unknown;
+      } else if (registration[0] === "input") {
+        const [, handler] = registration;
         pi.on("input", (value, ctx) => handler({ text: value.text, ...(value.images === undefined ? {} : { images: value.images }), source: value.source }, context(ctx)));
-      } else if (event === "tool_call") {
-        const handler = hostHandler as (value: HostEventMap["tool_call"], context: HostContext) => unknown;
+      } else if (registration[0] === "tool_call") {
+        const [, handler] = registration;
         pi.on("tool_call", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, input: value.input }, context(ctx)));
-      } else if (event === "tool_result") {
-        const handler = hostHandler as (value: HostEventMap["tool_result"], context: HostContext) => unknown;
-        pi.on("tool_result", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, isError: value.isError, content: value.content.map((part) => part.type === "text" ? { type: "text", text: part.text } : { type: part.type }), details: value.details }, context(ctx)));
-      } else if (event === "session_start") {
-        const handler = hostHandler as (value: HostEventMap["session_start"], context: HostContext) => unknown;
+      } else if (registration[0] === "tool_result") {
+        const [, handler] = registration;
+        pi.on("tool_result", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, isError: value.isError, content: (value.content ?? []).map((part) => part.type === "text" ? { type: "text", text: part.text } : { type: "image", data: part.data, mimeType: part.mimeType }), details: value.details }, context(ctx)));
+      } else if (registration[0] === "session_start") {
+        const [, handler] = registration;
         pi.on("session_start", (value, ctx) => handler({ reason: value.reason }, context(ctx)));
-      } else if (event === "session_shutdown") {
-        const handler = hostHandler as (value: HostEventMap["session_shutdown"], context: HostContext) => unknown;
+      } else if (registration[0] === "session_shutdown") {
+        const [, handler] = registration;
         pi.on("session_shutdown", (_value, ctx) => handler({}, context(ctx)));
-      } else if (event === "after_provider_response") {
-        const handler = hostHandler as (value: HostEventMap["after_provider_response"], context: HostContext) => unknown;
+      } else if (registration[0] === "after_provider_response") {
+        const [, handler] = registration;
         pi.on("after_provider_response", (value, ctx) => handler({ status: value.status }, context(ctx)));
-      } else if (event === "agent_end") {
-        const handler = hostHandler as (value: HostEventMap["agent_end"], context: HostContext) => unknown;
+      } else if (registration[0] === "agent_end") {
+        const [, handler] = registration;
         pi.on("agent_end", (value, ctx) => handler({
         messages: value.messages.map((message) => ({
           role: message.role,
@@ -165,17 +165,17 @@ export function createPiRoleHostAdapter(
               : { type: part.type }) : [],
         })),
       }, context(ctx)));
-      } else if (event === "agent_settled") {
-        const handler = hostHandler as (value: HostEventMap["agent_settled"], context: HostContext) => unknown;
+      } else if (registration[0] === "agent_settled") {
+        const [, handler] = registration;
         pi.on("agent_settled", (_value, ctx) => handler({}, context(ctx)));
-      } else if (event === "tool_execution_start") {
-        const handler = hostHandler as (value: HostEventMap["tool_execution_start"], context: HostContext) => unknown;
+      } else if (registration[0] === "tool_execution_start") {
+        const [, handler] = registration;
         pi.on("tool_execution_start", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId }, context(ctx)));
-      } else if (event === "tool_execution_update") {
-        const handler = hostHandler as (value: HostEventMap["tool_execution_update"], context: HostContext) => unknown;
+      } else if (registration[0] === "tool_execution_update") {
+        const [, handler] = registration;
         pi.on("tool_execution_update", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, partialResult: value.partialResult }, context(ctx)));
       } else {
-        const handler = hostHandler as (value: HostEventMap["tool_execution_end"], context: HostContext) => unknown;
+        const [, handler] = registration;
         pi.on("tool_execution_end", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, isError: value.isError }, context(ctx)));
       }
     },
