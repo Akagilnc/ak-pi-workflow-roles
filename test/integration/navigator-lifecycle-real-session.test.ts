@@ -483,7 +483,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     );
     await mkdir(sessionDir, { recursive: true });
     sessionManager = SessionManager.create(home, sessionDir);
-    sessionManager.appendMessage({ role: "user", content: "activation fixture", timestamp: Date.now() });
+    sessionManager.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
     const ctx = { cwd: home, sessionManager, abort() {} };
 
     await handlers.get("session_start")?.({}, ctx);
@@ -787,7 +787,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "survive", "session");
     await mkdir(sessionDir, { recursive: true });
     const sessionManager = SessionManager.create(home, sessionDir);
-    sessionManager.appendMessage({ role: "user", content: "activation fixture", timestamp: Date.now() });
+    sessionManager.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
     const ctx = { cwd: home, sessionManager, abort() {} };
 
     await emit("session_start", {}, ctx);
