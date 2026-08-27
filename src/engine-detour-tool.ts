@@ -106,7 +106,7 @@ export function createEngineDetourToolDefinition(input: {
       const argv = Array.isArray(args.argv) ? args.argv : [];
       if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
         input.fail(
-          new Error("engine detour argv must be a non-empty string array"),
+          new Error("劳务引擎 argv 须为非空字符串数组"),
           toolCallId,
           ctx,
         );
@@ -123,7 +123,7 @@ export function createEngineDetourToolDefinition(input: {
         if (isCallerCancellation(error, signal)) throw error;
         const cause = error instanceof Error
           ? error
-          : new Error(String(error).trim() || "engine detour spawn failed");
+          : new Error(String(error).trim() || "劳务引擎 spawn 失败");
         input.fail(cause, toolCallId, ctx);
       }
 

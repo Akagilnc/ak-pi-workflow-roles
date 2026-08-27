@@ -9,7 +9,6 @@ export const REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
 export const REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
     adapterId: "reviewer-axis-output",
     version: 1,
-    implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities"),
 });
 /** Package-owned axis identity + neutral report-byte fact (ADR 0073: no instruction copy of soul). */
 export function reviewerAxisMethodAdapter(axis) {
