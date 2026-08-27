@@ -16,7 +16,6 @@ import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
-import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readReviewerDispatchRejection } from "./explicit-internal.ts";
 import {
   RESUME_TRANSPORT_ENVELOPE,
@@ -1607,8 +1606,6 @@ function auditToolNameForRole(
   switch (role) {
     case "judge":
       return JUDGE_AUDIT_TOOL_NAME;
-    case "reviewer":
-      return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
       return DOCTOR_AUDIT_TOOL_NAME;
   }
@@ -3324,20 +3321,13 @@ export async function publishReviewerArtifacts(
   ];
 }
 
-/** Lawful Reviewer accepted outcome extracted from session (shared success interface). */
-export type LawfulReviewerRoleOutcome =
-  | {
-      kind: "accepted";
-      role: "reviewer";
-      status: string;
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    }
-  | {
-      kind: "audit_escalation";
-      role: "reviewer";
-      status: "audit_escalation";
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    };
+/** Lawful Reviewer accepted outcome extracted from session (no LLM auditor after #495 S6). */
+export type LawfulReviewerRoleOutcome = {
+  kind: "accepted";
+  role: "reviewer";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
 
 export function extractReviewerRoleOutcome(
   entries: readonly SessionEntry[],
@@ -3350,26 +3340,11 @@ export function extractReviewerRoleOutcome(
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "reviewer",
-      REVIEWER_OUTPUT_TOOL_NAME,
-    );
-    if (escalation !== undefined) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "reviewer",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details },
-        },
-      };
-    }
-    if (isUnboundAuditEscalationFace(message.details)) continue;
+    const details = message.details;
+    // Residual audit_escalation faces are not lawful Reviewer terminals after #495 S6.
+    if (isUnboundAuditEscalationFace(details)) continue;
     try {
-      const receipt = validateRuntimeReviewerReceipt(message.details);
+      const receipt = validateRuntimeReviewerReceipt(details);
       const outcome: LawfulReviewerRoleOutcome = {
         kind: "accepted",
         role: "reviewer",

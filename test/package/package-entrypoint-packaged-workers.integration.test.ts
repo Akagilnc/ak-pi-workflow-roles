@@ -96,9 +96,8 @@ test("cold-installed package audits active auditor seats from editable Souls", a
     { prefix: "ak-auditor-package-" },
     async ({ home }) => {
       await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
-      const [judge, reviewer, doctor] = await Promise.all([
+      const [judge, doctor] = await Promise.all([
         installed("src/judge-auditor.ts"),
-        installed("src/reviewer-auditor.ts"),
         installed("src/doctor-auditor.ts"),
       ]);
 
@@ -110,8 +109,8 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         },
         sessionManager: SessionManager.inMemory(),
       } as any;
-// Judge/reviewer/doctor auditors take zero hand-delivered materials (#233).
-      // Fixer LLM auditor retired (#242) — active auditor seats only.
+      // Judge/doctor auditors take zero hand-delivered materials (#233).
+      // Fixer (#242) / Reviewer (#495 S6) LLM auditors retired — active auditor seats only.
       // Seed the real run record shape; the locator binds from the parent record,
       // never from an environment-variable convention.
       const runDirectory = resolve(installedRoot, "fixture-run");
@@ -128,15 +127,13 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: "toolUse", timestamp: Date.now(),
       });
-      context.sessionManager.appendCustomEntry("ak_reviewer_audit_candidate", { version: 1, candidate: {} });
       context.sessionManager.appendCustomEntry("ak_doctor_audit_candidate", { version: 1, testimony: {} });
       const roles = [
         { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)({ context }) },
-        { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)({ context }) },
         { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)({ context }) },
       ] as const;
-      // #470: judge/reviewer = constitution + soul + audit-law; doctor omits audit-law.
-      // #467: judge auditor also loads quality-law; reviewer/doctor rosters unchanged.
+      // #470: judge = constitution + soul + audit-law + quality-law; doctor omits audit-law.
+      // #495 S6: reviewer auditor roster retired.
       const installedConstitution = await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8");
       const installedAuditLaw = await readFile(resolve(installedRoot, "souls/audit-law.md"), "utf8");
       const installedQualityLaw = await readFile(resolve(installedRoot, "souls/quality-law.md"), "utf8");
@@ -145,10 +142,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         if (name === "doctor") {
           return `${installedConstitution}\n\n${soul}`;
         }
-        if (name === "judge") {
-          return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}`;
-        }
-        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}`;
+        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}`;
       };
       const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
