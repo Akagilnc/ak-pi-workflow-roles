@@ -144,7 +144,7 @@ export function createReviewerRoleRuntime(
 
       if (!registered) {
         registered = true;
-        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "Standards/Spec 评审腿由 runtime 以取证子会话代跑，本席收腿报告后交薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(id, parameters, _signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
             requireSoleReviewerOutputCall(id, toolCtx);
