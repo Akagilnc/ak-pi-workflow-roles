@@ -1,3 +1,4 @@
+import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
 /**
  * Package-owned engine detour tool (#357 T2 / #378 / #380).
  * Registered by shared role-runtime when any role + engine activation signal is present.
@@ -5,12 +6,6 @@
  * Engine process failures stop through the host infrastructure-failure seam.
  * Caller AbortSignal cancellation propagates unchanged.
  */
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ExtensionContext,
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
 import {
@@ -37,13 +32,13 @@ type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;
 export type EngineDetourHostActions = {
   failInfrastructure(
     error: unknown,
-    ctx: ExtensionContext,
+    ctx: HostContext,
     toolCallId?: string,
   ): never;
 };
 
 export type EngineDetourToolRegistration = {
-  /** True when the tool definition was installed on this ExtensionAPI. */
+  /** True when the tool definition was installed on this RoleHost. */
   readonly registered: boolean;
 };
 
@@ -75,8 +70,8 @@ function isCallerCancellation(
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
   latch?: EngineDetourLatch;
-  fail: (error: Error, toolCallId: string, ctx: ExtensionContext) => never;
-}): ToolDefinition {
+  fail: (error: Error, toolCallId: string, ctx: HostContext) => never;
+}): HostToolDefinition {
   const latch = input.latch ?? { used: false };
   const engineName = input.engineName;
   return {
@@ -92,7 +87,7 @@ export function createEngineDetourToolDefinition(input: {
       signal,
       _onUpdate,
       ctx,
-    ): Promise<AgentToolResult<unknown>> {
+    ): Promise<HostToolResult<unknown>> {
       if (latch.used) {
         input.fail(
           new Error(ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC),
@@ -143,7 +138,7 @@ export function createEngineDetourToolDefinition(input: {
         },
       };
     },
-  } as ToolDefinition;
+  } as HostToolDefinition;
 }
 
 /**
@@ -152,7 +147,7 @@ export function createEngineDetourToolDefinition(input: {
  * Once-latch is activation-scoped via the returned reset handle.
  */
 export function registerEngineDetourTool(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   hostActions: EngineDetourHostActions,
 ): EngineDetourToolRegistration & { resetLatch(): void } {
   const engineName = engineNameFromEnv();

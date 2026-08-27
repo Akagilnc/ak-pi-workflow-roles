@@ -1,9 +1,5 @@
-import { StringEnum } from "@earendil-works/pi-ai";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  AgentToolResult,
-} from "@earendil-works/pi-coding-agent";
+import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
+import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 
 import { disposeComplianceDecision } from "./audit-escalation.ts";
@@ -23,7 +19,7 @@ export type { JudgeVerdict };
 
 const judgeVerdictSchema = Type.Object(
   {
-    judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
+    judgeStatus: stringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
     fix: Type.Optional(
       Type.Object(
         { summary: Type.String({ minLength: 1, description: "continue 时的补救摘要" }) },
@@ -59,7 +55,7 @@ export type SoulAuditResult = ComplianceDecision;
 export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
   auditSoulCompliance(
-    options: { context: ExtensionContext; signal?: AbortSignal },
+    options: { context: HostContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
 };
 
@@ -71,13 +67,13 @@ export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
 
 function requireSingletonSubmissionCall(
   toolCallId: string,
-  ctx: ExtensionContext,
+  ctx: HostContext,
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
     throw new Error("大理寺回执非唯一终局工具调用");
   }
-  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
+  const calls = leaf.message.content.filter((part: any) => part.type === "toolCall");
   const call = calls[0];
   if (
     calls.length !== 1 || call === undefined || call.id !== toolCallId ||
@@ -88,7 +84,7 @@ function requireSingletonSubmissionCall(
 }
 
 export function createJudgeRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: JudgeRoleDependencies,
   hostActions: JudgeRoleHostActions,
 ): { activate(): Promise<void> } {
@@ -107,7 +103,7 @@ export function createJudgeRoleRuntime(
           description: "提交大理寺终局判词；受理前经审刑院审计。",
           promptSnippet: "提交大理寺终局判词",
           parameters: judgeVerdictSchema,
-          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: any, signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
             requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
@@ -132,7 +128,7 @@ export function createJudgeRoleRuntime(
               hostActions.failInfrastructure(error, ctx, toolCallId);
             }
             const acceptedDetails = verdict;
-            return disposeComplianceDecision<AgentToolResult<unknown>>(
+            return disposeComplianceDecision<HostToolResult<unknown>>(
               audit,
               {
                 pass: (usage) => ({
@@ -159,7 +155,7 @@ export function createJudgeRoleRuntime(
             );
           },
         });
-        pi.on("before_agent_start", (event) => {
+        pi.on("before_agent_start", (event: any) => {
           if (soul === undefined) throw new Error("大理寺职分未装载");
           return {
             systemPrompt:

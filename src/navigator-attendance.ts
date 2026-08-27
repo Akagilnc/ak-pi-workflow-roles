@@ -13,7 +13,7 @@ import {
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
-import { openInProcessAgentSession } from "./in-process-session.ts";
+import { openInProcessAgentSession } from "./pi/in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";

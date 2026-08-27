@@ -1,7 +1,4 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
 import type { Static } from "typebox";
 
 import {
@@ -70,7 +67,7 @@ export type CollectorRoleDependencies = {
 };
 
 export type CollectorRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
+  failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never;
 };
 
 type CollectorActivation = {
@@ -86,13 +83,13 @@ type CollectorActivation = {
 /** Sole-final at the output execution seam (same shape as other terminating roles). */
 function assertSoleFinalCollectorOutput(
   toolCallId: string,
-  ctx: ExtensionContext,
+  ctx: HostContext,
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
     throw new Error("通进司回执非唯一终局工具调用");
   }
-  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
+  const calls = leaf.message.content.filter((part: any) => part.type === "toolCall");
   const call = calls[0];
   if (
     calls.length !== 1 ||
@@ -116,12 +113,12 @@ function buildMethodContext(activation: CollectorActivation): string {
 }
 
 export function createCollectorRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: CollectorRoleDependencies,
   hostActions: CollectorRoleHostActions,
 ): {
   activate(
-    ctx: ExtensionContext,
+    ctx: HostContext,
     event: { reason: string },
   ): Promise<void>;
 } {
@@ -151,7 +148,7 @@ export function createCollectorRoleRuntime(
     if (lifecycleRegistered) return;
     lifecycleRegistered = true;
 
-    pi.on("input", (event, ctx) => {
+    pi.on("input", (event: any, ctx: HostContext) => {
       if (activation === undefined) {
         // role not active
         return { action: "continue" as const };
@@ -172,7 +169,7 @@ export function createCollectorRoleRuntime(
       };
     });
 
-    pi.on("before_agent_start", (event, ctx) => {
+    pi.on("before_agent_start", (event: any, ctx: HostContext) => {
       if (activation === undefined) return;
 
       // Detectable ambient instruction resources on the supported prompt surface.
@@ -232,7 +229,7 @@ export function createCollectorRoleRuntime(
       };
     });
 
-    pi.on("tool_call", (event) => {
+    pi.on("tool_call", (event: any) => {
       if (activation === undefined) return;
       if (activation.ledger.fatal) {
         return {
@@ -260,7 +257,7 @@ export function createCollectorRoleRuntime(
       return undefined;
     });
 
-    pi.on("tool_result", (event) => {
+    pi.on("tool_result", (event: any) => {
       if (activation === undefined) return;
       activation.ledger.completeOperational(event.toolCallId);
     });
@@ -285,7 +282,7 @@ export function createCollectorRoleRuntime(
       description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。",
       promptSnippet: "抓取配置目标 PR 证据",
       parameters: observeSchema,
-      async execute(toolCallId, _params, signal, _onUpdate, ctx) {
+      async execute(toolCallId: string, _params: any, signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext) {
         if (activation === undefined) {
           throw new Error("通进司未激活");
         }
@@ -320,7 +317,7 @@ export function createCollectorRoleRuntime(
       description: "按配置请求体与关联标记，在所引最新快照 HEAD 发一次请求。",
       promptSnippet: "按配置发一次请求",
       parameters: requestSchema,
-      async execute(toolCallId, params: RequestParams, signal, _onUpdate, ctx) {
+      async execute(toolCallId: string, params: RequestParams, signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext) {
         if (activation === undefined) {
           throw new Error("通进司未激活");
         }
@@ -352,7 +349,7 @@ export function createCollectorRoleRuntime(
       description: "再观察前等待；单次上限五分钟且不超剩余资格。",
       promptSnippet: "资格截止前等待",
       parameters: waitSchema,
-      async execute(toolCallId, params: WaitParams, signal, _onUpdate, ctx) {
+      async execute(toolCallId: string, params: WaitParams, signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext) {
         if (activation === undefined) {
           throw new Error("通进司未激活");
         }
@@ -383,7 +380,7 @@ export function createCollectorRoleRuntime(
       description: "观察完成后提交；回执由 runtime 组装。",
       promptSnippet: "提交通进司回执",
       parameters: outputSchema,
-      async execute(toolCallId, params: OutputParams, _signal, _onUpdate, ctx) {
+      async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext) {
         if (activation === undefined) {
           throw new Error("通进司未激活");
         }

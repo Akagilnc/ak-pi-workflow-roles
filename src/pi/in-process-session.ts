@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
-import { createRecordSession } from "./archivist-record-entry.ts";
+import { createRecordSession } from "../archivist-record-entry.ts";
 
 type OpenInProcessAgentSessionBase = {
   readonly cwd: string;
@@ -24,7 +24,7 @@ type OpenInProcessAgentSessionBase = {
   readonly modelRuntime: ModelRuntime;
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly systemPrompt?: string;
-  readonly customTools?: ToolDefinition[];
+  readonly customTools?: ToolDefinition[] | import("../host-contracts.ts").HostToolDefinition[];
   readonly noTools?: "all" | "builtin";
   /** Optional allowlist — omit for unrestricted Pi defaults (ADR 0064). */
   readonly tools?: string[];
@@ -83,7 +83,7 @@ export async function openInProcessAgentSession(
     settingsManager: settings,
     ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
     ...(options.tools === undefined ? {} : { tools: options.tools }),
-    ...(options.customTools === undefined ? {} : { customTools: options.customTools }),
+    ...(options.customTools === undefined ? {} : { customTools: options.customTools as ToolDefinition[] }),
   };
 
   if (options.agentDir !== undefined) {
