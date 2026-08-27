@@ -12,9 +12,10 @@ export type HostMessage = {
   isError?: boolean;
 };
 
-export type HostSessionEntry =
-  | { type: "message"; message: HostMessage; [key: string]: unknown }
-  | { type: string; [key: string]: unknown };
+export type HostSessionEntry = {
+  type: string;
+  message?: HostMessage;
+};
 
 export type HostToolResult<T = unknown> = {
   content: Array<{ type: "text"; text: string } | Record<string, unknown>>;
@@ -36,6 +37,7 @@ export type HostSessionManager = {
 /** Context supplied by a host for one activation and its interceptable events. */
 export type HostContext = {
   cwd: string;
+  mode: string;
   sessionManager: HostSessionManager;
   signal?: AbortSignal;
   abort(): void;
@@ -43,7 +45,7 @@ export type HostContext = {
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown> = {
   name: string;
-  label?: string;
+  label: string;
   description: string;
   promptSnippet?: string;
   parameters: S;
@@ -85,17 +87,17 @@ export interface RoleHost {
   registerFlag(name: string, definition: { description: string; type: "boolean" | "string"; default?: boolean | string }): void;
   getFlag(name: string): boolean | string | undefined;
   registerTool<S extends TSchema, D = unknown>(tool: HostToolDefinition<S, D>): void;
-  getAllTools(): HostToolDefinition[];
+  getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>;
   setActiveTools(names: string[]): void;
   getActiveTools(): string[];
   on<K extends keyof HostEventMap>(event: K, handler: (event: HostEventMap[K], ctx: HostContext) => unknown): void;
-  getCommands(): Array<{ name: string; [key: string]: unknown }>;
+  getCommands(): Array<{ name: string }>;
   readonly sessionManager?: HostSessionManager;
   readonly abort?: () => void;
 }
 
 export function isHostToolCall(part: { type: string }): part is { type: "toolCall"; id: string; name: string } {
-  return part.type === "toolCall";
+  return part.type === "toolCall" && "id" in part && "name" in part;
 }
 
 /** Local replacement for Pi AI's convenience constructor. */
