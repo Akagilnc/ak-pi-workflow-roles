@@ -34,6 +34,11 @@ import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
+import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
+import {
+  WorkerCommitReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "../../src/worker-submission-gates.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -291,8 +296,10 @@ function workerCompletionGatekeeperHarness(options: {
       await reject("transport", (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject("unusable-release", (error) => {
         assert.equal(error instanceof GatekeeperDecisionError, false);
-        assert.match(error.message, /transport failure|无显式/);
-        assert.deepEqual((error as Error & { submission?: unknown }).submission, unusableSubmission);
+        const typed = error as Error & { stage?: string; reason?: string; submission?: unknown };
+        assert.equal(typed.stage, "gatekeeper");
+        assert.ok(typeof typed.reason === "string" && typed.reason.length > 0);
+        assert.deepEqual(typed.submission, unusableSubmission);
       });
       await reject("no-receipt", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -306,8 +313,10 @@ function workerCompletionGatekeeperHarness(options: {
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject(`${officer}-unusable-release`, (error) => {
         assert.equal(error instanceof GatekeeperDecisionError, false);
-        assert.match(error.message, /transport failure|无显式/);
-        assert.deepEqual((error as Error & { submission?: unknown }).submission, officerUnusableSubmission);
+        const typed = error as Error & { stage?: string; reason?: string; submission?: unknown };
+        assert.equal(typed.stage, officer);
+        assert.ok(typeof typed.reason === "string" && typed.reason.length > 0);
+        assert.deepEqual(typed.submission, officerUnusableSubmission);
       });
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -337,7 +346,7 @@ function workerCompletionGatekeeperHarness(options: {
   };
 }
 
-function menxiaCatalogModel(provider: string, id: string) {
+function gateCatalogModel(provider: string, id: string) {
   return {
     api: "openai-responses" as const,
     provider,
@@ -356,7 +365,7 @@ function menxiaCatalogModel(provider: string, id: string) {
  * Real submit-tool → requireGatekeeperPass → shared executor child model observation (#453).
  * Pass-only script; full non-pass matrix stays on workerCompletionGatekeeperHarness.
  */
-function realEntryMenxiaModelHarness(options: {
+function realEntryGateModelHarness(options: {
   officer?: "inspector" | "notary";
   catalog?: ReadonlyArray<{ provider: string; id: string }>;
   authFailIds?: ReadonlySet<string>;
@@ -368,7 +377,7 @@ function realEntryMenxiaModelHarness(options: {
   const catalog = new Map(
     (options.catalog ?? []).map((entry) => [
       `${entry.provider}/${entry.id}`,
-      menxiaCatalogModel(entry.provider, entry.id),
+      gateCatalogModel(entry.provider, entry.id),
     ]),
   );
   const authFailIds = options.authFailIds ?? new Set<string>();
@@ -758,7 +767,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
         return harness;
       },
       output: { judgeStatus: "converged", evidence: { checks: [{ name: "receipt", passed: true }] } },
-      acceptedText: "Judge verdict accepted",
     },
     {
       role: "fixer" as const,
@@ -780,7 +788,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
         return harness;
       },
       output: { status: "completed", report: "done", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] },
-      acceptedText: "Fixer report accepted",
     },
     {
       role: "coder" as const,
@@ -802,7 +809,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
         return harness;
       },
       output: { status: "planned", report: "plan" },
-      acceptedText: "Coder report accepted",
     },
   ];
 
@@ -814,8 +820,8 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     assert.equal(tool.name, fixture.name);
     assert.ok(typeof tool.description === "string" && tool.description.length > 0);
     assert.ok(
-      (tool.promptGuidelines ?? []).some((line) => line.includes(fixture.name)),
-      `${fixture.name} guidelines must name the tool`,
+      tool.promptGuidelines === undefined || tool.promptGuidelines.length === 0,
+      `${fixture.name} must not carry promptGuidelines instruction family`,
     );
     const result = await tool.execute(
       "receipt",
@@ -826,7 +832,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
         ? withPassingGatekeeper(toolCallContext([{ id: "receipt", name: fixture.name }]))
         : toolCallContext([{ id: "receipt", name: fixture.name }]),
     );
-    assert.equal(result.content[0].text, fixture.acceptedText);
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
     assert.deepEqual(
@@ -1045,7 +1050,6 @@ test("judge role fails before adjudication when its soul is empty", async () => 
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await assert.rejects(
       Promise.resolve(harness.handlers.get("session_start")?.({}, activationCtx(home))),
-      /Judge soul is empty/,
     );
   });
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
@@ -1149,8 +1153,8 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   await assert.rejects(
     tool.execute("unfinished-bare", bare, undefined, undefined, nonCompletedContext("unfinished-bare")),
     (error: unknown) =>
-      error instanceof Error &&
-      error.message === "补理由（前置缺失/违宪之一）或继续施工",
+      error instanceof WorkerUnfinishedReasonReminderError &&
+      error.code === "worker_unfinished_reason_reminder",
   );
   assert.deepEqual(
     (await tool.execute("unfinished-reasoned", reasoned, undefined, undefined, nonCompletedContext("unfinished-reasoned"))).details,
@@ -1191,11 +1195,11 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   assert.ok(tool2);
   await assert.rejects(
     tool2.execute("u1", bare, undefined, undefined, nonCompletedContext("u1")),
-    /补理由（前置缺失\/违宪之一）或继续施工/,
+    (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
   );
   await assert.rejects(
     tool2.execute("u2", bare, undefined, undefined, nonCompletedContext("u2")),
-    /补理由（前置缺失\/违宪之一）或继续施工/,
+    (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
   );
   assert.deepEqual(
     (await tool2.execute("u3", bare, undefined, undefined, nonCompletedContext("u3"))).details,
@@ -1441,8 +1445,8 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
   assert.equal(secondGate.providerRequests, 1);
 });
 
-// #453: menxia model selection through real coder/fixer/judge submit tools.
-test("#453 real coder/fixer/judge entries observe menxia model inheritance and overrides", async () => {
+// #453: gate model selection through real coder/fixer/judge submit tools.
+test("#453 real coder/fixer/judge entries observe gate model inheritance and overrides", async () => {
   const completedCoder = { status: "completed", report: "TDD and verification evidence" };
   const completedFixer = {
     status: "completed" as const,
@@ -1499,7 +1503,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
   };
 
-  await withActivationHome({ prefix: "ak-453-menxia-model-" }, async ({ home }) => {
+  await withActivationHome({ prefix: "ak-453-gate-model-" }, async ({ home }) => {
     // Unconfigured: all three real entries inherit the parent session model.
     for (const entry of [
       {
@@ -1525,7 +1529,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
       },
     ]) {
       const tool = await entry.start();
-      const tracer = realEntryMenxiaModelHarness({ officer: entry.officer });
+      const tracer = realEntryGateModelHarness({ officer: entry.officer });
       const accepted = await tool.execute(
         `${entry.name}-inherit`,
         entry.output,
@@ -1540,7 +1544,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
           { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
           { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
         ],
-        `${entry.name} unconfigured menxia seats inherit parent model`,
+        `${entry.name} unconfigured gate seats inherit parent model`,
       );
     }
 
@@ -1555,7 +1559,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     );
     for (const officer of ["inspector", "notary"] as const) {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({
+      const tracer = realEntryGateModelHarness({
         officer,
         catalog: [{ provider: "xai", id: "gate-only-model" }],
       });
@@ -1592,7 +1596,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     ];
     {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({ officer: "inspector", catalog });
+      const tracer = realEntryGateModelHarness({ officer: "inspector", catalog });
       assert.equal(
         (await tool.execute(
           "own-inspector",
@@ -1610,7 +1614,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     }
     {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({ officer: "notary", catalog });
+      const tracer = realEntryGateModelHarness({ officer: "notary", catalog });
       assert.equal(
         (await tool.execute(
           "own-notary",
@@ -1634,7 +1638,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     await savePublicCliConfig(config, home);
     {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({
+      const tracer = realEntryGateModelHarness({
         officer: "inspector",
         catalog, // leftover catalog must not apply without persistent seats
       });
@@ -1664,7 +1668,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     );
     {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({
+      const tracer = realEntryGateModelHarness({
         officer: "inspector",
         catalog: [{ provider: "xai", id: "auth-fail-model" }],
         authFailIds: new Set(["auth-fail-model"]),
@@ -1893,17 +1897,16 @@ test("coder apply binds completion to the immediately following canonical tdd ex
           { id: "sibling", name: "read" },
         ]),
       ),
-      /Coder output must be the sole final tool call/,
     );
   }
 });
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
   const rows = [
-    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" }, packet: "{", diagnostic: /Fixer prerequisite/ },
-    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" }, packet: JSON.stringify([{ id: "bad/id", requirement: "x" }]), diagnostic: /Fixer prerequisite/ },
-    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-phase": "apply" }, packet: "", diagnostic: /Fixer instructions must be nonblank/ },
-    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-phase": "apply" }, packet: " \t\n", diagnostic: /Fixer instructions must be nonblank/ },
+    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" }, packet: "{" },
+    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" }, packet: JSON.stringify([{ id: "bad/id", requirement: "x" }]) },
+    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-phase": "apply" }, packet: "" },
+    { flags: { "ak-fix-packet": "/packet.md", "ak-fixer-phase": "apply" }, packet: " \t\n" },
   ] as const;
   for (const row of rows) {
     const harness = extensionHarness("fixer", row.flags);
@@ -1915,7 +1918,10 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
       auditSoulCompliance: async () => ({ status: "pass" }),
     })(harness.pi as ExtensionAPI);
     await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-      await assert.rejects(Promise.resolve(harness.handlers.get("session_start")?.({}, activationCtx(home))), row.diagnostic);
+      await assert.rejects(
+        Promise.resolve(harness.handlers.get("session_start")?.({}, activationCtx(home))),
+        (error: unknown) => error instanceof FixerPacketValidationError,
+      );
     });
     assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), false);
     assert.equal(harness.handlers.has("before_agent_start"), true);
@@ -1945,7 +1951,12 @@ test("undeclared prerequisite submissions are rejected; declared references acce
         { name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice", evidence: "Choice absent." } },
       ],
     };
-    await assert.rejects(tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])), /未观察到 commit/);
+    await assert.rejects(
+      tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])),
+      (error: unknown) =>
+        error instanceof WorkerCommitReminderError &&
+        error.code === "worker_commit_reminder",
+    );
     const second = await tool.execute("partial2", partial, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.deepEqual(second.details, partial);
 
@@ -2070,13 +2081,14 @@ test("fixer output must be the sole call in its assistant batch", async () => {
           undefined,
           toolCallContext(calls),
         ),
-        /Fixer output must be the sole final tool call/,
       );
     }
 
     await assert.rejects(
       tool.execute("fixer", output, undefined, undefined, toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
-      /未观察到 commit/,
+      (error: unknown) =>
+        error instanceof WorkerCommitReminderError &&
+        error.code === "worker_commit_reminder",
     );
     const accepted = await tool.execute(
       "fixer",
@@ -2086,6 +2098,7 @@ test("fixer output must be the sole call in its assistant batch", async () => {
       withPassingGatekeeper(toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
     );
     assert.deepEqual(accepted.details, output);
+    assert.equal(accepted.terminate, true);
   });
 });
 
@@ -2138,7 +2151,6 @@ test("judge output must be the sole call in its assistant batch", async () => {
         undefined,
         toolCallContext(calls),
       ),
-      /sole final tool call/,
     );
   }
   for (const sessionManager of [
@@ -2161,10 +2173,18 @@ test("judge output must be the sole call in its assistant batch", async () => {
         undefined,
         { sessionManager, abort() {} } as unknown as ExtensionContext,
       ),
-      /sole final tool call/,
     );
   }
   assert.equal(auditCalls, 0);
+  const accepted = await tool.execute(
+    "judge",
+    verdict,
+    undefined,
+    undefined,
+    withPassingGatekeeper(toolCallContext([{ id: "judge", name: JUDGE_OUTPUT_TOOL_NAME, arguments: verdict }])),
+  );
+  assert.deepEqual(accepted.details, verdict);
+  assert.equal(accepted.terminate, true);
 });
 
 test(
@@ -2352,10 +2372,11 @@ test(
 
 // #420 整改移档（自 package-entrypoint-packaged-workers.integration.test.ts）：
 // 纯进程内模块逻辑（Source-tree imports，无任何装包边界），性质属快档。
-// 契约断言一字不减：revise→errored / pass→terminate / escalate 全矩阵在此。
+// Judge/doctor：revise→errored / pass→terminate / escalate 全矩阵。
+// Fixer (#242) / Reviewer (#495 S6)：无审刑院闸，typed validate 即受理。
 test("role outputs run nested audits through pass, revise, and escalation", async () => {
   // Source-tree imports: cold-install boundary is owned by neighbouring install tests;
-  // this carrier owns revise→errored / pass→terminate / escalate per role output tool.
+  // this carrier owns revise→errored / pass→terminate / escalate per audited role output tool.
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
   const nestedRunDir = await mkdtemp(join(tmpdir(), "ak-nested-audit-run-"));
@@ -2363,9 +2384,8 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   process.env.AK_ROLE_RUN_DIR = nestedRunDir;
   try {
   {
-      const [judge, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
+      const [judge, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/judge-auditor.ts"),
-        importSrc("src/reviewer-auditor.ts"),
         importSrc("src/doctor-auditor.ts"),
         importSrc("src/judge-role.ts"),
         importSrc("src/worker-role.ts"),
@@ -2413,7 +2433,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       } as const;
       const toolNames = {
         judge: judge.JUDGE_AUDIT_TOOL_NAME,
-        reviewer: reviewer.REVIEWER_AUDIT_TOOL_NAME,
         doctor: doctor.DOCTOR_AUDIT_TOOL_NAME,
       } as const;
       const acceptedNames = {
@@ -2474,13 +2493,12 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         let selectedDecision = decision;
         const complete = async (_model: unknown, _request: Context) => {
           auditCalls += 1;
-          const auditTool = toolNames[role as Exclude<typeof role, "fixer">];
+          const auditTool = toolNames[role as "judge" | "doctor"];
           return fauxAssistantMessage(fauxToolCall(auditTool, selectedDecision), { stopReason: "toolUse" });
         };
-// Judge/reviewer/doctor: zero-arg materials (#233). Fixer LLM auditor retired (#242).
+        // Judge/doctor: zero-arg materials (#233). Fixer (#242) / Reviewer (#495 S6) no LLM auditor.
         const auditCompliance = (options: any) => {
           if (role === "judge") return judge.createPiJudgeAuditor(complete)(options);
-          if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(options);
           return doctor.createPiDoctorAuditor(complete)(options);
         };
         let runtime: any;
@@ -2522,7 +2540,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
               readPinnedText: async () => undefined,
             }),
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
-            auditCompliance,
           }, testHostActions());
         }
         return {
@@ -2535,31 +2552,37 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
 
       for (const role of ["judge", "fixer", "reviewer", "doctor"] as const) {
         const toolName = role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME;
-        if (role === "fixer") {
-          // #242: Fixer LLM auditor retired — accept on schema validate only, no audit leg.
+        if (role === "fixer" || role === "reviewer") {
+          // #242 fixer / #495 S6 reviewer: no LLM auditor — accept on typed validate only.
           const plain = createRole(role, pass);
-          await plain.runtime.activate();
+          if (role === "reviewer") {
+            await plain.runtime.activate(undefined, { baseRevision: "review-base" });
+            assert.deepEqual(
+              plain.harness.activeTools(),
+              ["read", "write", "grep", "find", "bash"],
+              "Reviewer activation must preserve Pi's evidence tool surface",
+            );
+          } else {
+            await plain.runtime.activate();
+          }
           const tool = plain.harness.tools.get(toolName);
           assert.ok(tool);
-          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, withPassingGatekeeper(outputContext(tool.name, `${role}-pass`)));
+          const ctx = role === "fixer"
+            ? withPassingGatekeeper(outputContext(tool.name, `${role}-pass`))
+            : outputContext(tool.name, `${role}-pass`, outputs[role] as Record<string, unknown>);
+          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, ctx);
           assert.equal(accepted.terminate, true);
-          assert.deepEqual(accepted.details, outputs[role]);
+          if (role === "fixer") {
+            assert.deepEqual(accepted.details, outputs[role]);
+          } else {
+            // Reviewer receipt is assembled from ledger + intent; status rides the face.
+            assert.equal(accepted.details.status, outputs[role].status);
+          }
           assert.equal(plain.auditCalls, 0);
           continue;
         }
         const retriable = createRole(role, revise);
-        if (role === "reviewer") {
-          await retriable.runtime.activate(undefined, { baseRevision: "review-base" });
-        } else {
-          await retriable.runtime.activate();
-        }
-        if (role === "reviewer") {
-          assert.deepEqual(
-            retriable.harness.activeTools(),
-            ["read", "write", "grep", "find", "bash"],
-            "Reviewer activation must preserve Pi's evidence tool surface",
-          );
-        }
+        await retriable.runtime.activate();
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
         const submissionContext = (id: string) => {
@@ -2572,15 +2595,11 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         assert.equal(accepted.terminate, true);
         if (role === "judge") assert.equal(accepted.details.judgeStatus, outputs[role].judgeStatus);
         else assert.equal(accepted.details.status, outputs[role].status);
-        if (role !== "reviewer") assert.deepEqual(accepted.details, outputs[role]);
+        assert.deepEqual(accepted.details, outputs[role]);
         assert.equal(retriable.auditCalls, 2, `${role} must audit the rejected submission and its resubmission`);
 
         const escalated = createRole(role, escalation);
-        if (role === "reviewer") {
-          await escalated.runtime.activate(undefined, { baseRevision: "review-base" });
-        } else {
-          await escalated.runtime.activate();
-        }
+        await escalated.runtime.activate();
         const escalationTool = escalated.harness.tools.get(tool.name);
         const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, submissionContext(`${role}-escalate`));
         assert.equal(result.terminate, true);

@@ -3,7 +3,7 @@ import { ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC, ENGINE_DETOUR_TOOL_NAME, engineD
 const engineDetourArgsSchema = Type.Object({
     argv: Type.Array(Type.String({ minLength: 1 }), {
         minItems: 1,
-        description: "Executable argv for one engine subprocess. First element is the command (PATH lookup); remaining elements are arguments. Build argv from the host CLI actual interface for the configured engine name; when optional packaged notes are present in the session prompt, follow those bytes. Do not invent package flags.",
+        description: "首项为 PATH 中的可执行文件，其余项为参数。",
     }),
 }, { additionalProperties: false });
 /** Caller/upper-layer cancellation must propagate unchanged. */
@@ -29,15 +29,9 @@ export function createEngineDetourToolDefinition(input) {
     const engineName = input.engineName;
     return {
         name: ENGINE_DETOUR_TOOL_NAME,
-        label: "Engine Detour",
-        description: `Run one labor-engine subprocess (engine=${engineName}) and return its stdout to this session. Call at most once per activation. Build argv from the host CLI actual interface for this engine name; when optional packaged notes are present in the session prompt, follow those bytes too.`,
-        promptSnippet: "Run the configured labor engine once and return its stdout",
-        promptGuidelines: [
-            `Use ${ENGINE_DETOUR_TOOL_NAME} exactly once for the configured engine (${engineName}). Optional packaged notes are guidance when present; a bare engine name alone is also a valid call path.`,
-            "Pass argv for the host CLI of this engine name — first element is the executable name on PATH. Follow optional packaged notes when delivered; otherwise act from the engine name and the host CLI actual interface. Do not invent package flags.",
-            "On success, use the returned stdout as labor content for the existing typed submission / report path.",
-            "An engine process failure stops this activation; do not continue labor in this session.",
-        ],
+        label: "劳务引擎",
+        description: `运行一次劳务引擎子进程（engine=${engineName}），stdout 返回本 session；每次激活至多一次。`,
+        promptSnippet: "运行配置的劳务引擎一次并返回 stdout",
         parameters: engineDetourArgsSchema,
         async execute(toolCallId, params, signal, _onUpdate, ctx) {
             if (latch.used) {
@@ -47,7 +41,7 @@ export function createEngineDetourToolDefinition(input) {
             const args = params;
             const argv = Array.isArray(args.argv) ? args.argv : [];
             if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
-                input.fail(new Error("engine detour argv must be a non-empty string array"), toolCallId, ctx);
+                input.fail(new Error("劳务引擎 argv 须为非空字符串数组"), toolCallId, ctx);
             }
             let result;
             try {
@@ -62,7 +56,7 @@ export function createEngineDetourToolDefinition(input) {
                     throw error;
                 const cause = error instanceof Error
                     ? error
-                    : new Error(String(error).trim() || "engine detour spawn failed");
+                    : new Error(String(error).trim() || "劳务引擎 spawn 失败");
                 input.fail(cause, toolCallId, ctx);
             }
             if (isEngineDetourFailure(result)) {

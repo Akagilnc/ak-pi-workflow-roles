@@ -3,17 +3,21 @@ import test from "node:test";
 
 import {
   NOTARY_OUTPUT_TOOL_NAME,
-  validateNotaryOutput,
+  projectLawfulNotaryOutput,
+  retainNotarySubmission,
 } from "../../src/notary-contracts.ts";
 import { createNotaryRoleRuntime } from "../../src/notary-role.ts";
 
-test("validateNotaryOutput accepts pass bounce and rejects non-release shapes", () => {
-  assert.equal(validateNotaryOutput({ status: "pass", findings: [] }).status, "pass");
-  const bounce = validateNotaryOutput({ status: "bounce", findings: ["x"] });
-  assert.equal(bounce.status, "bounce");
-  assert.throws(() => validateNotaryOutput({ status: "incomplete", reason: "missing draft" }));
-  assert.throws(() => validateNotaryOutput({ status: "maybe" }));
-  assert.throws(() => validateNotaryOutput(null));
+test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is", () => {
+  assert.equal(projectLawfulNotaryOutput({ status: "pass", findings: [] })?.status, "pass");
+  const bounce = projectLawfulNotaryOutput({ status: "bounce", findings: ["x"] });
+  assert.equal(bounce?.status, "bounce");
+  // ADR 0055 / 第 0 条: no shape admission throw — non-release stays undefined projection.
+  assert.equal(projectLawfulNotaryOutput({ status: "incomplete", reason: "missing draft" }), undefined);
+  assert.equal(projectLawfulNotaryOutput({ status: "maybe" }), undefined);
+  assert.equal(projectLawfulNotaryOutput(null), undefined);
+  const raw = { status: "maybe", note: "not an explicit release" };
+  assert.deepEqual(retainNotarySubmission(raw), raw);
 });
 
 test("Notary runtime registers output tool and binds source-run locator without draft body", async () => {

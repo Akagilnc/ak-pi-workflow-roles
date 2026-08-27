@@ -34,7 +34,16 @@ test("Merger input rejects identity, path-set, scope, and check ambiguity", () =
 });
 
 test("Merger terminal leaves are exact and attempt-bound", () => {
-  assert.deepEqual(validateMergerOutput({ status: "completed", attemptId: "attempt-22-a", report: "resolved", mergeCommitId: oid("c") }, "attempt-22-a"), { status: "completed", attemptId: "attempt-22-a", report: "resolved", mergeCommitId: oid("c") });
-  assert.deepEqual(validateMergerOutput({ status: "escalate", attemptId: "attempt-22-a", diagnosis: "intents conflict", report: "owner decision required" }, "attempt-22-a").status, "escalate");
-  assert.throws(() => validateMergerOutput({ status: "completed", attemptId: "wrong", report: "x", mergeCommitId: oid("c") }, "attempt-22-a"), /attempt/);
+  const expectedAttemptId = "attempt-22-a";
+  const completed = validateMergerOutput({ status: "completed", attemptId: expectedAttemptId, report: "resolved", mergeCommitId: oid("c") }, expectedAttemptId);
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.attemptId, expectedAttemptId);
+  assert.equal(completed.mergeCommitId, oid("c"));
+  const escalated = validateMergerOutput({ status: "escalate", attemptId: expectedAttemptId, diagnosis: "intents conflict", report: "owner decision required" }, expectedAttemptId);
+  assert.equal(escalated.status, "escalate");
+  assert.equal(escalated.attemptId, expectedAttemptId);
+  assert.throws(
+    () => validateMergerOutput({ status: "completed", attemptId: "wrong", report: "x", mergeCommitId: oid("c") }, expectedAttemptId),
+    Error,
+  );
 });

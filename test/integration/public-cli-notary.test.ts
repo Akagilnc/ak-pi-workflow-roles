@@ -519,6 +519,7 @@ test("layer ② no usable Notary release keeps candidate on failure channel and 
     const bad = { status: "maybe", note: "not an explicit release" };
     const { io } = captureIo();
 
+    // ADR 0055: role accepts once (isError false); public-terminal projects cause:output + candidate.
     const result = await runAkRole(
       ["notary", "--source-run", sourceRunPath],
       {
@@ -527,7 +528,7 @@ test("layer ② no usable Notary release keeps candidate on failure channel and 
         cwd: project,
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000002",
-        piRunner: scriptedNotarySession(bad, { isError: true }),
+        piRunner: scriptedNotarySession(bad),
       },
     );
 

@@ -3,10 +3,13 @@ import {
   readPackageMaterial,
 } from "./session-opening-materials.ts";
 
-/** Active auditor seats. Fixer LLM auditor retired by #242; souls/fixer-auditor.md retained on disk for possible re-enable. */
+/**
+ * Active auditor seats.
+ * Fixer LLM auditor retired by #242; reviewer-side 审刑院 gate retired by #495 S6.
+ * souls/fixer-auditor.md and souls/reviewer-auditor.md retained-or-deleted on disk as owner decisions; not active.
+ */
 export const AUDITOR_SOUL_ROLES = [
   "judge",
-  "reviewer",
   "doctor",
 ] as const;
 
@@ -17,8 +20,9 @@ function auditorSoulRelativePath(role: AuditorSoulRole): string {
 }
 
 /**
- * #470 auditor session materials. Judge/reviewer carry audit-law; doctor does
- * not (御批四: 参审四席 = 大理寺/御史台主会话 + 两审计席; 太医线不动).
+ * #470 auditor session materials. Judge carries audit-law + quality-law; doctor does
+ * not (御批四: 参审席 = 大理寺主会话 + 其审计席; 太医线不动).
+ * Reviewer auditor roster removed with #495 S6 gate retirement.
  */
 export const AUDITOR_SESSION_MATERIALS = {
   judge: [
@@ -27,7 +31,6 @@ export const AUDITOR_SESSION_MATERIALS = {
     "souls/audit-law.md",
     "souls/quality-law.md",
   ],
-  reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md", "souls/audit-law.md"],
   doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
 } as const satisfies Record<
   AuditorSoulRole,

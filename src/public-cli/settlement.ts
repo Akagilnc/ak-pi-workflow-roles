@@ -16,7 +16,6 @@ import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
-import { REVIEWER_AUDIT_TOOL_NAME } from "../reviewer-auditor.ts";
 import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readReviewerDispatchRejection } from "./explicit-internal.ts";
 import {
   RESUME_TRANSPORT_ENVELOPE,
@@ -115,8 +114,8 @@ import {
   redactExactRunId,
   type ControlledFailureCause,
   type TerminalArtifactRef,
-  type TerminalMenxiaFact,
-  type TerminalMenxiaSeat,
+  type TerminalGateFact,
+  type TerminalGateSeat,
   type TerminalNavigatorFact,
   type TerminalResult,
   type TerminalResume,
@@ -1607,8 +1606,6 @@ function auditToolNameForRole(
   switch (role) {
     case "judge":
       return JUDGE_AUDIT_TOOL_NAME;
-    case "reviewer":
-      return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
       return DOCTOR_AUDIT_TOOL_NAME;
   }
@@ -1995,15 +1992,15 @@ function parseNavigatorAttendanceDetails(
 }
 
 /**
- * Project paired gate-cycle rounds onto the public Terminal menxia region (#478).
+ * Project paired gate-cycle rounds onto the public Terminal gate region (#478).
  * actualSeats are derived only from accepted paired receipts — never from soul
  * expected/missing officer judgments.
  */
-export function projectTerminalMenxiaFact(
+export function projectTerminalGateFact(
   rounds: readonly AnalystGateCycleRound[],
-): TerminalMenxiaFact | undefined {
+): TerminalGateFact | undefined {
   if (rounds.length === 0) return undefined;
-  const seen = new Set<TerminalMenxiaSeat>();
+  const seen = new Set<TerminalGateSeat>();
   // Every paired round implies an accepted gatekeeper dispatch volume.
   seen.add("gatekeeper");
   for (const round of rounds) seen.add(round.officer);
@@ -2031,34 +2028,34 @@ export function projectTerminalMenxiaFact(
 }
 
 /**
- * Read menxia facts from the run's session/auditor-roles nest via the sole
+ * Read gate facts from the run's session/auditor-roles nest via the sole
  * nested-volume reader (#446/#478). Missing directory → undefined (no-gate
  * zero change). Damaged discovered volumes propagate — never wash to "no gate".
  */
-export async function extractMenxiaFactFromSessionDirectory(
+export async function extractGateFactFromSessionDirectory(
   sessionDirectory: string,
-): Promise<TerminalMenxiaFact | undefined> {
+): Promise<TerminalGateFact | undefined> {
   const rounds = await readAnalystGateCyclesFromAuditorRoles(
     join(sessionDirectory, "auditor-roles"),
   );
-  return projectTerminalMenxiaFact(rounds);
+  return projectTerminalGateFact(rounds);
 }
 
 /**
- * Attach optional menxia projection onto a settled Terminal base.
+ * Attach optional gate projection onto a settled Terminal base.
  * Shared by every settle path so auditor-roles is scanned once here only.
  * `runId` is not required — resumable failures omit it by contract.
- * Menxia read damage propagates with its real identity (never washed to no-gate
+ * Gate read damage propagates with its real identity (never washed to no-gate
  * or swallowed); callers that already hold a controlled failure still surface the
  * JSONL/session cause rather than pretend the gate was absent.
  */
-async function withOptionalMenxiaProjection<
+async function withOptionalGateProjection<
   T extends {
     roleOutcome: TerminalRoleOutcome;
     navigator: TerminalNavigatorFact;
     artifacts: readonly TerminalArtifactRef[];
   },
->(base: T, sessionDirectory: string): Promise<T & { menxia?: TerminalMenxiaFact }> {
+>(base: T, sessionDirectory: string): Promise<T & { gate?: TerminalGateFact }> {
   // A gate transport failure is already represented by typed evidence and has no
   // accepted gate cycle to project. Re-reading that rejected receipt as an
   // accepted cycle would replace the original failure with a projection error.
@@ -2074,8 +2071,8 @@ async function withOptionalMenxiaProjection<
       || secondaryEvidence.stage === "notary"
     )
   ) return base;
-  const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
-  return menxia === undefined ? base : { ...base, menxia };
+  const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
+  return gate === undefined ? base : { ...base, gate };
 }
 
 export function extractNavigatorFact(
@@ -2409,7 +2406,7 @@ async function settleLawfulJudgeTerminalResult(
     roleOutcome,
     admitted.sessionDirectory,
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome,
       navigator,
@@ -2470,7 +2467,7 @@ async function settleLawfulCoderTerminalResult(
         : { methodProvenance: options.methodProvenance }),
     },
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -2682,7 +2679,7 @@ async function settleLawfulFixerTerminalResult(
       methodInvocations,
     },
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -2843,7 +2840,7 @@ async function settleLawfulCollectorTerminalResult(
     admitted.sessionDirectory,
     { collectorReceipt: extracted.receipt },
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -3029,7 +3026,7 @@ async function settleLawfulDoctorTerminalResult(
     admitted.sessionDirectory,
     extracted.output === undefined ? {} : { doctorOutput: extracted.output },
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -3102,7 +3099,9 @@ async function settleLawfulNotaryTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === undefined) {
-    // No usable Notary release → existing non-zero failure channel with candidate (#475).
+    // No usable Notary release → existing non-zero failure channel with candidate (#475 / ADR 0055).
+    // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
+    let acceptedNonUsable: unknown | undefined;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
@@ -3112,17 +3111,37 @@ async function settleLawfulNotaryTerminalResult(
         message,
         NOTARY_OUTPUT_TOOL_NAME,
       );
-      if (residual === undefined) continue;
+      if (residual !== undefined) {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false },
+        });
+      }
+      if (
+        acceptedNonUsable === undefined &&
+        message.toolName === NOTARY_OUTPUT_TOOL_NAME &&
+        isAcceptedPackagedRoleTerminalResult(message)
+      ) {
+        // Accepted once but not a lawful pass/bounce — hold as fallback.
+        try {
+          validateRecordedNotaryOutput(message.details);
+        } catch {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== undefined) {
       return settleFailureTerminalResult(admitted, {
         cause: "output",
-        diagnostic: residual.diagnostic,
-        details: { candidate: residual.candidate, acceptedReceipt: false },
+        diagnostic: "符宝郎回执无显式 pass/bounce",
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
       });
     }
     return undefined;
   }
   const navigator = extractNavigatorFact(entries);
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -3302,20 +3321,13 @@ export async function publishReviewerArtifacts(
   ];
 }
 
-/** Lawful Reviewer accepted outcome extracted from session (shared success interface). */
-export type LawfulReviewerRoleOutcome =
-  | {
-      kind: "accepted";
-      role: "reviewer";
-      status: string;
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    }
-  | {
-      kind: "audit_escalation";
-      role: "reviewer";
-      status: "audit_escalation";
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    };
+/** Lawful Reviewer accepted outcome extracted from session (no LLM auditor after #495 S6). */
+export type LawfulReviewerRoleOutcome = {
+  kind: "accepted";
+  role: "reviewer";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
 
 export function extractReviewerRoleOutcome(
   entries: readonly SessionEntry[],
@@ -3328,26 +3340,11 @@ export function extractReviewerRoleOutcome(
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "reviewer",
-      REVIEWER_OUTPUT_TOOL_NAME,
-    );
-    if (escalation !== undefined) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "reviewer",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details },
-        },
-      };
-    }
-    if (isUnboundAuditEscalationFace(message.details)) continue;
+    const details = message.details;
+    // Residual audit_escalation faces are not lawful Reviewer terminals after #495 S6.
+    if (isUnboundAuditEscalationFace(details)) continue;
     try {
-      const receipt = validateRuntimeReviewerReceipt(message.details);
+      const receipt = validateRuntimeReviewerReceipt(details);
       const outcome: LawfulReviewerRoleOutcome = {
         kind: "accepted",
         role: "reviewer",
@@ -3391,7 +3388,7 @@ async function settleLawfulReviewerTerminalResult(
       methodInvocations,
     },
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -3660,7 +3657,7 @@ async function settleLawfulMergerTerminalResult(
       methodInvocations,
     },
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -4019,7 +4016,7 @@ export async function settleFailureTerminalResult(
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
             const decisiveFacts: NoReceiptLifecycleFacts = facts;
             // #478: no_receipt is still a public Terminal — project accepted gate facts.
-            return withOptionalMenxiaProjection(
+            return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
                 navigator: await extractNavigatorFactFromAdmittedSession(admitted),
@@ -4067,8 +4064,8 @@ export async function settleFailureTerminalResult(
       diagnostic: publicDiagnostic,
       decisiveFacts: publicFacts,
     };
-    // #478: resume desensitization stays; menxia is additive typed fact only.
-    return withOptionalMenxiaProjection(
+    // #478: resume desensitization stays; gate is additive typed fact only.
+    return withOptionalGateProjection(
       {
         roleOutcome,
         navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
@@ -4086,7 +4083,7 @@ export async function settleFailureTerminalResult(
     decisiveFacts,
   };
   // #478: ordinary controlled failure still surfaces accepted gate facts.
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome,
       navigator,

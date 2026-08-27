@@ -3,7 +3,7 @@ import { FIXER_PREREQUISITE_ID_PATTERN, type FixerInvocationInput } from "./fixe
 import { openToolObjectFromUnion } from "../open-tool-schema.ts";
 
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
-export const FIXER_ACCEPTED_TEXT = "Fixer report accepted";
+export const FIXER_ACCEPTED_TEXT = "修内司回执已接受";
 
 const nonblankTransportString = Type.String({ minLength: 1 });
 const authorityBlockerSchema = Type.Object({ cause: Type.Literal("authority_violation"), evidence: nonblankTransportString });
@@ -12,10 +12,10 @@ const blockerSchema = Type.Union([authorityBlockerSchema, prerequisiteBlockerSch
 const exceptionSchema = Type.Object({ where: nonblankTransportString, reason: nonblankTransportString });
 /** ⑥ test evidence slip — require submit when diff has test changes; machine does not check existence/completeness/coverage. */
 const testEvidenceSchema = Type.Object({
-  contract: Type.String({ minLength: 1, description: "Contract the test change proves." }),
-  minimumNecessaryCost: Type.String({ minLength: 1, description: "One-line minimum necessary cost of the test change." }),
-  measuredDuration: Type.String({ minLength: 1, description: "Measured duration of the focused verification run." }),
-}, { description: "Test evidence slip (submit when diff includes test changes; machine does not verify)." });
+  contract: Type.String({ minLength: 1, description: "测试改动所证明的契约" }),
+  minimumNecessaryCost: Type.String({ minLength: 1, description: "测试改动的一行最小必要成本" }),
+  measuredDuration: Type.String({ minLength: 1, description: "聚焦验证实测时长" }),
+}, { description: "测试证据条；diff 含测试改动时提交；机器不核验。" });
 const completedClassResultSchema = Type.Object({
   name: nonblankTransportString,
   disposition: Type.Literal("completed"),
@@ -33,12 +33,12 @@ const classResultSchema = Type.Union([completedClassResultSchema, refusedClassRe
 const completedClassResultsSchema = Type.Array(completedClassResultSchema, { minItems: 1 });
 
 const fixerOutputVariants = Type.Union([
-  Type.Object({ status: Type.Literal("planned", { description: "Plan-phase proposal outcome." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
-  Type.Object({ status: Type.Literal("refused", { description: "Lawfully refused outcome." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: Type.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: Type.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
-  Type.Object({ status: Type.Literal("unfinished", { description: "Apply outcome when a missing prerequisite or an unconstitutional constraint blocks completing this invocation; state the reason." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: Type.String({ minLength: 1, description: "Work remaining after this invocation." }), reason: Type.Optional(Type.String({ minLength: 1, description: "Blocking reason: prerequisite missing or unconstitutional. A missing pending owner decision or answer is a missing prerequisite." })), classResults: Type.Optional(Type.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: Type.Optional(testEvidenceSchema) }),
-  Type.Object({ status: Type.Literal("completed", { description: "All assigned classes completed." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: Type.Optional(testEvidenceSchema) }),
-  Type.Object({ status: Type.Literal("refused", { description: "All assigned classes lawfully refused." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
-  Type.Object({ status: Type.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: Type.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: Type.Optional(testEvidenceSchema) }),
+  Type.Object({ status: Type.Literal("planned", { description: "planned — 形状指引，非 schema 闸" }), report: Type.String({ minLength: 1, description: "如实结果报告" }) }),
+  Type.Object({ status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), remainingScope: Type.String({ minLength: 1, description: "依法不能完成的工作范围" }), blocker: Type.Unsafe({ ...blockerSchema, description: "合法阻断完成的 blocker" }) }),
+  Type.Object({ status: Type.Literal("unfinished", { description: "unfinished — 形状指引，非 schema 闸；缺前置或违宪约束致本局未完成时可用。缺待决 owner 决定或答复属缺前置。" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), remainingScope: Type.String({ minLength: 1, description: "本局后剩余工作" }), reason: Type.Optional(Type.String({ minLength: 1, description: "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。" })), classResults: Type.Optional(Type.Unsafe({ ...completedClassResultsSchema, description: "本局已完成的 class 结算" })), testEvidence: Type.Optional(testEvidenceSchema) }),
+  Type.Object({ status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "已完成的 class 结算" }), testEvidence: Type.Optional(testEvidenceSchema) }),
+  Type.Object({ status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "各类拒绝结算" }) }),
+  Type.Object({ status: Type.Literal("partially_completed", { description: "partially_completed — 形状指引，非 schema 闸" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "各类完成或拒绝结算" }), testEvidence: Type.Optional(testEvidenceSchema) }),
 ]);
 export const fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
 

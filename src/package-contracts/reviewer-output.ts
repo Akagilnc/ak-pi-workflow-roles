@@ -3,7 +3,7 @@
 import type { ReviewerAcceptedEvidence, ReviewerFailureClassification, ReviewerWorkspaceDisposition } from "../reviewer-execution-ledger.ts";
 
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
-export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
+export const REVIEWER_ACCEPTED_TEXT = "御史台回执已接受";
 
 /** Seat-owned per-axis delta relative to child reports — not a replacement report. */
 export type ReviewerAmendments = Readonly<Partial<Record<"standards" | "spec", string>>>;

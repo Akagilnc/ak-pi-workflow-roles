@@ -4,16 +4,12 @@ import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 export type { CanonicalSkillBinding };
-import { disposeComplianceDecision } from "./audit-escalation.ts";
-import type { ComplianceDecision } from "./compliance-transport.ts";
-import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
-import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
 import { type ReviewerSpecDisposition } from "./reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerIssueFetcher, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
+import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
@@ -29,17 +25,17 @@ export type ReviewerAdmittedInputs = Readonly<{
 }>;
 
 const reviewerAmendmentsSchema = Type.Object({
-  standards: Type.Optional(Type.String({ description: "Delta relative to the Standards child report: added finding, withdrawal, or factual correction." })),
-  spec: Type.Optional(Type.String({ description: "Delta relative to the Spec child report: added finding, withdrawal, or factual correction." })),
-}, { additionalProperties: true, description: "Optional per-axis deltas relative to child reports; not a replacement report. Omit axes with no delta." });
+  standards: Type.Optional(Type.String({ description: "相对 Standards 子报告的增量：增 finding、撤回或事实更正" })),
+  spec: Type.Optional(Type.String({ description: "相对 Spec 子报告的增量：增 finding、撤回或事实更正" })),
+}, { additionalProperties: true, description: "相对子报告的可选轴增量；非替代报告。无增量的轴可省略。" });
 const reviewerOutputVariants = Type.Union([
   Type.Object({
-    status: Type.Literal("completed", { description: "Reviewer dispatch completed." }),
+    status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }),
     amendments: Type.Optional(reviewerAmendmentsSchema),
   }, { additionalProperties: false }),
   Type.Object({
-    status: Type.Literal("refused", { description: "Reviewer dispatch was lawfully refused." }),
-    diagnostic: Type.String({ minLength: 1, description: "Diagnostic explaining the refusal." }),
+    status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸" }),
+    diagnostic: Type.String({ minLength: 1, description: "拒绝诊断说明" }),
     amendments: Type.Optional(reviewerAmendmentsSchema),
   }, { additionalProperties: false }),
 ]);
@@ -52,15 +48,14 @@ export type ReviewerRoleDependencies = {
   fetchIssue?: ReviewerIssueFetcher;
   runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   shutdownAgent?(): Promise<void>;
-  auditCompliance(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never };
 
 function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void {
   const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Reviewer output must be the sole final tool call");
+  if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("御史台回执非唯一终局工具调用");
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
-  if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== REVIEWER_OUTPUT_TOOL_NAME) throw new Error("Reviewer output must be the sole final tool call");
+  if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== REVIEWER_OUTPUT_TOOL_NAME) throw new Error("御史台回执非唯一终局工具调用");
 }
 
 export type ReviewerActivation = Readonly<{
@@ -76,6 +71,7 @@ export type ReviewerActivation = Readonly<{
 /**
  * Reviewer behavior runtime: label, soul, evidence tools, decision tool, projection.
  * No flag registration/decoding and no agent_start prompt lifecycle (ADR 0018 / envelope).
+ * Reviewer-side 审刑院 gate retired (#495 S6 / 风闻奏事); accept on typed validate only.
  */
 export function createReviewerRoleRuntime(
   pi: ExtensionAPI,
@@ -148,10 +144,9 @@ export function createReviewerRoleRuntime(
 
       if (!registered) {
         registered = true;
-        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`,
-            "This runtime executes the Standards and Spec review legs for you as package-managed evidence-child sessions — that IS this runtime's implementation of the review Skill's parallel sub-agents. Do not refuse because no Agent tool appears in your tool list, and do not substitute your own sub-processes; work with the legs the runtime provides. The same rule applies to corrections and redos after an auditor bounce-back: complete them in this session with your own tools. Evidence-leg model and thinking tier follow the seat's active order; the reviewer seat does not choose them."], parameters: reviewerOutputSchema,
-          async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
-            if (!soul || !binding) throw new Error("Reviewer inputs were not loaded");
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "Standards/Spec 评审腿由 runtime 以取证子会话代跑，本席收腿报告后交薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
+          async execute(id, parameters, _signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
+            if (!soul || !binding) throw new Error("御史台输入未装载");
             requireSoleReviewerOutputCall(id, toolCtx);
             const output = validateReviewerIntent(parameters);
             let record: ReviewerExecutionRecord;
@@ -161,50 +156,12 @@ export function createReviewerRoleRuntime(
                 record,
                 canonicalSkillText: binding.snapshot.raw,
               });
-            // First-record-then-audit: candidate lands on the parent session books
-            // before the auditor is spawned (zero hand-delivery).
-            try {
-              appendActiveSessionCustomEntry(
-                toolCtx,
-                REVIEWER_CANDIDATE_ENTRY_TYPE,
-                { version: 1, candidate },
-                {
-                  unavailable: "reviewer candidate retention is unavailable",
-                  failed: "reviewer candidate retention failed",
-                },
-              );
-            } catch (error) {
-              hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id);
-            }
-            let audit: ComplianceDecision;
-            try {
-              audit = await dependencies.auditCompliance({
-                context: toolCtx,
-                ...(signal === undefined ? {} : { signal }),
-              });
-            }
-            catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-            return disposeComplianceDecision<AgentToolResult<unknown>>(
-              audit,
-              {
-                pass: async (usage) => {
-                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                  return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
-                },
-                noReceipt: async (auditNoReceipt, usageProjection) => {
-                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                  return { content: [{ type: "text" as const, text: "Reviewer report accepted; compliance audit produced no receipt" }], details: { ...candidate, auditNoReceipt }, terminate: true as const, ...usageProjection };
-                },
-                revise: (violations) => {
-                  throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });
-                },
-                escalate: async (result) => {
-                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                  return result;
-                },
-              },
-              candidate,
-            );
+            try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
+            return {
+              content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_TEXT }],
+              details: candidate,
+              terminate: true as const,
+            };
           } });
         // Skill invocation transform + agent_start expansion/prompt lifecycle: shared envelope (ADR 0018).
         pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });

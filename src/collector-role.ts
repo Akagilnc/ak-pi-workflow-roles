@@ -36,6 +36,7 @@ import {
   collectorRequestArgsSchema,
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
+import { COLLECTOR_ACCEPTED_TEXT } from "./package-contracts/collector-output.ts";
 
 export { COLLECTOR_FIXED_KICKOFF } from "./collector-config.ts";
 export {
@@ -89,7 +90,7 @@ function assertSoleFinalCollectorOutput(
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("Collector output must be the sole final tool call");
+    throw new Error("通进司回执非唯一终局工具调用");
   }
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
   const call = calls[0];
@@ -99,17 +100,13 @@ function assertSoleFinalCollectorOutput(
     call.id !== toolCallId ||
     call.name !== COLLECTOR_OUTPUT_TOOL
   ) {
-    throw new Error("Collector output must be the sole final tool call");
+    throw new Error("通进司回执非唯一终局工具调用");
   }
 }
 
 function buildMethodContext(activation: CollectorActivation): string {
   return [
     "<collector_method>",
-    "Observe all GitHub review materials; machine identity groups are runtime-owned.",
-    "Use ak_collector_request only when an optional configured request is needed.",
-    "Wait and cutoff only stop observation; they never imply absent observers.",
-    "After a complete final observation, submit ak_collector_output with an empty object.",
     `host: github.com`,
     `repository: ${activation.repository.canonical}`,
     `prNumber: ${activation.prNumber}`,
@@ -160,9 +157,7 @@ export function createCollectorRoleRuntime(
         return { action: "continue" as const };
       }
       if (inputCount >= 1) {
-        activation.ledger.latchFatal(
-          "Collector is one-shot and rejects later inputs",
-        );
+        activation.ledger.latchFatal("通进司已拒绝后续输入");
         if (process.exitCode === undefined || process.exitCode === 0) {
           process.exitCode = 1;
         }
@@ -185,7 +180,7 @@ export function createCollectorRoleRuntime(
       if (options.skills && options.skills.length > 0) {
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
-            "Collector detected ambient skills in systemPromptOptions",
+            "通进司检测到系统提示中的环境 skills",
           ),
           ctx,
         );
@@ -193,7 +188,7 @@ export function createCollectorRoleRuntime(
       if (options.contextFiles && options.contextFiles.length > 0) {
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
-            "Collector detected ambient context files in systemPromptOptions",
+            "通进司检测到系统提示中的环境 context files",
           ),
           ctx,
         );
@@ -204,7 +199,7 @@ export function createCollectorRoleRuntime(
       ) {
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
-            "Collector detected appendSystemPrompt drift",
+            "通进司检测到 appendSystemPrompt 漂移",
           ),
           ctx,
         );
@@ -213,7 +208,7 @@ export function createCollectorRoleRuntime(
       if (event.prompt !== COLLECTOR_FIXED_KICKOFF) {
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
-            "Collector first prompt must be the fixed packaged kickoff",
+            "通进司首条提示不是固定开场令",
           ),
           ctx,
         );
@@ -242,13 +237,13 @@ export function createCollectorRoleRuntime(
       if (activation.ledger.fatal) {
         return {
           block: true,
-          reason: activation.ledger.fatalReason ?? "Collector fatal state",
+          reason: activation.ledger.fatalReason ?? "通进司致命状态",
         };
       }
       if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(event.toolName)) {
         return {
           block: true,
-          reason: `Collector forbids tool ${event.toolName}`,
+          reason: `通进司禁用工具 ${event.toolName}`,
         };
       }
       // Concurrency is owned at execute (beginOperational), not announced-batch preflight.
@@ -259,7 +254,7 @@ export function createCollectorRoleRuntime(
       ) {
         return {
           block: true,
-          reason: "Collector output already accepted; no further operations",
+          reason: "回执已受理，本局不再受理操作",
         };
       }
       return undefined;
@@ -286,17 +281,13 @@ export function createCollectorRoleRuntime(
 
     pi.registerTool({
       name: COLLECTOR_OBSERVE_TOOL,
-      label: "Collector Observe",
-      description:
-        "Fetch complete GitHub PR evidence for the configured target and store an immutable snapshot in the invocation ledger.",
-      promptSnippet: "Observe configured PR evidence",
-      promptGuidelines: [
-        "Call ak_collector_observe with no arguments to refresh the latest complete snapshot.",
-      ],
+      label: "通进司观察",
+      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。",
+      promptSnippet: "抓取配置目标 PR 证据",
       parameters: observeSchema,
       async execute(toolCallId, _params, signal, _onUpdate, ctx) {
         if (activation === undefined) {
-          throw new Error("Collector is not activated");
+          throw new Error("通进司未激活");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, toolCallId);
@@ -325,17 +316,13 @@ export function createCollectorRoleRuntime(
 
     pi.registerTool({
       name: COLLECTOR_REQUEST_TOOL,
-      label: "Collector Request",
-      description:
-        "Post one configured request body plus its correlation marker at the cited latest snapshot HEAD.",
-      promptSnippet: "Post a configured request",
-      promptGuidelines: [
-        "Call ak_collector_request only with a configured request-capable requestId and the latest snapshotId.",
-      ],
+      label: "通进司请求",
+      description: "按配置请求体与关联标记，在所引最新快照 HEAD 发一次请求。",
+      promptSnippet: "按配置发一次请求",
       parameters: requestSchema,
       async execute(toolCallId, params: RequestParams, signal, _onUpdate, ctx) {
         if (activation === undefined) {
-          throw new Error("Collector is not activated");
+          throw new Error("通进司未激活");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_REQUEST_TOOL, toolCallId);
@@ -349,7 +336,7 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: `Request attempt recorded for request ${params.requestId}`,
+              text: `请求尝试已记录：request ${params.requestId}`,
             }],
             details,
           };
@@ -361,17 +348,13 @@ export function createCollectorRoleRuntime(
 
     pi.registerTool({
       name: COLLECTOR_WAIT_TOOL,
-      label: "Collector Wait",
-      description:
-        "Wait before re-observing; each call is capped to five minutes and to remaining eligibility.",
-      promptSnippet: "Wait within the eligibility cutoff",
-      promptGuidelines: [
-        "Call ak_collector_wait with a positive durationMs; runtime caps each wait to five minutes and to remaining eligibility.",
-      ],
+      label: "通进司等待",
+      description: "再观察前等待；单次上限五分钟且不超剩余资格。",
+      promptSnippet: "资格截止前等待",
       parameters: waitSchema,
       async execute(toolCallId, params: WaitParams, signal, _onUpdate, ctx) {
         if (activation === undefined) {
-          throw new Error("Collector is not activated");
+          throw new Error("通进司未激活");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_WAIT_TOOL, toolCallId);
@@ -384,7 +367,7 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: `Waited ${String((details as { effectiveMs: number }).effectiveMs)}ms`,
+              text: `已等待 ${String((details as { effectiveMs: number }).effectiveMs)}ms`,
             }],
             details,
           };
@@ -396,17 +379,13 @@ export function createCollectorRoleRuntime(
 
     pi.registerTool({
       name: COLLECTOR_OUTPUT_TOOL,
-      label: "Collector Output",
-      description:
-        "Submit after observation. Runtime builds the self-contained typed-group receipt.",
-      promptSnippet: "Submit the Collector receipt",
-      promptGuidelines: [
-        "Use ak_collector_output as the sole final Collector action after a complete observation.",
-      ],
+      label: "通进司输出",
+      description: "观察完成后提交；回执由 runtime 组装。",
+      promptSnippet: "提交通进司回执",
       parameters: outputSchema,
       async execute(toolCallId, params: OutputParams, _signal, _onUpdate, ctx) {
         if (activation === undefined) {
-          throw new Error("Collector is not activated");
+          throw new Error("通进司未激活");
         }
         try {
           assertSoleFinalCollectorOutput(toolCallId, ctx);
@@ -422,7 +401,7 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: "Collector receipt accepted",
+              text: COLLECTOR_ACCEPTED_TEXT,
             }],
             details: acceptedDetails,
             terminate: true as const,

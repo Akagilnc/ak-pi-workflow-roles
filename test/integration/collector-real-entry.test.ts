@@ -115,5 +115,5 @@ test("Collector failed reactivation clears a previously successful real role act
   const context = { mode: "print" } as any;
   await runtime.activate(context, { reason: "new" }); flags.delete("ak-collector-repo");
   await assert.rejects(() => runtime.activate(context, { reason: "new" }), /requires --ak-collector-repo/);
-  await assert.rejects(() => tools.get(COLLECTOR_OBSERVE_TOOL).execute("call", {}, undefined, undefined), /not activated/);
+  await assert.rejects(() => tools.get(COLLECTOR_OBSERVE_TOOL).execute("call", {}, undefined, undefined), /通进司未激活/);
 });

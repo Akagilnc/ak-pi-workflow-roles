@@ -21,8 +21,8 @@ export function applyEngineChildEnv(childEnv, engine) {
         childEnv[AK_ROLE_ENGINE_ENV] = undefined;
     }
 }
-export const ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC = "engine detour produced empty stdout";
-export const ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC = "engine detour already used in this activation";
+export const ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC = "劳务引擎 stdout 为空";
+export const ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC = "本激活内劳务引擎已使用";
 function abortReasonError(signal) {
     const reason = signal.reason;
     if (reason instanceof Error)
@@ -41,7 +41,7 @@ function abortReasonError(signal) {
  */
 export async function runEngineDetourOnce(input) {
     if (input.argv.length === 0) {
-        throw new Error("engine detour argv must be non-empty");
+        throw new Error("劳务引擎 argv 不得为空");
     }
     const command = input.argv[0];
     const args = input.argv.slice(1);
@@ -128,7 +128,7 @@ export function engineDetourFailureDiagnostic(result) {
             break;
         }
     }
-    return `engine detour exited with code ${result.code}: ${lastRow}`;
+    return `劳务引擎以 code ${result.code} 退出：${lastRow}`;
 }
 /** Non-empty trimmed engine name from process.env, else undefined. */
 export function engineNameFromEnv() {

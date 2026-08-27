@@ -101,23 +101,23 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
   let inputReleasedAt = "";
-  /** #475 Menxia unusable-submission modes via existing fixture (no parallel fixtures). */
-  const menxiaMode = process.env.AK_MENXIA_MODE;
+  /** #475 Gate unusable-submission modes via existing fixture (no parallel fixtures). */
+  const gateMode = process.env.AK_GATE_MODE;
   const response = async (context: Context, options?: { timeoutMs?: number }) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     // Judge draft province gate runs before auditor; script pass so MALFORMED stays on auditor.
     if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-      if (menxiaMode === "gatekeeper-no-dispatch") {
+      if (gateMode === "gatekeeper-no-dispatch") {
         return fauxAssistantMessage(
           fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "pass", findings: [] }),
           { stopReason: "toolUse" },
         );
       }
-      if (menxiaMode === "officer-no-pass" || menxiaMode === "notary-no-pass") {
+      if (gateMode === "officer-no-pass" || gateMode === "notary-no-pass") {
         return fauxAssistantMessage(
           fauxToolCall(GATEKEEPER_OUTPUT_TOOL, {
             status: "dispatch",
-            officer: menxiaMode === "notary-no-pass" ? "notary" : "inspector",
+            officer: gateMode === "notary-no-pass" ? "notary" : "inspector",
           }),
           { stopReason: "toolUse" },
         );
@@ -128,7 +128,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       );
     }
     if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
-      if (menxiaMode === "officer-no-pass") {
+      if (gateMode === "officer-no-pass") {
         return fauxAssistantMessage(
           fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "ok-enough" }),
           { stopReason: "toolUse" },
@@ -143,7 +143,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       return fauxAssistantMessage(
         fauxToolCall(
           NOTARY_OUTPUT_TOOL,
-          menxiaMode === "notary-no-pass"
+          gateMode === "notary-no-pass"
             ? { status: "ok-enough" }
             : { status: "pass", findings: [] },
         ),

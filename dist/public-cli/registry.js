@@ -8,7 +8,7 @@ export const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
 export const PUBLIC_CALLABLE_ROLES = PACKAGED_ROLE_REGISTRY.map((entry) => entry.role);
 /** Automatic attendance seat — configurable, never a caller-selected command. */
 export const AUTOMATIC_NAVIGATOR_SEAT = "navigator";
-/** Automatic menxia seats — configurable model only; never caller commands (#453). */
+/** Automatic gate seats — configurable model only; never caller commands (#453). */
 export const AUTOMATIC_GATEKEEPER_SEAT = "gatekeeper";
 export const AUTOMATIC_INSPECTOR_SEAT = "inspector";
 /** All automatic configurable seats (no independent public activation command). */
@@ -67,7 +67,7 @@ const STARTUP_CANDIDATES = {
         { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
         { provider: "xai", model: "grok-4.5", thinking: "high" },
     ],
-    // #453: automatic menxia seats have no startup default — unset means inherit parent.
+    // #453: automatic gate seats have no startup default — unset means inherit parent.
     gatekeeper: [],
     inspector: [],
     navigator: [

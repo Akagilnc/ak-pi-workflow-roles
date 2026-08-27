@@ -51,7 +51,7 @@ ak-role config set-auto-resume-limit 3
 
 ### 门下省交卷闸
 
-完成侧交卷时，包可能在本局结算前起门下省：`gatekeeper` 读受审物并派官（`inspector` 给事中或 `notary` 符宝郎）；既有审刑院挂钩仍在原位。闸在交卷 session 内运行；封驳＝当场重写重交，不是角色失败；最终回执即过闸产物。`planned`／`refused`／`unfinished` 不调省。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。闸史已投影进 typed 回执：可选 menxia 段列出实际在场席位、每轮派官（officer 与逐字 reason）与各官报告（席位/判决/findings）；无闸调用时该段缺席。勿刮 session 散文当闸状态——读 typed 段。
+完成侧交卷时，包可能在本局结算前起门下省：`gatekeeper` 读受审物并派官（`inspector` 给事中或 `notary` 符宝郎）；既有审刑院挂钩仍在原位。闸在交卷 session 内运行；封驳＝当场重写重交，不是角色失败；最终回执即过闸产物。`planned`／`refused`／`unfinished` 不调省。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。闸史已投影进 typed 回执：可选 gate 段列出实际在场席位、每轮派官（officer 与逐字 reason）与各官报告（席位/判决/findings）；无闸调用时该段缺席。勿刮 session 散文当闸状态——读 typed 段。
 
 劳务引擎绕行进程无法启动、非零退出或未产生可用输出时，角色运行沿既有基础设施失败路径立即停止并保留可见真因；座席不继续顶班，也不产出 typed 回执。调用方 cancel 仍原样传播。见 [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)。
 
@@ -117,7 +117,7 @@ ak-role resume <runId> "<裁定>"
 | **修内司** | fixer | **缮修旧物。** 面对已有问题，不急于表面修补，而是追寻问题根源，找到真正需要修整之处。既要修复眼前缺漏，也要防止同类问题再次出现。 |
 | **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；Standards／Spec 两条取证腿由 runtime 代跑，本席收腿报告出薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
-| **审刑院** | judge-auditor／reviewer-auditor／doctor-auditor（无 CLI，共享内部接缝） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
+| **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
 | **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **质量保证省。** 交卷时判断受审物、够不够审、该谁审，派给事中或符宝郎；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。 |
 | **给事中** | inspector（无独立 CLI；可由门下省派发） | **复杂度与测试质量两轴质检。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。 |
 | **符宝郎** | notary | **引语真伪与票面对齐。** 受审物是大理寺拟判等文书；可被门下省派发，也可 `ak-role notary` 单独调。 |

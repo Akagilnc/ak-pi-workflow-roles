@@ -26,6 +26,7 @@ import {
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
+export const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "游奕使准备已接受";
 export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
 
 export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
@@ -199,7 +200,13 @@ export type NavigatorContextProjection = {
 // Provider admission is ADR 0060 object root only. Nested advisory shape
 // (candidates/next/route/matches/reason/command) is never a gate — every object
 // root reaches the unique execute/normalize path exactly once.
-const prepareSchema = Type.Object({}, { additionalProperties: true });
+// Field guidance only — candidates shape is never an acceptance gate (Rule 0).
+const prepareSchema = Type.Object({
+  candidates: Type.Optional(Type.Unknown({
+    description:
+      "方向候选；candidates[].next.role 必填，phase 可选，route/matches/reason/command 可选上下文，非受理闸",
+  })),
+}, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
 
 export type NavigatorPreparationSession = {
@@ -438,14 +445,14 @@ export function parseNavigatorModelSetting(value: string): { provider: string; m
 export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => void): ToolDefinition {
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
-    label: "Navigator preparation",
-    description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
+    label: "游奕使准备",
+    description: "提交游奕使方向建议。",
     parameters: prepareSchema,
     async execute(_id, value) {
       // Rule 0: the unique prepare submission is accepted once. Ancillary shape is
       // normalized later; never open a format-correction retry loop here.
       onOutput(value as PrepareOutput);
-      return { content: [{ type: "text" as const, text: "Navigator preparation accepted" }], details: value, terminate: true as const };
+      return { content: [{ type: "text" as const, text: NAVIGATOR_PREPARE_ACCEPTED_TEXT }], details: value, terminate: true as const };
     },
   };
 }
@@ -781,29 +788,20 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       };
       activeSession.appendEntry(CONTEXT_ENTRY, projection);
       const request = [
-        "Act as the Navigator direction advisor. Submit one next-step advice batch; do not execute or invoke any role.",
+        "本次导航材料如下：",
         `<navigator_soul>\n${soul}\n</navigator_soul>`,
-        ...(routePlaybookReadFailure === undefined ? [
-          `<route_playbook>\n${routePlaybook}\n</route_playbook>`,
-          "The route playbook is advisory material only. Exercise independent judgment: adopt, alter, or ignore it; the caller may also deviate.",
-        ] : ["The optional route playbook could not be read. Continue independent judgment from the other supplied materials."]),
+        ...(routePlaybookReadFailure === undefined
+          ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
+          : ["可选路线手册未能读取。"]),
         `<work_subject>\n${subject}\n</work_subject>`,
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
-        ...(boundSettlement === undefined ? [] : [
-          `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
-          "The current role has just reached this typed settlement. Recommend the next packaged role AFTER this settlement.",
-          "public_settlement_history is prior background only — a prior terminal does not consume or replace the work this settlement just produced.",
-        ]),
+        ...(boundSettlement === undefined
+          ? []
+          : [`<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`]),
         `<prior_route>\n${JSON.stringify(prior ?? null)}\n</prior_route>`,
         `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
-        ...(boundSettlement === undefined ? [
-          "Preparation is speculative while the current role still runs. Prefer candidates[].matches keyed to plausible accepted outcomes of the current role; prior history must not substitute for the current role's work.",
-        ] : []),
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
-        `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
-        "v1 requires a usable next direction: candidates[].next.role, with phase only when present and meaningful. route, matches, id, reason, and command are optional context — never retry to satisfy optional shape.",
-        "Do not put task-specific paths, prompts, packets, or Skill bindings in any field. Command display is rendered by the host from next, not from model prose.",
       ].join("\n\n");
       try {
         try {

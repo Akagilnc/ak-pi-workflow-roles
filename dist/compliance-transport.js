@@ -23,15 +23,15 @@ export class ComplianceCandidateUnreadableError extends Error {
     }
 }
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
-export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier.";
+export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
 // Transport retains malformed candidates on ComplianceCandidateUnreadableError so
 // the existing failure channel can publish observation + candidate (#475).
 // Status values are guidance, not a schema gate.
-export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "Auditor decision status." }), violations: Type.Array(nonblank, { description: "Observed compliance violations." }), conflicts: Type.Array(nonblank, { description: "Unresolved authority or execution conflicts." }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
+export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "pass | revise | escalate — 形状指引，非 schema 闸" }), violations: Type.Array(nonblank, { description: "观察到的合规违规" }), conflicts: Type.Array(nonblank, { description: "未决权威或执行冲突" }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "升级问题与可选选项" }) }, { additionalProperties: true, required: [] });
 export function createComplianceDecisionTool(name, description) {
-    return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) { return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true }; } };
+    return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) { return { content: [{ type: "text", text: "审计决议已收" }], details: params, terminate: true }; } };
 }
 export async function prepareComplianceDispatch(model, context, label) {
     const resolution = await context.modelRegistry.getProviderAuth(model.provider).catch((error) => { throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); });

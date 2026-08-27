@@ -21,16 +21,16 @@ import {
 } from "./registry.ts";
 
 /** Province officers that may carry a persistent model override (#453). */
-export const MENXIA_OFFICER_SEATS = [
+export const GATE_OFFICER_SEATS = [
   "gatekeeper",
   "inspector",
   "notary",
 ] as const;
 
-export type MenxiaOfficerSeat = (typeof MENXIA_OFFICER_SEATS)[number];
+export type GateOfficerSeat = (typeof GATE_OFFICER_SEATS)[number];
 
-export function isMenxiaOfficerSeat(value: string): value is MenxiaOfficerSeat {
-  return (MENXIA_OFFICER_SEATS as readonly string[]).includes(value);
+export function isGateOfficerSeat(value: string): value is GateOfficerSeat {
+  return (GATE_OFFICER_SEATS as readonly string[]).includes(value);
 }
 
 export type CredentialProviders = {
@@ -152,15 +152,15 @@ export function setPersistentSeatConfig(
 }
 
 /**
- * Clear a menxia officer's persistent model override (#453).
- * Scope is MenxiaOfficerSeat only — non-province seats have no destructive clear seam.
+ * Clear a gate officer's persistent model override (#453).
+ * Scope is GateOfficerSeat only — non-province seats have no destructive clear seam.
  * Only notary may retain an engine-only residual so direct notary activation keeps
  * its labor engine while model resolution returns to startup / province inheritance.
  * gatekeeper/inspector drop the whole row. Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(
   config: PublicCliConfig,
-  seat: MenxiaOfficerSeat,
+  seat: GateOfficerSeat,
 ): PublicCliConfig {
   const previous = config.seats[seat];
   if (previous === undefined) return config;
@@ -184,9 +184,9 @@ export function clearPersistentSeatConfig(
  * direct `ak-role notary` keeps resolveEffectiveSeat; only province reads this.
  * Engine-only residual is not a model override.
  */
-export function resolveMenxiaOfficerModelSelection(
+export function resolveGateOfficerModelSelection(
   config: PublicCliConfig,
-  officer: MenxiaOfficerSeat,
+  officer: GateOfficerSeat,
 ): SeatModelConfig | undefined {
   const ownModel = seatModelOnly(config.seats[officer]);
   if (ownModel !== undefined) return ownModel;

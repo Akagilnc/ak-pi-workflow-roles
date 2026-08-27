@@ -23,6 +23,7 @@ import {
 } from "./upstream-error-testimony.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
+const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "\u6E38\u5955\u4F7F\u51C6\u5907\u5DF2\u63A5\u53D7";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
 const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
 class NavigatorUnavailableError extends Error {
@@ -89,7 +90,11 @@ function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
 }
-const prepareSchema = Type.Object({}, { additionalProperties: true });
+const prepareSchema = Type.Object({
+  candidates: Type.Optional(Type.Unknown({
+    description: "\u65B9\u5411\u5019\u9009\uFF1Bcandidates[].next.role \u5FC5\u586B\uFF0Cphase \u53EF\u9009\uFF0Croute/matches/reason/command \u53EF\u9009\u4E0A\u4E0B\u6587\uFF0C\u975E\u53D7\u7406\u95F8"
+  }))
+}, { additionalProperties: true });
 const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
@@ -248,12 +253,12 @@ function parseNavigatorModelSetting(value) {
 function createNavigatorPrepareTool(onOutput) {
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
-    label: "Navigator preparation",
-    description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
+    label: "\u6E38\u5955\u4F7F\u51C6\u5907",
+    description: "\u63D0\u4EA4\u6E38\u5955\u4F7F\u65B9\u5411\u5EFA\u8BAE\u3002",
     parameters: prepareSchema,
     async execute(_id, value) {
       onOutput(value);
-      return { content: [{ type: "text", text: "Navigator preparation accepted" }], details: value, terminate: true };
+      return { content: [{ type: "text", text: NAVIGATOR_PREPARE_ACCEPTED_TEXT }], details: value, terminate: true };
     }
   };
 }
@@ -510,16 +515,13 @@ ${text}
     };
     activeSession.appendEntry(CONTEXT_ENTRY, projection);
     const request = [
-      "Act as the Navigator direction advisor. Submit one next-step advice batch; do not execute or invoke any role.",
+      "\u672C\u6B21\u5BFC\u822A\u6750\u6599\u5982\u4E0B\uFF1A",
       `<navigator_soul>
 ${soul}
 </navigator_soul>`,
-      ...routePlaybookReadFailure === void 0 ? [
-        `<route_playbook>
+      ...routePlaybookReadFailure === void 0 ? [`<route_playbook>
 ${routePlaybook}
-</route_playbook>`,
-        "The route playbook is advisory material only. Exercise independent judgment: adopt, alter, or ignore it; the caller may also deviate."
-      ] : ["The optional route playbook could not be read. Continue independent judgment from the other supplied materials."],
+</route_playbook>`] : ["\u53EF\u9009\u8DEF\u7EBF\u624B\u518C\u672A\u80FD\u8BFB\u53D6\u3002"],
       `<work_subject>
 ${subject}
 </work_subject>`,
@@ -529,28 +531,18 @@ ${authority}
       `<current_role>
 ${JSON.stringify({ role: options.role, phase: options.phase })}
 </current_role>`,
-      ...boundSettlement === void 0 ? [] : [
-        `<current_settlement>
+      ...boundSettlement === void 0 ? [] : [`<current_settlement>
 ${JSON.stringify(boundSettlement)}
-</current_settlement>`,
-        "The current role has just reached this typed settlement. Recommend the next packaged role AFTER this settlement.",
-        "public_settlement_history is prior background only \u2014 a prior terminal does not consume or replace the work this settlement just produced."
-      ],
+</current_settlement>`],
       `<prior_route>
 ${JSON.stringify(prior ?? null)}
 </prior_route>`,
       `<public_settlement_history>
 ${JSON.stringify(projection.publicSettlementHistory)}
 </public_settlement_history>`,
-      ...boundSettlement === void 0 ? [
-        "Preparation is speculative while the current role still runs. Prefer candidates[].matches keyed to plausible accepted outcomes of the current role; prior history must not substitute for the current role's work."
-      ] : [],
       `<live_role_help>
 ${helpContext}
-</live_role_help>`,
-      `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
-      "v1 requires a usable next direction: candidates[].next.role, with phase only when present and meaningful. route, matches, id, reason, and command are optional context \u2014 never retry to satisfy optional shape.",
-      "Do not put task-specific paths, prompts, packets, or Skill bindings in any field. Command display is rendered by the host from next, not from model prose."
+</live_role_help>`
     ].join("\n\n");
     try {
       try {
@@ -1051,6 +1043,7 @@ function registerNavigatorModelCommand(pi, path = navigatorModelSettingPath()) {
 export {
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_EVENT_TYPE,
+  NAVIGATOR_PREPARE_ACCEPTED_TEXT,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NAVIGATOR_TARGETS,
   NavigatorUnavailableError,

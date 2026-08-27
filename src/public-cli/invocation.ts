@@ -841,7 +841,7 @@ export function buildJudgeTransportPrompt(
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("已受理附件（冻结快照路径）：");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -988,7 +988,7 @@ export function buildCoderTransportPrompt(
   const lines: string[] = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("已受理附件（冻结快照路径）：");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -1145,7 +1145,7 @@ export function buildFixerTransportPrompt(
   const lines: string[] = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("已受理附件（冻结快照路径）：");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -1751,7 +1751,7 @@ export function buildDoctorTransportPrompt(
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("已受理附件（冻结快照路径）：");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -2078,8 +2078,7 @@ export function buildReviewerTransportPrompt(
   engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines = [
-    `Base revision for the fixed review target: ${admitted.baseRevision}`,
-    "Use this exact revision as the fixed review point.",
+    `本次审查的固定基点：${admitted.baseRevision}`,
   ];
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
@@ -2340,7 +2339,7 @@ export function buildMergerTransportPrompt(
   ];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("已受理附件（冻结快照路径）：");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }

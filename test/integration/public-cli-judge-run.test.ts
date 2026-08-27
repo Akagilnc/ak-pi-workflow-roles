@@ -302,7 +302,7 @@ async function traceJudgeInfrastructureFailure(input: {
   readonly runId: string;
   readonly childEnv?: NodeJS.ProcessEnv;
   readonly poisonRunDir?: boolean;
-  readonly expectMenxiaAbsent?: boolean;
+  readonly expectGateAbsent?: boolean;
   readonly expectDetails: Record<string, unknown>;
 }): Promise<void> {
   const home = await mkdtemp(join(tmpdir(), `ak-public-cli-judge-${input.name}-`));
@@ -362,8 +362,8 @@ async function traceJudgeInfrastructureFailure(input: {
     assert.equal(outcome.kind, "failure");
     if (outcome.kind !== "failure") throw new Error("expected failure");
     assert.equal(outcome.cause, "output");
-    if (input.expectMenxiaAbsent) {
-      assert.equal(result.terminal!.menxia, undefined, `${input.name}: no accepted Menxia cycle`);
+    if (input.expectGateAbsent) {
+      assert.equal(result.terminal!.gate, undefined, `${input.name}: no accepted Gate cycle`);
     }
 
     const runDir = join(
@@ -430,7 +430,7 @@ async function traceJudgeInfrastructureFailure(input: {
   }
 }
 
-/** #475: audited-role materials + Menxia unusable submission — one parameterized harness. */
+/** #475: audited-role materials + Gate unusable submission — one parameterized harness. */
 for (const scenario of [
   {
     name: "missing-dossier",
@@ -452,8 +452,8 @@ for (const scenario of [
   },
   {
     name: "gatekeeper-no-dispatch",
-    runId: "run-e2e-judge-menxia-gk-001",
-    childEnv: { AK_MENXIA_MODE: "gatekeeper-no-dispatch" },
+    runId: "run-e2e-judge-gate-gk-001",
+    childEnv: { AK_GATE_MODE: "gatekeeper-no-dispatch" },
     expectDetails: {
       stage: "gatekeeper",
       submission: { status: "pass", findings: [] },
@@ -461,8 +461,8 @@ for (const scenario of [
   },
   {
     name: "officer-no-pass",
-    runId: "run-e2e-judge-menxia-officer-001",
-    childEnv: { AK_MENXIA_MODE: "officer-no-pass" },
+    runId: "run-e2e-judge-gate-officer-001",
+    childEnv: { AK_GATE_MODE: "officer-no-pass" },
     expectDetails: {
       stage: "inspector",
       submission: { status: "ok-enough" },
@@ -470,9 +470,9 @@ for (const scenario of [
   },
   {
     name: "notary-no-pass",
-    runId: "run-e2e-judge-menxia-notary-001",
-    childEnv: { AK_MENXIA_MODE: "notary-no-pass" },
-    expectMenxiaAbsent: true,
+    runId: "run-e2e-judge-gate-notary-001",
+    childEnv: { AK_GATE_MODE: "notary-no-pass" },
+    expectGateAbsent: true,
     expectDetails: {
       stage: "notary",
       submission: { status: "ok-enough" },
@@ -489,8 +489,8 @@ for (const scenario of [
         expectDetails: scenario.expectDetails,
         ...("poisonRunDir" in scenario ? { poisonRunDir: scenario.poisonRunDir } : {}),
         ...("childEnv" in scenario ? { childEnv: scenario.childEnv } : {}),
-        ...("expectMenxiaAbsent" in scenario
-          ? { expectMenxiaAbsent: scenario.expectMenxiaAbsent }
+        ...("expectGateAbsent" in scenario
+          ? { expectGateAbsent: scenario.expectGateAbsent }
           : {}),
       });
     },

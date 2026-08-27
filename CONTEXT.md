@@ -23,14 +23,14 @@
 - **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态，语义为**受阻求援**——仅当前置条件缺失或违宪导致本次调用无法完成时可用，回执必须说明理由；缺待拍决策/答复＝前置缺失的一种(2026-08-12 收窄与执法位见 ADR 0050 Amendment / #292)。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 的 #75/#76 两条施工腿均已装配。
 - **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
-- **门下省(Menxia province)**:质量保证省部级席位。内部入口在一次省内政中按受审物派给事中或符宝郎；省不是纯分类词，也不是外层编排器。给事中与符宝郎仍是独立角色，自己提交 typed 结果。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 与 [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。
+- **门下省(Gate province)**:质量保证省部级席位。内部入口在一次省内政中按受审物派给事中或符宝郎；省不是纯分类词，也不是外层编排器。给事中与符宝郎仍是独立角色，自己提交 typed 结果。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 与 [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。
 _Avoid_:把「门下省」当作通进司的公开角色名。
 - **给事中(Quality-gate officer)**:门下省下的**独立**质检角色（寺监级）。只审**复杂度**与**测试质量**；受审物是将作监/修内司的交卷产出；形态比照审刑院硬闸（封驳＝当场打回重写交卷，不是本局失败）。不改大理寺灵魂。可被门下省在一次省内政里派发，也可被外层调用者单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
 - **符宝郎(Document-fidelity auditor)**:门下省下的**独立**文书核验角色（寺监级）。只审**引语真伪**与**票面对齐**；受审物是大理寺拟判；形态比照审刑院硬闸（封驳＝当场打回重写拟判，不是本局失败）。进单、交卷是拟判的两种场合，不是两个官。可被门下省派发，也可被单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
 - **通进司(Collector)**:门下省下的收证衙门。单次调用内独立观察外部 GitHub PR 材料、可选请求、判定停止观察并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
 _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的可选请求不构成评审腿或身份期待。
-- **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。审刑院/御史台审计开庭材料=工厂宪法+己 auditor Soul+审刑院法典(`souls/audit-law.md`);太医审计暂=工厂宪法+己 Soul(御批四)。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
+- **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。大理寺审计开庭材料=工厂宪法+己 auditor Soul+审刑院法典(`souls/audit-law.md`)+quality-law;太医审计暂=工厂宪法+己 Soul(御批四)。御史台侧审刑院闸已退役(#495 S6 风闻奏事)。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
 - **卷宗(Dossier)**:一次 run 在候簿记录之家里的全部既落账材料；卷宗即真源,无投影副本。定位靠机器注入的 typed 指针(`cwd` 与 `AK_ROLE_RUN_DIR`),禁 latest-run/mtime/全局扫描猜测。
 - **先立卷后审卷**:被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象走既有非零故障通道(`missing-dossier` / `missing-subject` 真因落 error artifact),public CLI 无合法 Receipt。
 - **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。

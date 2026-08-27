@@ -9,7 +9,6 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { REVIEWER_AXIS_OUTPUT_ADAPTER } from "../../src/reviewer-construction.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
-import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 
 function axisFromPrompt(text: string): "standards" | "spec" | undefined {
   // Identity from typed package constant — no hard-coded version contract in the fixture.
@@ -20,7 +19,7 @@ function axisFromPrompt(text: string): "standards" | "spec" | undefined {
 }
 
 function authorityRefsFromPrompt(text: string): string[] | undefined {
-  const marker = "Authority-Refs:\n";
+  const marker = "权威引用：\n";
   const index = text.indexOf(marker);
   if (index < 0) return undefined;
   const rest = text.slice(index + marker.length);
@@ -30,11 +29,11 @@ function authorityRefsFromPrompt(text: string): string[] | undefined {
     parsed = JSON.parse(line);
   } catch (error) {
     throw new Error(
-      `Authority-Refs payload is not recognized JSON: ${error instanceof Error ? error.message : String(error)}`,
+      `权威引用 payload is not recognized JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
-    throw new Error("Authority-Refs payload is not a string array");
+    throw new Error("权威引用 payload is not a string array");
   }
   return parsed as string[];
 }
@@ -62,22 +61,22 @@ function assertAuthorityRefsCarrier(axis: "standards" | "spec", prompt: string):
   const observed = authorityRefsFromPrompt(prompt);
   if (axis === "standards") {
     if (observed !== undefined) {
-      throw new Error("Standards child must not receive Authority-Refs material");
+      throw new Error("Standards child must not receive 权威引用 material");
     }
     return;
   }
   if (expected === undefined) {
     if (observed !== undefined) {
-      throw new Error("Spec child received unexpected Authority-Refs material");
+      throw new Error("Spec child received unexpected 权威引用 material");
     }
     return;
   }
   if (observed === undefined) {
-    throw new Error("Spec child prompt missing Authority-Refs material");
+    throw new Error("Spec child prompt missing 权威引用 material");
   }
   if (JSON.stringify(observed) !== JSON.stringify(expected)) {
     throw new Error(
-      `Spec child Authority-Refs mismatch: expected ${JSON.stringify(expected)} got ${JSON.stringify(observed)}`,
+      `Spec child 权威引用 mismatch: expected ${JSON.stringify(expected)} got ${JSON.stringify(observed)}`,
     );
   }
 }
@@ -94,12 +93,13 @@ function expectedAxesFromEnv(): ReadonlySet<"standards" | "spec"> {
   return new Set(axes as Array<"standards" | "spec">);
 }
 
-/** Stable seat-owned deltas for the real A→revise→B→pass package tracer (#437). */
-export const REVIEWER_AMENDMENT_TRACE_A = Object.freeze({ standards: "axis-delta-A" });
-export const REVIEWER_AMENDMENT_TRACE_B = Object.freeze({ standards: "axis-delta-B" });
-export const REVIEWER_AMENDMENT_TRACE_VIOLATION = "amendment-trace-revise";
+/** Stable seat-owned delta for the real package tracer (#437 / #495 S6 single accept). */
+export const REVIEWER_AMENDMENT_TRACE = Object.freeze({ standards: "axis-delta" });
+/** @deprecated alias kept for any residual import during S6 cutover */
+export const REVIEWER_AMENDMENT_TRACE_A = REVIEWER_AMENDMENT_TRACE;
+export const REVIEWER_AMENDMENT_TRACE_B = REVIEWER_AMENDMENT_TRACE;
 
-/** Offline provider for public ak-role Reviewer fixed two-axis + auditor chain. */
+/** Offline provider for public ak-role Reviewer fixed two-axis chain (no auditor after #495 S6). */
 export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
   const faux = fauxProvider({
     api: "ak-reviewer-two-axis",
@@ -128,7 +128,7 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
     const label = i === 0 ? "child prompt" : `child prompt #${i + 1}`;
     responses.push((context) => childResponse(context, label));
   }
-  const parentOutput = (context: Context, amendments: Readonly<Record<string, string>>, id: string) => {
+  const parentOutput = (context: Context) => {
     for (const axis of expectedAxes) {
       if (!axisSeen.has(axis)) {
         throw new Error(`expected axes [${[...expectedAxes].join(",")}] before output; saw ${[...axisSeen].join(",")}`);
@@ -145,32 +145,14 @@ export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
     return fauxAssistantMessage(
       fauxToolCall(
         REVIEWER_OUTPUT_TOOL_NAME,
-        { status: "completed", amendments },
-        { id },
+        { status: "completed", amendments: REVIEWER_AMENDMENT_TRACE },
+        { id: "output" },
       ),
       { stopReason: "toolUse" },
     );
   };
-  const auditDecision = (
-    status: "revise" | "pass",
-    id: string,
-    violations: readonly string[] = [],
-  ) =>
-    fauxAssistantMessage(
-      fauxToolCall(
-        REVIEWER_AUDIT_TOOL_NAME,
-        { status, violations: [...violations], conflicts: [], decisionGate: null },
-        { id },
-      ),
-      { stopReason: "toolUse" },
-    );
-  // Real package lifecycle: output A → auditor revise → output B → auditor pass (#437).
-  responses.push((context) => parentOutput(context, REVIEWER_AMENDMENT_TRACE_A, "output-a"));
-  responses.push(() =>
-    auditDecision("revise", "audit-revise", [REVIEWER_AMENDMENT_TRACE_VIOLATION]),
-  );
-  responses.push((context) => parentOutput(context, REVIEWER_AMENDMENT_TRACE_B, "output-b"));
-  responses.push(() => auditDecision("pass", "audit-pass"));
+  // #495 S6: no reviewer-side auditor — single typed accept after legs.
+  responses.push((context) => parentOutput(context));
   faux.setResponses(responses);
   const model = faux.getModel();
   const provider: Provider = {
