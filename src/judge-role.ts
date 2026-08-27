@@ -73,7 +73,7 @@ function requireSingletonSubmissionCall(
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
     throw new Error("大理寺回执非唯一终局工具调用");
   }
-  const calls = leaf.message.content.filter((part: any) => part.type === "toolCall");
+  const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
   const call = calls[0];
   if (
     calls.length !== 1 || call === undefined || call.id !== toolCallId ||
@@ -103,7 +103,7 @@ export function createJudgeRoleRuntime(
           description: "提交大理寺终局判词；受理前经审刑院审计。",
           promptSnippet: "提交大理寺终局判词",
           parameters: judgeVerdictSchema,
-          async execute(toolCallId: string, parameters: any, signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext): Promise<HostToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
             requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
@@ -155,7 +155,7 @@ export function createJudgeRoleRuntime(
             );
           },
         });
-        pi.on("before_agent_start", (event: any) => {
+        pi.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error("大理寺职分未装载");
           return {
             systemPrompt:

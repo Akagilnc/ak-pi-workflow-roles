@@ -54,7 +54,7 @@ export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: 
 function requireSoleReviewerOutputCall(id: string, ctx: HostContext): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("御史台回执非唯一终局工具调用");
-  const calls = leaf.message.content.filter((part: any) => part.type === "toolCall");
+  const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
   if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== REVIEWER_OUTPUT_TOOL_NAME) throw new Error("御史台回执非唯一终局工具调用");
 }
 
@@ -145,7 +145,7 @@ export function createReviewerRoleRuntime(
       if (!registered) {
         registered = true;
         pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "Standards/Spec 评审腿由 runtime 以取证子会话代跑，本席收腿报告后交薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
-          async execute(id: string, parameters: any, _signal: AbortSignal | undefined, _update: any, toolCtx: HostContext): Promise<HostToolResult<unknown>> {
+          async execute(id: string, parameters: unknown, _signal: AbortSignal | undefined, _update: unknown, toolCtx: HostContext): Promise<HostToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
             requireSoleReviewerOutputCall(id, toolCtx);
             const output = validateReviewerIntent(parameters);
