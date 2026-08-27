@@ -438,6 +438,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         attendanceInvocationId = options.invocationId;
         const nav = createNavigatorAttendance({
           ...options,
+          context: context(),
           modelSettingPath,
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
@@ -729,6 +730,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
       createNavigatorAttendance: (options) => {
         const nav = createNavigatorAttendance({
           ...options,
+          context: context(),
           modelSettingPath: join(home, "navigator-model.json"),
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,

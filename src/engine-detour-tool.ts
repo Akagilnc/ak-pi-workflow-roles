@@ -29,10 +29,12 @@ const engineDetourArgsSchema = Type.Object(
 
 type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;
 
+type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort">;
+
 export type EngineDetourHostActions = {
   failInfrastructure(
     error: unknown,
-    ctx: HostContext,
+    ctx: EngineDetourContext,
     toolCallId?: string,
   ): never;
 };
@@ -70,8 +72,8 @@ function isCallerCancellation(
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
   latch?: EngineDetourLatch;
-  fail: (error: Error, toolCallId: string, ctx: HostContext) => never;
-}): HostToolDefinition<typeof engineDetourArgsSchema> {
+  fail: (error: Error, toolCallId: string, ctx: EngineDetourContext) => never;
+}): HostToolDefinition<typeof engineDetourArgsSchema, unknown, EngineDetourContext> {
   const latch = input.latch ?? { used: false };
   const engineName = input.engineName;
   return {
