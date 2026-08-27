@@ -35,7 +35,7 @@ export class WorkerCommitReminderError extends Error {
 export class WorkerPrefixReminderError extends Error {
   readonly code = "worker_prefix_reminder" as const;
   constructor() {
-    super("观察到缺前缀 commit，请重写后再交");
+    super("观察到缺前缀 commit");
     this.name = "WorkerPrefixReminderError";
   }
 }
@@ -43,7 +43,7 @@ export class WorkerPrefixReminderError extends Error {
 export class WorkerUnfinishedReasonReminderError extends Error {
   readonly code = "worker_unfinished_reason_reminder" as const;
   constructor() {
-    super("补理由（前置缺失/违宪之一）或继续施工");
+    super("本次 unfinished 回执未含 reason；本接缝缺由至多打回两次。");
     this.name = "WorkerUnfinishedReasonReminderError";
   }
 }

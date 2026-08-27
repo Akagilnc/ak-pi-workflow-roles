@@ -195,7 +195,7 @@ export function createReviewerRoleRuntime(
                   return { content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_AUDIT_NO_RECEIPT_TEXT }], details: { ...candidate, auditNoReceipt }, terminate: true as const, ...usageProjection };
                 },
                 revise: (violations) => {
-                  throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });
+                  throw new AggregateError([], `御史台回执违 soul：${violations.join("; ")}`, { cause: Object.freeze([...violations]) });
                 },
                 escalate: async (result) => {
                   try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }

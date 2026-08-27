@@ -310,7 +310,7 @@ export function createFixerRoleRuntime(
           return {
             block: true,
             reason:
-              `Fixer blocked bash command containing forbidden literal: ${matched}`,
+              `修内司 bash 拦截：命中禁用字面量 ${matched}`,
           };
         });
         pi.on("before_agent_start", (event) => {

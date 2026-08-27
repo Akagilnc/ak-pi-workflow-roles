@@ -158,7 +158,8 @@ test("Gatekeeper stage settlement without an accepted receipt is loud typed no_r
     if (result.status === "no_receipt") {
       assert.equal(result.stage, "gatekeeper");
       assert.equal(result.facts.sessionCompletion, "settled-without-accepted-receipt");
-      assert.match(result.reason, /accepted receipt/i);
+      assert.equal(result.facts.acceptedReceipt, false);
+      assert.ok(typeof result.reason === "string" && result.reason.length > 0);
     }
   });
 });

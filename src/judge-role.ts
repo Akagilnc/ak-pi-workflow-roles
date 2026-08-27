@@ -149,7 +149,7 @@ export function createJudgeRoleRuntime(
                 }),
                 revise: (violations) => {
                   throw new Error(
-                    `Judge verdict violates its soul: ${violations.join("; ")}`,
+                    `大理寺回执违 soul：${violations.join("; ")}`,
                   );
                 },
                 escalate: (result) => result,
