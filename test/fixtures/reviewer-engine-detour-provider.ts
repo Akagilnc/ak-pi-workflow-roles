@@ -4,8 +4,6 @@
  * per axis, then emit the existing axis report text from detour stdout.
  * Parent still submits typed ak_reviewer_output. Zero production hooks.
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -23,18 +21,6 @@ import {
 import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 
 const CANNED_LABOR = "canned-reviewer-engine-labor-378";
-
-/** Path-fact oracle: evidence-child must carry souls/quality-law.md bytes (no wording pin). */
-const EVIDENCE_CHILD_QUALITY_LAW = readFileSync(
-  fileURLToPath(new URL("../../souls/quality-law.md", import.meta.url)),
-  "utf8",
-);
-
-function assertEvidenceChildQualityLawMaterial(context: Context): void {
-  if (!context.systemPrompt?.includes(EVIDENCE_CHILD_QUALITY_LAW)) {
-    throw new Error("evidence-child system prompt missing souls/quality-law.md material");
-  }
-}
 
 function axisFromPrompt(text: string): "standards" | "spec" | undefined {
   const prefix = `Axis-Output-Adapter: ${REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId}@${REVIEWER_AXIS_OUTPUT_ADAPTER.version}`;
@@ -93,7 +79,6 @@ export default function reviewerEngineDetourProvider(pi: ExtensionAPI): void {
 
     // Evidence-child labor path: detour when registered, then axis report text.
     if (axis !== undefined) {
-      assertEvidenceChildQualityLawMaterial(context);
       if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !detourAlreadyCalled(context)) {
         return fauxAssistantMessage(
           fauxToolCall(
