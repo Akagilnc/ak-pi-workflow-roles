@@ -594,7 +594,7 @@ export async function executeEvidenceChild(
         : { parentDirectory: options.credentialScratchParent }),
     },
     async (childConfigDir) => {
-      const { openInProcessAgentSession } = await import("./pi/in-process-session.ts");
+      const { openInProcessAgentSession } = await import("./in-process-session.ts");
       const { createRecordSession } = await import("./archivist-record-entry.ts");
       let inherited: InheritedRuntime;
       try {
@@ -858,7 +858,7 @@ export async function executeAuditorChild(
     });
 
     // Shared session open — no tools allowlist (ADR 0064).
-    const { openInProcessAgentSession: openSession } = await import("./pi/in-process-session.ts");
+    const { openInProcessAgentSession: openSession } = await import("./in-process-session.ts");
     const { session, dispose } = await openSession({
       cwd,
       agentDir: scratch,

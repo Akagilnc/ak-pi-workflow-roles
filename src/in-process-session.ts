@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
-import { createRecordSession } from "../archivist-record-entry.ts";
+import { createRecordSession } from "./archivist-record-entry.ts";
 
 type OpenInProcessAgentSessionBase = {
   readonly cwd: string;
