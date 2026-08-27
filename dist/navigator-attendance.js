@@ -89,7 +89,11 @@ function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
 }
-const prepareSchema = Type.Object({}, { additionalProperties: true });
+const prepareSchema = Type.Object({
+  candidates: Type.Optional(Type.Unknown({
+    description: "\u65B9\u5411\u5019\u9009\uFF1Bcandidates[].next.role \u5FC5\u586B\uFF0Cphase \u53EF\u9009\uFF0Croute/matches/reason/command \u53EF\u9009\u4E0A\u4E0B\u6587\uFF0C\u975E\u53D7\u7406\u95F8"
+  }))
+}, { additionalProperties: true });
 const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
@@ -248,8 +252,8 @@ function parseNavigatorModelSetting(value) {
 function createNavigatorPrepareTool(onOutput) {
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
-    label: "Navigator preparation",
-    description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
+    label: "\u6E38\u5955\u4F7F\u51C6\u5907",
+    description: "\u63D0\u4EA4\u6E38\u5955\u4F7F\u65B9\u5411\u5EFA\u8BAE\u3002",
     parameters: prepareSchema,
     async execute(_id, value) {
       onOutput(value);

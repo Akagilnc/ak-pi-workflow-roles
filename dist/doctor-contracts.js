@@ -3,7 +3,7 @@ import { canonicalJson } from "./canonical-json.js";
 import { openToolObjectFromUnion } from "./open-tool-schema.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
-export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "Submit the sole final typed single-case testimony. Use completed when findings is empty or contains only non-prescriptive case observations. The runtime adds its derived case cost to the accepted receipt. Refuse only when the evidence cannot support even truthful case testimony; unavailable reusable-asset or bounded-bite evidence blocks only the corresponding asset prescription.";
+export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "提交唯一终局单案证词；completed 允许空 findings；runtime 补记派生成本入回执。";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: false });
@@ -37,22 +37,22 @@ const cost = Type.Object({
 }, { additionalProperties: false });
 const doctorSubmissionVariants = Type.Union([
     Type.Object({
-        status: Type.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
-        case: Type.Unsafe({ ...caseIdentity, description: "Identity of the retained Doctor case." }),
-        findings: Type.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." }),
-    }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
+        status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸；允许空 findings；runtime 补记派生成本入回执" }),
+        case: Type.Unsafe({ ...caseIdentity, description: "留存太医署案身份" }),
+        findings: Type.Array(finding, { description: "可空或仅含非处方案观察；缺可复用资产或 bounded-bite 证据只排除对应资产处方" }),
+    }, { additionalProperties: false, description: "单案证词，不要求任何处方或可复用 finding" }),
     Type.Object({
-        status: Type.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
-        reason: Type.String({ minLength: 1, description: "Reason evidence is insufficient for truthful testimony." }),
-        missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "Evidence required before truthful testimony is possible." }),
-    }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." }),
+        status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸；仅当证据不足以支撑如实案证词" }),
+        reason: Type.String({ minLength: 1, description: "证据不足以支撑如实证词的原因" }),
+        missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "如实证词所需而尚缺的证据" }),
+    }, { additionalProperties: false, description: "证据不足以支撑如实案证词" }),
 ]);
 export const doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
 export const doctorOutputSchema = Type.Union([
     Type.Object({ status: Type.Literal("completed"), case: caseIdentity, findings: Type.Array(finding), cost }, { additionalProperties: false }),
     doctorSubmissionVariants.anyOf[1],
 ]);
-export const doctorEvidenceReadSchema = Type.Object({ evidenceId: Type.String({ minLength: 1, description: "Identifier of the retained evidence to read." }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based byte offset at which to begin reading." })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096, description: "Maximum number of bytes to return." })) }, { additionalProperties: false });
+export const doctorEvidenceReadSchema = Type.Object({ evidenceId: Type.String({ minLength: 1, description: "待读留存证据标识" }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "起始字节偏移（从 0 计）" })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096, description: "返回字节上限" })) }, { additionalProperties: false });
 export class DoctorSubmissionContractError extends Error {
     name = "DoctorSubmissionContractError";
 }
