@@ -13,16 +13,7 @@ import type {
   RoleHost,
 } from "../host-contracts.ts";
 
-const projectedPiContexts = new WeakMap<HostContext, ExtensionContext>();
-
-/** Composition-root-only native context resolution for Pi-backed dependencies. */
-export function resolvePiContextAtCompositionRoot(context: HostContext): ExtensionContext {
-  const native = projectedPiContexts.get(context);
-  if (native === undefined) throw new Error("Host context did not originate at a Pi adapter boundary");
-  return native;
-}
-
-type PiRoleHostAdapter = {
+export type PiRoleHostAdapter = {
   readonly host: RoleHost;
   resolveContext(context: HostContext): ExtensionContext;
 };
@@ -47,7 +38,6 @@ function projectPiContext(context: ExtensionContext, contexts: WeakMap<HostConte
     abort: () => context.abort(),
   };
   contexts.set(host, context);
-  projectedPiContexts.set(host, context);
   return host;
 }
 

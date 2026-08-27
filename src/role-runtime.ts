@@ -1,7 +1,7 @@
 import { writeSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { RoleHost, HostContext } from "./host-contracts.ts";
-import { createPiRoleHostAdapter, resolvePiContextAtCompositionRoot } from "./pi/adapter.ts";
+import { createPiRoleHostAdapter, type PiRoleHostAdapter } from "./pi/adapter.ts";
 import { Value } from "typebox/value";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -607,9 +607,10 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
 
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
+  injectedPiHostAdapter?: PiRoleHostAdapter,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
-    const piHostAdapter = createPiRoleHostAdapter(pi);
+    const piHostAdapter = injectedPiHostAdapter ?? createPiRoleHostAdapter(pi);
     const roleHost = piHostAdapter.host;
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
@@ -1093,7 +1094,7 @@ export function createRoleRuntimeExtension(
     roleHost.on("after_provider_response", async (event, ctx) => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
-      const provider = resolvePiContextAtCompositionRoot(ctx).model?.provider;
+      const provider = piHostAdapter.resolveContext(ctx).model?.provider;
       if (typeof provider !== "string" || provider.trim() === "") return;
       const status = event.status;
       if (typeof status !== "number") return;
@@ -1133,7 +1134,7 @@ export function createRoleRuntimeExtension(
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
-      oauthKeepalive.start(resolvePiContextAtCompositionRoot(ctx));
+      oauthKeepalive.start(piHostAdapter.resolveContext(ctx));
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);

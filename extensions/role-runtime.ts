@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
-import { resolvePiContextAtCompositionRoot } from "../src/pi/adapter.ts";
+import { createPiRoleHostAdapter } from "../src/pi/adapter.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
@@ -244,6 +244,8 @@ export async function loadNavigatorWorkContext(
 
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner({ packageRoot });
+  const piHostAdapter = createPiRoleHostAdapter(pi);
+  const resolveContext = piHostAdapter.resolveContext;
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   // #351: static provider list from extension setting (default ["kimi-coding"]).
@@ -266,17 +268,17 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorCase,
     auditDoctorCompliance: (options) => createPiDoctorAuditor()({
       ...options,
-      context: resolvePiContextAtCompositionRoot(options.context),
+      context: resolveContext(options.context),
     }),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, {
       ...options,
-      context: resolvePiContextAtCompositionRoot(options.context),
+      context: resolveContext(options.context),
     }),
     createNavigatorAttendance: (options) => {
       return createNavigatorAttendance({
-        context: resolvePiContextAtCompositionRoot(options.context),
+        context: resolveContext(options.context),
         role: options.role,
         phase: options.phase,
         subjectKey: options.subjectKey,
@@ -310,13 +312,13 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     },
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, {
       ...options,
-      context: resolvePiContextAtCompositionRoot(options.context),
+      context: resolveContext(options.context),
     }),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
-    transcriptFromContext: (context) => transcriptFromContext(resolvePiContextAtCompositionRoot(context)),
+    transcriptFromContext: (context) => transcriptFromContext(resolveContext(context)),
     auditSoulCompliance: (options) => createPiJudgeAuditor()({
       ...options,
-      context: resolvePiContextAtCompositionRoot(options.context),
+      context: resolveContext(options.context),
     }),
-  })(pi);
+  }, piHostAdapter)(pi);
 }
