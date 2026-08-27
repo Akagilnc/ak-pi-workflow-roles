@@ -36,9 +36,6 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
       getSessionFile: () => context.sessionManager.getSessionFile(),
       getHeader: () => sessionManager.getHeader(),
       setSessionFile: (path) => sessionManager.setSessionFile(path),
-      appendMessage: (message) => sessionManager.appendMessage(
-        message as Parameters<SessionManager["appendMessage"]>[0],
-      ),
       appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
     },
     ...(context.signal === undefined ? {} : { signal: context.signal }),
@@ -133,14 +130,56 @@ export function createPiRoleHostAdapter(
     })),
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
-    on(event, handler) {
-      const register = pi.on as <K extends keyof HostEventMap>(
-        event: K,
-        handler: (event: HostEventMap[K], context: ExtensionContext) => unknown,
-      ) => void;
-      register(event, (value, context) => handler(value, projectPiContext(context, options.transcriptFromContext)));
+    on(event, hostHandler) {
+      const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
+      if (event === "before_agent_start") {
+        const handler = hostHandler as (value: HostEventMap["before_agent_start"], context: HostContext) => unknown;
+        pi.on("before_agent_start", (value, ctx) => handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, context(ctx)));
+      } else if (event === "input") {
+        const handler = hostHandler as (value: HostEventMap["input"], context: HostContext) => unknown;
+        pi.on("input", (value, ctx) => handler({ text: value.text, ...(value.images === undefined ? {} : { images: value.images }), source: value.source }, context(ctx)));
+      } else if (event === "tool_call") {
+        const handler = hostHandler as (value: HostEventMap["tool_call"], context: HostContext) => unknown;
+        pi.on("tool_call", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, input: value.input }, context(ctx)));
+      } else if (event === "tool_result") {
+        const handler = hostHandler as (value: HostEventMap["tool_result"], context: HostContext) => unknown;
+        pi.on("tool_result", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, isError: value.isError, content: value.content.map((part) => part.type === "text" ? { type: "text", text: part.text } : { type: part.type }), details: value.details }, context(ctx)));
+      } else if (event === "session_start") {
+        const handler = hostHandler as (value: HostEventMap["session_start"], context: HostContext) => unknown;
+        pi.on("session_start", (value, ctx) => handler({ reason: value.reason }, context(ctx)));
+      } else if (event === "session_shutdown") {
+        const handler = hostHandler as (value: HostEventMap["session_shutdown"], context: HostContext) => unknown;
+        pi.on("session_shutdown", (_value, ctx) => handler({}, context(ctx)));
+      } else if (event === "after_provider_response") {
+        const handler = hostHandler as (value: HostEventMap["after_provider_response"], context: HostContext) => unknown;
+        pi.on("after_provider_response", (value, ctx) => handler({ status: value.status }, context(ctx)));
+      } else if (event === "agent_end") {
+        const handler = hostHandler as (value: HostEventMap["agent_end"], context: HostContext) => unknown;
+        pi.on("agent_end", (value, ctx) => handler({
+        messages: value.messages.map((message) => ({
+          role: message.role,
+          content: "content" in message && Array.isArray(message.content) ? message.content.map((part) => part.type === "text"
+            ? { type: "text", text: part.text }
+            : part.type === "toolCall"
+              ? { type: "toolCall", id: part.id, name: part.name, arguments: part.arguments }
+              : { type: part.type }) : [],
+        })),
+      }, context(ctx)));
+      } else if (event === "agent_settled") {
+        const handler = hostHandler as (value: HostEventMap["agent_settled"], context: HostContext) => unknown;
+        pi.on("agent_settled", (_value, ctx) => handler({}, context(ctx)));
+      } else if (event === "tool_execution_start") {
+        const handler = hostHandler as (value: HostEventMap["tool_execution_start"], context: HostContext) => unknown;
+        pi.on("tool_execution_start", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId }, context(ctx)));
+      } else if (event === "tool_execution_update") {
+        const handler = hostHandler as (value: HostEventMap["tool_execution_update"], context: HostContext) => unknown;
+        pi.on("tool_execution_update", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, partialResult: value.partialResult }, context(ctx)));
+      } else {
+        const handler = hostHandler as (value: HostEventMap["tool_execution_end"], context: HostContext) => unknown;
+        pi.on("tool_execution_end", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, isError: value.isError }, context(ctx)));
+      }
     },
-    getCommands: () => pi.getCommands().map(({ name }) => ({ name })),
+    ...(typeof pi.getCommands === "function" ? { getCommands: () => pi.getCommands().map(({ name }) => ({ name })) } : {}),
   };
   return { host };
 }
