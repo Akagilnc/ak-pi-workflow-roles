@@ -1117,9 +1117,9 @@ export async function withInProcessPi<T>(
       "activation",
       "inprocess-pi",
     );
+    // The host adapter exposes Pi's deferred header/rebind capabilities, so activation
+    // materializes the real principal without a synthetic assistant message.
     sessionManager = SessionManager.create(options.cwd, parentSessionDir);
-    // Pi defers the first durable write until an assistant message exists.
-    sessionManager.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
   }
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,
