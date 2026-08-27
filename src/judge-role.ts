@@ -4,7 +4,7 @@ import { Type, type Static } from "typebox";
 
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
+import { requirePiGatekeeperPass, type HostGatekeeperActions } from "./pi/adapter.ts";
 
 import {
   JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
@@ -59,7 +59,7 @@ export type JudgeRoleDependencies = {
   ): Promise<SoulAuditResult>;
 };
 
-export type JudgeRoleHostActions = GatekeeperPassHostActions;
+export type JudgeRoleHostActions = HostGatekeeperActions;
 
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
@@ -110,7 +110,7 @@ export function createJudgeRoleRuntime(
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
             // Gatekeeper runs after the draft is booked and before existing auditor.
-            await requireGatekeeperPass({
+            await requirePiGatekeeperPass({
               context: ctx,
               subject: { kind: "judge_draft", material: JSON.stringify(verdict) },
               ...(signal === undefined ? {} : { signal }),

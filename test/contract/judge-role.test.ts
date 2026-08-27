@@ -17,15 +17,13 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { executeAuditorChild } from "../../src/evidence-child-executor.ts";
-import { createPiRoleHostAdapter, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
+import { createPiRoleHostAdapter, toPiContext, type HostGatekeeperActions, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import type { HostContext } from "../../src/host-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GATEKEEPER_OUTPUT_TOOL,
   GatekeeperDecisionError,
-  type GatekeeperPassHostActions,
 } from "../../src/gatekeeper-role.ts";
 import {
   createNavigatorAttendance,
@@ -163,8 +161,15 @@ function extensionHarness(
 }
 
 /** Test host: infrastructure throws through; non-pass bind is a no-op unless a case wires tool_result. */
-function testHostActions(fail: (error: unknown) => never = (error): never => { throw error instanceof Error ? error : new Error(String(error)); }): GatekeeperPassHostActions {
-  return { failInfrastructure(error) { fail(error); }, bindGatekeeperNonPass() {}, executeGatekeeperChild: (request) => executeAuditorChild({ ...request, context: request.context as never, runCompletion: request.runCompletion as never, tool: request.tool as never, dossierTool: request.dossierTool as never }) };
+function testHostActions(
+  fail: (error: unknown) => never = (error): never => {
+    throw error instanceof Error ? error : new Error(String(error));
+  },
+): HostGatekeeperActions {
+  return {
+    failInfrastructure(error) { fail(error); },
+    bindGatekeeperNonPass() {},
+  };
 }
 
 function toolCallContext(
@@ -2508,7 +2513,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         };
         // Judge/doctor: zero-arg materials (#233). Fixer (#242) / Reviewer (#495 S6) no LLM auditor.
         const auditCompliance = (options: { context: HostContext; signal?: AbortSignal }) => {
-          const piOptions = options;
+          const piOptions = { ...options, context: toPiContext(options.context) };
           if (role === "judge") return judge.createPiJudgeAuditor(complete)(piOptions);
           return doctor.createPiDoctorAuditor(complete)(piOptions);
         };

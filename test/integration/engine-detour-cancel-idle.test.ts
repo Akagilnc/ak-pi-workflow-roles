@@ -9,7 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import type { HostContext } from "../../src/host-contracts.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { runEngineDetourOnce } from "../../src/engine-detour.ts";
 import {
@@ -33,12 +33,12 @@ async function withHangCwd<T>(run: (cwd: string, argv: string[]) => Promise<T>):
   }
 }
 
-function fakeCtx(cwd: string): HostContext {
+function fakeCtx(cwd: string): ExtensionContext {
   return {
     cwd,
     sessionManager: { getEntries: () => [] },
     abort() {},
-  } as unknown as HostContext;
+  } as unknown as ExtensionContext;
 }
 
 test("runEngineDetourOnce abort rejects with signal reason and terminates child", async () => {
