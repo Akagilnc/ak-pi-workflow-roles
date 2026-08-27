@@ -17,7 +17,8 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { createPiRoleHost } from "../../src/pi/adapter.ts";
+import { createPiRoleHost, toPiContext } from "../../src/pi/adapter.ts";
+import type { HostContext } from "../../src/host-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -447,7 +448,7 @@ async function startJudge(
   auditSoulCompliance: Parameters<
     typeof createRoleRuntimeExtension
   >[0]["auditSoulCompliance"],
-  transcriptFromContext: (ctx: ExtensionContext) => string = () =>
+  transcriptFromContext: (ctx: HostContext) => string = () =>
     "review evidence and adjudication",
 ) {
   return withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -692,7 +693,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     "ak-fixer-phase": "plan",
   });
   const fixerRuntime = createFixerRoleRuntime(
-    fixer.pi as ExtensionAPI,
+    createPiRoleHost(fixer.pi as ExtensionAPI),
     {
       loadSoul: async () => "\n FIXER LAW \n",
       loadPacket: async () => emptyFixPacket,
@@ -728,7 +729,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     "ak-coder-phase": "plan",
   });
   const coderRuntime = createCoderRoleRuntime(
-    coder.pi as ExtensionAPI,
+    createPiRoleHost(coder.pi as ExtensionAPI),
     {
       loadSoul: async () => "\n CODER LAW \n",
       loadTask: async () => "\n TASK BODY \n",
@@ -968,6 +969,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
           ...options,
+          context: toPiContext(options.context),
           modelSettingPath: "/missing/navigator-model.json",
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
@@ -1366,7 +1368,7 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
     ],
   };
   const partialHarness = extensionHarness(undefined, { "ak-fix-packet": "/materials/fix.md", "ak-fixer-prerequisites": "/materials/prereqs.json", "ak-fixer-phase": "apply" });
-  const partialRuntime = createFixerRoleRuntime(partialHarness.pi as ExtensionAPI, {
+  const partialRuntime = createFixerRoleRuntime(createPiRoleHost(partialHarness.pi as ExtensionAPI), {
     loadSoul: async () => "FIXER LAW",
     loadPacket: async (path) => path.endsWith("prereqs.json") ? declaredFixPrerequisites : emptyFixPacket,
   }, testHostActions());
@@ -2234,6 +2236,7 @@ test(
         createNavigatorAttendance: async (options) => {
           attendance = createNavigatorAttendance({
             ...options,
+            context: toPiContext(options.context),
             modelSettingPath,
             loadSoul: async () => "route law",
             loadRoutePlaybook: async () => {

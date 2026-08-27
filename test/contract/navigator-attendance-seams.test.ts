@@ -16,6 +16,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
+import { toPiContext } from "../../src/pi/adapter.ts";
 import {
   context,
   candidate,
@@ -672,7 +673,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
         loadJudgeSoul: async () => "JUDGE LAW",
         transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
-        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, options),
+        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, { ...options, context: toPiContext(options.context) }),
         createNavigatorAttendance: (options) => {
           observed = {
             subject: options.subject,
