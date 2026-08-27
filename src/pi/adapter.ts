@@ -101,14 +101,20 @@ export function toPiToolDefinition<S extends TSchema, D>(
     description: tool.description,
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
     parameters: tool.parameters,
-    execute: async (toolCallId, params, signal, update, context) =>
-      toPiResult(await tool.execute(
-        toolCallId,
-        params as Static<S>,
-        signal,
-        update === undefined ? undefined : (result) => update(toPiResult(result)),
-        projectContext(context),
-      )),
+    execute: async (toolCallId, params, signal, update, context) => {
+      try {
+        return toPiResult(await tool.execute(
+          toolCallId,
+          params as Static<S>,
+          signal,
+          update === undefined ? undefined : (result) => update(toPiResult(result)),
+          projectContext(context),
+        ));
+      } catch (error) {
+        context.abort();
+        throw error;
+      }
+    },
   };
 }
 
