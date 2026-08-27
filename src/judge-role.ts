@@ -21,11 +21,11 @@ export type { JudgeVerdict };
 
 const judgeVerdictSchema = Type.Object(
   {
-    judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "Judge adjudication outcome discriminator." }),
+    judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
     fix: Type.Optional(
       Type.Object(
-        { summary: Type.String({ minLength: 1, description: "Required remediation summary." }) },
-        { additionalProperties: false, description: "Remediation requested when adjudication must continue." },
+        { summary: Type.String({ minLength: 1, description: "continue 时的补救摘要" }) },
+        { additionalProperties: false, description: "continue 时的补救说明" },
       ),
     ),
     classes: Type.Optional(Type.Array(Type.Object({
@@ -33,16 +33,16 @@ const judgeVerdictSchema = Type.Object(
       owner: Type.String({ minLength: 1 }),
       boundary: Type.String({ minLength: 1 }),
       disposition: Type.String({ minLength: 1 }),
-    }, { additionalProperties: false }), { minItems: 1, description: "Adjudicated finding classes with owner and repair boundary." })),
-    note: Type.Optional(Type.String({ minLength: 1, description: "Optional adjudication note." })),
-    evidence: Type.Optional(Type.Unknown({ description: "Retained adjudication evidence." })),
+    }, { additionalProperties: false }), { minItems: 1, description: "已裁决 finding 类及其 owner 与修理边界" })),
+    note: Type.Optional(Type.String({ minLength: 1, description: "可选裁决附注" })),
+    evidence: Type.Optional(Type.Unknown({ description: "留存的裁决证据" })),
     decisionGate: Type.Optional(
       Type.Object(
         {
           question: Type.String({ minLength: 1 }),
           options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
         },
-        { additionalProperties: false, description: "Question and options requiring human authority." },
+        { additionalProperties: false, description: "需人权威处置的问题与选项" },
       ),
     ),
   },
@@ -73,7 +73,7 @@ function requireSingletonSubmissionCall(
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("Judge output must be the sole final tool call");
+    throw new Error("大理寺回执非唯一终局工具调用");
   }
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
   const call = calls[0];
@@ -81,7 +81,7 @@ function requireSingletonSubmissionCall(
     calls.length !== 1 || call === undefined || call.id !== toolCallId ||
     call.name !== JUDGE_OUTPUT_TOOL_NAME
   ) {
-    throw new Error("Judge output must be the sole final tool call");
+    throw new Error("大理寺回执非唯一终局工具调用");
   }
 }
 
@@ -101,13 +101,9 @@ export function createJudgeRoleRuntime(
         lifecycleRegistered = true;
         pi.registerTool({
           name: JUDGE_OUTPUT_TOOL_NAME,
-          label: "Judge Output",
-          description:
-            "Submit the final judge verdict. Soul compliance is audited before acceptance.",
-          promptSnippet: "Submit the final judge verdict after adjudication",
-          promptGuidelines: [
-            `Use ${JUDGE_OUTPUT_TOOL_NAME} as the final action for the judge role.`,
-          ],
+          label: "大理寺输出",
+          description: "提交大理寺终局判词；受理前经审刑院审计。",
+          promptSnippet: "提交大理寺终局判词",
           parameters: judgeVerdictSchema,
           async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (soul === undefined) throw new Error("Judge soul was not loaded");

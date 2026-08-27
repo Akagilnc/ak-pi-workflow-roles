@@ -42,7 +42,7 @@ function requireSingletonSubmissionCall(
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("Notary output must be the sole final tool call");
+    throw new Error("符宝郎回执非唯一终局工具调用");
   }
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
   if (
@@ -50,7 +50,7 @@ function requireSingletonSubmissionCall(
     calls[0]?.id !== toolCallId ||
     calls[0]?.name !== NOTARY_OUTPUT_TOOL_NAME
   ) {
-    throw new Error("Notary output must be the sole final tool call");
+    throw new Error("符宝郎回执非唯一终局工具调用");
   }
 }
 
@@ -83,14 +83,9 @@ export function createNotaryRoleRuntime(
         registered = true;
         pi.registerTool({
           name: NOTARY_OUTPUT_TOOL_NAME,
-          label: "Notary Output",
-          description:
-            "Submit one typed pass or bounce decision on quote fidelity and ticket alignment.",
-          promptSnippet: "Submit the Notary decision",
-          promptGuidelines: [
-            `Use ${NOTARY_OUTPUT_TOOL_NAME} as the sole final action.`,
-            "Fetch ticket, git, and dossier evidence yourself from the bound source-run locator.",
-          ],
+          label: "符宝郎输出",
+          description: "提交引文保真与票面对齐的 typed pass/bounce 决议。",
+          promptSnippet: "提交符宝郎决议",
           parameters: notaryOutputSchema,
           async execute(
             toolCallId,

@@ -89,7 +89,7 @@ function assertSoleFinalCollectorOutput(
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("Collector output must be the sole final tool call");
+    throw new Error("通进司回执非唯一终局工具调用");
   }
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
   const call = calls[0];
@@ -99,7 +99,7 @@ function assertSoleFinalCollectorOutput(
     call.id !== toolCallId ||
     call.name !== COLLECTOR_OUTPUT_TOOL
   ) {
-    throw new Error("Collector output must be the sole final tool call");
+    throw new Error("通进司回执非唯一终局工具调用");
   }
 }
 
@@ -286,13 +286,9 @@ export function createCollectorRoleRuntime(
 
     pi.registerTool({
       name: COLLECTOR_OBSERVE_TOOL,
-      label: "Collector Observe",
-      description:
-        "Fetch complete GitHub PR evidence for the configured target and store an immutable snapshot in the invocation ledger.",
-      promptSnippet: "Observe configured PR evidence",
-      promptGuidelines: [
-        "Call ak_collector_observe with no arguments to refresh the latest complete snapshot.",
-      ],
+      label: "通进司观察",
+      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。",
+      promptSnippet: "抓取配置目标 PR 证据",
       parameters: observeSchema,
       async execute(toolCallId, _params, signal, _onUpdate, ctx) {
         if (activation === undefined) {
@@ -325,13 +321,9 @@ export function createCollectorRoleRuntime(
 
     pi.registerTool({
       name: COLLECTOR_REQUEST_TOOL,
-      label: "Collector Request",
-      description:
-        "Post one configured request body plus its correlation marker at the cited latest snapshot HEAD.",
-      promptSnippet: "Post a configured request",
-      promptGuidelines: [
-        "Call ak_collector_request only with a configured request-capable requestId and the latest snapshotId.",
-      ],
+      label: "通进司请求",
+      description: "按配置请求体与关联标记，在所引最新快照 HEAD 发一次请求。",
+      promptSnippet: "按配置发一次请求",
       parameters: requestSchema,
       async execute(toolCallId, params: RequestParams, signal, _onUpdate, ctx) {
         if (activation === undefined) {
@@ -349,7 +341,7 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: `Request attempt recorded for request ${params.requestId}`,
+              text: `请求尝试已记录：request ${params.requestId}`,
             }],
             details,
           };
@@ -361,13 +353,9 @@ export function createCollectorRoleRuntime(
 
     pi.registerTool({
       name: COLLECTOR_WAIT_TOOL,
-      label: "Collector Wait",
-      description:
-        "Wait before re-observing; each call is capped to five minutes and to remaining eligibility.",
-      promptSnippet: "Wait within the eligibility cutoff",
-      promptGuidelines: [
-        "Call ak_collector_wait with a positive durationMs; runtime caps each wait to five minutes and to remaining eligibility.",
-      ],
+      label: "通进司等待",
+      description: "再观察前等待；单次上限五分钟且不超剩余资格。",
+      promptSnippet: "资格截止前等待",
       parameters: waitSchema,
       async execute(toolCallId, params: WaitParams, signal, _onUpdate, ctx) {
         if (activation === undefined) {
@@ -384,7 +372,7 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: `Waited ${String((details as { effectiveMs: number }).effectiveMs)}ms`,
+              text: `已等待 ${String((details as { effectiveMs: number }).effectiveMs)}ms`,
             }],
             details,
           };
@@ -396,13 +384,9 @@ export function createCollectorRoleRuntime(
 
     pi.registerTool({
       name: COLLECTOR_OUTPUT_TOOL,
-      label: "Collector Output",
-      description:
-        "Submit after observation. Runtime builds the self-contained typed-group receipt.",
-      promptSnippet: "Submit the Collector receipt",
-      promptGuidelines: [
-        "Use ak_collector_output as the sole final Collector action after a complete observation.",
-      ],
+      label: "通进司输出",
+      description: "观察完成后提交；回执由 runtime 组装。",
+      promptSnippet: "提交通进司回执",
       parameters: outputSchema,
       async execute(toolCallId, params: OutputParams, _signal, _onUpdate, ctx) {
         if (activation === undefined) {

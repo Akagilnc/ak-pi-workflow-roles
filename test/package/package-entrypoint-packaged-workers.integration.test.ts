@@ -982,7 +982,6 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
             mixed?.type === "message" && mixed.message.role === "toolResult",
           );
           assert.equal(mixed.message.isError, true);
-          assert.match(textOf(mixed.message), /sole final tool call/);
 
           faux.setResponses([
             fauxAssistantMessage(

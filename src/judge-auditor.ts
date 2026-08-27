@@ -24,7 +24,7 @@ export type JudgeAuditOptions = {
 
 const auditDecisionTool = createComplianceDecisionTool(
   JUDGE_AUDIT_TOOL_NAME,
-  "Return whether the proposed verdict demonstrably follows the audit law and Judge role boundaries from the dossier evidence.",
+  "提交 typed pass/revise/escalate 决议（大理寺审刑）。",
 );
 
 /**

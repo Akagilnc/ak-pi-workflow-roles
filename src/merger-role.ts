@@ -11,7 +11,7 @@ export type MergerRoleDependencies = { loadSoul(): Promise<string>; loadInput(pa
 export type MergerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never };
 
 function same(a: readonly string[], b: readonly string[]): boolean { return a.length === b.length && a.every((value, i) => value === b[i]); }
-function singleton(id: string, ctx: ExtensionContext): void { const leaf = ctx.sessionManager.getLeafEntry(); if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Merger output must be the sole final tool call"); const calls = leaf.message.content.filter(part => part.type === "toolCall"); if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME) throw new Error("Merger output must be the sole final tool call"); }
+function singleton(id: string, ctx: ExtensionContext): void { const leaf = ctx.sessionManager.getLeafEntry(); if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("合并回执非唯一终局工具调用"); const calls = leaf.message.content.filter(part => part.type === "toolCall"); if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME) throw new Error("合并回执非唯一终局工具调用"); }
 function materialText(input: MergerInput, key: keyof MergerInput["materials"]): string { return exactUtf8(Buffer.from(input.materials[key].bytesBase64, "base64"), `Merger ${key}`); }
 
 export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRoleDependencies, host: MergerRoleHostActions) {
@@ -28,10 +28,10 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
     if (state.targetObjectId !== input.targetObjectId || state.sourceObjectId !== input.sourceObjectId || !same(state.unmergedPaths, input.expectedConflictPaths) || state.unmergedPaths.length === 0 || !isFullGitObjectId(state.automaticMergeTreeId) || state.automaticMergeTreeId.length !== input.targetObjectId.length) throw new Error("Merger activation rejected repository parent, merge, automatic-result, or complete conflict-set drift");
     activation = { soul, input, automaticMergeTreeId: state.automaticMergeTreeId }; accepted = false;
     if (!registered) { registered = true;
-      pi.registerTool({ name: MERGER_OUTPUT_TOOL_NAME, label: "Merger Output", description: "Submit the sole completed merge candidate or genuine intent/authority escalation.", promptSnippet: "Submit the Merger result", promptGuidelines: [`Use ${MERGER_OUTPUT_TOOL_NAME} as the sole final action.`, "Infrastructure and Git failures abort; they are not escalations."], parameters: mergerOutputSchema,
+      pi.registerTool({ name: MERGER_OUTPUT_TOOL_NAME, label: "合并输出", description: "提交合并结果；输出分支为 completed 与 escalate；基础设施及 Git 失败由 abort 通道承接。", promptSnippet: "提交合并结果", parameters: mergerOutputSchema,
         async execute(id, params, _signal, _update, ctx) {
           if (!activation) throw new Error("Merger is not activated");
-          if (accepted) throw new Error("Merger output already accepted");
+          if (accepted) throw new Error("合并回执已受理");
           let output;
           try {
             singleton(id, ctx);

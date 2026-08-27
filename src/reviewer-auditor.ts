@@ -23,7 +23,7 @@ export type ReviewerAuditOptions = {
 
 const reviewerDecisionTool = createComplianceDecisionTool(
   REVIEWER_AUDIT_TOOL_NAME,
-  "Decide whether the Reviewer receipt demonstrably followed its method and boundaries from the dossier.",
+  "提交 typed pass/revise/escalate 决议（御史台审刑）。",
 );
 
 /**

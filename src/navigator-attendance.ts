@@ -199,7 +199,13 @@ export type NavigatorContextProjection = {
 // Provider admission is ADR 0060 object root only. Nested advisory shape
 // (candidates/next/route/matches/reason/command) is never a gate — every object
 // root reaches the unique execute/normalize path exactly once.
-const prepareSchema = Type.Object({}, { additionalProperties: true });
+// Field guidance only — candidates shape is never an acceptance gate (Rule 0).
+const prepareSchema = Type.Object({
+  candidates: Type.Optional(Type.Unknown({
+    description:
+      "方向候选；candidates[].next.role 必填，phase 可选，route/matches/reason/command 可选上下文，非受理闸",
+  })),
+}, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
 
 export type NavigatorPreparationSession = {
@@ -438,8 +444,8 @@ export function parseNavigatorModelSetting(value: string): { provider: string; m
 export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => void): ToolDefinition {
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
-    label: "Navigator preparation",
-    description: "Submit Navigator direction advice. Provide candidates with next.role (phase when meaningful). route/matches/reason/command are optional context, not acceptance gates.",
+    label: "游奕使准备",
+    description: "提交游奕使方向建议。",
     parameters: prepareSchema,
     async execute(_id, value) {
       // Rule 0: the unique prepare submission is accepted once. Ancillary shape is

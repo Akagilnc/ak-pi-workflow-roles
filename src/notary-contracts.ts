@@ -24,10 +24,10 @@ export const NOTARY_FIXED_KICKOFF =
 export const notaryOutputSchema = openToolObject(
   Type.Object({
     status: Type.Unknown({
-      description: "pass | bounce — guidance, not a schema gate.",
+      description: "pass | bounce — 形状指引，非 schema 闸",
     }),
     findings: Type.Unknown({
-      description: "string[] findings retained with pass or bounce.",
+      description: "string[] findings，随 pass 或 bounce 留存",
     }),
   }),
 );
