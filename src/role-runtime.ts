@@ -714,7 +714,11 @@ export function createRoleRuntimeExtension(
         };
       }
     });
-    roleHost.on("tool_result", async (event) => {
+    roleHost.on("tool_result", async (event, ctx) => {
+      if (event.toolName === ENGINE_DETOUR_TOOL_NAME && event.isError) {
+        const diagnostic = event.content.map((part) => part.type === "text" ? part.text : "").join("").trim();
+        failInfrastructure(new Error(diagnostic || "劳务引擎执行失败"), ctx);
+      }
       const role = selectedRole;
       if (role === undefined) return;
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
