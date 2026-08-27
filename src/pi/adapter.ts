@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { RoleHost } from "../host-contracts.ts";
-import { openInProcessAgentSession } from "./in-process-session.ts";
 
 /** Pi composition boundary. Each consumed capability is adapted explicitly. */
 export function createPiRoleHost(pi: ExtensionAPI): RoleHost {
@@ -15,6 +14,3 @@ export function createPiRoleHost(pi: ExtensionAPI): RoleHost {
     getCommands: () => pi.getCommands(),
   };
 }
-
-/** Pi implementation of the controlled internal-session contract. */
-export const openPiControlledSession = openInProcessAgentSession;
