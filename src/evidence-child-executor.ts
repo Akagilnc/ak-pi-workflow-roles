@@ -30,6 +30,7 @@ import {
   type AuditorParentAttemptBinding,
 } from "./compliance-transport.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
+import { toPiToolDefinition } from "./pi/adapter.ts";
 import { engineNameFromEnv } from "./engine-detour.ts";
 import {
   appendEngineSessionMaterial,
@@ -642,7 +643,7 @@ export async function executeEvidenceChild(
         systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
         ...(engineDetourTool === undefined
           ? {}
-          : { customTools: [engineDetourTool] }),
+          : { customTools: [toPiToolDefinition(engineDetourTool)] }),
         sessionManager: createRecordSession({
           cwd: workspace,
           kind: "evidence-children",
@@ -866,7 +867,10 @@ export async function executeAuditorChild(
       thinkingLevel: gate.thinkingLevel ?? options.context.thinkingLevel ?? "off",
       modelRuntime: inherited.runtime,
       systemPrompt: options.systemPrompt,
-      customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
+      customTools: [
+        toPiToolDefinition({ ...options.dossierTool, label: options.roleLabel }),
+        toPiToolDefinition(tool),
+      ],
       sessionManager: auditorSessionManager,
     });
 

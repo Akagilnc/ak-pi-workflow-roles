@@ -10,6 +10,7 @@ export type HostMessage = {
   content: readonly HostContentPart[];
   toolName?: string;
   isError?: boolean;
+  stopReason?: string;
 };
 
 export type HostSessionEntry = {
@@ -61,11 +62,13 @@ export type HostToolDefinition<S extends TSchema = TSchema, D = unknown> = {
 type BeforeAgentStartEvent = { prompt: string; systemPrompt: string; systemPromptOptions?: unknown };
 type InputEvent = { text: string; images?: readonly unknown[]; source?: string };
 type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<string, unknown> };
-type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content?: readonly HostContentPart[]; details?: unknown };
+type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: readonly HostContentPart[]; details: unknown };
 type SessionStartEvent = { reason: string };
 type ProviderResponseEvent = { status?: number };
 type AgentEndEvent = { messages: readonly HostMessage[] };
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
+type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
+type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean }; 
 
 export type HostEventMap = {
   before_agent_start: BeforeAgentStartEvent;
@@ -78,8 +81,8 @@ export type HostEventMap = {
   agent_end: AgentEndEvent;
   agent_settled: Record<never, never>;
   tool_execution_start: ToolExecutionEvent;
-  tool_execution_update: ToolExecutionEvent;
-  tool_execution_end: ToolExecutionEvent;
+  tool_execution_update: ToolExecutionUpdateEvent;
+  tool_execution_end: ToolExecutionEndEvent;
 };
 
 /** The activation surface consumed by package role factories. */
