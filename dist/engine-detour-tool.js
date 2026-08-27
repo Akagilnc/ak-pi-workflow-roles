@@ -84,7 +84,7 @@ export function createEngineDetourToolDefinition(input) {
  * an engine activation signal. Returns whether registration occurred.
  * Once-latch is activation-scoped via the returned reset handle.
  */
-export function registerEngineDetourTool(pi, hostActions) {
+export function registerEngineDetourTool(roleHost, hostActions) {
     const engineName = engineNameFromEnv();
     if (engineName === undefined) {
         return {
@@ -102,7 +102,7 @@ export function registerEngineDetourTool(pi, hostActions) {
             hostActions.failInfrastructure(error, ctx, toolCallId);
         },
     });
-    pi.registerTool(definition);
+    roleHost.registerTool(definition);
     return {
         registered: true,
         resetLatch() {

@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { createAssistantMessageEventStream, InMemoryCredentialStore, } from "@earendil-works/pi-ai";
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, prepareComplianceDispatch, } from "./compliance-transport.js";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.js";
-import { toPiToolDefinition } from "./pi/adapter.js";
 import { engineNameFromEnv } from "./engine-detour.js";
 import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
 import { readPackageMaterial } from "./session-opening-materials.js";
@@ -96,7 +95,7 @@ export async function createInheritedRuntime(options) {
         modelsPath: null,
     });
     // Injected completions historically accepted the minimal model exposed by an
-    // host context. AgentSession crosses ModelRuntime first, so complete the
+    // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
     // model metadata required by that runtime without changing provider identity.
     const inheritedModel = options.runCompletion === undefined
         ? dispatch.model
@@ -506,7 +505,7 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
             systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
             ...(engineDetourTool === undefined
                 ? {}
-                : { customTools: [toPiToolDefinition(engineDetourTool)] }),
+                : { customTools: [engineDetourTool] }),
             sessionManager: createRecordSession({
                 cwd: workspace,
                 kind: "evidence-children",
@@ -689,10 +688,7 @@ export async function executeAuditorChild(options) {
             thinkingLevel: gate.thinkingLevel ?? options.context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
             systemPrompt: options.systemPrompt,
-            customTools: [
-                toPiToolDefinition({ ...options.dossierTool, label: options.roleLabel }),
-                toPiToolDefinition(tool),
-            ],
+            customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
             sessionManager: auditorSessionManager,
         });
         const binding = {
