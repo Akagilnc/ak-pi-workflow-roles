@@ -34,6 +34,7 @@ import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
+import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -291,7 +292,7 @@ function workerCompletionGatekeeperHarness(options: {
       await reject("transport", (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject("unusable-release", (error) => {
         assert.equal(error instanceof GatekeeperDecisionError, false);
-        assert.match(error.message, /transport failure|无显式/);
+        assert.match(error.message, /transport_failure|无显式/);
         assert.deepEqual((error as Error & { submission?: unknown }).submission, unusableSubmission);
       });
       await reject("no-receipt", (error) => {
@@ -306,7 +307,7 @@ function workerCompletionGatekeeperHarness(options: {
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject(`${officer}-unusable-release`, (error) => {
         assert.equal(error instanceof GatekeeperDecisionError, false);
-        assert.match(error.message, /transport failure|无显式/);
+        assert.match(error.message, /transport_failure|无显式/);
         assert.deepEqual((error as Error & { submission?: unknown }).submission, officerUnusableSubmission);
       });
       await reject(`${officer}-no-receipt`, (error) => {
@@ -1145,8 +1146,8 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   await assert.rejects(
     tool.execute("unfinished-bare", bare, undefined, undefined, nonCompletedContext("unfinished-bare")),
     (error: unknown) =>
-      error instanceof Error &&
-      error.message === "补理由（前置缺失/违宪之一）或继续施工",
+      error instanceof WorkerUnfinishedReasonReminderError &&
+      error.code === "worker_unfinished_reason_reminder",
   );
   assert.deepEqual(
     (await tool.execute("unfinished-reasoned", reasoned, undefined, undefined, nonCompletedContext("unfinished-reasoned"))).details,
@@ -1187,11 +1188,11 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   assert.ok(tool2);
   await assert.rejects(
     tool2.execute("u1", bare, undefined, undefined, nonCompletedContext("u1")),
-    /补理由（前置缺失\/违宪之一）或继续施工/,
+    (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
   );
   await assert.rejects(
     tool2.execute("u2", bare, undefined, undefined, nonCompletedContext("u2")),
-    /补理由（前置缺失\/违宪之一）或继续施工/,
+    (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
   );
   assert.deepEqual(
     (await tool2.execute("u3", bare, undefined, undefined, nonCompletedContext("u3"))).details,

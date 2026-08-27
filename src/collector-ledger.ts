@@ -201,7 +201,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
   };
 
   const assertNotFatal = (): void => {
-    if (fatal) throw new Error(fatalReason ?? "Collector is in fatal state");
+    if (fatal) throw new Error(fatalReason ?? "通进司致命状态");
   };
 
   const storeEvidence = (record: CollectorEvidenceRecord): CollectorEvidenceRecord => {
@@ -340,7 +340,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
       if (outputAccepted && toolName !== COLLECTOR_OUTPUT_TOOL) {
-        throw latchFatal("Collector output already accepted; no further operations");
+        throw latchFatal("回执已受理，本局不再受理操作");
       }
       // Idempotent for the same call across tool_call preflight and execute.
       if (activeOperationalCallId === toolCallId) {

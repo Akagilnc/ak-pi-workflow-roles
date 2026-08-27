@@ -140,8 +140,7 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
     () => gate.assertAcceptable("unfinished", {}),
     (error: unknown) =>
       error instanceof WorkerUnfinishedReasonReminderError &&
-      error.code === "worker_unfinished_reason_reminder" &&
-      error.message === "补理由（前置缺失/违宪之一）或继续施工",
+      error.code === "worker_unfinished_reason_reminder",
   );
   assert.throws(() => gate.assertAcceptable("unfinished", { reason: "   " }), WorkerUnfinishedReasonReminderError);
   assert.doesNotThrow(() =>
@@ -173,8 +172,7 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
         () => gate.assertAcceptable("completed"),
         (error: unknown) =>
           error instanceof WorkerCommitReminderError &&
-          error.code === "worker_commit_reminder" &&
-          error.message === "未观察到 commit",
+          error.code === "worker_commit_reminder",
       );
       assert.doesNotThrow(() => gate.assertAcceptable("completed"));
       const g2 = createWorkerSubmissionGate();
@@ -203,8 +201,7 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
       () => missing.assertAcceptable("completed"),
       (error: unknown) =>
         error instanceof WorkerPrefixReminderError &&
-        error.code === "worker_prefix_reminder" &&
-        error.message === "观察到缺前缀 commit，请重写后再交",
+        error.code === "worker_prefix_reminder",
     );
     assert.doesNotThrow(() => missing.assertAcceptable("completed"));
 

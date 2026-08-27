@@ -239,13 +239,13 @@ export function createCollectorRoleRuntime(
       if (activation.ledger.fatal) {
         return {
           block: true,
-          reason: activation.ledger.fatalReason ?? "Collector fatal state",
+          reason: activation.ledger.fatalReason ?? "通进司致命状态",
         };
       }
       if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(event.toolName)) {
         return {
           block: true,
-          reason: `Collector forbids tool ${event.toolName}`,
+          reason: `通进司禁用工具 ${event.toolName}`,
         };
       }
       // Concurrency is owned at execute (beginOperational), not announced-batch preflight.
@@ -256,7 +256,7 @@ export function createCollectorRoleRuntime(
       ) {
         return {
           block: true,
-          reason: "Collector output already accepted; no further operations",
+          reason: "回执已受理，本局不再受理操作",
         };
       }
       return undefined;

@@ -1,6 +1,6 @@
 /** Shared accepted-receipt delivery budget for role, auditor, and Navigator sessions (#288). */
 export const RECEIPT_DELIVERY_TURN_LIMIT = 2;
-export const RECEIPT_DELIVERY_PROMPT = "本 session 尚无已接受的 typed 回执。请现在调用具名终局工具交卷；若先前被打回，请按拒因修正后重交。";
+export const RECEIPT_DELIVERY_PROMPT = "本会话尚无已接受的 typed 回执。";
 export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle";
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);

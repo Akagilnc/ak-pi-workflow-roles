@@ -38,13 +38,24 @@ export type GatekeeperNonPassResult = Extract<
   { status: "bounce" | "no_receipt" }
 >;
 
+function menxiaSeatLabel(stage: "gatekeeper" | "inspector" | "notary"): string {
+  switch (stage) {
+    case "gatekeeper":
+      return "门下省";
+    case "inspector":
+      return "给事中";
+    case "notary":
+      return "符宝郎";
+  }
+}
+
 function nonPassMessage(result: GatekeeperNonPassResult): string {
   // Message text is what pi-agent-core createErrorToolResult exposes to the model.
   if (result.status === "bounce") {
-    const findings = result.findings.length === 0 ? "(no findings)" : result.findings.join("; ");
-    return `Gatekeeper requires rewrite: ${findings}`;
+    const findings = result.findings.length === 0 ? "（无 findings）" : result.findings.join("; ");
+    return `门下省打回重写，findings：${findings}`;
   }
-  return `Gatekeeper ${result.status} at ${result.stage}: ${result.reason}`;
+  return `门下省 ${result.status}（${result.stage}）：${result.reason}`;
 }
 
 /** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
@@ -214,7 +225,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
   }
   if (provinceRun.noReceiptLifecycle !== undefined) {
-    return { status: "no_receipt", stage: "gatekeeper", reason: "Gatekeeper settled without an accepted receipt", facts: provinceRun.noReceiptLifecycle };
+    return { status: "no_receipt", stage: "gatekeeper", reason: `${menxiaSeatLabel("gatekeeper")}未产生已接受回执即散局`, facts: provinceRun.noReceiptLifecycle };
   }
   const province = projectProvinceDecision(provinceRun.decision);
   if (province.status !== "dispatch") return province;
@@ -234,7 +245,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
     });
     if (officerRun.noReceiptLifecycle !== undefined) {
-      return { status: "no_receipt", stage: officer, reason: `${officer} settled without an accepted receipt`, facts: officerRun.noReceiptLifecycle };
+      return { status: "no_receipt", stage: officer, reason: `${menxiaSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
     }
     return projectOfficerDecision(officer, officerRun.decision);
   } catch (error) {
@@ -258,7 +269,7 @@ export async function requireGatekeeperPass(options: {
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {
     // Typed stage/reason/submission ride failInfrastructure → durable tool_result (#475).
-    const error = new Error(`Gatekeeper transport failure at ${gatekeeper.stage}: ${gatekeeper.reason}`) as Error & {
+    const error = new Error(`门下省 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
       stage: typeof gatekeeper.stage;
       reason: string;
       submission?: unknown;
