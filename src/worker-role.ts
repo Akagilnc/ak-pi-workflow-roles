@@ -163,7 +163,7 @@ function requireSingletonSubmissionCall(
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   const seat = roleLabel === "Fixer" ? "修内司" : "将作监";
-  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant") {
+  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant" || !Array.isArray(leaf.message.content)) {
     throw new Error(`${seat}回执非唯一终局工具调用`);
   }
   const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");

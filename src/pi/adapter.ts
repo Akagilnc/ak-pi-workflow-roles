@@ -1,17 +1,12 @@
 import type {
-  AgentToolResult,
   ExtensionAPI,
   ExtensionContext,
   SessionManager,
-  ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { Static, TSchema } from "typebox";
 import { requireGatekeeperPass, type GatekeeperNonPassResult, type GatekeeperSubject } from "../gatekeeper-role.ts";
 import type {
   HostContext,
   HostEventRegistration,
-  HostToolDefinition,
-  HostToolResult,
   RoleHost,
 } from "../host-contracts.ts";
 
@@ -29,12 +24,12 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
     mode: context.mode,
     model: context.model === undefined ? undefined : { provider: context.model.provider },
     sessionManager: {
-      getLeafEntry: () => context.sessionManager.getLeafEntry() as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
+      getLeafEntry: () => context.sessionManager.getLeafEntry(),
       getLeafId: () => context.sessionManager.getLeafId(),
-      getEntries: () => context.sessionManager.getEntries() as ReturnType<HostContext["sessionManager"]["getEntries"]>,
+      getEntries: () => context.sessionManager.getEntries(),
       getSessionDir: () => context.sessionManager.getSessionDir(),
       getSessionFile: () => context.sessionManager.getSessionFile(),
-      getHeader: () => sessionManager.getHeader(),
+      getHeader: () => context.sessionManager.getHeader(),
       setSessionFile: (path) => sessionManager.setSessionFile(path),
       appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
     },
@@ -86,32 +81,6 @@ export function fromPiContext(context: ExtensionContext): HostContext {
   return projectPiContext(context);
 }
 
-function toPiResult<D>(result: HostToolResult<D>): AgentToolResult<D> {
-  return result as AgentToolResult<D>;
-}
-
-/** Project a package-owned tool definition onto Pi's registration/custom-tool contract. */
-export function toPiToolDefinition<S extends TSchema, D>(
-  tool: HostToolDefinition<S, D>,
-  projectContext: (context: ExtensionContext) => HostContext = fromPiContext,
-): ToolDefinition<S, D> {
-  return {
-    name: tool.name,
-    label: tool.label,
-    description: tool.description,
-    ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
-    parameters: tool.parameters,
-    execute: async (toolCallId, params, signal, update, context) =>
-      toPiResult(await tool.execute(
-        toolCallId,
-        params as Static<S>,
-        signal,
-        update === undefined ? undefined : (result) => update(toPiResult(result)),
-        projectContext(context),
-      )),
-  };
-}
-
 /** Pi composition boundary. Each consumed capability is adapted explicitly. */
 export function createPiRoleHostAdapter(
   pi: ExtensionAPI,
@@ -120,10 +89,7 @@ export function createPiRoleHostAdapter(
   const host: RoleHost = {
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),
-    registerTool: (tool) => pi.registerTool(toPiToolDefinition(
-      tool,
-      (context) => projectPiContext(context, options.transcriptFromContext),
-    )),
+    registerTool: (tool) => pi.registerTool(tool),
     getAllTools: () => pi.getAllTools().map(({ name, sourceInfo }) => ({
       name,
       ...(sourceInfo?.path === undefined ? {} : { sourceInfo: { path: sourceInfo.path } }),
