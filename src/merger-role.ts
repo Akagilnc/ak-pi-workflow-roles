@@ -1,4 +1,4 @@
-import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
+import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, mergerOutputSchema, validateMergerInput, validateMergerOutput, type MergerInput } from "./merger-contracts.ts";
 import type { MergerGitState } from "./merger-git-state.ts";
 import { exactUtf8 } from "./exact-utf8.ts";

@@ -1,4 +1,4 @@
-import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
+import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 /**
  * Public Notary role runtime — direct officer seat (not through Gatekeeper province).
  * Caller supplies only a source-run locator; Notary self-fetches authoritative materials.

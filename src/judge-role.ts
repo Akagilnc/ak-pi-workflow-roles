@@ -1,4 +1,4 @@
-import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
+import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 
