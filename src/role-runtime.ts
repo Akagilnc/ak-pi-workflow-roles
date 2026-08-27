@@ -637,7 +637,7 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
-    pi.on("input", (event) => {
+    roleHost.on("input", (event) => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       // Envelope exclusively owns Reviewer Skill invocation transform + original-request capture.
@@ -656,7 +656,7 @@ export function createRoleRuntimeExtension(
       }
       return { action: "continue" as const };
     });
-    pi.on("before_agent_start", (event, ctx) => {
+    roleHost.on("before_agent_start", (event, ctx) => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
@@ -713,7 +713,7 @@ export function createRoleRuntimeExtension(
         };
       }
     });
-    pi.on("tool_result", async (event) => {
+    roleHost.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined) return;
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
@@ -815,7 +815,7 @@ export function createRoleRuntimeExtension(
     // already decided no queued continuation will run, so a triggerTurn there is
     // too late for print/json sessions. `agent_end` is the last production seam
     // whose queued next turn is consumed before settlement.
-    pi.on("agent_end", (event) => {
+    roleHost.on("agent_end", (event) => {
       const lastMessage = event.messages.at(-1);
       if (lastMessage?.role === "assistant"
         && (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")) {
@@ -845,7 +845,7 @@ export function createRoleRuntimeExtension(
         }
       }
     });
-    pi.on("agent_settled", async () => {
+    roleHost.on("agent_settled", async () => {
       if (pendingNavigatorSettlement !== undefined) {
         await pendingNavigatorSettlement;
       }
@@ -867,7 +867,7 @@ export function createRoleRuntimeExtension(
         details: presentation.event,
       }, { triggerTurn: false });
     });
-    pi.on("session_shutdown", async () => {
+    roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
       oauthKeepalive.stop();
       // Flush any still-pending affirmative attendance before teardown. Accepted
@@ -1060,20 +1060,20 @@ export function createRoleRuntimeExtension(
         failInfrastructure(error, ctx);
       }
     };
-    pi.on("tool_execution_start", async (event, ctx) => {
+    roleHost.on("tool_execution_start", async (event, ctx) => {
       await observe(() => observationFace.onStart(event), ctx);
     });
-    pi.on("tool_execution_update", async (event, ctx) => {
+    roleHost.on("tool_execution_update", async (event, ctx) => {
       await observe(() => observationFace.onUpdate(event), ctx);
     });
-    pi.on("tool_execution_end", async (event, ctx) => {
+    roleHost.on("tool_execution_end", async (event, ctx) => {
       await observe(() => observationFace.onEnd(event), ctx);
     });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
     // 2xx clears prior observation (see recordTypedProviderHttpStatus). Non-success
     // write failure must surface — never silently drop authorized error evidence.
-    pi.on("after_provider_response", async (event, ctx) => {
+    roleHost.on("after_provider_response", async (event, ctx) => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
       const provider = ctx.model?.provider;
@@ -1099,7 +1099,7 @@ export function createRoleRuntimeExtension(
       }
     });
 
-    pi.on("session_start", async (event, ctx) => {
+    roleHost.on("session_start", async (event, ctx) => {
       admitted = false;
       selectedRole = undefined;
       activeReviewerParent = undefined;

@@ -4,7 +4,7 @@ import type {
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { TSchema } from "typebox";
+import type { Static, TSchema } from "typebox";
 import type {
   HostContext,
   HostEventMap,
@@ -20,7 +20,13 @@ export function fromPiContext(context: ExtensionContext): HostContext {
   const host: HostContext = {
     cwd: context.cwd,
     mode: context.mode,
-    sessionManager: context.sessionManager,
+    sessionManager: {
+      getLeafEntry: () => context.sessionManager.getLeafEntry() as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
+      getLeafId: () => context.sessionManager.getLeafId(),
+      getEntries: () => context.sessionManager.getEntries() as ReturnType<HostContext["sessionManager"]["getEntries"]>,
+      getSessionDir: () => context.sessionManager.getSessionDir(),
+      getSessionFile: () => context.sessionManager.getSessionFile(),
+    },
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     abort: () => context.abort(),
   };
@@ -50,7 +56,7 @@ export function toPiToolDefinition<S extends TSchema, D>(tool: HostToolDefinitio
     execute: async (toolCallId, params, signal, update, context) =>
       toPiResult(await tool.execute(
         toolCallId,
-        params,
+        params as Static<S>,
         signal,
         update === undefined ? undefined : (result) => update(toPiResult(result)),
         fromPiContext(context),
