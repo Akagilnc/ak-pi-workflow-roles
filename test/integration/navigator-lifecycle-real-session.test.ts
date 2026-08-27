@@ -7,7 +7,6 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
@@ -425,7 +424,6 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       },
     };
 
-    const piHostAdapter = createPiRoleHostAdapter(pi as never);
     createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "",
@@ -440,7 +438,6 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         attendanceInvocationId = options.invocationId;
         const nav = createNavigatorAttendance({
           ...options,
-          context: piHostAdapter.resolveContext(options.context),
           modelSettingPath,
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
@@ -471,7 +468,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         });
         return nav;
       },
-    }, piHostAdapter)(pi as never);
+    })(pi as never);
 
     const sessionDir = join(
       home,
@@ -484,7 +481,6 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     );
     await mkdir(sessionDir, { recursive: true });
     sessionManager = SessionManager.create(home, sessionDir);
-    sessionManager.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
     const ctx = { cwd: home, sessionManager, abort() {} };
 
     await handlers.get("session_start")?.({}, ctx);
@@ -720,7 +716,6 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     const started = new Promise<void>((resolve) => { prepStarted = resolve; });
     const events: Array<{ disposition?: string }> = [];
 
-    const piHostAdapter = createPiRoleHostAdapter(pi as never);
     createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "",
@@ -734,7 +729,6 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
       createNavigatorAttendance: (options) => {
         const nav = createNavigatorAttendance({
           ...options,
-          context: piHostAdapter.resolveContext(options.context),
           modelSettingPath: join(home, "navigator-model.json"),
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
@@ -783,13 +777,12 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
           },
         };
       },
-    }, piHostAdapter)(pi as never);
+    })(pi as never);
 
     await writeFile(join(home, "navigator-model.json"), JSON.stringify({ model: "provider/model" }));
     const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "survive", "session");
     await mkdir(sessionDir, { recursive: true });
     const sessionManager = SessionManager.create(home, sessionDir);
-    sessionManager.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
     const ctx = { cwd: home, sessionManager, abort() {} };
 
     await emit("session_start", {}, ctx);
