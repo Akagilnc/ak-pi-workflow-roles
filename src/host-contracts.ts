@@ -3,7 +3,7 @@ import { Type, type Static, type TLiteral, type TSchema } from "typebox";
 export type HostContentPart =
   | { type: "text"; text: string }
   | { type: "toolCall"; id: string; name: string; arguments?: unknown }
-  | { type: string; [key: string]: unknown };
+  | { type: string };
 
 export type HostMessage = {
   role: string;
@@ -18,7 +18,7 @@ export type HostSessionEntry = {
 };
 
 export type HostToolResult<T = unknown> = {
-  content: Array<{ type: "text"; text: string } | Record<string, unknown>>;
+  content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
   details?: T;
   terminate?: boolean;
   usage?: unknown;

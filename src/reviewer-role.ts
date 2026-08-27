@@ -53,7 +53,7 @@ export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: 
 
 function requireSoleReviewerOutputCall(id: string, ctx: HostContext): void {
   const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("御史台回执非唯一终局工具调用");
+  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant") throw new Error("御史台回执非唯一终局工具调用");
   const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
   if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== REVIEWER_OUTPUT_TOOL_NAME) throw new Error("御史台回执非唯一终局工具调用");
 }

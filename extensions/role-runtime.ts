@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
+import { toPiContext } from "../src/pi/adapter.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
@@ -263,13 +264,19 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     collectorPackageExtensionPath: extensionPath,
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
-    auditDoctorCompliance: createPiDoctorAuditor(),
+    auditDoctorCompliance: (options) => createPiDoctorAuditor()({
+      ...options,
+      context: toPiContext(options.context),
+    }),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
-    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
+    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, {
+      ...options,
+      context: toPiContext(options.context),
+    }),
     createNavigatorAttendance: (options) => {
       return createNavigatorAttendance({
-        context: options.context,
+        context: toPiContext(options.context),
         role: options.role,
         phase: options.phase,
         subjectKey: options.subjectKey,
@@ -303,7 +310,10 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     },
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
-    transcriptFromContext,
-    auditSoulCompliance: createPiJudgeAuditor(),
+    transcriptFromContext: (context) => transcriptFromContext(toPiContext(context)),
+    auditSoulCompliance: (options) => createPiJudgeAuditor()({
+      ...options,
+      context: toPiContext(options.context),
+    }),
   })(pi);
 }
