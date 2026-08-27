@@ -78,7 +78,7 @@ type ProviderResponseEvent = { status?: number };
 type AgentEndEvent = { messages: readonly HostMessage[] };
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
-type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean }; 
+type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };
 
 export type HostEventMap = {
   before_agent_start: BeforeAgentStartEvent;
@@ -107,10 +107,6 @@ export interface RoleHost {
   getCommands(): Array<{ name: string }>;
   readonly sessionManager?: HostSessionManager;
   readonly abort?: () => void;
-}
-
-export function isHostToolCall(part: { type: string }): part is { type: "toolCall"; id: string; name: string } {
-  return part.type === "toolCall" && "id" in part && "name" in part;
 }
 
 /** Local replacement for Pi AI's convenience constructor. */
