@@ -292,8 +292,10 @@ function workerCompletionGatekeeperHarness(options: {
       await reject("transport", (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject("unusable-release", (error) => {
         assert.equal(error instanceof GatekeeperDecisionError, false);
-        assert.match(error.message, /transport_failure|无显式/);
-        assert.deepEqual((error as Error & { submission?: unknown }).submission, unusableSubmission);
+        const typed = error as Error & { stage?: string; reason?: string; submission?: unknown };
+        assert.equal(typed.stage, "gatekeeper");
+        assert.ok(typeof typed.reason === "string" && typed.reason.length > 0);
+        assert.deepEqual(typed.submission, unusableSubmission);
       });
       await reject("no-receipt", (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
@@ -307,8 +309,10 @@ function workerCompletionGatekeeperHarness(options: {
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject(`${officer}-unusable-release`, (error) => {
         assert.equal(error instanceof GatekeeperDecisionError, false);
-        assert.match(error.message, /transport_failure|无显式/);
-        assert.deepEqual((error as Error & { submission?: unknown }).submission, officerUnusableSubmission);
+        const typed = error as Error & { stage?: string; reason?: string; submission?: unknown };
+        assert.equal(typed.stage, officer);
+        assert.ok(typeof typed.reason === "string" && typed.reason.length > 0);
+        assert.deepEqual(typed.submission, officerUnusableSubmission);
       });
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
