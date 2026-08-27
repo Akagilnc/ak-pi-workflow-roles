@@ -56,10 +56,12 @@ function appendEngineSessionMaterial(lines, engineMaterial) {
   }
   const out = [...lines];
   out.push("");
-  out.push("\u672C\u6B21\u914D\u7F6E\u7684\u52B3\u52A1\u5F15\u64CE\u53CA\u5176\u624B\u518C\uFF1A");
-  out.push(`- engine: ${engineMaterial.name}`);
   if (engineMaterial.materialPath !== void 0) {
+    out.push("\u672C\u6B21\u914D\u7F6E\u7684\u52B3\u52A1\u5F15\u64CE\u53CA\u5176\u624B\u518C\uFF1A");
+    out.push(`- engine: ${engineMaterial.name}`);
     out.push(`- ${engineMaterial.materialPath}`);
+  } else {
+    out.push(`- engine: ${engineMaterial.name}`);
   }
   return out;
 }
@@ -22576,6 +22578,7 @@ async function settleLawfulNotaryTerminalResult(admitted) {
   if (entries === void 0) return void 0;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === void 0) {
+    let acceptedNonUsable;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
@@ -22585,27 +22588,27 @@ async function settleLawfulNotaryTerminalResult(admitted) {
         message,
         NOTARY_OUTPUT_TOOL_NAME
       );
-      if (residual === void 0) continue;
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: residual.diagnostic,
-        details: { candidate: residual.candidate, acceptedReceipt: false }
-      });
-    }
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      if (message.toolName !== NOTARY_OUTPUT_TOOL_NAME) continue;
-      if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-      try {
-        validateRecordedNotaryOutput(message.details);
-      } catch {
+      if (residual !== void 0) {
         return settleFailureTerminalResult(admitted, {
           cause: "output",
-          diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
-          details: { candidate: message.details, acceptedReceipt: false }
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false }
         });
       }
+      if (acceptedNonUsable === void 0 && message.toolName === NOTARY_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
+        try {
+          validateRecordedNotaryOutput(message.details);
+        } catch {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== void 0) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false }
+      });
     }
     return void 0;
   }

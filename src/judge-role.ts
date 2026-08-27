@@ -108,7 +108,7 @@ export function createJudgeRoleRuntime(
           promptSnippet: "提交大理寺终局判词",
           parameters: judgeVerdictSchema,
           async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
-            if (soul === undefined) throw new Error("Judge soul was not loaded");
+            if (soul === undefined) throw new Error("大理寺职分未装载");
             requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
@@ -160,7 +160,7 @@ export function createJudgeRoleRuntime(
           },
         });
         pi.on("before_agent_start", (event) => {
-          if (soul === undefined) throw new Error("Judge soul was not loaded");
+          if (soul === undefined) throw new Error("大理寺职分未装载");
           return {
             systemPrompt:
               `${event.systemPrompt}\n\n<judge_soul>\n${soul}\n</judge_soul>`,

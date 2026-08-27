@@ -150,7 +150,7 @@ export function createReviewerRoleRuntime(
         registered = true;
         pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台薄回执；受理前经审刑院审计。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
-            if (!soul || !binding) throw new Error("Reviewer inputs were not loaded");
+            if (!soul || !binding) throw new Error("御史台输入未装载");
             requireSoleReviewerOutputCall(id, toolCtx);
             const output = validateReviewerIntent(parameters);
             let record: ReviewerExecutionRecord;
@@ -168,8 +168,8 @@ export function createReviewerRoleRuntime(
                 REVIEWER_CANDIDATE_ENTRY_TYPE,
                 { version: 1, candidate },
                 {
-                  unavailable: "reviewer candidate retention is unavailable",
-                  failed: "reviewer candidate retention failed",
+                  unavailable: "御史台候选留存不可用",
+                  failed: "御史台候选留存失败",
                 },
               );
             } catch (error) {

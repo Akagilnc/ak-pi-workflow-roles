@@ -97,7 +97,8 @@ export function engineSessionMaterialFromOptions(options: {
 /**
  * Append engine method-material delivery to session initial material lines.
  * No engine → identity copy (byte-stable when joined the same way).
- * With engine → Chinese neutral header + engine name; notes also carry absolute material path.
+ * With notes → Chinese neutral handbook header + engine name + absolute material path.
+ * Name only → engine name coordinate only (no handbook header, no path, no warning).
  * Never delivers material body.
  */
 export function appendEngineSessionMaterial(
@@ -109,10 +110,13 @@ export function appendEngineSessionMaterial(
   }
   const out = [...lines];
   out.push("");
-  out.push("本次配置的劳务引擎及其手册：");
-  out.push(`- engine: ${engineMaterial.name}`);
   if (engineMaterial.materialPath !== undefined) {
+    out.push("本次配置的劳务引擎及其手册：");
+    out.push(`- engine: ${engineMaterial.name}`);
     out.push(`- ${engineMaterial.materialPath}`);
+  } else {
+    // Name-only pass-through: no packaged bytes to claim as handbook.
+    out.push(`- engine: ${engineMaterial.name}`);
   }
   return out;
 }

@@ -30,7 +30,7 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
     if (!registered) { registered = true;
       pi.registerTool({ name: MERGER_OUTPUT_TOOL_NAME, label: "合并输出", description: "提交合并结果；输出分支为 completed 与 escalate；基础设施及 Git 失败由 abort 通道承接。", promptSnippet: "提交合并结果", parameters: mergerOutputSchema,
         async execute(id, params, _signal, _update, ctx) {
-          if (!activation) throw new Error("Merger is not activated");
+          if (!activation) throw new Error("校书郎未激活");
           if (accepted) throw new Error("合并回执已受理");
           let output;
           try {
@@ -50,7 +50,7 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
           const acceptedDetails = output;
           return { content: [{ type: "text" as const, text: MERGER_ACCEPTED_TEXT }], details: acceptedDetails, terminate: true as const };
         } });
-      pi.on("before_agent_start", event => { if (!activation) throw new Error("Merger is not activated"); const admitted = { attemptId: activation.input.attemptId, targetObjectId: activation.input.targetObjectId, sourceObjectId: activation.input.sourceObjectId, task: materialText(activation.input, "task"), authority: materialText(activation.input, "authority"), targetIntent: materialText(activation.input, "targetIntent"), sourceIntent: materialText(activation.input, "sourceIntent"), expectedConflictPaths: activation.input.expectedConflictPaths, resolutionScope: activation.input.resolutionScope, authorizedChecks: activation.input.authorizedChecks }; return { systemPrompt: `${event.systemPrompt}\n\n<merger_soul>\n${activation.soul}\n</merger_soul>\n\n<merger_assignment>\n${JSON.stringify(admitted)}\n</merger_assignment>` }; });
+      pi.on("before_agent_start", event => { if (!activation) throw new Error("校书郎未激活"); const admitted = { attemptId: activation.input.attemptId, targetObjectId: activation.input.targetObjectId, sourceObjectId: activation.input.sourceObjectId, task: materialText(activation.input, "task"), authority: materialText(activation.input, "authority"), targetIntent: materialText(activation.input, "targetIntent"), sourceIntent: materialText(activation.input, "sourceIntent"), expectedConflictPaths: activation.input.expectedConflictPaths, resolutionScope: activation.input.resolutionScope, authorizedChecks: activation.input.authorizedChecks }; return { systemPrompt: `${event.systemPrompt}\n\n<merger_soul>\n${activation.soul}\n</merger_soul>\n\n<merger_assignment>\n${JSON.stringify(admitted)}\n</merger_assignment>` }; });
     }
     const all = pi.getAllTools().map(tool => tool.name);
     for (const name of MERGER_ACTIVE_TOOLS) if (all.filter(item => item === name).length !== 1) throw new Error(`Merger required tool collision or missing: ${name}`);
