@@ -16,8 +16,8 @@ export const mergerInputSchema = Type.Object({
   authorizedChecks: Type.Array(checkSchema),
 }, { additionalProperties: false });
 const mergerOutputVariants = Type.Union([
-  Type.Object({ status: Type.Literal("completed", { description: "Merge attempt completed." }), attemptId: Type.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), report: Type.String({ minLength: 1, description: "Truthful merge outcome report." }), mergeCommitId: Type.String({ pattern: oidPattern, description: "Verified completed merge commit object ID." }) }, { additionalProperties: false }),
-  Type.Object({ status: Type.Literal("escalate", { description: "Merge attempt requires human authority." }), attemptId: Type.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), diagnosis: Type.String({ minLength: 1, description: "Reason merge completion requires escalation." }), report: Type.String({ minLength: 1, description: "Truthful merge outcome report." }) }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }), attemptId: Type.String({ minLength: 1, description: "已受理合并 attempt 身份" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), mergeCommitId: Type.String({ pattern: oidPattern, description: "已核验的完成合并 commit object ID" }) }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal("escalate", { description: "escalate — 形状指引，非 schema 闸" }), attemptId: Type.String({ minLength: 1, description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ minLength: 1, description: "合并完成需升级的原因" }), report: Type.String({ minLength: 1, description: "如实结果报告" }) }, { additionalProperties: false }),
 ]);
 export const mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
 

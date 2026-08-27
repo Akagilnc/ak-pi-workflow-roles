@@ -74,13 +74,13 @@ export type GatekeeperPassHostActions = {
 // Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
 // Opening goes through the sole openToolObject owner — no parallel transport helper.
 const officerDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "pass | bounce — guidance, not a schema gate." }),
-  findings: Type.Unknown({ description: "string[] findings retained with pass or bounce." }),
+  status: Type.Unknown({ description: "pass | bounce — 形状指引，非 schema 闸" }),
+  findings: Type.Unknown({ description: "string[] findings，随 pass 或 bounce 留存" }),
 }));
 
 const gatekeeperDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "dispatch — guidance, not a schema gate." }),
-  officer: Type.Unknown({ description: "inspector | notary when status is dispatch." }),
+  status: Type.Unknown({ description: "dispatch — 形状指引，非 schema 闸" }),
+  officer: Type.Unknown({ description: "status 为 dispatch 时为 inspector | notary" }),
 }));
 
 const INVOCATION_OVERLAY = "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
@@ -92,7 +92,7 @@ function result(content: string, details: unknown) {
 function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
   return {
     name: SUBJECT_TOOL,
-    description: "Read the admitted subject. Collection only: this tool never judges or mutates it.",
+    description: "读取已受理卷宗；只供取阅，不评判不改动。",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute() { return result(JSON.stringify(subject), subject); },
   };
@@ -102,9 +102,9 @@ function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
 export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
   return {
     name,
-    description: "Submit one typed pass or bounce decision.",
+    description: "提交一份 typed pass/bounce 决议。",
     parameters: officerDecisionSchema,
-    async execute(_id, args) { return result(`accepted ${String((args as { status?: unknown })?.status)}`, args); },
+    async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
   };
 }
 
@@ -112,9 +112,9 @@ export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
 export function createGatekeeperOutputTool(): AuditorDecisionTool {
   return {
     name: GATEKEEPER_OUTPUT_TOOL,
-    description: "Dispatch the admitted subject to one officer.",
+    description: "提交门下省派官决定。",
     parameters: gatekeeperDecisionSchema,
-    async execute(_id, args) { return result(`accepted ${String((args as { status?: unknown })?.status)}`, args); },
+    async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
   };
 }
 

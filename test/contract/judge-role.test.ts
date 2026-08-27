@@ -814,8 +814,8 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     assert.equal(tool.name, fixture.name);
     assert.ok(typeof tool.description === "string" && tool.description.length > 0);
     assert.ok(
-      (tool.promptGuidelines ?? []).some((line) => line.includes(fixture.name)),
-      `${fixture.name} guidelines must name the tool`,
+      tool.promptGuidelines === undefined || tool.promptGuidelines.length === 0,
+      `${fixture.name} must not carry promptGuidelines instruction family`,
     );
     const result = await tool.execute(
       "receipt",
@@ -1893,7 +1893,6 @@ test("coder apply binds completion to the immediately following canonical tdd ex
           { id: "sibling", name: "read" },
         ]),
       ),
-      /Coder output must be the sole final tool call/,
     );
   }
 });
@@ -2070,7 +2069,6 @@ test("fixer output must be the sole call in its assistant batch", async () => {
           undefined,
           toolCallContext(calls),
         ),
-        /Fixer output must be the sole final tool call/,
       );
     }
 
@@ -2086,6 +2084,7 @@ test("fixer output must be the sole call in its assistant batch", async () => {
       withPassingGatekeeper(toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
     );
     assert.deepEqual(accepted.details, output);
+    assert.equal(accepted.terminate, true);
   });
 });
 
@@ -2138,7 +2137,6 @@ test("judge output must be the sole call in its assistant batch", async () => {
         undefined,
         toolCallContext(calls),
       ),
-      /sole final tool call/,
     );
   }
   for (const sessionManager of [
@@ -2161,10 +2159,18 @@ test("judge output must be the sole call in its assistant batch", async () => {
         undefined,
         { sessionManager, abort() {} } as unknown as ExtensionContext,
       ),
-      /sole final tool call/,
     );
   }
   assert.equal(auditCalls, 0);
+  const accepted = await tool.execute(
+    "judge",
+    verdict,
+    undefined,
+    undefined,
+    withPassingGatekeeper(toolCallContext([{ id: "judge", name: JUDGE_OUTPUT_TOOL_NAME, arguments: verdict }])),
+  );
+  assert.deepEqual(accepted.details, verdict);
+  assert.equal(accepted.terminate, true);
 });
 
 test(

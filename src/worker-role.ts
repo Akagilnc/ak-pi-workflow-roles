@@ -59,24 +59,27 @@ function matchFixerBashForbiddenLiteral(
 
 const coderOutputVariants = Type.Union([
   Type.Object({
-    status: StringEnum(["planned"] as const, { description: "Plan-phase proposal outcome." }),
-    report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
+    status: StringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
+    report: Type.String({ minLength: 1, description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["completed", "refused"] as const, { description: "Completed or lawfully refused apply outcome." }),
-    report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
+    status: StringEnum(["completed", "refused"] as const, {
+      description:
+        "completed | refused — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据",
+    }),
+    report: Type.String({ minLength: 1, description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
     status: StringEnum(["unfinished"] as const, {
       description:
-        "Apply outcome when a missing prerequisite or an unconstitutional constraint blocks completing this invocation; state the reason.",
+        "unfinished — 形状指引，非 schema 闸；缺前置或违宪约束致本局未完成时可用。缺待决 owner 决定或答复属缺前置。",
     }),
-    report: Type.String({ minLength: 1, description: "Truthful Coder outcome report." }),
-    remainingScope: Type.String({ minLength: 1, description: "Work remaining after this invocation." }),
+    report: Type.String({ minLength: 1, description: "如实结果报告" }),
+    remainingScope: Type.String({ minLength: 1, description: "本局后剩余工作" }),
     reason: Type.Optional(Type.String({
       minLength: 1,
       description:
-        "Blocking reason: prerequisite missing or unconstitutional. A missing pending owner decision or answer is a missing prerequisite.",
+        "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。",
     })),
   }, { additionalProperties: false }),
 ]);
@@ -161,8 +164,9 @@ function requireSingletonSubmissionCall(
   ctx: ExtensionContext,
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
+  const seat = roleLabel === "Fixer" ? "修内司" : "将作监";
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error(`${roleLabel} output must be the sole final tool call`);
+    throw new Error(`${seat}回执非唯一终局工具调用`);
   }
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
   const call = calls[0];
@@ -170,7 +174,7 @@ function requireSingletonSubmissionCall(
     calls.length !== 1 || call === undefined || call.id !== toolCallId ||
     call.name !== expectedToolName
   ) {
-    throw new Error(`${roleLabel} output must be the sole final tool call`);
+    throw new Error(`${seat}回执非唯一终局工具调用`);
   }
 }
 
@@ -255,17 +259,9 @@ export function createFixerRoleRuntime(
         lifecycleRegistered = true;
         pi.registerTool({
           name: FIXER_OUTPUT_TOOL_NAME,
-          label: "Fixer Output",
-          description:
-            "Submit the plan refusal, apply settlement, or unfinished blocked-handover receipt.",
-          promptSnippet: "Submit the final fixer report",
-          promptGuidelines: [
-            `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
-            `${FIXER_OUTPUT_TOOL_NAME} reports only lawful assignment blockers; infrastructure failures abort.`,
-            "plan permits planned|refused; apply permits completed|refused|partially_completed|unfinished.",
-            "unfinished is available only when a missing prerequisite or an unconstitutional constraint prevents completing this invocation; state the reason. A missing pending owner decision or answer is a missing prerequisite.",
-            "When the diff includes test changes, submit testEvidence: contract proven, one-line minimum necessary cost, measured duration.",
-          ],
+          label: "修内司输出",
+          description: "提交修内司终局回执；基础设施失败走 abort，不经本工具。",
+          promptSnippet: "提交修内司终局回执",
           parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (packet === undefined || phase === undefined) {
@@ -396,17 +392,9 @@ export function createCoderRoleRuntime(
         lifecycleRegistered = true;
         pi.registerTool({
           name: CODER_OUTPUT_TOOL_NAME,
-          label: "Coder Output",
-          description:
-            "Submit a plan, completion, unfinished blocked-handover, or evidence-bearing refusal for the active coder phase.",
-          promptSnippet: "Submit the final coder report",
-          promptGuidelines: [
-            `Use ${CODER_OUTPUT_TOOL_NAME} as the final action for the coder role.`,
-            `${CODER_OUTPUT_TOOL_NAME} never escalates; explain authority or task conflicts in report for the caller to dispose.`,
-            "plan permits planned|refused; apply permits completed|unfinished|refused.",
-            "unfinished is available only when a missing prerequisite or an unconstitutional constraint prevents completing this invocation; state the reason. A missing pending owner decision or answer is a missing prerequisite.",
-            "A completed apply report must preserve evidence for TDD, the same-pattern check, introduced-regression check, and behavior-fact check.",
-          ],
+          label: "将作监输出",
+          description: "提交将作监终局回执；本工具无 escalate 通道。",
+          promptSnippet: "提交将作监终局回执",
           parameters: coderOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
             if (task === undefined || phase === undefined) {
