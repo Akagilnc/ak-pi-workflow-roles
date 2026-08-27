@@ -28,11 +28,10 @@ import {
   assertPublicFailureSettlement,
 } from "../helpers/failure-settlement-kit.ts";
 
-test("fast four-role public wiring matrix settles an injected auditor provider stop", async () => {
+test("fast audited-seat public wiring matrix settles an injected auditor provider stop", async () => {
+  // #495 S6: AUDITOR_SOUL_ROLES is judge/doctor only (reviewer gate retired; fixer #242).
   const argv = {
     judge: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
-    fixer: (project: string) => ["--model", "openai-codex/faux-1:off", "fixer", "--project", project, "audit provider stop"],
-    reviewer: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "--base", "HEAD", "audit provider stop"],
     doctor: (project: string) => ["--model", "openai-codex/faux-1:off", "doctor", "--issue", "212", "--project", project, "audit provider stop"],
   } as const;
   for (const role of AUDITOR_SOUL_ROLES) await withTempHome(async (home) => {

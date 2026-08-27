@@ -3,11 +3,11 @@ import { COLLECTOR_ELIGIBILITY_MS } from "./collector-evidence.ts";
 
 export const collectorObserveArgsSchema = Type.Object({}, { additionalProperties: false });
 export const collectorRequestArgsSchema = Type.Object({
-  requestId: Type.String({ minLength: 1, description: "Configured request identity." }),
-  snapshotId: Type.String({ minLength: 1, description: "Latest retained observation snapshot." }),
+  requestId: Type.String({ minLength: 1, description: "配置请求身份" }),
+  snapshotId: Type.String({ minLength: 1, description: "最新留存观察快照" }),
 }, { additionalProperties: false });
 export const collectorWaitArgsSchema = Type.Object({
-  durationMs: Type.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS }),
+  durationMs: Type.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "等待毫秒；单次上限五分钟且不超剩余资格" }),
 }, { additionalProperties: false });
 /** Runtime owns the observed groups; the model only signals sole-final submission. */
 export const collectorOutputArgsSchema = Type.Object({}, { additionalProperties: true });

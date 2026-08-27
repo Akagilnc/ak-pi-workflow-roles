@@ -23,12 +23,12 @@ export function auditorRunDirectory(context: ExtensionContext): string | undefin
 export function createAuditorDossierTool(runDirectory: string | undefined) {
   return {
     name: AUDITOR_DOSSIER_TOOL_NAME,
-    description: "Locate this auditor's bound run dossier and its evidence entry points.",
+    description: "定位本审计席绑定的 run 卷宗及其证据入口。",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute(_id: string, _params: unknown): Promise<AgentToolResult<AuditorDossierLocation | undefined>> {
       if (runDirectory === undefined) {
         return {
-          content: [{ type: "text", text: "This auditor has no run-bound dossier record." }],
+          content: [{ type: "text", text: "本审计席无绑定 run 卷宗记录。" }],
           details: undefined,
         };
       }

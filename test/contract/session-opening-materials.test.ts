@@ -1,22 +1,24 @@
 /**
- * #443 — session opening materials: ticket-oracle byte equality at the three
- * loader families. Pack/default-wiring real entries live in package + gatekeeper
- * integration trunks (not parallel injected-loadSoul harnesses).
+ * #443 / #495 S4 — session opening materials: ticket-oracle path rosters at the
+ * three loader families (no soul-prose byte pin). Pack/default-wiring real entries
+ * live in package + gatekeeper integration trunks.
  */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
 
-import { loadAuditorSoul, AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import {
+  AUDITOR_SESSION_MATERIALS,
+  AUDITOR_SOUL_ROLES,
+} from "../../src/auditor-soul.ts";
+import {
+  GATEKEEPER_SESSION_MATERIALS,
   joinPackageMaterials,
-  loadGatekeeperSessionMaterials,
-  loadMainRoleSessionMaterials,
+  MAIN_ROLE_SESSION_MATERIALS,
+  type GatekeeperSessionRole,
+  type MainRoleSession,
 } from "../../src/session-opening-materials.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-/** Ticket #443 What-to-build oracles — not imported from production tables. */
+/** Ticket #443 What-to-build path oracles — not imported from production tables. */
 const TICKET_MAIN_MATERIALS = {
   judge: [
     "CLAUDE.md",
@@ -37,7 +39,12 @@ const TICKET_MAIN_MATERIALS = {
     "souls/quality-law.md",
     "souls/coder-output-guide.md",
   ],
-  reviewer: ["CLAUDE.md", "souls/reviewer.md", "souls/audit-law.md"],
+  reviewer: [
+    "CLAUDE.md",
+    "souls/reviewer.md",
+    "souls/audit-law.md",
+    "souls/quality-law.md",
+  ],
   collector: ["CLAUDE.md", "souls/collector.md"],
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],
@@ -63,49 +70,37 @@ const TICKET_AUDITOR_MATERIALS = {
     "souls/audit-law.md",
     "souls/quality-law.md",
   ],
-  reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md", "souls/audit-law.md"],
   // #470 范围修正: doctor auditor 暂不装审刑院法典
+  // #495 S6: reviewer-side auditor roster retired with gate
   doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
 } as const;
 
-async function expectJoined(relativePaths: readonly string[]): Promise<string> {
-  const parts = [];
-  for (const relativePath of relativePaths) {
-    parts.push(await readFile(resolve(packageRoot, relativePath), "utf8"));
-  }
-  return parts.join("\n\n");
-}
-
-test("main-role loaders match ticket material roster byte-for-byte", async () => {
+test("main-role material roster matches ticket path list", () => {
   for (const [role, paths] of Object.entries(TICKET_MAIN_MATERIALS)) {
-    assert.equal(
-      await loadMainRoleSessionMaterials(
-        role as keyof typeof TICKET_MAIN_MATERIALS,
-      ),
-      await expectJoined(paths),
-      `${role} must carry ticket materials from package source`,
+    assert.deepEqual(
+      [...MAIN_ROLE_SESSION_MATERIALS[role as MainRoleSession]],
+      [...paths],
+      `${role} must carry ticket material paths`,
     );
   }
 });
 
-test("gatekeeper family loaders match ticket material roster byte-for-byte", async () => {
+test("gatekeeper family material roster matches ticket path list", () => {
   for (const [role, paths] of Object.entries(TICKET_GATEKEEPER_MATERIALS)) {
-    assert.equal(
-      await loadGatekeeperSessionMaterials(
-        role as keyof typeof TICKET_GATEKEEPER_MATERIALS,
-      ),
-      await expectJoined(paths),
-      `${role} must carry ticket materials from package source`,
+    assert.deepEqual(
+      [...GATEKEEPER_SESSION_MATERIALS[role as GatekeeperSessionRole]],
+      [...paths],
+      `${role} must carry ticket material paths`,
     );
   }
 });
 
-test("auditor loaders match ticket material roster byte-for-byte", async () => {
+test("auditor material roster matches ticket path list", () => {
   for (const role of AUDITOR_SOUL_ROLES) {
-    assert.equal(
-      await loadAuditorSoul(role),
-      await expectJoined(TICKET_AUDITOR_MATERIALS[role]),
-      `${role} auditor must carry ticket materials from package source`,
+    assert.deepEqual(
+      [...AUDITOR_SESSION_MATERIALS[role]],
+      [...TICKET_AUDITOR_MATERIALS[role]],
+      `${role} auditor must carry ticket material paths`,
     );
   }
 });

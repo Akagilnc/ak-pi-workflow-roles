@@ -3,7 +3,9 @@ import { canonicalJson } from "./canonical-json.js";
 import { openToolObjectFromUnion } from "./open-tool-schema.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
-export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "Submit the sole final typed single-case testimony. Use completed when findings is empty or contains only non-prescriptive case observations. The runtime adds its derived case cost to the accepted receipt. Refuse only when the evidence cannot support even truthful case testimony; unavailable reusable-asset or bounded-bite evidence blocks only the corresponding asset prescription.";
+export const DOCTOR_ACCEPTED_TEXT = "太医署回执已接受";
+export const DOCTOR_ACCEPTED_AUDIT_NO_RECEIPT_TEXT = "太医署回执已接受；审计无回执";
+export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "提交唯一终局单案证词；completed 允许空 findings；runtime 补记派生成本入回执。";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: false });
@@ -37,22 +39,22 @@ const cost = Type.Object({
 }, { additionalProperties: false });
 const doctorSubmissionVariants = Type.Union([
     Type.Object({
-        status: Type.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
-        case: Type.Unsafe({ ...caseIdentity, description: "Identity of the retained Doctor case." }),
-        findings: Type.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." }),
-    }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
+        status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸；允许空 findings；runtime 补记派生成本入回执" }),
+        case: Type.Unsafe({ ...caseIdentity, description: "留存太医署案身份" }),
+        findings: Type.Array(finding, { description: "可空或仅含非处方案观察；缺可复用资产或 bounded-bite 证据只排除对应资产处方" }),
+    }, { additionalProperties: false, description: "单案证词，不要求任何处方或可复用 finding" }),
     Type.Object({
-        status: Type.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
-        reason: Type.String({ minLength: 1, description: "Reason evidence is insufficient for truthful testimony." }),
-        missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "Evidence required before truthful testimony is possible." }),
-    }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." }),
+        status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸；仅当证据不足以支撑如实案证词" }),
+        reason: Type.String({ minLength: 1, description: "证据不足以支撑如实证词的原因" }),
+        missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "如实证词所需而尚缺的证据" }),
+    }, { additionalProperties: false, description: "证据不足以支撑如实案证词" }),
 ]);
 export const doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
 export const doctorOutputSchema = Type.Union([
     Type.Object({ status: Type.Literal("completed"), case: caseIdentity, findings: Type.Array(finding), cost }, { additionalProperties: false }),
     doctorSubmissionVariants.anyOf[1],
 ]);
-export const doctorEvidenceReadSchema = Type.Object({ evidenceId: Type.String({ minLength: 1, description: "Identifier of the retained evidence to read." }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based byte offset at which to begin reading." })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096, description: "Maximum number of bytes to return." })) }, { additionalProperties: false });
+export const doctorEvidenceReadSchema = Type.Object({ evidenceId: Type.String({ minLength: 1, description: "待读留存证据标识" }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "起始字节偏移（从 0 计）" })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096, description: "返回字节上限" })) }, { additionalProperties: false });
 export class DoctorSubmissionContractError extends Error {
     name = "DoctorSubmissionContractError";
 }
@@ -67,14 +69,14 @@ catch {
 export function validateDoctorSubmissionShape(value) {
     const status = read(value, "status");
     if (status !== "completed" && status !== "refused")
-        throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+        throw new DoctorSubmissionContractError("太医署交卷无已识别的执行状态");
     return value;
 }
 export function validateRecordedDoctorOutput(value) {
     const output = validateDoctorSubmissionShape(value);
     const status = read(output, "status");
     if (status === "completed" && read(output, "cost") === undefined)
-        throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+        throw new DoctorSubmissionContractError("completed 太医署回执缺少 runtime 持有的 cost 证词");
     return output;
 }
 export class DoctorEvidenceStore {
@@ -86,9 +88,9 @@ export class DoctorEvidenceStore {
         this.entries = new Map(patient.evidence.map((entry) => [entry.id, entry]));
     }
     read(evidenceId, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry)
-        throw new Error(`Evidence ID is not admitted: ${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096)
-        throw new Error("Invalid evidence pagination"); if (offset > entry.contentLength)
-        throw new Error("Evidence offset exceeds content"); const end = Math.min(entry.contentLength, offset + limit); const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end]].sort((a, b) => a[0] - b[0]); const merged = []; for (const range of ranges) {
+        throw new Error(`证据 ID 未准入：${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096)
+        throw new Error("证据分页参数无效"); if (offset > entry.contentLength)
+        throw new Error("证据 offset 超出内容"); const end = Math.min(entry.contentLength, offset + limit); const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end]].sort((a, b) => a[0] - b[0]); const merged = []; for (const range of ranges) {
         const prior = merged.at(-1);
         if (prior && range[0] <= prior[1])
             prior[1] = Math.max(prior[1], range[1]);
@@ -102,11 +104,11 @@ export function validateDoctorOutput(value, patient, store) {
     const output = validateDoctorSubmissionShape(value);
     const lawfulTargets = new Set(["case", ...patient.cost.invocations.sources]);
     const assertTarget = (targetKey) => { if (typeof targetKey === "string" && !lawfulTargets.has(targetKey))
-        throw new Error(`Target key is not a lawful case target: ${targetKey}`); };
+        throw new DoctorSubmissionContractError(`targetKey 不是合法案目标：${targetKey}`); };
     const readCitations = (ids, label) => { if (!Array.isArray(ids))
         return; for (const id of ids)
         if (typeof id === "string" && (!store.entries.has(id) || !store.hasRead(id)))
-            throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
+            throw new DoctorSubmissionContractError(`${label} 须引用已准入/已读证据：${id}`); };
     if (read(output, "status") === "refused") {
         const missingEvidence = read(output, "missingEvidence");
         if (Array.isArray(missingEvidence))
@@ -122,7 +124,7 @@ export function validateDoctorOutput(value, patient, store) {
     const issueNumber = read(identity, "issueNumber");
     const runsPath = read(identity, "runsPath");
     if ((issueNumber !== undefined && issueNumber !== patient.identity.issueNumber) || (runsPath !== undefined && runsPath !== patient.identity.runsPath))
-        throw new Error("Doctor submission case must equal the activated case identity");
+        throw new DoctorSubmissionContractError("太医署交卷 case 须等于已激活案身份");
     const findings = read(output, "findings");
     if (!Array.isArray(findings))
         return output;
@@ -138,9 +140,9 @@ export function validateDoctorOutput(value, patient, store) {
         const assetTargetKind = read(assetEvidence, "targetKind");
         const assetEvidenceId = read(assetEvidence, "evidenceId");
         if (typeof assetTargetKey === "string" && assetTargetKey !== targetKey)
-            throw new Error("Typed asset evidence must establish the finding target key");
+            throw new DoctorSubmissionContractError("类型化资产证据须确立 finding 的 targetKey");
         if (typeof assetTargetKind === "string" && assetTargetKind !== read(finding, "targetKind"))
-            throw new Error("Typed asset evidence must establish the finding target kind");
+            throw new DoctorSubmissionContractError("类型化资产证据须确立 finding 的 targetKind");
         if (typeof assetEvidenceId === "string")
             readCitations([assetEvidenceId], "asset evidence");
         const guardrails = read(finding, "guardrails");
@@ -151,12 +153,12 @@ export function validateDoctorOutput(value, patient, store) {
         if (biteKind !== "actual" && biteKind !== "noRealBite")
             continue;
         if (read(bite, "targetKey") !== targetKey)
-            throw new Error("lastRealBite target mismatch");
+            throw new DoctorSubmissionContractError("lastRealBite 目标不匹配");
         if (biteKind === "actual") {
             const evidenceId = read(bite, "evidenceId");
             const entry = typeof evidenceId === "string" ? store.entries.get(evidenceId) : undefined;
             if (!entry || entry.kind !== "session" || !store.hasRead(entry.id))
-                throw new Error("actual bite must cite an admitted/read retained session");
+                throw new DoctorSubmissionContractError("actual bite 须引用已准入/已读的留存 session");
         }
         else {
             const eligible = patient.evidence.map((entry) => entry.id).sort();
@@ -164,7 +166,7 @@ export function validateDoctorOutput(value, patient, store) {
             if (Array.isArray(ids)) {
                 const claimed = ids.filter((id) => typeof id === "string").sort();
                 if (canonicalJson(claimed) !== canonicalJson(eligible))
-                    throw new Error("noRealBite must prove the complete eligible single-case evidence population");
+                    throw new DoctorSubmissionContractError("noRealBite 须证明完整的单案合格证据全集");
                 readCitations(eligible, "noRealBite");
             }
         }

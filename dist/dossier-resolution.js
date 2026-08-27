@@ -7,7 +7,6 @@ import { resolve } from "node:path";
 import { JUDGE_OUTPUT_TOOL_NAME as JUDGE_OUTPUT_TOOL } from "./package-contracts/judge-output.js";
 export const JUDGE_OUTPUT_TOOL_NAME = JUDGE_OUTPUT_TOOL;
 export const AUDIT_RUN_DIR_ENV = "AK_ROLE_RUN_DIR";
-export const REVIEWER_CANDIDATE_ENTRY_TYPE = "ak_reviewer_audit_candidate";
 export const DOCTOR_CANDIDATE_ENTRY_TYPE = "ak_doctor_audit_candidate";
 /**
  * Resolve the per-run dossier pointer injected by the public CLI.
@@ -73,18 +72,6 @@ export function readJudgeAuditSubjects(context) {
         return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-verdict" } };
     }
     return { status: "ok" };
-}
-/**
- * Reviewer candidate receipt must be recorded before audit (first-record-then-audit).
- */
-export function readReviewerAuditSubjects(context) {
-    const entries = context.sessionManager.getEntries?.() ?? [];
-    for (const entry of entries) {
-        if (entry.type === "custom" && entry.customType === REVIEWER_CANDIDATE_ENTRY_TYPE) {
-            return { status: "ok" };
-        }
-    }
-    return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-receipt" } };
 }
 /**
  * Doctor candidate testimony must be recorded before audit.

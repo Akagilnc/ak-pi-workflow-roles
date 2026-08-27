@@ -1,5 +1,5 @@
 /**
- * #478 Terminal menxia projection — real public CLI entry (runAkRole).
+ * #478 Terminal gate projection — real public CLI entry (runAkRole).
  *
  * Size: mid-tier contract (temp HOME/git + public runner), not a unit micro-test.
  * Owned under test/contract so daily `pnpm test` still covers it with unit+contract.
@@ -7,15 +7,15 @@
  * External contracts only:
  *   1. normal dispatch + officer findings; non-empty reason kept as written
  *   2. seat reduction without written reason (reason key absent)
- *   3. no-gate → menxia omitted
+ *   3. no-gate → gate omitted
  *   4. damaged auditor-roles → must not wash to "no gate"
  *   5. ordinary controlled failure still projects accepted gate facts
  *   6. no_receipt projects accepted gate facts
- *   7. resumable failure projects menxia while keeping runId only in resume.command
- *   8. audit-incomplete + menxia read damage ≠ publication-failure label
+ *   7. resumable failure projects gate while keeping runId only in resume.command
+ *   8. audit-incomplete + gate read damage ≠ publication-failure label
  *   9. failure path keeps damaged auditor-roles loud
  *
- * Oracles: typed TerminalResult.menxia / roleOutcome fields only (ADR 0052).
+ * Oracles: typed TerminalResult.gate / roleOutcome fields only (ADR 0052).
  */
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -27,7 +27,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { renderResumeCommand } from "../../src/public-cli/run-lifecycle.ts";
-import type { TerminalMenxiaFact, TerminalResult } from "../../src/public-cli/terminal.ts";
+import type { TerminalGateFact, TerminalResult } from "../../src/public-cli/terminal.ts";
 import {
   captureIo,
   seedGitProject,
@@ -43,7 +43,7 @@ function iso(offsetMs: number): string {
   return new Date(BASE_MS + offsetMs).toISOString();
 }
 
-async function seedMenxiaPair(
+async function seedGatePair(
   sessionDir: string,
   input: {
     readonly officer: "inspector" | "notary";
@@ -146,13 +146,13 @@ function auditIncompleteSessionRows(callId: string, candidate: unknown): string 
   ].join("\n") + "\n";
 }
 
-function assertMenxiaNotaryRound(
-  menxia: TerminalMenxiaFact,
+function assertGateNotaryRound(
+  gate: TerminalGateFact,
   reason: string | undefined,
 ): void {
-  assert.deepEqual(menxia.actualSeats, ["gatekeeper", "notary"]);
-  assert.equal(menxia.rounds.length, 1);
-  const round = menxia.rounds[0]!;
+  assert.deepEqual(gate.actualSeats, ["gatekeeper", "notary"]);
+  assert.equal(gate.rounds.length, 1);
+  const round = gate.rounds[0]!;
   assert.equal(round.roundIndex, 1);
   assert.equal(round.dispatch.status, "dispatch");
   assert.equal(round.dispatch.officer, "notary");
@@ -171,11 +171,11 @@ function assertMenxiaNotaryRound(
   assert.ok(round.officer.findings.every((item) => typeof item === "string"));
 }
 
-/** Typed oracle: menxia/session JSONL damage surfaces as LedgerSessionJsonlError, not publication failure. */
-function assertLoudMenxiaReadFailure(terminal: TerminalResult): void {
+/** Typed oracle: gate/session JSONL damage surfaces as LedgerSessionJsonlError, not publication failure. */
+function assertLoudGateReadFailure(terminal: TerminalResult): void {
   assert.equal(terminal.roleOutcome.kind, "failure");
   if (terminal.roleOutcome.kind !== "failure") {
-    throw new Error("expected failure terminal for menxia read damage");
+    throw new Error("expected failure terminal for gate read damage");
   }
   assert.equal(terminal.roleOutcome.cause, "unrecognized");
   assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "LedgerSessionJsonlError");
@@ -183,7 +183,7 @@ function assertLoudMenxiaReadFailure(terminal: TerminalResult): void {
     Object.prototype.hasOwnProperty.call(terminal.roleOutcome.decisiveFacts, "publicationFailure"),
     false,
   );
-  assert.equal(terminal.menxia, undefined);
+  assert.equal(terminal.gate, undefined);
 }
 
 async function runJudgePublic(input: {
@@ -198,7 +198,7 @@ async function runJudgePublic(input: {
 }): Promise<{ terminal: TerminalResult; exitCode: number; stdout: string[]; stderr: string[] }> {
   const { io, stdout, stderr } = captureIo();
   const result = await runAkRole(
-    ["judge", "--project", input.project, "menxia projection"],
+    ["judge", "--project", input.project, "gate projection"],
     {
       packageRoot,
       home: input.home,
@@ -228,7 +228,7 @@ async function runJudgePublic(input: {
   };
 }
 
-test("public CLI projects normal menxia dispatch + officer findings", async () => {
+test("public CLI projects normal gate dispatch + officer findings", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -240,10 +240,10 @@ test("public CLI projects normal menxia dispatch + officer findings", async () =
     const { terminal, exitCode } = await runJudgePublic({
       home,
       project,
-      runId: "run-menxia-normal",
+      runId: "run-gate-normal",
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
-        await seedMenxiaPair(sessionDir, {
+        await seedGatePair(sessionDir, {
           officer: "notary",
           reason,
           findings: [...findings],
@@ -252,13 +252,13 @@ test("public CLI projects normal menxia dispatch + officer findings", async () =
     });
     assert.equal(exitCode, 0);
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.ok(terminal.menxia !== undefined);
-    assertMenxiaNotaryRound(terminal.menxia!, reason);
+    assert.ok(terminal.gate !== undefined);
+    assertGateNotaryRound(terminal.gate!, reason);
     // Typed reason field projects fixture bytes as written (not re-trimmed).
-    assert.equal(terminal.menxia!.rounds[0]!.dispatch.reason, reason);
-    assert.equal(terminal.menxia!.rounds[0]!.officer.findings.length, findings.length);
-    assert.deepEqual(terminal.menxia!.rounds[0]!.officer.findings, [...findings]);
-  }, { prefix: "ak-menxia-normal-" });
+    assert.equal(terminal.gate!.rounds[0]!.dispatch.reason, reason);
+    assert.equal(terminal.gate!.rounds[0]!.officer.findings.length, findings.length);
+    assert.deepEqual(terminal.gate!.rounds[0]!.officer.findings, [...findings]);
+  }, { prefix: "ak-gate-normal-" });
 });
 
 test("public CLI shows seat reduction without reason as reason-absent", async () => {
@@ -269,18 +269,18 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
     const { terminal } = await runJudgePublic({
       home,
       project,
-      runId: "run-menxia-no-reason",
+      runId: "run-gate-no-reason",
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
-        await seedMenxiaPair(sessionDir, {
+        await seedGatePair(sessionDir, {
           officer: "inspector",
           findings: [],
         });
       },
     });
-    assert.ok(terminal.menxia !== undefined);
-    assert.deepEqual(terminal.menxia!.actualSeats, ["gatekeeper", "inspector"]);
-    const round = terminal.menxia!.rounds[0]!;
+    assert.ok(terminal.gate !== undefined);
+    assert.deepEqual(terminal.gate!.actualSeats, ["gatekeeper", "inspector"]);
+    const round = terminal.gate!.rounds[0]!;
     assert.equal(round.dispatch.officer, "inspector");
     assert.equal(
       Object.prototype.hasOwnProperty.call(round.dispatch, "reason"),
@@ -288,10 +288,10 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
       "reason must stay absent when dispatch wrote none",
     );
     assert.deepEqual(round.officer.findings, []);
-  }, { prefix: "ak-menxia-no-reason-" });
+  }, { prefix: "ak-gate-no-reason-" });
 });
 
-test("public CLI omits menxia when no auditor-roles gate ran", async () => {
+test("public CLI omits gate when no auditor-roles gate ran", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -299,19 +299,19 @@ test("public CLI omits menxia when no auditor-roles gate ran", async () => {
     const { terminal } = await runJudgePublic({
       home,
       project,
-      runId: "run-menxia-no-gate",
+      runId: "run-gate-no-gate",
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
       },
     });
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(
-      Object.prototype.hasOwnProperty.call(terminal, "menxia"),
+      Object.prototype.hasOwnProperty.call(terminal, "gate"),
       false,
-      "no-gate run must keep menxia omitted (zero change)",
+      "no-gate run must keep gate omitted (zero change)",
     );
-    assert.equal(terminal.menxia, undefined);
-  }, { prefix: "ak-menxia-no-gate-" });
+    assert.equal(terminal.gate, undefined);
+  }, { prefix: "ak-gate-no-gate-" });
 });
 
 test("public CLI does not wash damaged auditor-roles into no-gate", async () => {
@@ -322,7 +322,7 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
     const { terminal, exitCode } = await runJudgePublic({
       home,
       project,
-      runId: "run-menxia-damaged",
+      runId: "run-gate-damaged",
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         const auditorDir = join(sessionDir, "auditor-roles");
@@ -333,11 +333,11 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
     // Settlement read fails loud — public entry settles a failure carrying the
     // typed JSONL error identity, never an accepted Terminal that pretends no gate ran.
     assert.equal(exitCode, 1);
-    assertLoudMenxiaReadFailure(terminal);
-  }, { prefix: "ak-menxia-damaged-" });
+    assertLoudGateReadFailure(terminal);
+  }, { prefix: "ak-gate-damaged-" });
 });
 
-test("public CLI failure Terminal still projects accepted menxia gate facts", async () => {
+test("public CLI failure Terminal still projects accepted gate facts", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -346,27 +346,27 @@ test("public CLI failure Terminal still projects accepted menxia gate facts", as
     const { terminal, exitCode } = await runJudgePublic({
       home,
       project,
-      runId: "run-menxia-fail",
+      runId: "run-gate-fail",
       piResult: { code: 1, stderr: "provider rejected the request\n" },
       seedSession: async (sessionDir) => {
         // No lawful judge receipt — activation failure path.
         await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-        await seedMenxiaPair(sessionDir, { officer: "notary", reason });
+        await seedGatePair(sessionDir, { officer: "notary", reason });
       },
     });
     assert.equal(exitCode, 1);
     assert.equal(terminal.roleOutcome.kind, "failure");
-    assert.ok(terminal.menxia !== undefined, "failure must not hide accepted gate facts");
-    assertMenxiaNotaryRound(terminal.menxia!, reason);
-  }, { prefix: "ak-menxia-fail-" });
+    assert.ok(terminal.gate !== undefined, "failure must not hide accepted gate facts");
+    assertGateNotaryRound(terminal.gate!, reason);
+  }, { prefix: "ak-gate-fail-" });
 });
 
-test("public CLI no_receipt Terminal projects accepted menxia gate facts", async () => {
+test("public CLI no_receipt Terminal projects accepted gate facts", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const runId = "run-menxia-no-receipt";
+    const runId = "run-gate-no-receipt";
     const reason = "reason-token-no-receipt";
     const { terminal, exitCode } = await runJudgePublic({
       home,
@@ -396,22 +396,22 @@ test("public CLI no_receipt Terminal projects accepted menxia gate facts", async
           })}\n${JSON.stringify(lifecycle)}\n`,
           "utf8",
         );
-        await seedMenxiaPair(sessionDir, { officer: "notary", reason });
+        await seedGatePair(sessionDir, { officer: "notary", reason });
       },
     });
     assert.equal(exitCode, 0);
     assert.equal(terminal.roleOutcome.kind, "no_receipt");
-    assert.ok(terminal.menxia !== undefined);
-    assertMenxiaNotaryRound(terminal.menxia!, reason);
-  }, { prefix: "ak-menxia-no-receipt-" });
+    assert.ok(terminal.gate !== undefined);
+    assertGateNotaryRound(terminal.gate!, reason);
+  }, { prefix: "ak-gate-no-receipt-" });
 });
 
-test("public CLI resumable failure projects menxia without re-disclosing runId outside resume", async () => {
+test("public CLI resumable failure projects gate without re-disclosing runId outside resume", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const runId = "run-menxia-resume-429";
+    const runId = "run-gate-resume-429";
     const reason = "reason-token-resume";
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
@@ -421,7 +421,7 @@ test("public CLI resumable failure projects menxia without re-disclosing runId o
         "judge",
         "--project",
         project,
-        "menxia resume",
+        "gate resume",
       ],
       {
         packageRoot,
@@ -460,7 +460,7 @@ test("public CLI resumable failure projects menxia without re-disclosing runId o
             ].join("\n") + "\n",
             "utf8",
           );
-          await seedMenxiaPair(sessionDir, { officer: "notary", reason });
+          await seedGatePair(sessionDir, { officer: "notary", reason });
           return {
             code: 1,
             stderr: "activation wrapper exited nonzero\n",
@@ -479,21 +479,21 @@ test("public CLI resumable failure projects menxia without re-disclosing runId o
     assert.ok(terminal.resume);
     assert.equal(terminal.resume!.command, renderResumeCommand(runId));
     assert.equal(terminal.runId, undefined);
-    assert.ok(terminal.menxia !== undefined);
-    assertMenxiaNotaryRound(terminal.menxia!, reason);
+    assert.ok(terminal.gate !== undefined);
+    assertGateNotaryRound(terminal.gate!, reason);
     // Resume desensitization: runId only inside resume.command among typed regions.
     const outside = {
       roleOutcome: terminal.roleOutcome,
       navigator: terminal.navigator,
       artifacts: terminal.artifacts,
-      menxia: terminal.menxia,
+      gate: terminal.gate,
       runId: terminal.runId,
     };
     assert.equal(JSON.stringify(outside).includes(runId), false);
-  }, { prefix: "ak-menxia-resume-" });
+  }, { prefix: "ak-gate-resume-" });
 });
 
-test("public CLI audit-incomplete keeps menxia read damage off the publication-failure label", async () => {
+test("public CLI audit-incomplete keeps gate read damage off the publication-failure label", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -501,7 +501,7 @@ test("public CLI audit-incomplete keeps menxia read damage off the publication-f
     const { terminal, exitCode } = await runJudgePublic({
       home,
       project,
-      runId: "run-menxia-audit-read",
+      runId: "run-gate-audit-read",
       seedSession: async (sessionDir) => {
         await writeFile(
           join(sessionDir, "session.jsonl"),
@@ -513,11 +513,11 @@ test("public CLI audit-incomplete keeps menxia read damage off the publication-f
         await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
       },
     });
-    // Menxia read throws after successful publication → typed JSONL error identity.
+    // Gate read throws after successful publication → typed JSONL error identity.
     // Must not carry publicationFailure decisive fact.
     assert.equal(exitCode, 1);
-    assertLoudMenxiaReadFailure(terminal);
-  }, { prefix: "ak-menxia-audit-read-" });
+    assertLoudGateReadFailure(terminal);
+  }, { prefix: "ak-gate-audit-read-" });
 });
 
 test("public CLI failure path keeps damaged auditor-roles loud (not silent no-gate)", async () => {
@@ -528,7 +528,7 @@ test("public CLI failure path keeps damaged auditor-roles loud (not silent no-ga
     const { terminal, exitCode } = await runJudgePublic({
       home,
       project,
-      runId: "run-menxia-fail-damaged",
+      runId: "run-gate-fail-damaged",
       piResult: { code: 1, stderr: "provider rejected the request\n" },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -537,9 +537,9 @@ test("public CLI failure path keeps damaged auditor-roles loud (not silent no-ga
         await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
       },
     });
-    // Failure settlement projects menxia loud: damaged volumes surface typed
+    // Failure settlement projects gate loud: damaged volumes surface typed
     // JSONL error identity rather than a silent no-gate omission.
     assert.equal(exitCode, 1);
-    assertLoudMenxiaReadFailure(terminal);
-  }, { prefix: "ak-menxia-fail-damaged-" });
+    assertLoudGateReadFailure(terminal);
+  }, { prefix: "ak-gate-fail-damaged-" });
 });

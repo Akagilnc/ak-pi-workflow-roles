@@ -57,7 +57,7 @@ function appendEngineSessionMaterial(lines, engineMaterial) {
   const out = [...lines];
   out.push("");
   if (engineMaterial.materialPath !== void 0) {
-    out.push("Engine method material (read these bytes and follow them):");
+    out.push("\u672C\u6B21\u914D\u7F6E\u7684\u52B3\u52A1\u5F15\u64CE\u53CA\u5176\u624B\u518C\uFF1A");
     out.push(`- engine: ${engineMaterial.name}`);
     out.push(`- ${engineMaterial.materialPath}`);
   } else {
@@ -14030,10 +14030,10 @@ var init_fixer_output = __esm({
     blockerSchema = typebox_exports.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
     exceptionSchema = typebox_exports.Object({ where: nonblankTransportString, reason: nonblankTransportString });
     testEvidenceSchema = typebox_exports.Object({
-      contract: typebox_exports.String({ minLength: 1, description: "Contract the test change proves." }),
-      minimumNecessaryCost: typebox_exports.String({ minLength: 1, description: "One-line minimum necessary cost of the test change." }),
-      measuredDuration: typebox_exports.String({ minLength: 1, description: "Measured duration of the focused verification run." })
-    }, { description: "Test evidence slip (submit when diff includes test changes; machine does not verify)." });
+      contract: typebox_exports.String({ minLength: 1, description: "\u6D4B\u8BD5\u6539\u52A8\u6240\u8BC1\u660E\u7684\u5951\u7EA6" }),
+      minimumNecessaryCost: typebox_exports.String({ minLength: 1, description: "\u6D4B\u8BD5\u6539\u52A8\u7684\u4E00\u884C\u6700\u5C0F\u5FC5\u8981\u6210\u672C" }),
+      measuredDuration: typebox_exports.String({ minLength: 1, description: "\u805A\u7126\u9A8C\u8BC1\u5B9E\u6D4B\u65F6\u957F" })
+    }, { description: "\u6D4B\u8BD5\u8BC1\u636E\u6761\uFF1Bdiff \u542B\u6D4B\u8BD5\u6539\u52A8\u65F6\u63D0\u4EA4\uFF1B\u673A\u5668\u4E0D\u6838\u9A8C\u3002" });
     completedClassResultSchema = typebox_exports.Object({
       name: nonblankTransportString,
       disposition: typebox_exports.Literal("completed"),
@@ -14050,12 +14050,12 @@ var init_fixer_output = __esm({
     classResultSchema = typebox_exports.Union([completedClassResultSchema, refusedClassResultSchema]);
     completedClassResultsSchema = typebox_exports.Array(completedClassResultSchema, { minItems: 1 });
     fixerOutputVariants = typebox_exports.Union([
-      typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "Plan-phase proposal outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "Lawfully refused outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Apply outcome when a missing prerequisite or an unconstitutional constraint blocks completing this invocation; state the reason." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), reason: typebox_exports.Optional(typebox_exports.String({ minLength: 1, description: "Blocking reason: prerequisite missing or unconstitutional. A missing pending owner decision or answer is a missing prerequisite." })), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "All assigned classes lawfully refused." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
+      typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "planned \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), remainingScope: typebox_exports.String({ minLength: 1, description: "\u4F9D\u6CD5\u4E0D\u80FD\u5B8C\u6210\u7684\u5DE5\u4F5C\u8303\u56F4" }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "\u5408\u6CD5\u963B\u65AD\u5B8C\u6210\u7684 blocker" }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "unfinished \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u81F4\u672C\u5C40\u672A\u5B8C\u6210\u65F6\u53EF\u7528\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), remainingScope: typebox_exports.String({ minLength: 1, description: "\u672C\u5C40\u540E\u5269\u4F59\u5DE5\u4F5C" }), reason: typebox_exports.Optional(typebox_exports.String({ minLength: 1, description: "\u963B\u65AD\u539F\u56E0\uFF1A\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002" })), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "\u672C\u5C40\u5DF2\u5B8C\u6210\u7684 class \u7ED3\u7B97" })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5DF2\u5B8C\u6210\u7684 class \u7ED3\u7B97" }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u62D2\u7EDD\u7ED3\u7B97" }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "partially_completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u5B8C\u6210\u6216\u62D2\u7EDD\u7ED3\u7B97" }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
     ]);
     fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
   }
@@ -14100,13 +14100,13 @@ function read2(value, key) {
 }
 function validateDoctorSubmissionShape(value) {
   const status = read2(value, "status");
-  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("\u592A\u533B\u7F72\u4EA4\u5377\u65E0\u5DF2\u8BC6\u522B\u7684\u6267\u884C\u72B6\u6001");
   return value;
 }
 function validateRecordedDoctorOutput(value) {
   const output = validateDoctorSubmissionShape(value);
   const status = read2(output, "status");
-  if (status === "completed" && read2(output, "cost") === void 0) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+  if (status === "completed" && read2(output, "cost") === void 0) throw new DoctorSubmissionContractError("completed \u592A\u533B\u7F72\u56DE\u6267\u7F3A\u5C11 runtime \u6301\u6709\u7684 cost \u8BC1\u8BCD");
   return output;
 }
 var DOCTOR_OUTPUT_TOOL_NAME, DOCTOR_TARGET_KINDS, nonblank, count, evidenceIds, guardrail, lastRealBite, assetKinds, findingBody, finding, caseIdentity, cost, doctorSubmissionVariants, doctorSubmissionSchema, doctorOutputSchema, doctorEvidenceReadSchema, DoctorSubmissionContractError;
@@ -14156,22 +14156,22 @@ var init_doctor_contracts = __esm({
     }, { additionalProperties: false });
     doctorSubmissionVariants = typebox_exports.Union([
       typebox_exports.Object({
-        status: typebox_exports.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
-        case: typebox_exports.Unsafe({ ...caseIdentity, description: "Identity of the retained Doctor case." }),
-        findings: typebox_exports.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." })
-      }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
+        status: typebox_exports.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u5141\u8BB8\u7A7A findings\uFF1Bruntime \u8865\u8BB0\u6D3E\u751F\u6210\u672C\u5165\u56DE\u6267" }),
+        case: typebox_exports.Unsafe({ ...caseIdentity, description: "\u7559\u5B58\u592A\u533B\u7F72\u6848\u8EAB\u4EFD" }),
+        findings: typebox_exports.Array(finding, { description: "\u53EF\u7A7A\u6216\u4EC5\u542B\u975E\u5904\u65B9\u6848\u89C2\u5BDF\uFF1B\u7F3A\u53EF\u590D\u7528\u8D44\u4EA7\u6216 bounded-bite \u8BC1\u636E\u53EA\u6392\u9664\u5BF9\u5E94\u8D44\u4EA7\u5904\u65B9" })
+      }, { additionalProperties: false, description: "\u5355\u6848\u8BC1\u8BCD\uFF0C\u4E0D\u8981\u6C42\u4EFB\u4F55\u5904\u65B9\u6216\u53EF\u590D\u7528 finding" }),
       typebox_exports.Object({
-        status: typebox_exports.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
-        reason: typebox_exports.String({ minLength: 1, description: "Reason evidence is insufficient for truthful testimony." }),
-        missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "Evidence required before truthful testimony is possible." })
-      }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." })
+        status: typebox_exports.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u4EC5\u5F53\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" }),
+        reason: typebox_exports.String({ minLength: 1, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u8BC1\u8BCD\u7684\u539F\u56E0" }),
+        missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "\u5982\u5B9E\u8BC1\u8BCD\u6240\u9700\u800C\u5C1A\u7F3A\u7684\u8BC1\u636E" })
+      }, { additionalProperties: false, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" })
     ]);
     doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
     doctorOutputSchema = typebox_exports.Union([
       typebox_exports.Object({ status: typebox_exports.Literal("completed"), case: caseIdentity, findings: typebox_exports.Array(finding), cost }, { additionalProperties: false }),
       doctorSubmissionVariants.anyOf[1]
     ]);
-    doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: typebox_exports.String({ minLength: 1, description: "Identifier of the retained evidence to read." }), offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0, description: "Zero-based byte offset at which to begin reading." })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096, description: "Maximum number of bytes to return." })) }, { additionalProperties: false });
+    doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: typebox_exports.String({ minLength: 1, description: "\u5F85\u8BFB\u7559\u5B58\u8BC1\u636E\u6807\u8BC6" }), offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0, description: "\u8D77\u59CB\u5B57\u8282\u504F\u79FB\uFF08\u4ECE 0 \u8BA1\uFF09" })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096, description: "\u8FD4\u56DE\u5B57\u8282\u4E0A\u9650" })) }, { additionalProperties: false });
     DoctorSubmissionContractError = class extends Error {
       name = "DoctorSubmissionContractError";
     };
@@ -14257,11 +14257,11 @@ function validateMergerInput(value) {
   return deepFreeze(structuredClone(value));
 }
 function validateMergerOutput(value, expectedAttemptId) {
-  if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch");
+  if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("\u5408\u5E76\u56DE\u6267 attempt \u4E0D\u5339\u914D");
   const status = typeof value.status === "string" ? value.status : void 0;
   if (status === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
   if (status === "escalate") return structuredClone(value);
-  throw new Error("Merger output has no recognized execution discriminator");
+  throw new Error("\u5408\u5E76\u56DE\u6267\u65E0\u5DF2\u8BC6\u522B\u7684\u6267\u884C\u5224\u522B");
 }
 var oidPattern, materialSchema, checkSchema, mergerInputSchema, mergerOutputVariants, mergerOutputSchema, MERGER_OUTPUT_TOOL_NAME, record, blank, MergerInputContractError;
 var init_merger_contracts = __esm({
@@ -14286,8 +14286,8 @@ var init_merger_contracts = __esm({
       authorizedChecks: typebox_exports.Array(checkSchema)
     }, { additionalProperties: false });
     mergerOutputVariants = typebox_exports.Union([
-      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "Merge attempt completed." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "Verified completed merge commit object ID." }) }, { additionalProperties: false }),
-      typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "Merge attempt requires human authority." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), diagnosis: typebox_exports.String({ minLength: 1, description: "Reason merge completion requires escalation." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }) }, { additionalProperties: false })
+      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: typebox_exports.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "\u5DF2\u6838\u9A8C\u7684\u5B8C\u6210\u5408\u5E76 commit object ID" }) }, { additionalProperties: false }),
+      typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: typebox_exports.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), diagnosis: typebox_exports.String({ minLength: 1, description: "\u5408\u5E76\u5B8C\u6210\u9700\u5347\u7EA7\u7684\u539F\u56E0" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }, { additionalProperties: false })
     ]);
     mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
     MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
@@ -14310,15 +14310,9 @@ function asStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.filter((item) => typeof item === "string");
 }
-function validateNotaryOutput(value) {
-  if (!isRecord3(value)) {
-    throw new Error("Notary output has no recognized execution discriminator");
-  }
-  const statusRaw = typeof value.status === "string" ? value.status : void 0;
-  if (statusRaw === void 0) {
-    throw new Error("Notary output has no recognized execution discriminator");
-  }
-  const status = statusRaw;
+function projectLawfulNotaryOutput(value) {
+  if (!isRecord3(value)) return void 0;
+  const status = typeof value.status === "string" ? value.status : void 0;
   if (status === "bounce") {
     const clone = structuredClone(value);
     if (clone.disposition === void 0) clone.disposition = "rewrite";
@@ -14330,10 +14324,14 @@ function validateNotaryOutput(value) {
     if (!Array.isArray(clone.findings)) clone.findings = asStringArray(clone.findings);
     return clone;
   }
-  throw new Error("Notary output has no recognized execution discriminator");
+  return void 0;
 }
 function validateRecordedNotaryOutput(value) {
-  return validateNotaryOutput(value);
+  const projected = projectLawfulNotaryOutput(value);
+  if (projected === void 0) {
+    throw new Error("Notary output has no recognized execution discriminator");
+  }
+  return projected;
 }
 function notaryDecisiveFacts(output) {
   const status = String(output.status);
@@ -14354,14 +14352,14 @@ var init_notary_contracts = __esm({
     init_build();
     init_open_tool_schema();
     NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
-    NOTARY_FIXED_KICKOFF = "Notary review. Bound source-run locator is on the session materials; fetch authoritative ticket, git, and dossier evidence yourself; submit one typed decision.";
+    NOTARY_FIXED_KICKOFF = "\u7B26\u5B9D\u90CE\u6848\u5377\u5DF2\u53D7\u7406\uFF1B\u6765\u6E90 run \u5B9A\u4F4D\u89C1\u4F1A\u8BDD\u6750\u6599\u3002";
     notaryOutputSchema = openToolObject(
       typebox_exports.Object({
         status: typebox_exports.Unknown({
-          description: "pass | bounce \u2014 guidance, not a schema gate."
+          description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
         }),
         findings: typebox_exports.Unknown({
-          description: "string[] findings retained with pass or bounce."
+          description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58"
         })
       })
     );
@@ -14493,7 +14491,7 @@ var init_registry2 = __esm({
         { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
         { provider: "xai", model: "grok-4.5", thinking: "high" }
       ],
-      // #453: automatic menxia seats have no startup default — unset means inherit parent.
+      // #453: automatic gate seats have no startup default — unset means inherit parent.
       gatekeeper: [],
       inspector: [],
       navigator: [
@@ -14509,8 +14507,8 @@ var init_registry2 = __esm({
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname as dirname2, join as join3 } from "node:path";
-function isMenxiaOfficerSeat(value) {
-  return MENXIA_OFFICER_SEATS.includes(value);
+function isGateOfficerSeat(value) {
+  return GATE_OFFICER_SEATS.includes(value);
 }
 function publicCliConfigPath(home = homedir()) {
   return join3(home, ".ak-roles", "public-cli.json");
@@ -14876,13 +14874,13 @@ async function loadCredentialProviders(agentDir) {
     throw error;
   }
 }
-var MENXIA_OFFICER_SEATS, THINKING_LEVELS;
+var GATE_OFFICER_SEATS, THINKING_LEVELS;
 var init_config2 = __esm({
   "src/public-cli/config.ts"() {
     "use strict";
     init_engine_material();
     init_registry2();
-    MENXIA_OFFICER_SEATS = [
+    GATE_OFFICER_SEATS = [
       "gatekeeper",
       "inspector",
       "notary"
@@ -15669,7 +15667,7 @@ var init_collector_config = __esm({
     "use strict";
     COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
     COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
-    COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.";
+    COLLECTOR_FIXED_KICKOFF = "\u91C7\u96C6\u76EE\u6807\u5DF2\u53D7\u7406\uFF0C\u672C\u5C40\u5F00\u59CB\u3002";
   }
 });
 
@@ -17799,7 +17797,7 @@ function buildJudgeTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -17883,7 +17881,7 @@ function buildCoderTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -18000,7 +17998,7 @@ function buildFixerTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -18467,7 +18465,7 @@ function buildDoctorTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -18710,8 +18708,7 @@ async function admitReviewerInvocation(options) {
 }
 function buildReviewerTransportPrompt(admitted, engineMaterial) {
   const lines = [
-    `Base revision for the fixed review target: ${admitted.baseRevision}`,
-    "Use this exact revision as the fixed review point."
+    `\u672C\u6B21\u5BA1\u67E5\u7684\u56FA\u5B9A\u57FA\u70B9\uFF1A${admitted.baseRevision}`
   ];
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
@@ -18900,7 +18897,7 @@ function buildMergerTransportPrompt(admitted, engineMaterial) {
   ];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -19205,7 +19202,7 @@ var init_reviewer_scope_prompt = __esm({
 });
 
 // src/reviewer-construction.ts
-var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER, REVIEWER_VERIFICATION_BOUNDARY, REVIEWER_STANDARDS_CONCLUSION_KEYS, REVIEWER_STANDARDS_CONCLUSION_LABELS;
+var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER;
 var init_reviewer_construction = __esm({
   "src/reviewer-construction.ts"() {
     "use strict";
@@ -19219,26 +19216,7 @@ var init_reviewer_construction = __esm({
     });
     REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
       adapterId: "reviewer-axis-output",
-      version: 1,
-      implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
-    });
-    REVIEWER_VERIFICATION_BOUNDARY = [
-      "Verification-Boundary: you may run focused product tests during this review turn when independent verification needs them.",
-      "A full repository test suite is not forbidden, but do not re-run it every review round;",
-      "prefer once at family wrap-up unless this review specifically requires a broader run.",
-      "Slice and review work should not trigger frequent full-suite reruns.",
-      "Independently discover test facts (including existing coder/fixer receipts and any tests you run);",
-      "do not treat caller prose as the source of those facts."
-    ].join(" ");
-    REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
-      "constitutionality",
-      "minimum-necessary-test-cost",
-      "complexity"
-    ]);
-    REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
-      constitutionality: "constitutionality",
-      "minimum-necessary-test-cost": "minimum-necessary test cost",
-      complexity: "complexity"
+      version: 1
     });
   }
 });
@@ -19895,14 +19873,14 @@ function formatTerminalResult(result2) {
   for (const artifact of result2.artifacts) {
     lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
   }
-  if (result2.menxia !== void 0) {
+  if (result2.gate !== void 0) {
     lines.push(
-      `menxia	${encodeTerminalField(result2.menxia.actualSeats.join(","))}	${result2.menxia.rounds.length}`
+      `gate	${encodeTerminalField(result2.gate.actualSeats.join(","))}	${result2.gate.rounds.length}`
     );
-    for (const round of result2.menxia.rounds) {
+    for (const round of result2.gate.rounds) {
       const reason = round.dispatch.reason === void 0 ? "" : encodeTerminalField(round.dispatch.reason);
       lines.push(
-        `menxia-round	${round.roundIndex}	${round.dispatch.status}	${round.dispatch.officer}	${reason}	${round.officer.seat}	${encodeTerminalField(round.officer.status)}	${encodeTerminalField(JSON.stringify(round.officer.findings))}`
+        `gate-round	${round.roundIndex}	${round.dispatch.status}	${round.dispatch.officer}	${reason}	${round.officer.seat}	${encodeTerminalField(round.officer.status)}	${encodeTerminalField(JSON.stringify(round.officer.findings))}`
       );
     }
   }
@@ -20327,7 +20305,7 @@ var init_engine_detour_tool = __esm({
       {
         argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), {
           minItems: 1,
-          description: "Executable argv for one engine subprocess. First element is the command (PATH lookup); remaining elements are arguments. Build argv from the host CLI actual interface for the configured engine name; when optional packaged notes are present in the session prompt, follow those bytes. Do not invent package flags."
+          description: "\u9996\u9879\u4E3A PATH \u4E2D\u7684\u53EF\u6267\u884C\u6587\u4EF6\uFF0C\u5176\u4F59\u9879\u4E3A\u53C2\u6570\u3002"
         })
       },
       { additionalProperties: false }
@@ -20380,9 +20358,9 @@ var init_evidence_child_executor = __esm({
     init_engine_detour_tool();
     init_engine_detour();
     init_engine_material();
+    init_session_opening_materials();
     init_config2();
     init_receipt_delivery_policy();
-    init_reviewer_construction();
     init_stream_idle_guard();
     init_upstream_error_testimony();
   }
@@ -20391,7 +20369,7 @@ var init_evidence_child_executor = __esm({
 // src/compliance-transport.ts
 function createComplianceDecisionTool(name, description) {
   return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
-    return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
+    return { content: [{ type: "text", text: "\u5BA1\u8BA1\u51B3\u8BAE\u5DF2\u6536" }], details: params, terminate: true };
   } };
 }
 function readListField(value) {
@@ -20438,7 +20416,7 @@ var init_compliance_transport = __esm({
     };
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
-    complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
+    complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "pass | revise | escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), violations: typebox_exports.Array(nonblank2, { description: "\u89C2\u5BDF\u5230\u7684\u5408\u89C4\u8FDD\u89C4" }), conflicts: typebox_exports.Array(nonblank2, { description: "\u672A\u51B3\u6743\u5A01\u6216\u6267\u884C\u51B2\u7A81" }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "\u5347\u7EA7\u95EE\u9898\u4E0E\u53EF\u9009\u9009\u9879" }) }, { additionalProperties: true, required: [] });
     COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
     AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
     AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
@@ -20465,7 +20443,7 @@ var init_doctor_auditor = __esm({
     DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
     tool = createComplianceDecisionTool(
       DOCTOR_AUDIT_TOOL_NAME,
-      "Return whether the proposed Doctor testimony demonstrably follows the Doctor Soul and frozen evidence record from the dossier. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
+      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u592A\u533B\u7F72\u5BA1\u5211\uFF09\u3002"
     );
   }
 });
@@ -20482,24 +20460,7 @@ var init_judge_auditor = __esm({
     JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
     auditDecisionTool = createComplianceDecisionTool(
       JUDGE_AUDIT_TOOL_NAME,
-      "Return whether the proposed verdict demonstrably follows the audit law and Judge role boundaries from the dossier evidence."
-    );
-  }
-});
-
-// src/reviewer-auditor.ts
-var REVIEWER_AUDIT_TOOL_NAME, reviewerDecisionTool;
-var init_reviewer_auditor = __esm({
-  "src/reviewer-auditor.ts"() {
-    "use strict";
-    init_auditor_dossier_tool();
-    init_auditor_soul();
-    init_compliance_transport();
-    init_dossier_resolution();
-    REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
-    reviewerDecisionTool = createComplianceDecisionTool(
-      REVIEWER_AUDIT_TOOL_NAME,
-      "Decide whether the Reviewer receipt demonstrably followed its method and boundaries from the dossier."
+      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5927\u7406\u5BFA\u5BA1\u5211\uFF09\u3002"
     );
   }
 });
@@ -20529,11 +20490,11 @@ var init_collector_tool_schemas = __esm({
     init_collector_evidence();
     collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
     collectorRequestArgsSchema = typebox_exports.Object({
-      requestId: typebox_exports.String({ minLength: 1, description: "Configured request identity." }),
-      snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot." })
+      requestId: typebox_exports.String({ minLength: 1, description: "\u914D\u7F6E\u8BF7\u6C42\u8EAB\u4EFD" }),
+      snapshotId: typebox_exports.String({ minLength: 1, description: "\u6700\u65B0\u7559\u5B58\u89C2\u5BDF\u5FEB\u7167" })
     }, { additionalProperties: false });
     collectorWaitArgsSchema = typebox_exports.Object({
-      durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS })
+      durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "\u7B49\u5F85\u6BEB\u79D2\uFF1B\u5355\u6B21\u4E0A\u9650\u4E94\u5206\u949F\u4E14\u4E0D\u8D85\u5269\u4F59\u8D44\u683C" })
     }, { additionalProperties: false });
     collectorOutputArgsSchema = typebox_exports.Object({}, { additionalProperties: true });
     collectorOutputArgsSchema.required = [];
@@ -21619,8 +21580,6 @@ function auditToolNameForRole(role) {
   switch (role) {
     case "judge":
       return JUDGE_AUDIT_TOOL_NAME;
-    case "reviewer":
-      return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
       return DOCTOR_AUDIT_TOOL_NAME;
   }
@@ -21863,7 +21822,7 @@ function parseNavigatorAttendanceDetails(details) {
     reason: "Navigator attendance disposition is unparseable"
   };
 }
-function projectTerminalMenxiaFact(rounds) {
+function projectTerminalGateFact(rounds) {
   if (rounds.length === 0) return void 0;
   const seen = /* @__PURE__ */ new Set();
   seen.add("gatekeeper");
@@ -21888,17 +21847,17 @@ function projectTerminalMenxiaFact(rounds) {
     }))
   };
 }
-async function extractMenxiaFactFromSessionDirectory(sessionDirectory) {
+async function extractGateFactFromSessionDirectory(sessionDirectory) {
   const rounds = await readAnalystGateCyclesFromAuditorRoles(
     join13(sessionDirectory, "auditor-roles")
   );
-  return projectTerminalMenxiaFact(rounds);
+  return projectTerminalGateFact(rounds);
 }
-async function withOptionalMenxiaProjection(base, sessionDirectory) {
+async function withOptionalGateProjection(base, sessionDirectory) {
   const secondaryEvidence = base.roleOutcome.kind === "failure" ? base.roleOutcome.decisiveFacts.secondaryEvidence : void 0;
   if (isRecord8(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
-  const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
-  return menxia === void 0 ? base : { ...base, menxia };
+  const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
+  return gate === void 0 ? base : { ...base, gate };
 }
 function extractNavigatorFact(entries) {
   const terminal = findLatestDurablePackagedRoleTerminal(entries);
@@ -22138,7 +22097,7 @@ async function settleLawfulJudgeTerminalResult(admitted) {
     roleOutcome,
     admitted.sessionDirectory
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome,
       navigator,
@@ -22166,7 +22125,7 @@ async function settleLawfulCoderTerminalResult(admitted, options = {}) {
       ...options.methodProvenance === void 0 ? {} : { methodProvenance: options.methodProvenance }
     }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22309,7 +22268,7 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
       methodInvocations
     }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22429,7 +22388,7 @@ async function settleLawfulCollectorTerminalResult(admitted) {
     admitted.sessionDirectory,
     { collectorReceipt: extracted.receipt }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22558,7 +22517,7 @@ async function settleLawfulDoctorTerminalResult(admitted) {
     admitted.sessionDirectory,
     extracted.output === void 0 ? {} : { doctorOutput: extracted.output }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22600,6 +22559,7 @@ async function settleLawfulNotaryTerminalResult(admitted) {
   if (entries === void 0) return void 0;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === void 0) {
+    let acceptedNonUsable;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
@@ -22609,17 +22569,32 @@ async function settleLawfulNotaryTerminalResult(admitted) {
         message,
         NOTARY_OUTPUT_TOOL_NAME
       );
-      if (residual === void 0) continue;
+      if (residual !== void 0) {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false }
+        });
+      }
+      if (acceptedNonUsable === void 0 && message.toolName === NOTARY_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
+        try {
+          validateRecordedNotaryOutput(message.details);
+        } catch {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== void 0) {
       return settleFailureTerminalResult(admitted, {
         cause: "output",
-        diagnostic: residual.diagnostic,
-        details: { candidate: residual.candidate, acceptedReceipt: false }
+        diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false }
       });
     }
     return void 0;
   }
   const navigator = extractNavigatorFact(entries);
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22739,26 +22714,10 @@ function extractReviewerRoleOutcome(entries) {
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "reviewer",
-      REVIEWER_OUTPUT_TOOL_NAME
-    );
-    if (escalation !== void 0) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "reviewer",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details }
-        }
-      };
-    }
-    if (isUnboundAuditEscalationFace(message.details)) continue;
+    const details = message.details;
+    if (isUnboundAuditEscalationFace(details)) continue;
     try {
-      const receipt = validateRuntimeReviewerReceipt(message.details);
+      const receipt = validateRuntimeReviewerReceipt(details);
       const outcome = {
         kind: "accepted",
         role: "reviewer",
@@ -22794,7 +22753,7 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
       methodInvocations
     }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22973,7 +22932,7 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
       methodInvocations
     }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -23201,7 +23160,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
           const facts = parseNoReceiptLifecycleFacts(raw);
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
             const decisiveFacts2 = facts;
-            return withOptionalMenxiaProjection(
+            return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts: decisiveFacts2 },
                 navigator: await extractNavigatorFactFromAdmittedSession(admitted),
@@ -23244,7 +23203,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       diagnostic: publicDiagnostic,
       decisiveFacts: publicFacts
     };
-    return withOptionalMenxiaProjection(
+    return withOptionalGateProjection(
       {
         roleOutcome: roleOutcome2,
         navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
@@ -23261,7 +23220,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
     diagnostic: failure.diagnostic,
     decisiveFacts
   };
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome,
       navigator,
@@ -23295,7 +23254,6 @@ var init_settlement = __esm({
     init_auditor_soul();
     init_doctor_auditor();
     init_judge_auditor();
-    init_reviewer_auditor();
     init_explicit_internal();
     init_run_lifecycle();
     init_compliance_transport();
@@ -28718,9 +28676,9 @@ async function runConfigCommand(args, home, packageRoot2, io) {
       );
     }
     const seat = args[1];
-    if (!isMenxiaOfficerSeat(seat)) {
+    if (!isGateOfficerSeat(seat)) {
       throw new CliUsageError(
-        `config unset serves menxia officer overrides only (gatekeeper|inspector|notary); got ${seat}`
+        `config unset serves gate officer overrides only (gatekeeper|inspector|notary); got ${seat}`
       );
     }
     const config = clearPersistentSeatConfig(

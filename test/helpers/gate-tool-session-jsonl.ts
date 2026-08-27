@@ -1,7 +1,7 @@
 /**
  * Shared JSONL volume builder for accepted/rejected/omitted gate tool receipts.
  *
- * Sole fixture shape for auditor-roles session volumes used by menxia Terminal
+ * Sole fixture shape for auditor-roles session volumes used by gate Terminal
  * tracers and analyst gate-cycle tracers — do not fork a second local copy.
  */
 export type GateToolSessionReceipt = "accepted" | "rejected" | "omit";

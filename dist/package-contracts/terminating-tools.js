@@ -6,7 +6,7 @@ import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollect
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, } from "./reviewer-output.js";
 import { isAuditEscalationResult } from "../audit-escalation.js";
-import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
+import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput } from "../notary-contracts.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
@@ -37,7 +37,7 @@ export function acceptedTextFor(toolName) {
         case COLLECTOR_OUTPUT_TOOL:
             return COLLECTOR_ACCEPTED_TEXT;
         case DOCTOR_OUTPUT_TOOL_NAME:
-            return "Doctor output accepted";
+            return DOCTOR_ACCEPTED_TEXT;
         case MERGER_OUTPUT_TOOL_NAME:
             return MERGER_ACCEPTED_TEXT;
         case NOTARY_OUTPUT_TOOL_NAME:

@@ -13,7 +13,8 @@ import {
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
   notaryOutputSchema,
-  validateNotaryOutput,
+  projectLawfulNotaryOutput,
+  retainNotarySubmission,
   type NotarySourceRunLocator,
 } from "./notary-contracts.ts";
 
@@ -42,7 +43,7 @@ function requireSingletonSubmissionCall(
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("Notary output must be the sole final tool call");
+    throw new Error("符宝郎回执非唯一终局工具调用");
   }
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
   if (
@@ -50,7 +51,7 @@ function requireSingletonSubmissionCall(
     calls[0]?.id !== toolCallId ||
     calls[0]?.name !== NOTARY_OUTPUT_TOOL_NAME
   ) {
-    throw new Error("Notary output must be the sole final tool call");
+    throw new Error("符宝郎回执非唯一终局工具调用");
   }
 }
 
@@ -83,14 +84,9 @@ export function createNotaryRoleRuntime(
         registered = true;
         pi.registerTool({
           name: NOTARY_OUTPUT_TOOL_NAME,
-          label: "Notary Output",
-          description:
-            "Submit one typed pass or bounce decision on quote fidelity and ticket alignment.",
-          promptSnippet: "Submit the Notary decision",
-          promptGuidelines: [
-            `Use ${NOTARY_OUTPUT_TOOL_NAME} as the sole final action.`,
-            "Fetch ticket, git, and dossier evidence yourself from the bound source-run locator.",
-          ],
+          label: "符宝郎输出",
+          description: "提交引文保真与票面对齐的 typed pass/bounce 决议。",
+          promptSnippet: "提交符宝郎决议",
           parameters: notaryOutputSchema,
           async execute(
             toolCallId,
@@ -100,29 +96,23 @@ export function createNotaryRoleRuntime(
             ctx,
           ): Promise<AgentToolResult<unknown>> {
             if (activation === undefined) {
-              throw new Error("Notary is not activated");
+              throw new Error("符宝郎未激活");
             }
-            let output;
-            try {
-              requireSingletonSubmissionCall(toolCallId, ctx);
-              output = validateNotaryOutput(parameters);
-            } catch (error) {
-              // Non-explicit release stays a rejected terminating call so public
-              // settlement can map it to the existing non-zero failure channel (#475).
-              throw error instanceof Error
-                ? error
-                : new Error(String(error));
-            }
+            // Unique submission + terminate only. Shape is not an admission gate
+            // (第 0 条 / ADR 0055): lawful pass/bounce projected; else params as-is.
+            requireSingletonSubmissionCall(toolCallId, ctx);
+            const lawful = projectLawfulNotaryOutput(parameters);
+            const details = lawful ?? retainNotarySubmission(parameters);
             return {
               content: [{ type: "text" as const, text: NOTARY_ACCEPTED_TEXT }],
-              details: output,
+              details,
               terminate: true as const,
             };
           },
         });
         pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
-            throw new Error("Notary is not activated");
+            throw new Error("符宝郎未激活");
           }
           // Locator only — never preload ticket/diff/draft body (self-fetch contract).
           const bound = {

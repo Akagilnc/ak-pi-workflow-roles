@@ -1,6 +1,6 @@
 /** Package-owned Reviewer intent and runtime-receipt leaves — no role registration surface. */
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
-export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
+export const REVIEWER_ACCEPTED_TEXT = "御史台回执已接受";
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }

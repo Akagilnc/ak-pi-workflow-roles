@@ -48,7 +48,12 @@ export const MAIN_ROLE_SESSION_MATERIALS = {
     "souls/quality-law.md",
     "souls/coder-output-guide.md",
   ],
-  reviewer: ["CLAUDE.md", "souls/reviewer.md", "souls/audit-law.md"],
+  reviewer: [
+    "CLAUDE.md",
+    "souls/reviewer.md",
+    "souls/audit-law.md",
+    "souls/quality-law.md",
+  ],
   collector: ["CLAUDE.md", "souls/collector.md"],
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],

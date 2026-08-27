@@ -201,7 +201,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
   };
 
   const assertNotFatal = (): void => {
-    if (fatal) throw new Error(fatalReason ?? "Collector is in fatal state");
+    if (fatal) throw new Error(fatalReason ?? "通进司致命状态");
   };
 
   const storeEvidence = (record: CollectorEvidenceRecord): CollectorEvidenceRecord => {
@@ -340,14 +340,14 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
       if (outputAccepted && toolName !== COLLECTOR_OUTPUT_TOOL) {
-        throw latchFatal("Collector output already accepted; no further operations");
+        throw latchFatal("回执已受理，本局不再受理操作");
       }
       // Idempotent for the same call across tool_call preflight and execute.
       if (activeOperationalCallId === toolCallId) {
         return;
       }
       if (activeOperationalCallId !== undefined) {
-        throw latchFatal("Collector operational call already active");
+        throw latchFatal("通进司操作调用已在进行");
       }
 
       if (toolName === COLLECTOR_OUTPUT_TOOL) {
@@ -355,7 +355,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       }
 
       if (!isOperationalTool(toolName)) {
-        throw latchFatal(`Unknown Collector tool ${toolName}`);
+        throw latchFatal(`未知通进司工具 ${toolName}`);
       }
       activeOperationalCallId = toolCallId;
     },
@@ -368,7 +368,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
     markOutputAccepted() {
       assertNotFatal();
-      if (outputAccepted) throw latchFatal("Collector output is singleton");
+      if (outputAccepted) throw latchFatal("通进司回执为唯一终局");
       outputAccepted = true;
     },
 
@@ -379,19 +379,19 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     assertOutputObservationLaw(clock) {
       assertNotFatal();
       if (activationTime === undefined || deadlineTime === undefined || deadlineMono === undefined) {
-        throw new Error("Collector output requires activation timeline");
+        throw new Error("通进司回执需要激活时间线");
       }
       if (latestCompleteSnapshotId === undefined) {
-        throw new Error("Collector output requires a complete final snapshot");
+        throw new Error("通进司回执需要完整终局快照");
       }
       if (observedGeneration !== mutationGeneration) {
         throw new Error(
-          "Collector output requires a complete observe after the latest request/wait mutation",
+          "通进司回执要求在最近 request/wait 变更后完成一次 observe",
         );
       }
       const snapshot = snapshots.find((item) => item.snapshotId === latestCompleteSnapshotId);
       if (snapshot === undefined || !snapshot.complete) {
-        throw new Error("Collector final snapshot is missing or incomplete");
+        throw new Error("通进司终局快照缺失或不完整");
       }
 
       const mono = monoNowOrThrow(clock);
@@ -403,7 +403,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           snapshot.completedMono < deadlineMono
         ) {
           throw new Error(
-            "Collector output at/after cutoff requires a complete observation finished at or after the cutoff",
+            "通进司截止时/后回执要求不早于截止完成的完整观察",
           );
         }
         finalObservationCompleted = true;
@@ -413,16 +413,13 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     async observe(transport, clock, signal) {
       assertNotFatal();
       if (activationTime === undefined) {
-        throw latchFatal("Collector observe requires activation");
+        throw latchFatal("通进司观察需要激活");
       }
       if (signal?.aborted) {
         const abortMessage = signal.reason instanceof Error
           ? signal.reason.message
-          : String(signal.reason ?? "aborted");
-        throw latchFatal(
-          `Collector observe failed: ${abortMessage}`,
-          signal.reason,
-        );
+          : String(signal.reason ?? "已中止");
+        throw latchFatal(`通进司观察失败：${abortMessage}`, signal.reason);
       }
       const observedAt = clock.wallNow().toISOString();
       const cutoff = pastCutoff(clock);
@@ -438,13 +435,13 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           surfaces = await fetchObserveSurfaces(transport, observedAt, signal);
           if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
             throw new Error(
-              `PR identity drifted across observe bracket after retry (${prIdentity(surfaces.prInitial)} → ${prIdentity(surfaces.prTerminal)})`,
+              `PR 身份在 observe 括弧重试后仍漂移（${prIdentity(surfaces.prInitial)} → ${prIdentity(surfaces.prTerminal)}）`,
             );
           }
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : "unknown failure";
-        throw latchFatal(`Collector observe failed: ${message}`, error);
+        const message = error instanceof Error ? error.message : "未知失败";
+        throw latchFatal(`通进司观察失败：${message}`, error);
       }
 
       // First-sighting trust must not predate actual surface observation.
@@ -502,7 +499,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       const storedRecords = storedIds.map((id) => {
         const stored = evidenceById.get(id);
         if (stored === undefined) {
-          throw latchFatal(`Collector observe lost stored evidence ${id}`);
+          throw latchFatal(`通进司观察丢失已存证据 ${id}`);
         }
         return stored;
       });
@@ -575,30 +572,30 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     async request(input, transport, clock, signal) {
       assertNotFatal();
       if (activationTime === undefined || deadlineTime === undefined) {
-        throw latchFatal("Collector request requires activation");
+        throw latchFatal("通进司请求需要激活");
       }
       if (pastCutoff(clock)) {
         finalObservationRequired = true;
-        throw latchFatal("Collector request is not permitted at or after the eligibility cutoff");
+        throw latchFatal("通进司请求不在资格截止前");
       }
       if (ledger.unresolvedTransportFailure) {
-        throw latchFatal("Collector cannot request while a transport failure is unrecovered");
+        throw latchFatal("通进司请求时存在未恢复的传输失败");
       }
 
       const request = config.manifest.requests.find((item) => item.id === input.requestId);
       if (request === undefined) {
-        throw new Error(`Unknown Collector requestId "${input.requestId}"`);
+        throw new Error(`未知通进司 requestId "${input.requestId}"`);
       }
 
       const snapshot = snapshots.find((item) => item.snapshotId === input.snapshotId);
       if (snapshot === undefined) {
-        throw new Error(`Unknown Collector snapshotId \"${input.snapshotId}\"`);
+        throw new Error(`未知通进司 snapshotId "${input.snapshotId}"`);
       }
       if (snapshot.snapshotId !== latestCompleteSnapshotId) {
-        throw new Error("Collector request requires the latest complete snapshot");
+        throw new Error("通进司请求要求最新完整快照");
       }
       if (snapshot.prState !== "OPEN") {
-        throw latchFatal("Collector cannot request on a non-OPEN pull request snapshot");
+        throw latchFatal("通进司请求要求 OPEN 状态的 PR 快照");
       }
 
       const { body, marker } = buildCollectorRequestBody({
@@ -616,7 +613,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       });
       if (existingMarker) {
         throw new Error(
-          `Collector already has an authenticated same-marker request for request \"${input.requestId}\" at this HEAD`,
+          `通进司在此 HEAD 已有同 marker 的已认证请求 "${input.requestId}"`,
         );
       }
 
@@ -628,7 +625,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       ].join("|");
       if (attemptKeys.has(attemptKey)) {
         throw new Error(
-          `Collector process-local request attempt already used for request \"${request.id}\" at HEAD ${snapshot.headOid}`,
+          `通进司进程内请求 "${request.id}" 在 HEAD ${snapshot.headOid} 的 attempt 已用`,
         );
       }
 
@@ -699,27 +696,25 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       attempt.status = "rejected";
       attempt.responseDiagnostics = result.diagnostics;
-      throw latchFatal(
-        `Collector request rejected: ${result.diagnostics}`,
-      );
+      throw latchFatal(`通进司请求被拒：${result.diagnostics}`);
     },
 
     async wait(input, clock, signal) {
       assertNotFatal();
       if (activationTime === undefined) {
-        throw latchFatal("Collector wait requires activation");
+        throw latchFatal("通进司等待需要激活");
       }
       if (!Number.isSafeInteger(input.durationMs) || input.durationMs < 1) {
-        throw new Error("Collector wait durationMs must be a positive safe integer");
+        throw new Error("通进司等待 durationMs 须为正安全整数");
       }
       if (input.durationMs > COLLECTOR_ELIGIBILITY_MS) {
         throw new Error(
-          `Collector wait durationMs must be at most ${COLLECTOR_ELIGIBILITY_MS}`,
+          `通进司等待 durationMs 至多为 ${COLLECTOR_ELIGIBILITY_MS}`,
         );
       }
       if (pastCutoff(clock)) {
         finalObservationRequired = true;
-        throw latchFatal("Collector wait is not permitted at or after the eligibility cutoff");
+        throw latchFatal("通进司等待不在资格截止前");
       }
 
       const remaining = remainingMs(clock);

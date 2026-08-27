@@ -23,7 +23,7 @@ export type DoctorAuditOptions = {
 
 const tool = createComplianceDecisionTool(
   DOCTOR_AUDIT_TOOL_NAME,
-  "Return whether the proposed Doctor testimony demonstrably follows the Doctor Soul and frozen evidence record from the dossier. Completed receipts are later augmented with runtime-owned cost; empty findings are valid.",
+  "提交 typed pass/revise/escalate 决议（太医署审刑）。",
 );
 
 /**

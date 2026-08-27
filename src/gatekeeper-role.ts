@@ -38,13 +38,24 @@ export type GatekeeperNonPassResult = Extract<
   { status: "bounce" | "no_receipt" }
 >;
 
+function gateSeatLabel(stage: "gatekeeper" | "inspector" | "notary"): string {
+  switch (stage) {
+    case "gatekeeper":
+      return "门下省";
+    case "inspector":
+      return "给事中";
+    case "notary":
+      return "符宝郎";
+  }
+}
+
 function nonPassMessage(result: GatekeeperNonPassResult): string {
   // Message text is what pi-agent-core createErrorToolResult exposes to the model.
   if (result.status === "bounce") {
-    const findings = result.findings.length === 0 ? "(no findings)" : result.findings.join("; ");
-    return `Gatekeeper requires rewrite: ${findings}`;
+    const findings = result.findings.length === 0 ? "（无 findings）" : result.findings.join("; ");
+    return `门下省打回重写，findings：${findings}`;
   }
-  return `Gatekeeper ${result.status} at ${result.stage}: ${result.reason}`;
+  return `门下省 ${result.status}（${result.stage}）：${result.reason}`;
 }
 
 /** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
@@ -74,16 +85,14 @@ export type GatekeeperPassHostActions = {
 // Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
 // Opening goes through the sole openToolObject owner — no parallel transport helper.
 const officerDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "pass | bounce — guidance, not a schema gate." }),
-  findings: Type.Unknown({ description: "string[] findings retained with pass or bounce." }),
+  status: Type.Unknown({ description: "pass | bounce — 形状指引，非 schema 闸" }),
+  findings: Type.Unknown({ description: "string[] findings，随 pass 或 bounce 留存" }),
 }));
 
 const gatekeeperDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "dispatch — guidance, not a schema gate." }),
-  officer: Type.Unknown({ description: "inspector | notary when status is dispatch." }),
+  status: Type.Unknown({ description: "dispatch — 形状指引，非 schema 闸" }),
+  officer: Type.Unknown({ description: "status 为 dispatch 时为 inspector | notary" }),
 }));
-
-const INVOCATION_OVERLAY = "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
 
 function result(content: string, details: unknown) {
   return { content: [{ type: "text" as const, text: content }], details };
@@ -92,7 +101,7 @@ function result(content: string, details: unknown) {
 function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
   return {
     name: SUBJECT_TOOL,
-    description: "Read the admitted subject. Collection only: this tool never judges or mutates it.",
+    description: "读取已受理卷宗；只供取阅，不评判不改动。",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute() { return result(JSON.stringify(subject), subject); },
   };
@@ -102,9 +111,9 @@ function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
 export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
   return {
     name,
-    description: "Submit one typed pass or bounce decision.",
+    description: "提交一份 typed pass/bounce 决议。",
     parameters: officerDecisionSchema,
-    async execute(_id, args) { return result(`accepted ${String((args as { status?: unknown })?.status)}`, args); },
+    async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
   };
 }
 
@@ -112,9 +121,9 @@ export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
 export function createGatekeeperOutputTool(): AuditorDecisionTool {
   return {
     name: GATEKEEPER_OUTPUT_TOOL,
-    description: "Dispatch the admitted subject to one officer.",
+    description: "提交门下省派官决定。",
     parameters: gatekeeperDecisionSchema,
-    async execute(_id, args) { return result(`accepted ${String((args as { status?: unknown })?.status)}`, args); },
+    async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
   };
 }
 
@@ -204,9 +213,9 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     provinceRun = await executeAuditorChild({
       context: options.context,
       roleLabel: "Gatekeeper",
-      menxiaSeat: "gatekeeper",
-      systemPrompt: `${await loadSoul("gatekeeper")}\n\n${INVOCATION_OVERLAY}`,
-      prompt: "Read the admitted subject with ak_gatekeeper_subject, then dispatch it to one officer.",
+      gateSeat: "gatekeeper",
+      systemPrompt: await loadSoul("gatekeeper"),
+      prompt: "卷宗已受理。",
       tool: createGatekeeperOutputTool(),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -216,7 +225,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
   }
   if (provinceRun.noReceiptLifecycle !== undefined) {
-    return { status: "no_receipt", stage: "gatekeeper", reason: "Gatekeeper settled without an accepted receipt", facts: provinceRun.noReceiptLifecycle };
+    return { status: "no_receipt", stage: "gatekeeper", reason: `${gateSeatLabel("gatekeeper")}未产生已接受回执即散局`, facts: provinceRun.noReceiptLifecycle };
   }
   const province = projectProvinceDecision(provinceRun.decision);
   if (province.status !== "dispatch") return province;
@@ -227,16 +236,16 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     const officerRun = await executeAuditorChild({
       context: options.context,
       roleLabel,
-      menxiaSeat: officer,
-      systemPrompt: `${await loadSoul(officer)}\n\n${INVOCATION_OVERLAY}`,
-      prompt: "Read the admitted subject with ak_gatekeeper_subject, then submit one typed decision on only your assigned axes.",
+      gateSeat: officer,
+      systemPrompt: await loadSoul(officer),
+      prompt: "卷宗已受理。",
       tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
     });
     if (officerRun.noReceiptLifecycle !== undefined) {
-      return { status: "no_receipt", stage: officer, reason: `${officer} settled without an accepted receipt`, facts: officerRun.noReceiptLifecycle };
+      return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
     }
     return projectOfficerDecision(officer, officerRun.decision);
   } catch (error) {
@@ -260,7 +269,7 @@ export async function requireGatekeeperPass(options: {
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {
     // Typed stage/reason/submission ride failInfrastructure → durable tool_result (#475).
-    const error = new Error(`Gatekeeper transport failure at ${gatekeeper.stage}: ${gatekeeper.reason}`) as Error & {
+    const error = new Error(`门下省 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
       stage: typeof gatekeeper.stage;
       reason: string;
       submission?: unknown;

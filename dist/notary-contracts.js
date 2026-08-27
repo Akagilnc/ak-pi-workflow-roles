@@ -6,7 +6,7 @@
 import { Type } from "typebox";
 import { openToolObject } from "./open-tool-schema.js";
 export const NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
-export const NOTARY_ACCEPTED_TEXT = "Notary output accepted";
+export const NOTARY_ACCEPTED_TEXT = "符宝郎回执已接受";
 export const NOTARY_SOURCE_RUN_FLAG = {
     name: "ak-notary-source-run",
     definition: {
@@ -15,13 +15,13 @@ export const NOTARY_SOURCE_RUN_FLAG = {
     },
 };
 /** Package-owned kickoff only — callers supply zero prompt bytes (ADR 0067 / #448). */
-export const NOTARY_FIXED_KICKOFF = "Notary review. Bound source-run locator is on the session materials; fetch authoritative ticket, git, and dossier evidence yourself; submit one typed decision.";
+export const NOTARY_FIXED_KICKOFF = "符宝郎案卷已受理；来源 run 定位见会话材料。";
 export const notaryOutputSchema = openToolObject(Type.Object({
     status: Type.Unknown({
-        description: "pass | bounce — guidance, not a schema gate.",
+        description: "pass | bounce — 形状指引，非 schema 闸",
     }),
     findings: Type.Unknown({
-        description: "string[] findings retained with pass or bounce.",
+        description: "string[] findings，随 pass 或 bounce 留存",
     }),
 }));
 function isRecord(value) {
@@ -33,18 +33,14 @@ function asStringArray(value) {
     return value.filter((item) => typeof item === "string");
 }
 /**
- * Project one explicit Notary release. Throws when there is no lawful explicit
- * pass / bounce — callers map that to the existing non-zero failure channel.
+ * Project one lawful explicit Notary release (pass | bounce).
+ * No throw on shape — ADR 0055 / 第 0 条: already-submitted params are retained as-is;
+ * public-terminal projects non-usable releases via typed failure cause.
  */
-export function validateNotaryOutput(value) {
-    if (!isRecord(value)) {
-        throw new Error("Notary output has no recognized execution discriminator");
-    }
-    const statusRaw = typeof value.status === "string" ? value.status : undefined;
-    if (statusRaw === undefined) {
-        throw new Error("Notary output has no recognized execution discriminator");
-    }
-    const status = statusRaw;
+export function projectLawfulNotaryOutput(value) {
+    if (!isRecord(value))
+        return undefined;
+    const status = typeof value.status === "string" ? value.status : undefined;
     if (status === "bounce") {
         const clone = structuredClone(value);
         if (clone.disposition === undefined)
@@ -59,10 +55,29 @@ export function validateNotaryOutput(value) {
             clone.findings = asStringArray(clone.findings);
         return clone;
     }
-    throw new Error("Notary output has no recognized execution discriminator");
+    return undefined;
 }
+/** Retain submitted Notary params as-is for the failure channel (no shape rewrite). */
+export function retainNotarySubmission(value) {
+    if (value === undefined)
+        return { missing: "arguments" };
+    try {
+        return structuredClone(value);
+    }
+    catch {
+        return value;
+    }
+}
+/**
+ * Settlement/recording path: only lawful recorded pass/bounce.
+ * Does not gate role admission — callers must not use this to reject a submission.
+ */
 export function validateRecordedNotaryOutput(value) {
-    return validateNotaryOutput(value);
+    const projected = projectLawfulNotaryOutput(value);
+    if (projected === undefined) {
+        throw new Error("Notary output has no recognized execution discriminator");
+    }
+    return projected;
 }
 export function notaryDecisiveFacts(output) {
     const status = String(output.status);

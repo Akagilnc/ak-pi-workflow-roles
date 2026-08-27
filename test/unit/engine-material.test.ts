@@ -47,26 +47,22 @@ test("assertLegalEngineName rejects only real path hazards; consecutive dots pas
   assert.equal(assertLegalEngineName("company..opus"), "company..opus");
 });
 
-test("appendEngineSessionMaterial: name-only omits read-these-bytes; notes keep it", () => {
+test("appendEngineSessionMaterial: engine name line; notes also carry path", () => {
+  // Structured coordinates only — no presentation-header pin (#495 S4 / ADR 0073).
   const nameOnly = appendEngineSessionMaterial(["base"], { name: "company..opus" });
-  const nameOnlyText = nameOnly.join("\n");
-  assert.equal(nameOnlyText.includes("company..opus"), true);
+  assert.equal(nameOnly.includes("- engine: company..opus"), true);
   assert.equal(
-    nameOnlyText.includes("Engine method material (read these bytes"),
+    nameOnly.some((line) => line.startsWith("- /") || line.includes("/resources/engines/")),
     false,
-    "name-only path must not claim packaged bytes to read",
+    "name-only path must not carry a material path",
   );
 
   const withNotes = appendEngineSessionMaterial(["base"], {
     name: "cursor",
     materialPath: "/abs/resources/engines/cursor.md",
   });
-  const withNotesText = withNotes.join("\n");
-  assert.equal(
-    withNotesText.includes("Engine method material (read these bytes"),
-    true,
-  );
-  assert.equal(withNotesText.includes("/abs/resources/engines/cursor.md"), true);
+  assert.equal(withNotes.includes("- engine: cursor"), true);
+  assert.equal(withNotes.includes("- /abs/resources/engines/cursor.md"), true);
 });
 
 test("packaged notes directory is discovery-only; missing notes is not an error", async () => {
