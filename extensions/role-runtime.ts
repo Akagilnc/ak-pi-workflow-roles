@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
-import { createPiRoleHostAdapter } from "../src/pi/adapter.ts";
+import { createPiRoleHostAdapter, toPiContext } from "../src/pi/adapter.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
@@ -14,7 +14,6 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import type { HostContext } from "../src/host-contracts.ts";
 import type { Message } from "@earendil-works/pi-ai";
 
 import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../src/collector-github.ts";
@@ -144,7 +143,7 @@ export function transcriptFromContext(ctx: ExtensionContext): string {
 
 export async function loadNavigatorWorkContext(
   pi: Pick<ExtensionAPI, "getFlag">,
-  options: { context: HostContext; role: string },
+  options: { context: ExtensionContext; role: string },
 ): Promise<{ subjectKey: string; subject: string; authority: string; subjectProvenance: NavigatorSubjectProvenance }> {
   const reference = navigatorInputReference(pi as ExtensionAPI, options.role);
   const input = reference === undefined || options.role === "doctor" || options.role === "notary"
@@ -266,7 +265,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     collectorPackageExtensionPath: extensionPath,
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
-    auditDoctorCompliance: (options) => createPiDoctorAuditor()(options),
+    auditDoctorCompliance: (options) => createPiDoctorAuditor()({ ...options, context: toPiContext(options.context) }),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
@@ -304,9 +303,9 @@ export default function roleRuntime(pi: ExtensionAPI): void {
       }
       return loadHomeCanonicalSkillBinding(name);
     },
-    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
+    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, { ...options, context: toPiContext(options.context) }),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext: (context) => context.transcript?.() ?? "",
-    auditSoulCompliance: (options) => createPiJudgeAuditor()(options),
+    auditSoulCompliance: (options) => createPiJudgeAuditor()({ ...options, context: toPiContext(options.context) }),
   }, piHostAdapter)(pi);
 }

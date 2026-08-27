@@ -24,7 +24,7 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
-import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
+import { requirePiGatekeeperPass, type HostGatekeeperActions } from "./pi/adapter.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -115,7 +115,7 @@ function isWorkerPhase(value: unknown): value is WorkerPhase {
   return typeof value === "string" && (FIXER_PHASES as readonly string[]).includes(value);
 }
 
-export type WorkerRoleHostActions = GatekeeperPassHostActions;
+export type WorkerRoleHostActions = HostGatekeeperActions;
 
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
@@ -281,7 +281,7 @@ export function createFixerRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed" || output.status === "partially_completed") {
-              await requireGatekeeperPass({
+              await requirePiGatekeeperPass({
                 context: ctx,
                 subject: { kind: "worker_completion", material: JSON.stringify(output) },
                 ...(_signal === undefined ? {} : { signal: _signal }),
@@ -422,7 +422,7 @@ export function createCoderRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed") {
-              await requireGatekeeperPass({
+              await requirePiGatekeeperPass({
                 context: ctx,
                 subject: { kind: "worker_completion", material: JSON.stringify(output) },
                 ...(_signal === undefined ? {} : { signal: _signal }),

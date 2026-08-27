@@ -1,7 +1,7 @@
 import { writeSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { RoleHost, HostContext } from "./host-contracts.ts";
-import { createPiRoleHostAdapter, type PiRoleHostAdapter } from "./pi/adapter.ts";
+import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "./pi/adapter.ts";
 import { Value } from "typebox/value";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -41,7 +41,7 @@ import {
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { createNotaryRoleRuntime } from "./notary-role.ts";
-import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -71,8 +71,7 @@ import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   type ReviewerSpecDisposition,
 } from "./reviewer-construction.ts";
-import type { GatekeeperChildRequest, GatekeeperNonPassResult } from "./gatekeeper-role.ts";
-import { executeAuditorChild } from "./evidence-child-executor.ts";
+import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 /**
  * Private transport flag names/definitions for Reviewer admitted inputs.
@@ -270,7 +269,7 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export { executeAuditorChild };
+export { executeAuditorChild } from "./evidence-child-executor.ts";
 export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
   NOTARY_OUTPUT_TOOL,
@@ -498,8 +497,8 @@ export type RoleRuntimeDependencies = {
   auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
+  createNavigatorAttendance?(options: { context: NavigatorAttendanceOptions["context"]; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
+  loadNavigatorWorkContext?(options: { context: NavigatorAttendanceOptions["context"]; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -527,12 +526,11 @@ export type RoleRuntimeDependencies = {
   oauthKeepalive?: OAuthKeepaliveOptions;
 };
 
-function abortContext(ctx: HostContext): void {
-  const abort = (ctx as HostContext & { abort?: () => void }).abort;
-  if (typeof abort === "function") abort.call(ctx);
+function abortContext(ctx: { abort(): void }): void {
+  ctx.abort();
 }
 
-function failInfrastructure(error: unknown, ctx: HostContext): never {
+function failInfrastructure(error: unknown, ctx: { mode: string; abort(): void }): never {
   abortContext(ctx);
   if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
   throw error;
@@ -907,9 +905,6 @@ export function createRoleRuntimeExtension(
       bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void {
         pendingGatekeeperNonPassByToolCallId.set(toolCallId, result);
       },
-      async executeGatekeeperChild(request: GatekeeperChildRequest) {
-        return executeAuditorChild({ ...request, context: request.context as never, runCompletion: request.runCompletion as never, tool: request.tool as never, dossierTool: request.dossierTool as never });
-      },
     };
     const judge = createJudgeRoleRuntime(
       roleHost,
@@ -1122,7 +1117,7 @@ export function createRoleRuntimeExtension(
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
-      oauthKeepalive.start(ctx);
+      oauthKeepalive.start(toPiContext(ctx));
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);
@@ -1174,7 +1169,7 @@ export function createRoleRuntimeExtension(
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           } else {
             try {
-              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
+              work = await dependencies.loadNavigatorWorkContext({ context: toPiContext(ctx), role: entry.role, phase: navigatorPhase(pi, entry.role) });
               contextError = work.contextError;
             } catch (error) {
               // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
@@ -1205,7 +1200,7 @@ export function createRoleRuntimeExtension(
             });
           }
           navigatorAttendance = await dependencies.createNavigatorAttendance({
-            context: ctx,
+            context: toPiContext(ctx),
             role: entry.role,
             phase: invocationPhase,
             subjectKey: work.subjectKey,
@@ -1234,7 +1229,7 @@ export function createRoleRuntimeExtension(
         // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
         if (engineDetourRegistration === undefined) {
-          engineDetourRegistration = registerEngineDetourTool(roleHost, hostActions);
+          engineDetourRegistration = registerEngineDetourTool(pi, { failInfrastructure });
           if (!engineDetourRegistration.registered) {
             engineDetourRegistration = undefined;
           }

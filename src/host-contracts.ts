@@ -1,4 +1,3 @@
-import type { Api, Model, Provider } from "@earendil-works/pi-ai";
 import { Type, type Static, type TLiteral, type TSchema } from "typebox";
 
 export type HostContentPart = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments?: unknown } | { type: string };
@@ -14,12 +13,8 @@ export type HostToolResult<T = unknown> = {
 
 export type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendMessage?(message: HostMessage): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
-export type HostModelRegistry = { getProvider(provider: string): Provider<Api> | undefined; find(provider: string, modelId: string): Model<Api> | undefined; getProviderAuth(provider: string): Promise<{ auth: { baseUrl?: string }; env?: Record<string, string>; } | undefined>; getApiKeyAndHeaders(model: Model<Api>): Promise< | { ok: true; apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> } | { ok: false; error: string } >; refresh(options?: { allowNetwork?: boolean; providers?: readonly string[]; force?: boolean; signal?: AbortSignal; }): Promise<{ aborted: boolean; errors: ReadonlyMap<string, Error> }>; };
-
-export type HostChildContext = { cwd: string; model: Model<Api> | undefined; modelRegistry: HostModelRegistry; thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; sessionManager: Pick<HostSessionManager, "getSessionFile" | "getLeafId" | "getHeader" | "appendCustomEntry"> & { getEntries(): Iterable<unknown>; }; };
-
 /** Context supplied by a host for one activation and its interceptable events. */
-export type HostContext = { cwd: string; mode: string; model: Model<Api> | undefined; modelRegistry: HostModelRegistry; thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; sessionManager: HostSessionManager; signal?: AbortSignal; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; signal?: AbortSignal; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: HostContext, ): Promise<HostToolResult<D>>; };
 

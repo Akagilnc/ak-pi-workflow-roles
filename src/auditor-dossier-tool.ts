@@ -1,7 +1,6 @@
 import { dirname, join, resolve } from "node:path";
 
-import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
-import type { HostChildContext } from "./host-contracts.ts";
+import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier" as const;
@@ -15,7 +14,7 @@ export type AuditorDossierLocation = {
 };
 
 /** Resolve the exact run binding already carried by the parent record session. */
-export function auditorRunDirectory(context: HostChildContext): string | undefined {
+export function auditorRunDirectory(context: ExtensionContext): string | undefined {
   const sessionFile = context.sessionManager?.getSessionFile?.();
   return sessionFile === undefined ? undefined : resolve(dirname(dirname(sessionFile)));
 }

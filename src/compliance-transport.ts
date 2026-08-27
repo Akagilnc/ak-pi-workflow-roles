@@ -1,6 +1,5 @@
 import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
-import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
-import type { HostChildContext } from "./host-contracts.ts";
+import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
   executeAuditorChild,
@@ -56,7 +55,7 @@ export function createComplianceDecisionTool(name: string, description: string) 
   return { name, description, parameters: complianceDecisionSchema, async execute(_id: string, params: unknown): Promise<AgentToolResult<unknown>> { return { content: [{ type: "text", text: "审计决议已收" }], details: params, terminate: true }; } };
 }
 
-export async function prepareComplianceDispatch(model: Model<Api>, context: HostChildContext, label: string): Promise<ComplianceDispatch> {
+export async function prepareComplianceDispatch(model: Model<Api>, context: ExtensionContext, label: string): Promise<ComplianceDispatch> {
   const resolution = await context.modelRegistry.getProviderAuth(model.provider).catch((error: unknown) => { throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); });
   if (resolution === undefined) throw new Error(`${label} authentication failed: provider is not configured: ${model.provider}`);
   const auth = await context.modelRegistry.getApiKeyAndHeaders(model);
@@ -80,15 +79,15 @@ export type AuditorParentAttemptBinding = {
 export class ComplianceResponseRetentionError extends Error {
   constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }
-export type ActiveSessionResponseAppender = { appendCustomEntry(customType: string, data?: unknown): unknown };
+export type ActiveSessionResponseAppender = { appendCustomEntry(customType: string, data?: unknown): string };
 /** Unique owner for session custom-entry append with availability check and typed failure. */
 export function appendActiveSessionCustomEntry(
-  context: { sessionManager?: Partial<ActiveSessionResponseAppender> },
+  context: ExtensionContext,
   customType: string,
   data?: unknown,
   labels: { unavailable?: string; failed?: string } = {},
-): unknown {
-  const manager = context.sessionManager;
+): string {
+  const manager = context.sessionManager as unknown as Partial<ActiveSessionResponseAppender> | undefined;
   if (typeof manager?.appendCustomEntry !== "function") {
     throw new ComplianceResponseRetentionError(
       labels.unavailable ?? "session custom entry append is unavailable",
@@ -103,7 +102,7 @@ export function appendActiveSessionCustomEntry(
     );
   }
 }
-function retainComplianceResponse(context: HostChildContext, response: AssistantMessage): void {
+function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
   appendActiveSessionCustomEntry(
     context,
     COMPLIANCE_RESPONSE_ENTRY_TYPE,
@@ -142,7 +141,7 @@ export type RunComplianceAuditOptions = {
   roleLabel: string;
   invalidDecisionLabel: string;
   runCompletion?: ComplianceCompletion;
-  context: HostChildContext;
+  context: ExtensionContext;
   /** Exact machine-owned run binding; never sourced from AK_ROLE_RUN_DIR. */
   runDirectory?: string | undefined;
   signal?: AbortSignal;

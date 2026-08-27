@@ -3,8 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { ModelRuntime, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { HostContext } from "./host-contracts.ts";
+import { ModelRuntime, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
@@ -223,14 +222,14 @@ export type NavigatorPreparationSession = {
 };
 
 export type NavigatorSessionFactory = (options: {
-  context: HostContext;
+  context: ExtensionContext;
   subject: string;
   modelSettingPath?: string;
   tool: ToolDefinition;
 }) => Promise<NavigatorPreparationSession>;
 
 export type NavigatorAttendanceOptions = {
-  context: HostContext;
+  context: ExtensionContext;
   role: string;
   phase: NavigatorPhase;
   subjectKey: string;

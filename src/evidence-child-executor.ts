@@ -18,10 +18,10 @@ import {
   type Usage,
 } from "@earendil-works/pi-ai";
 import type {
+  ExtensionContext,
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { HostChildContext } from "./host-contracts.ts";
 
 import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
@@ -30,7 +30,6 @@ import {
   type AuditorParentAttemptBinding,
 } from "./compliance-transport.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
-import { toPiToolDefinition } from "./pi/adapter.ts";
 import { engineNameFromEnv } from "./engine-detour.ts";
 import {
   appendEngineSessionMaterial,
@@ -138,7 +137,7 @@ export async function withInProcessScratch<T>(
 }
 
 export type InheritedRuntimeOptions = {
-  readonly context: HostChildContext;
+  readonly context: ExtensionContext;
   readonly label: string;
   readonly runCompletion?: AuditorCompletion;
   readonly injectedSystemPrompt?: string;
@@ -181,7 +180,7 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
     modelsPath: null,
   });
   // Injected completions historically accepted the minimal model exposed by an
-  // host context. AgentSession crosses ModelRuntime first, so complete the
+  // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
   // model metadata required by that runtime without changing provider identity.
   const inheritedModel: Model<Api> = options.runCompletion === undefined
     ? dispatch.model
@@ -583,7 +582,7 @@ export type EvidenceChildExecuteOptions = Readonly<{
 export async function executeEvidenceChild(
   workspace: string,
   prompt: ReviewerPromptText,
-  context: HostChildContext,
+  context: ExtensionContext,
   options: EvidenceChildExecuteOptions = {},
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
   const signal = options.signal;
@@ -643,7 +642,7 @@ export async function executeEvidenceChild(
         systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
         ...(engineDetourTool === undefined
           ? {}
-          : { customTools: [toPiToolDefinition(engineDetourTool)] }),
+          : { customTools: [engineDetourTool] }),
         sessionManager: createRecordSession({
           cwd: workspace,
           kind: "evidence-children",
@@ -744,7 +743,7 @@ export type AuditorRoleOptions = {
   tool: AuditorDecisionTool;
   dossierTool: AuditorDecisionTool;
   roleLabel: string;
-  context: HostChildContext;
+  context: ExtensionContext;
   signal?: AbortSignal;
   runCompletion?: AuditorCompletion;
   retainResponse?(response: AssistantMessage): void;
@@ -761,7 +760,7 @@ export type AuditorRoleOptions = {
  * failures throw — createInheritedRuntime must not silent-fallback to parent.
  */
 async function resolveGateSeatModelOptions(
-  context: HostChildContext,
+  context: ExtensionContext,
   seat: GateOfficerSeat,
   roleLabel: string,
 ): Promise<{ model?: Model<Api>; thinkingLevel?: PublicThinkingLevel }> {
@@ -867,10 +866,7 @@ export async function executeAuditorChild(
       thinkingLevel: gate.thinkingLevel ?? options.context.thinkingLevel ?? "off",
       modelRuntime: inherited.runtime,
       systemPrompt: options.systemPrompt,
-      customTools: [
-        toPiToolDefinition({ ...options.dossierTool, label: options.roleLabel }),
-        toPiToolDefinition(tool),
-      ],
+      customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
       sessionManager: auditorSessionManager,
     });
 

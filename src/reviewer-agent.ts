@@ -1,4 +1,4 @@
-import type { HostChildContext } from "./host-contracts.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isReviewerPromptText, type ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import type { AcceptedReviewerExecution } from "./reviewer-dispatch.ts";
 import type { ReviewerTargetSnapshot, ReviewerWorkspaceDisposition, ReviewerFailureClassification, ReviewerUsage } from "./reviewer-execution-ledger.ts";
@@ -29,7 +29,7 @@ export class ReviewerDispatchExecutionError extends Error {
     this.name = "ReviewerDispatchExecutionError";
   }
 }
-export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: HostChildContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
+export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
 export type ReviewerAgentFaultPoint = ReviewerWorkspaceFaultPoint;
 type Dependencies = Readonly<{
   fault?(operation: ReviewerAgentFaultPoint): void;
