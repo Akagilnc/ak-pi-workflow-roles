@@ -1,9 +1,5 @@
-import { StringEnum } from "@earendil-works/pi-ai";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  AgentToolResult,
-} from "@earendil-works/pi-coding-agent";
+import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
+import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
@@ -61,18 +57,18 @@ function matchFixerBashForbiddenLiteral(
 
 const coderOutputVariants = Type.Union([
   Type.Object({
-    status: StringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
+    status: stringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
     report: Type.String({ minLength: 1, description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["completed", "refused"] as const, {
+    status: stringEnum(["completed", "refused"] as const, {
       description:
         "completed | refused — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据",
     }),
     report: Type.String({ minLength: 1, description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["unfinished"] as const, {
+    status: stringEnum(["unfinished"] as const, {
       description:
         "unfinished — 形状指引，非 schema 闸；缺前置或违宪约束致本局未完成时可用。缺待决 owner 决定或答复属缺前置。",
     }),
@@ -135,7 +131,7 @@ export type CoderRoleDependencies = {
 };
 
 export type WorkerRoleRuntime = {
-  activate(ctx?: ExtensionContext): Promise<void>;
+  activate(ctx?: HostContext): Promise<void>;
   /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds archivist durability. */
   armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
 };
@@ -163,14 +159,14 @@ function requireSingletonSubmissionCall(
   toolCallId: string,
   expectedToolName: string,
   roleLabel: WorkerRoleLabel,
-  ctx: ExtensionContext,
+  ctx: HostContext,
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   const seat = roleLabel === "Fixer" ? "修内司" : "将作监";
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
     throw new Error(`${seat}回执非唯一终局工具调用`);
   }
-  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
+  const calls = leaf.message.content.filter((part: any) => part.type === "toolCall");
   const call = calls[0];
   if (
     calls.length !== 1 || call === undefined || call.id !== toolCallId ||
@@ -186,7 +182,7 @@ function assertAcceptableThroughHost(
   status: string,
   details: unknown,
   hostActions: WorkerRoleHostActions,
-  ctx: ExtensionContext,
+  ctx: HostContext,
   toolCallId: string,
 ): void {
   try {
@@ -204,7 +200,7 @@ function assertAcceptableThroughHost(
 }
 
 export function createFixerRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: FixerRoleDependencies,
   hostActions: WorkerRoleHostActions,
 ): WorkerRoleRuntime {
@@ -265,7 +261,7 @@ export function createFixerRoleRuntime(
           description: "提交修内司终局回执；基础设施失败走 abort，不经本工具。",
           promptSnippet: "提交修内司终局回执",
           parameters: fixerOutputSchema,
-          async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: any, _signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (packet === undefined || phase === undefined) {
               throw new Error("修内司修理包与阶段未装载");
             }
@@ -301,7 +297,7 @@ export function createFixerRoleRuntime(
             };
           },
         });
-        pi.on("tool_call", (event) => {
+        pi.on("tool_call", (event: any) => {
           if (event.toolName !== "bash") return;
           const command = event.input["command"];
           if (typeof command !== "string") return;
@@ -313,7 +309,7 @@ export function createFixerRoleRuntime(
               `修内司 bash 拦截：命中禁用字面量 ${matched}`,
           };
         });
-        pi.on("before_agent_start", (event) => {
+        pi.on("before_agent_start", (event: any) => {
           if (soul === undefined) throw new Error("修内司职分未装载");
           return {
             systemPrompt:
@@ -329,7 +325,7 @@ export function createFixerRoleRuntime(
 }
 
 export function createCoderRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: CoderRoleDependencies,
   hostActions: WorkerRoleHostActions,
 ): WorkerRoleRuntime {
@@ -398,7 +394,7 @@ export function createCoderRoleRuntime(
           description: "提交将作监终局回执；本工具无 escalate 通道。",
           promptSnippet: "提交将作监终局回执",
           parameters: coderOutputSchema,
-          async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
+          async execute(toolCallId: string, parameters: any, _signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext) {
             if (task === undefined || phase === undefined) {
               throw new Error("将作监任务与阶段未装载");
             }
@@ -442,7 +438,7 @@ export function createCoderRoleRuntime(
             };
           },
         });
-        pi.on("input", (event) => {
+        pi.on("input", (event: any) => {
           if (phase !== "apply" || tddInvocationInjected) {
             return { action: "continue" as const };
           }
@@ -462,7 +458,7 @@ export function createCoderRoleRuntime(
             ...(event.images === undefined ? {} : { images: event.images }),
           };
         });
-        pi.on("before_agent_start", (event, ctx) => {
+        pi.on("before_agent_start", (event: any, ctx: HostContext) => {
           if (soul === undefined) throw new Error("将作监职分未装载");
           if (phase === "apply") {
             if (binding === undefined) {

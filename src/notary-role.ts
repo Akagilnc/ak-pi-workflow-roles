@@ -1,12 +1,8 @@
+import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
 /**
  * Public Notary role runtime — direct officer seat (not through Gatekeeper province).
  * Caller supplies only a source-run locator; Notary self-fetches authoritative materials.
  */
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
 
 import {
   NOTARY_ACCEPTED_TEXT,
@@ -32,20 +28,20 @@ export type NotaryRoleDependencies = {
 export type NotaryRoleHostActions = {
   failInfrastructure(
     error: unknown,
-    ctx: ExtensionContext,
+    ctx: HostContext,
     toolCallId?: string,
   ): never;
 };
 
 function requireSingletonSubmissionCall(
   toolCallId: string,
-  ctx: ExtensionContext,
+  ctx: HostContext,
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
     throw new Error("符宝郎回执非唯一终局工具调用");
   }
-  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
+  const calls = leaf.message.content.filter((part: any) => part.type === "toolCall");
   if (
     calls.length !== 1 ||
     calls[0]?.id !== toolCallId ||
@@ -56,7 +52,7 @@ function requireSingletonSubmissionCall(
 }
 
 export function createNotaryRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: NotaryRoleDependencies,
   host: NotaryRoleHostActions,
 ) {
@@ -88,13 +84,7 @@ export function createNotaryRoleRuntime(
           description: "提交引文保真与票面对齐的 typed pass/bounce 决议。",
           promptSnippet: "提交符宝郎决议",
           parameters: notaryOutputSchema,
-          async execute(
-            toolCallId,
-            parameters,
-            _signal,
-            _onUpdate,
-            ctx,
-          ): Promise<AgentToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: any, _signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext, ): Promise<HostToolResult<unknown>> {
             if (activation === undefined) {
               throw new Error("符宝郎未激活");
             }
@@ -110,7 +100,7 @@ export function createNotaryRoleRuntime(
             };
           },
         });
-        pi.on("before_agent_start", (event) => {
+        pi.on("before_agent_start", (event: any) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
           }

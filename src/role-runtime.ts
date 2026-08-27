@@ -1,5 +1,7 @@
 import { writeSync } from "node:fs";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { RoleHost, HostContext } from "./host-contracts.ts";
+import { createPiRoleHost } from "./pi/adapter.ts";
 import { Value } from "typebox/value";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -344,19 +346,19 @@ export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } fr
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
 type WorkerArmable = {
-  activate(context?: ExtensionContext): Promise<void>;
+  activate(context?: HostContext): Promise<void>;
   armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
 };
 
 type ActivationRuntime = {
   event: { reason: string };
-  context: ExtensionContext;
+  context: HostContext;
   judge: { activate(): Promise<void> };
   fixer: WorkerArmable;
   coder: WorkerArmable;
   reviewer: {
     activate(
-      context: ExtensionContext,
+      context: HostContext,
       admitted: ReviewerAdmittedInputs,
     ): Promise<ReviewerActivation>;
   };
@@ -364,7 +366,7 @@ type ActivationRuntime = {
   decodeReviewerAdmitted(): ReviewerAdmittedInputs;
   /** Envelope stores live parent activation for agent_start prompt assembly. */
   bindReviewerParent(activation: ReviewerActivation): void;
-  collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
+  collector: { activate(context: HostContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
   notary: { activate(): Promise<void> };
   merger(): Promise<void>;
@@ -492,22 +494,22 @@ export type RoleRuntimeDependencies = {
   loadMergerInput?(path: string): Promise<unknown>;
   mergerGitState?: MergerRoleDependencies["gitState"];
   createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
-  auditDoctorCompliance?(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
+  auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
+  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
+  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
   runReviewerDispatch?(
     dispatch: AcceptedReviewerExecution,
-    options: { context: ExtensionContext; signal?: AbortSignal },
+    options: { context: HostContext; signal?: AbortSignal },
   ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;
-  transcriptFromContext(ctx: ExtensionContext): string;
+  transcriptFromContext(ctx: HostContext): string;
   auditSoulCompliance(
-    options: { context: ExtensionContext; signal?: AbortSignal },
+    options: { context: HostContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
@@ -524,12 +526,12 @@ export type RoleRuntimeDependencies = {
   oauthKeepalive?: OAuthKeepaliveOptions;
 };
 
-function abortContext(ctx: ExtensionContext): void {
-  const abort = (ctx as ExtensionContext & { abort?: () => void }).abort;
+function abortContext(ctx: HostContext): void {
+  const abort = (ctx as HostContext & { abort?: () => void }).abort;
   if (typeof abort === "function") abort.call(ctx);
 }
 
-function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
+function failInfrastructure(error: unknown, ctx: HostContext): never {
   abortContext(ctx);
   if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
   throw error;
@@ -606,6 +608,7 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
+    const roleHost = createPiRoleHost(pi);
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {
@@ -892,7 +895,7 @@ export function createRoleRuntimeExtension(
     });
 
     const hostActions = {
-      failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never {
+      failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never {
         if (toolCallId !== undefined) {
           pendingInfrastructureFailures.set(toolCallId, buildPendingInfrastructureFailure(error));
         }
@@ -903,7 +906,7 @@ export function createRoleRuntimeExtension(
       },
     };
     const judge = createJudgeRoleRuntime(
-      pi,
+      roleHost,
       {
         loadSoul: dependencies.loadJudgeSoul,
         auditSoulCompliance: dependencies.auditSoulCompliance,
@@ -911,7 +914,7 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
     const fixer = createFixerRoleRuntime(
-      pi,
+      roleHost,
       {
         async loadSoul() {
           if (dependencies.loadFixerSoul === undefined) {
@@ -929,7 +932,7 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
     const coder = createCoderRoleRuntime(
-      pi,
+      roleHost,
       {
         async loadSoul() {
           if (dependencies.loadCoderSoul === undefined) {
@@ -953,7 +956,7 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
     const reviewer = createReviewerRoleRuntime(
-      pi,
+      roleHost,
       {
         async loadSoul() {
           if (dependencies.loadReviewerSoul === undefined) {
@@ -984,12 +987,12 @@ export function createRoleRuntimeExtension(
       },
       hostActions,
     );
-    const doctor = createDoctorRoleRuntime(pi, {
+    const doctor = createDoctorRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
       async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
-    const notary = createNotaryRoleRuntime(pi, {
+    const notary = createNotaryRoleRuntime(roleHost, {
       async loadSoul() {
         if (!dependencies.loadNotarySoul) throw new Error("Notary runtime dependencies are not configured");
         return dependencies.loadNotarySoul();
@@ -1000,7 +1003,7 @@ export function createRoleRuntimeExtension(
       },
     }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
-    const merger = createMergerRoleRuntime(pi, {
+    const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
       gitState: {
@@ -1009,7 +1012,7 @@ export function createRoleRuntimeExtension(
       },
     }, hostActions);
     const collector = createCollectorRoleRuntime(
-      pi,
+      roleHost,
       {
         async loadSoul() {
           if (dependencies.loadCollectorSoul === undefined) {
@@ -1049,7 +1052,7 @@ export function createRoleRuntimeExtension(
     // (abort + nonzero print/json exit) with the original cause before that swallow.
     const observe = async (
       run: () => void | Promise<void>,
-      ctx: ExtensionContext,
+      ctx: HostContext,
     ): Promise<void> => {
       try {
         await run();
@@ -1225,7 +1228,7 @@ export function createRoleRuntimeExtension(
         // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
         if (engineDetourRegistration === undefined) {
-          engineDetourRegistration = registerEngineDetourTool(pi, hostActions);
+          engineDetourRegistration = registerEngineDetourTool(roleHost, hostActions);
           if (!engineDetourRegistration.registered) {
             engineDetourRegistration = undefined;
           }
