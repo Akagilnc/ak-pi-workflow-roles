@@ -104,7 +104,7 @@ export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission 
 export function validateRecordedDoctorOutput(value: unknown): DoctorOutput {
   const output = validateDoctorSubmissionShape(value);
   const status = read(output, "status");
-  if (status === "completed" && read(output, "cost") === undefined) throw new Error("completed 太医署回执缺少 runtime 持有的 cost 证词");
+  if (status === "completed" && read(output, "cost") === undefined) throw new DoctorSubmissionContractError("completed 太医署回执缺少 runtime 持有的 cost 证词");
   return output as DoctorOutput;
 }
 
@@ -118,8 +118,8 @@ export class DoctorEvidenceStore {
 export function validateDoctorOutput(value: unknown, patient: DoctorCase, store: DoctorEvidenceStore): DoctorSubmission {
   const output = validateDoctorSubmissionShape(value);
   const lawfulTargets = new Set(["case", ...patient.cost.invocations.sources]);
-  const assertTarget = (targetKey: unknown) => { if (typeof targetKey === "string" && !lawfulTargets.has(targetKey)) throw new Error(`targetKey 不是合法案目标：${targetKey}`); };
-  const readCitations = (ids: unknown, label: string) => { if (!Array.isArray(ids)) return; for (const id of ids) if (typeof id === "string" && (!store.entries.has(id) || !store.hasRead(id))) throw new Error(`${label} 须引用已准入/已读证据：${id}`); };
+  const assertTarget = (targetKey: unknown) => { if (typeof targetKey === "string" && !lawfulTargets.has(targetKey)) throw new DoctorSubmissionContractError(`targetKey 不是合法案目标：${targetKey}`); };
+  const readCitations = (ids: unknown, label: string) => { if (!Array.isArray(ids)) return; for (const id of ids) if (typeof id === "string" && (!store.entries.has(id) || !store.hasRead(id))) throw new DoctorSubmissionContractError(`${label} 须引用已准入/已读证据：${id}`); };
   if (read(output, "status") === "refused") {
     const missingEvidence = read(output, "missingEvidence");
     if (Array.isArray(missingEvidence)) for (const missing of missingEvidence) {
@@ -131,7 +131,7 @@ export function validateDoctorOutput(value: unknown, patient: DoctorCase, store:
   const identity = read(output, "case");
   const issueNumber = read(identity, "issueNumber");
   const runsPath = read(identity, "runsPath");
-  if ((issueNumber !== undefined && issueNumber !== patient.identity.issueNumber) || (runsPath !== undefined && runsPath !== patient.identity.runsPath)) throw new Error("太医署交卷 case 须等于已激活案身份");
+  if ((issueNumber !== undefined && issueNumber !== patient.identity.issueNumber) || (runsPath !== undefined && runsPath !== patient.identity.runsPath)) throw new DoctorSubmissionContractError("太医署交卷 case 须等于已激活案身份");
   const findings = read(output, "findings");
   if (!Array.isArray(findings)) return output;
   for (const finding of findings) {
@@ -142,25 +142,25 @@ export function validateDoctorOutput(value: unknown, patient: DoctorCase, store:
     const assetTargetKey = read(assetEvidence, "targetKey");
     const assetTargetKind = read(assetEvidence, "targetKind");
     const assetEvidenceId = read(assetEvidence, "evidenceId");
-    if (typeof assetTargetKey === "string" && assetTargetKey !== targetKey) throw new Error("类型化资产证据须确立 finding 的 targetKey");
-    if (typeof assetTargetKind === "string" && assetTargetKind !== read(finding, "targetKind")) throw new Error("类型化资产证据须确立 finding 的 targetKind");
+    if (typeof assetTargetKey === "string" && assetTargetKey !== targetKey) throw new DoctorSubmissionContractError("类型化资产证据须确立 finding 的 targetKey");
+    if (typeof assetTargetKind === "string" && assetTargetKind !== read(finding, "targetKind")) throw new DoctorSubmissionContractError("类型化资产证据须确立 finding 的 targetKind");
     if (typeof assetEvidenceId === "string") readCitations([assetEvidenceId], "asset evidence");
     const guardrails = read(finding, "guardrails");
     for (const key of ["reproducibleFailure", "owningSeamOrInvariant", "deletionOrSimplificationSuffices"]) readCitations(read(read(guardrails, key), "evidenceIds"), "guardrail");
     const bite = read(finding, "lastRealBite");
     const biteKind = read(bite, "kind");
     if (biteKind !== "actual" && biteKind !== "noRealBite") continue;
-    if (read(bite, "targetKey") !== targetKey) throw new Error("lastRealBite 目标不匹配");
+    if (read(bite, "targetKey") !== targetKey) throw new DoctorSubmissionContractError("lastRealBite 目标不匹配");
     if (biteKind === "actual") {
       const evidenceId = read(bite, "evidenceId");
       const entry = typeof evidenceId === "string" ? store.entries.get(evidenceId) : undefined;
-      if (!entry || entry.kind !== "session" || !store.hasRead(entry.id)) throw new Error("actual bite 须引用已准入/已读的留存 session");
+      if (!entry || entry.kind !== "session" || !store.hasRead(entry.id)) throw new DoctorSubmissionContractError("actual bite 须引用已准入/已读的留存 session");
     } else {
       const eligible = patient.evidence.map((entry) => entry.id).sort();
       const ids = read(bite, "eligibleEvidenceIds");
       if (Array.isArray(ids)) {
         const claimed = ids.filter((id): id is string => typeof id === "string").sort();
-        if (canonicalJson(claimed) !== canonicalJson(eligible)) throw new Error("noRealBite 须证明完整的单案合格证据全集");
+        if (canonicalJson(claimed) !== canonicalJson(eligible)) throw new DoctorSubmissionContractError("noRealBite 须证明完整的单案合格证据全集");
         readCitations(eligible, "noRealBite");
       }
     }
