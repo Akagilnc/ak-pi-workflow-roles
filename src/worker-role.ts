@@ -166,7 +166,7 @@ function requireSingletonSubmissionCall(
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
     throw new Error(`${seat}回执非唯一终局工具调用`);
   }
-  const calls = leaf.message.content.filter((part: any) => part.type === "toolCall");
+  const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
   const call = calls[0];
   if (
     calls.length !== 1 || call === undefined || call.id !== toolCallId ||
@@ -261,7 +261,7 @@ export function createFixerRoleRuntime(
           description: "提交修内司终局回执；基础设施失败走 abort，不经本工具。",
           promptSnippet: "提交修内司终局回执",
           parameters: fixerOutputSchema,
-          async execute(toolCallId: string, parameters: any, _signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext): Promise<HostToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (packet === undefined || phase === undefined) {
               throw new Error("修内司修理包与阶段未装载");
             }
@@ -297,7 +297,7 @@ export function createFixerRoleRuntime(
             };
           },
         });
-        pi.on("tool_call", (event: any) => {
+        pi.on("tool_call", (event) => {
           if (event.toolName !== "bash") return;
           const command = event.input["command"];
           if (typeof command !== "string") return;
@@ -309,7 +309,7 @@ export function createFixerRoleRuntime(
               `修内司 bash 拦截：命中禁用字面量 ${matched}`,
           };
         });
-        pi.on("before_agent_start", (event: any) => {
+        pi.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error("修内司职分未装载");
           return {
             systemPrompt:
@@ -394,7 +394,7 @@ export function createCoderRoleRuntime(
           description: "提交将作监终局回执；本工具无 escalate 通道。",
           promptSnippet: "提交将作监终局回执",
           parameters: coderOutputSchema,
-          async execute(toolCallId: string, parameters: any, _signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext) {
+          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
             if (task === undefined || phase === undefined) {
               throw new Error("将作监任务与阶段未装载");
             }
@@ -438,7 +438,7 @@ export function createCoderRoleRuntime(
             };
           },
         });
-        pi.on("input", (event: any) => {
+        pi.on("input", (event) => {
           if (phase !== "apply" || tddInvocationInjected) {
             return { action: "continue" as const };
           }
@@ -458,7 +458,7 @@ export function createCoderRoleRuntime(
             ...(event.images === undefined ? {} : { images: event.images }),
           };
         });
-        pi.on("before_agent_start", (event: any, ctx: HostContext) => {
+        pi.on("before_agent_start", (event, ctx) => {
           if (soul === undefined) throw new Error("将作监职分未装载");
           if (phase === "apply") {
             if (binding === undefined) {

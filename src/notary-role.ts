@@ -41,7 +41,7 @@ function requireSingletonSubmissionCall(
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
     throw new Error("符宝郎回执非唯一终局工具调用");
   }
-  const calls = leaf.message.content.filter((part: any) => part.type === "toolCall");
+  const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
   if (
     calls.length !== 1 ||
     calls[0]?.id !== toolCallId ||
@@ -84,7 +84,7 @@ export function createNotaryRoleRuntime(
           description: "提交引文保真与票面对齐的 typed pass/bounce 决议。",
           promptSnippet: "提交符宝郎决议",
           parameters: notaryOutputSchema,
-          async execute(toolCallId: string, parameters: any, _signal: AbortSignal | undefined, _onUpdate: any, ctx: HostContext, ): Promise<HostToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext, ): Promise<HostToolResult<unknown>> {
             if (activation === undefined) {
               throw new Error("符宝郎未激活");
             }
@@ -100,7 +100,7 @@ export function createNotaryRoleRuntime(
             };
           },
         });
-        pi.on("before_agent_start", (event: any) => {
+        pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
           }
