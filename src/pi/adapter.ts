@@ -34,7 +34,9 @@ function projectPiContext(context: ExtensionContext, contexts: WeakMap<HostConte
       getSessionFile: () => context.sessionManager.getSessionFile(),
       getHeader: () => sessionManager.getHeader(),
       setSessionFile: (path) => sessionManager.setSessionFile(path),
-      appendMessage: (message) => sessionManager.appendMessage(message),
+      appendMessage: (message) => sessionManager.appendMessage(
+        message as Parameters<SessionManager["appendMessage"]>[0],
+      ),
       appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
     },
     ...(context.signal === undefined ? {} : { signal: context.signal }),
