@@ -2,11 +2,15 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   SessionManager,
+  ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { Static, TSchema } from "typebox";
 import { requireGatekeeperPass, type GatekeeperNonPassResult, type GatekeeperSubject } from "../gatekeeper-role.ts";
 import type {
   HostContext,
   HostEventRegistration,
+  HostToolDefinition,
+  HostToolResult,
   RoleHost,
 } from "../host-contracts.ts";
 
@@ -81,6 +85,31 @@ export function fromPiContext(context: ExtensionContext): HostContext {
   return projectPiContext(context);
 }
 
+function toPiResult<D>(result: HostToolResult<D>): HostToolResult<D> {
+  return result;
+}
+
+function toPiToolDefinition<S extends TSchema, D>(
+  tool: HostToolDefinition<S, D>,
+  projectContext: (context: ExtensionContext) => HostContext,
+): ToolDefinition<S, D> {
+  return {
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
+    parameters: tool.parameters,
+    execute: async (toolCallId, params, signal, update, context) =>
+      toPiResult(await tool.execute(
+        toolCallId,
+        params as Static<S>,
+        signal,
+        update === undefined ? undefined : (result) => update(toPiResult(result)),
+        projectContext(context),
+      )),
+  };
+}
+
 /** Pi composition boundary. Each consumed capability is adapted explicitly. */
 export function createPiRoleHostAdapter(
   pi: ExtensionAPI,
@@ -89,7 +118,11 @@ export function createPiRoleHostAdapter(
   const host: RoleHost = {
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),
-    registerTool: (tool) => pi.registerTool(tool),
+    registerTool: (tool) => pi.registerTool(toPiToolDefinition(
+      tool,
+      (context) => projectPiContext(context, options.transcriptFromContext),
+    )),
+    registerNativeTool: (tool) => pi.registerTool(tool),
     getAllTools: () => pi.getAllTools().map(({ name, sourceInfo }) => ({
       name,
       ...(sourceInfo?.path === undefined ? {} : { sourceInfo: { path: sourceInfo.path } }),
