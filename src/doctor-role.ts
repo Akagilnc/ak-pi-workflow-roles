@@ -1,4 +1,4 @@
-import type { RoleHost, HostContext, HostToolResult, HostToolDefinition } from "./host-contracts.ts";
+import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import { appendActiveSessionCustomEntry, type ComplianceDecision } from "./compliance-transport.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";

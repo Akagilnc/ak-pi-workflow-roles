@@ -1,20 +1,6 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type TLiteral, type TSchema } from "typebox";
 
-export type HostContentPart =
-  | { type: "text"; text: string }
-  | { type: "toolCall"; id: string; name: string; arguments?: unknown }
-  | { type: string };
-
-export type HostMessage = {
-  role: string;
-  content: readonly HostContentPart[];
-  toolName?: string;
-  isError?: boolean;
-};
-
-export type { SessionEntry };
-
 /** Host-neutral result returned by a registered tool. */
 export type HostToolResult<T = unknown> = AgentToolResult<T> & {
   terminate?: boolean;
@@ -27,34 +13,6 @@ export type HostSessionManager = ExtensionContext["sessionManager"];
 export type HostContext = ExtensionContext;
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown> = ToolDefinition<S, D>;
-
-export function isHostToolCall(part: { type: string }): part is { type: "toolCall"; id: string; name: string } {
-  return part.type === "toolCall";
-}
-
-type BeforeAgentStartEvent = { prompt: string; systemPrompt: string; systemPromptOptions?: unknown };
-type InputEvent = { text: string; images?: readonly unknown[]; source?: string };
-type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<string, unknown> };
-type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content?: readonly HostContentPart[]; details?: unknown };
-type SessionStartEvent = { reason: string };
-type ProviderResponseEvent = { status?: number };
-type AgentEndEvent = { messages: readonly HostMessage[] };
-type ToolExecutionEvent = { toolName: string; toolCallId: string };
-
-export type HostEventMap = {
-  before_agent_start: BeforeAgentStartEvent;
-  input: InputEvent;
-  tool_call: ToolCallEvent;
-  tool_result: ToolResultEvent;
-  session_start: SessionStartEvent;
-  session_shutdown: Record<never, never>;
-  after_provider_response: ProviderResponseEvent;
-  agent_end: AgentEndEvent;
-  agent_settled: Record<never, never>;
-  tool_execution_start: ToolExecutionEvent;
-  tool_execution_update: ToolExecutionEvent;
-  tool_execution_end: ToolExecutionEvent;
-};
 
 /** The activation surface consumed by package role factories. */
 export interface RoleHost extends Pick<ExtensionAPI,
