@@ -147,11 +147,11 @@ export type TerminalResume = {
   readonly command: string;
 };
 
-/** Current English menxia seat faces projected on Terminal (#478). */
-export type TerminalMenxiaSeat = "gatekeeper" | "inspector" | "notary";
+/** Current English gate seat faces projected on Terminal (#478). */
+export type TerminalGateSeat = "gatekeeper" | "inspector" | "notary";
 
 /** One accepted province dispatch receipt (status/officer + optional reduce-seat reason). */
-export type TerminalMenxiaDispatch = {
+export type TerminalGateDispatch = {
   readonly status: string;
   readonly officer: "inspector" | "notary";
   /** Present only when the accepted dispatch wrote a non-empty reason. */
@@ -159,28 +159,28 @@ export type TerminalMenxiaDispatch = {
 };
 
 /** One accepted officer report: seat, status, full typed findings. */
-export type TerminalMenxiaOfficerReport = {
+export type TerminalGateOfficerReport = {
   readonly seat: "inspector" | "notary";
   readonly status: string;
   readonly findings: readonly string[];
 };
 
 /** One paired dispatch↔officer gate round on the public Terminal. */
-export type TerminalMenxiaRound = {
+export type TerminalGateRound = {
   readonly roundIndex: number;
-  readonly dispatch: TerminalMenxiaDispatch;
-  readonly officer: TerminalMenxiaOfficerReport;
+  readonly dispatch: TerminalGateDispatch;
+  readonly officer: TerminalGateOfficerReport;
 };
 
 /**
- * Optional menxia province projection (#478).
+ * Optional gate province projection (#478).
  * Absent when no accepted paired gate rounds exist (no-gate zero change).
  * Only durable accepted child receipts — never soul-derived expected/missing seats.
  */
-export type TerminalMenxiaFact = {
+export type TerminalGateFact = {
   /** Seats that actually ran, derived from accepted paired receipts. */
-  readonly actualSeats: readonly TerminalMenxiaSeat[];
-  readonly rounds: readonly TerminalMenxiaRound[];
+  readonly actualSeats: readonly TerminalGateSeat[];
+  readonly rounds: readonly TerminalGateRound[];
 };
 
 /** Public free-text stand-in when an exact Role run ID is stripped outside resume.command. */
@@ -209,10 +209,10 @@ export type TerminalResult = {
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
-   * Optional menxia province facts (#478). Present only when accepted paired
+   * Optional gate province facts (#478). Present only when accepted paired
    * gate rounds exist under session/auditor-roles; omitted on no-gate runs.
    */
-  menxia?: TerminalMenxiaFact;
+  gate?: TerminalGateFact;
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
   autoResumeCount?: number;
 } & (
@@ -303,19 +303,19 @@ export function formatTerminalResult(result: TerminalResult): string {
   for (const artifact of result.artifacts) {
     lines.push(`artifact\t${artifact.kind}\t${encodeTerminalField(artifact.path)}`);
   }
-  // Menxia region is unfrozen presentation of typed facts (ADR 0052) — machines
-  // read result.menxia, never these row labels.
-  if (result.menxia !== undefined) {
+  // Gate region is unfrozen presentation of typed facts (ADR 0052) — machines
+  // read result.gate, never these row labels.
+  if (result.gate !== undefined) {
     lines.push(
-      `menxia\t${encodeTerminalField(result.menxia.actualSeats.join(","))}\t${result.menxia.rounds.length}`,
+      `gate\t${encodeTerminalField(result.gate.actualSeats.join(","))}\t${result.gate.rounds.length}`,
     );
-    for (const round of result.menxia.rounds) {
+    for (const round of result.gate.rounds) {
       const reason =
         round.dispatch.reason === undefined
           ? ""
           : encodeTerminalField(round.dispatch.reason);
       lines.push(
-        `menxia-round\t${round.roundIndex}\t${round.dispatch.status}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
+        `gate-round\t${round.roundIndex}\t${round.dispatch.status}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
       );
     }
   }

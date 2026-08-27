@@ -14489,7 +14489,7 @@ var init_registry2 = __esm({
         { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
         { provider: "xai", model: "grok-4.5", thinking: "high" }
       ],
-      // #453: automatic menxia seats have no startup default — unset means inherit parent.
+      // #453: automatic gate seats have no startup default — unset means inherit parent.
       gatekeeper: [],
       inspector: [],
       navigator: [
@@ -14505,8 +14505,8 @@ var init_registry2 = __esm({
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname as dirname2, join as join3 } from "node:path";
-function isMenxiaOfficerSeat(value) {
-  return MENXIA_OFFICER_SEATS.includes(value);
+function isGateOfficerSeat(value) {
+  return GATE_OFFICER_SEATS.includes(value);
 }
 function publicCliConfigPath(home = homedir()) {
   return join3(home, ".ak-roles", "public-cli.json");
@@ -14872,13 +14872,13 @@ async function loadCredentialProviders(agentDir) {
     throw error;
   }
 }
-var MENXIA_OFFICER_SEATS, THINKING_LEVELS;
+var GATE_OFFICER_SEATS, THINKING_LEVELS;
 var init_config2 = __esm({
   "src/public-cli/config.ts"() {
     "use strict";
     init_engine_material();
     init_registry2();
-    MENXIA_OFFICER_SEATS = [
+    GATE_OFFICER_SEATS = [
       "gatekeeper",
       "inspector",
       "notary"
@@ -19871,14 +19871,14 @@ function formatTerminalResult(result2) {
   for (const artifact of result2.artifacts) {
     lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
   }
-  if (result2.menxia !== void 0) {
+  if (result2.gate !== void 0) {
     lines.push(
-      `menxia	${encodeTerminalField(result2.menxia.actualSeats.join(","))}	${result2.menxia.rounds.length}`
+      `gate	${encodeTerminalField(result2.gate.actualSeats.join(","))}	${result2.gate.rounds.length}`
     );
-    for (const round of result2.menxia.rounds) {
+    for (const round of result2.gate.rounds) {
       const reason = round.dispatch.reason === void 0 ? "" : encodeTerminalField(round.dispatch.reason);
       lines.push(
-        `menxia-round	${round.roundIndex}	${round.dispatch.status}	${round.dispatch.officer}	${reason}	${round.officer.seat}	${encodeTerminalField(round.officer.status)}	${encodeTerminalField(JSON.stringify(round.officer.findings))}`
+        `gate-round	${round.roundIndex}	${round.dispatch.status}	${round.dispatch.officer}	${reason}	${round.officer.seat}	${encodeTerminalField(round.officer.status)}	${encodeTerminalField(JSON.stringify(round.officer.findings))}`
       );
     }
   }
@@ -21839,7 +21839,7 @@ function parseNavigatorAttendanceDetails(details) {
     reason: "Navigator attendance disposition is unparseable"
   };
 }
-function projectTerminalMenxiaFact(rounds) {
+function projectTerminalGateFact(rounds) {
   if (rounds.length === 0) return void 0;
   const seen = /* @__PURE__ */ new Set();
   seen.add("gatekeeper");
@@ -21864,17 +21864,17 @@ function projectTerminalMenxiaFact(rounds) {
     }))
   };
 }
-async function extractMenxiaFactFromSessionDirectory(sessionDirectory) {
+async function extractGateFactFromSessionDirectory(sessionDirectory) {
   const rounds = await readAnalystGateCyclesFromAuditorRoles(
     join13(sessionDirectory, "auditor-roles")
   );
-  return projectTerminalMenxiaFact(rounds);
+  return projectTerminalGateFact(rounds);
 }
-async function withOptionalMenxiaProjection(base, sessionDirectory) {
+async function withOptionalGateProjection(base, sessionDirectory) {
   const secondaryEvidence = base.roleOutcome.kind === "failure" ? base.roleOutcome.decisiveFacts.secondaryEvidence : void 0;
   if (isRecord8(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
-  const menxia = await extractMenxiaFactFromSessionDirectory(sessionDirectory);
-  return menxia === void 0 ? base : { ...base, menxia };
+  const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
+  return gate === void 0 ? base : { ...base, gate };
 }
 function extractNavigatorFact(entries) {
   const terminal = findLatestDurablePackagedRoleTerminal(entries);
@@ -22114,7 +22114,7 @@ async function settleLawfulJudgeTerminalResult(admitted) {
     roleOutcome,
     admitted.sessionDirectory
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome,
       navigator,
@@ -22142,7 +22142,7 @@ async function settleLawfulCoderTerminalResult(admitted, options = {}) {
       ...options.methodProvenance === void 0 ? {} : { methodProvenance: options.methodProvenance }
     }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22285,7 +22285,7 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
       methodInvocations
     }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22405,7 +22405,7 @@ async function settleLawfulCollectorTerminalResult(admitted) {
     admitted.sessionDirectory,
     { collectorReceipt: extracted.receipt }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22534,7 +22534,7 @@ async function settleLawfulDoctorTerminalResult(admitted) {
     admitted.sessionDirectory,
     extracted.output === void 0 ? {} : { doctorOutput: extracted.output }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22610,7 +22610,7 @@ async function settleLawfulNotaryTerminalResult(admitted) {
     return void 0;
   }
   const navigator = extractNavigatorFact(entries);
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22785,7 +22785,7 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
       methodInvocations
     }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -22964,7 +22964,7 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
       methodInvocations
     }
   );
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome: extracted.outcome,
       navigator,
@@ -23192,7 +23192,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
           const facts = parseNoReceiptLifecycleFacts(raw);
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
             const decisiveFacts2 = facts;
-            return withOptionalMenxiaProjection(
+            return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts: decisiveFacts2 },
                 navigator: await extractNavigatorFactFromAdmittedSession(admitted),
@@ -23235,7 +23235,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       diagnostic: publicDiagnostic,
       decisiveFacts: publicFacts
     };
-    return withOptionalMenxiaProjection(
+    return withOptionalGateProjection(
       {
         roleOutcome: roleOutcome2,
         navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
@@ -23252,7 +23252,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
     diagnostic: failure.diagnostic,
     decisiveFacts
   };
-  return withOptionalMenxiaProjection(
+  return withOptionalGateProjection(
     {
       roleOutcome,
       navigator,
@@ -28709,9 +28709,9 @@ async function runConfigCommand(args, home, packageRoot2, io) {
       );
     }
     const seat = args[1];
-    if (!isMenxiaOfficerSeat(seat)) {
+    if (!isGateOfficerSeat(seat)) {
       throw new CliUsageError(
-        `config unset serves menxia officer overrides only (gatekeeper|inspector|notary); got ${seat}`
+        `config unset serves gate officer overrides only (gatekeeper|inspector|notary); got ${seat}`
       );
     }
     const config = clearPersistentSeatConfig(

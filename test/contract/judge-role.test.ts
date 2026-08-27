@@ -346,7 +346,7 @@ function workerCompletionGatekeeperHarness(options: {
   };
 }
 
-function menxiaCatalogModel(provider: string, id: string) {
+function gateCatalogModel(provider: string, id: string) {
   return {
     api: "openai-responses" as const,
     provider,
@@ -365,7 +365,7 @@ function menxiaCatalogModel(provider: string, id: string) {
  * Real submit-tool → requireGatekeeperPass → shared executor child model observation (#453).
  * Pass-only script; full non-pass matrix stays on workerCompletionGatekeeperHarness.
  */
-function realEntryMenxiaModelHarness(options: {
+function realEntryGateModelHarness(options: {
   officer?: "inspector" | "notary";
   catalog?: ReadonlyArray<{ provider: string; id: string }>;
   authFailIds?: ReadonlySet<string>;
@@ -377,7 +377,7 @@ function realEntryMenxiaModelHarness(options: {
   const catalog = new Map(
     (options.catalog ?? []).map((entry) => [
       `${entry.provider}/${entry.id}`,
-      menxiaCatalogModel(entry.provider, entry.id),
+      gateCatalogModel(entry.provider, entry.id),
     ]),
   );
   const authFailIds = options.authFailIds ?? new Set<string>();
@@ -1445,8 +1445,8 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
   assert.equal(secondGate.providerRequests, 1);
 });
 
-// #453: menxia model selection through real coder/fixer/judge submit tools.
-test("#453 real coder/fixer/judge entries observe menxia model inheritance and overrides", async () => {
+// #453: gate model selection through real coder/fixer/judge submit tools.
+test("#453 real coder/fixer/judge entries observe gate model inheritance and overrides", async () => {
   const completedCoder = { status: "completed", report: "TDD and verification evidence" };
   const completedFixer = {
     status: "completed" as const,
@@ -1503,7 +1503,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
   };
 
-  await withActivationHome({ prefix: "ak-453-menxia-model-" }, async ({ home }) => {
+  await withActivationHome({ prefix: "ak-453-gate-model-" }, async ({ home }) => {
     // Unconfigured: all three real entries inherit the parent session model.
     for (const entry of [
       {
@@ -1529,7 +1529,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
       },
     ]) {
       const tool = await entry.start();
-      const tracer = realEntryMenxiaModelHarness({ officer: entry.officer });
+      const tracer = realEntryGateModelHarness({ officer: entry.officer });
       const accepted = await tool.execute(
         `${entry.name}-inherit`,
         entry.output,
@@ -1544,7 +1544,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
           { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
           { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
         ],
-        `${entry.name} unconfigured menxia seats inherit parent model`,
+        `${entry.name} unconfigured gate seats inherit parent model`,
       );
     }
 
@@ -1559,7 +1559,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     );
     for (const officer of ["inspector", "notary"] as const) {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({
+      const tracer = realEntryGateModelHarness({
         officer,
         catalog: [{ provider: "xai", id: "gate-only-model" }],
       });
@@ -1596,7 +1596,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     ];
     {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({ officer: "inspector", catalog });
+      const tracer = realEntryGateModelHarness({ officer: "inspector", catalog });
       assert.equal(
         (await tool.execute(
           "own-inspector",
@@ -1614,7 +1614,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     }
     {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({ officer: "notary", catalog });
+      const tracer = realEntryGateModelHarness({ officer: "notary", catalog });
       assert.equal(
         (await tool.execute(
           "own-notary",
@@ -1638,7 +1638,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     await savePublicCliConfig(config, home);
     {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({
+      const tracer = realEntryGateModelHarness({
         officer: "inspector",
         catalog, // leftover catalog must not apply without persistent seats
       });
@@ -1668,7 +1668,7 @@ test("#453 real coder/fixer/judge entries observe menxia model inheritance and o
     );
     {
       const tool = await startCoder();
-      const tracer = realEntryMenxiaModelHarness({
+      const tracer = realEntryGateModelHarness({
         officer: "inspector",
         catalog: [{ provider: "xai", id: "auth-fail-model" }],
         authFailIds: new Set(["auth-fail-model"]),

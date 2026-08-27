@@ -1,7 +1,7 @@
 /**
  * Sole nested-volume reader for gate-cycle facts under session/auditor-roles/.
  *
- * Consumers: Analyst sole ledger scan (classifyScopedRun) and Terminal menxia
+ * Consumers: Analyst sole ledger scan (classifyScopedRun) and Terminal gate
  * projection (#478). Metric families must not open a second disk scan — they
  * consume retained facts. Terminal settlement reuses this same pairing seam
  * (no second auditor-roles scanner).
