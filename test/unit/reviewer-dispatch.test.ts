@@ -231,10 +231,9 @@ test("production discovery: self-fetch bytes propagate from dispatch entry to re
   assert.equal(payload.adrs[0]?.body, "# ADR 0001\nbody\n");
   // JSON string encoding keeps original bytes auditable without raw multiline framing siblings.
   assert.equal(materialLines[1]!.includes(JSON.stringify(ISSUE_BODY_WITH_ADR)), true);
+  // Spec-only material stays off the Standards leg (structured carrier, not label pin).
   assert.equal(
-    result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes(
-      "权威取回-Spec：",
-    ),
+    result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes(material),
     false,
   );
 
@@ -497,7 +496,8 @@ test("production discovery: supplied authorityRefs launch Spec with material", a
   assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards", "spec"]);
   assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
   const material = reviewerAuthorityRefsMaterial(refs);
-  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes("权威引用："), false);
+  // Spec-only authority-refs material stays off the Standards leg.
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes(material), false);
   assert.equal(result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
   assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
 });
@@ -596,8 +596,13 @@ test("constructed legs exclude caller task channel", async () => {
     assert.equal(leg.prompt.includes("Task:"), false);
     assert.equal(leg.prompt.includes("supplied task"), false);
     assert.equal(leg.prompt.includes("review task"), false);
-    assert.match(leg.prompt, /Canonical-Skill:/);
-    assert.match(leg.prompt, /固定范围：/);
+    // Structured range + skill bytes — no Chinese presentation-label pin (#495 S4).
+    assert.equal(leg.prompt.includes("Canonical-Skill:"), true);
+    assert.equal(leg.prompt.includes("review skill"), true);
+    assert.equal(leg.prompt.includes(JSON.stringify(range, null, 2)), true);
+    assert.equal(leg.prompt.includes(range.target), true);
+    assert.equal(leg.prompt.includes(range.base), true);
+    assert.equal(leg.prompt.includes(range.diffCommand), true);
   }
   assert.equal("task" in result.dispatch.input, false);
   assert.equal(result.dispatch.input.canonicalSkill, "review skill");

@@ -1216,7 +1216,8 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
     const raw = "# code-review skill\n";
     const skillPath = "/skill/code-review/SKILL.md";
     const skillBody = raw;
-    const originalRequest = "本次审查的固定基点：main~1";
+    // Stable request token for expansion capture match — not a presentation-prose pin (#495 S4).
+    const originalRequest = "main~1";
     const expectedContent = `References are relative to /skill/code-review.\n\n${skillBody}`;
     const lawfulExpansion =
       `<skill name="code-review" location="${skillPath}">\n${expectedContent}\n</skill>\n\n${originalRequest}`;
@@ -1284,9 +1285,9 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
           promptResult.systemPrompt.includes("<reviewer_verification_boundary>"),
           false,
         );
-        // skipped-missing note is absent when Spec launched (fixture two-axis dispatch).
+        // skipped-missing disposition carrier absent when Spec launched (fixture two-axis dispatch).
         assert.equal(
-          promptResult.systemPrompt.includes("权威 Spec 不存在；未启动 Spec 取证腿。"),
+          promptResult.systemPrompt.includes("<reviewer_spec_disposition>"),
           false,
         );
       });

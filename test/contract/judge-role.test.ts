@@ -34,7 +34,10 @@ import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
-import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
+import {
+  WorkerCommitReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "../../src/worker-submission-gates.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -1945,7 +1948,12 @@ test("undeclared prerequisite submissions are rejected; declared references acce
         { name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice", evidence: "Choice absent." } },
       ],
     };
-    await assert.rejects(tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])), /未观察到 commit/);
+    await assert.rejects(
+      tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])),
+      (error: unknown) =>
+        error instanceof WorkerCommitReminderError &&
+        error.code === "worker_commit_reminder",
+    );
     const second = await tool.execute("partial2", partial, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.deepEqual(second.details, partial);
 
@@ -2075,7 +2083,9 @@ test("fixer output must be the sole call in its assistant batch", async () => {
 
     await assert.rejects(
       tool.execute("fixer", output, undefined, undefined, toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
-      /未观察到 commit/,
+      (error: unknown) =>
+        error instanceof WorkerCommitReminderError &&
+        error.code === "worker_commit_reminder",
     );
     const accepted = await tool.execute(
       "fixer",
