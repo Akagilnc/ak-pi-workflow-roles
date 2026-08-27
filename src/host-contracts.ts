@@ -41,6 +41,7 @@ export type HostSessionManager = {
 export type HostContext = {
   cwd: string;
   mode: string;
+  model?: { readonly provider: string };
   sessionManager: HostSessionManager;
   signal?: AbortSignal;
   abort(): void;

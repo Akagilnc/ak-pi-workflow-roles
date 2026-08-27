@@ -2,6 +2,7 @@ import type {
   AgentToolResult,
   ExtensionAPI,
   ExtensionContext,
+  SessionManager,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
@@ -20,19 +21,21 @@ export type PiRoleHostAdapter = {
 
 /** Project Pi's activation context onto the package-owned host contract. */
 function projectPiContext(context: ExtensionContext, contexts: WeakMap<HostContext, ExtensionContext>): HostContext {
+  const sessionManager = context.sessionManager as SessionManager;
   const host: HostContext = {
     cwd: context.cwd,
     mode: context.mode,
+    ...(context.model === undefined ? {} : { model: { provider: context.model.provider } }),
     sessionManager: {
       getLeafEntry: () => context.sessionManager.getLeafEntry() as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => context.sessionManager.getLeafId(),
       getEntries: () => context.sessionManager.getEntries() as ReturnType<HostContext["sessionManager"]["getEntries"]>,
       getSessionDir: () => context.sessionManager.getSessionDir(),
       getSessionFile: () => context.sessionManager.getSessionFile(),
-      getHeader: () => (context.sessionManager as any).getHeader(),
-      setSessionFile: (path) => (context.sessionManager as any).setSessionFile(path),
-      appendMessage: (message) => (context.sessionManager as any).appendMessage(message),
-      appendCustomEntry: (customType, data) => (context.sessionManager as any).appendCustomEntry(customType, data),
+      getHeader: () => sessionManager.getHeader(),
+      setSessionFile: (path) => sessionManager.setSessionFile(path),
+      appendMessage: (message) => sessionManager.appendMessage(message),
+      appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
     },
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     abort: () => context.abort(),
