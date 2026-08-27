@@ -19,7 +19,11 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
 
 - `-m grok-4.6` selects the model; `grok models` lists valid ids (currently
   `grok-4.6` default, `grok-4.5`).
-- `--always-approve` keeps the run non-interactive (documented).
+- `--always-approve` (equivalently `--yolo` or `--permission-mode
+  bypassPermissions`) keeps the run non-interactive (documented). Headless
+  permissions otherwise default to interactive approval, where an `ask`
+  decision has no UI to answer; alternatively, use an explicit permission
+  setup that auto-approves the required call.
 - Official docs list `-p/--single` as the canonical headless prompt input;
   `--prompt-file` exists in the installed CLI (`--help`) and is smoke-verified
   on this host — prefer it for long prompts, fall back to `-p` if absent.
@@ -54,10 +58,7 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
 - MCP tools are exposed to the model as `<server>__<tool>` (for example,
   `ak_489_coder__ak_coder_output`). Use the fully qualified name in prompts;
   a bare tool name relies on the host's loose discovery/matching behavior.
-- Headless permissions otherwise default to interactive approval. For
-  unattended MCP calls pass `--always-approve` (equivalently `--yolo` or
-  `--permission-mode bypassPermissions`), or an explicit permission setup
-  that auto-approves the required call; an `ask` decision has no UI to answer.
+- The headless permission setting described above also covers MCP calls.
 - Grok launches a stdio server from the task cwd. Make `command` and `args`
   cwd-independent: use absolute entrypoint paths and do not rely on resolving
   a task-local `node_modules` binary. A cwd-dependent `tsx` launcher failed in
