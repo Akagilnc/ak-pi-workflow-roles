@@ -6,7 +6,7 @@
  * Caller AbortSignal cancellation propagates unchanged.
  */
 import { Type, type Static } from "typebox";
-import type { HostNativeToolContext, HostToolDefinition, HostToolResult, RoleHost } from "./host-contracts.ts";
+import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "./host-contracts.ts";
 
 import {
   ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC,
@@ -29,7 +29,7 @@ const engineDetourArgsSchema = Type.Object(
 
 type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;
 
-type EngineDetourContext = HostNativeToolContext;
+type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort">;
 
 export type EngineDetourHostActions = {
   failInfrastructure(
@@ -170,7 +170,7 @@ export function registerEngineDetourTool(
       hostActions.failInfrastructure(error, ctx, toolCallId);
     },
   });
-  roleHost.registerNativeTool(definition);
+  roleHost.registerTool(definition);
 
   return {
     registered: true,
