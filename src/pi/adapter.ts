@@ -59,7 +59,7 @@ export type HostGatekeeperActions = {
 };
 
 /** Keep the S3 Gatekeeper executor on its native Pi context until S3 owns that migration. */
-export function requirePiGatekeeperPass(options: {
+function requirePiGatekeeperPass(options: {
   context: HostContext;
   subject: GatekeeperSubject;
   signal?: AbortSignal;
@@ -128,6 +128,7 @@ export function createPiRoleHostAdapter(
     })),
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
+    requireGatekeeperPass: requirePiGatekeeperPass,
     on(...registration: HostEventRegistration) {
       const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
       if (registration[0] === "before_agent_start") {

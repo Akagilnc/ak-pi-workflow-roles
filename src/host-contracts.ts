@@ -1,4 +1,5 @@
 import { Type, type Static, type TLiteral, type TSchema } from "typebox";
+import type { GatekeeperNonPassResult, GatekeeperSubject } from "./gatekeeper-role.ts";
 
 type HostContentPart = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments?: unknown } | { type: string };
 type HostMessage = { role: string; content?: unknown; toolName?: string; isError?: boolean; stopReason?: string };
@@ -62,6 +63,8 @@ type HostEventResultMap = {
 type HostEventHandler<K extends keyof HostEventMap> = (event: HostEventMap[K], ctx: HostContext) => HostEventResultMap[K] | void | Promise<HostEventResultMap[K] | void>;
 export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, handler: HostEventHandler<K>] }[keyof HostEventMap];
 
+export type HostGatekeeperActions = { failInfrastructure(error: unknown, context: HostContext, toolCallId?: string): never; bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void };
+
 /** The activation surface consumed by package role factories. */
 export interface RoleHost {
   registerFlag(name: string, definition: { description: string; type: "boolean" | "string"; default?: boolean | string }): void;
@@ -70,6 +73,7 @@ export interface RoleHost {
   getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>;
   setActiveTools(names: string[]): void;
   getActiveTools(): string[];
+  requireGatekeeperPass?(options: { context: HostContext; subject: GatekeeperSubject; signal?: AbortSignal; hostActions: HostGatekeeperActions; toolCallId: string }): Promise<void>;
   on(event: "before_agent_start", handler: HostEventHandler<"before_agent_start">): void;
   on(event: "input", handler: HostEventHandler<"input">): void;
   on(event: "tool_call", handler: HostEventHandler<"tool_call">): void;

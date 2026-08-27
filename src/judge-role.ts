@@ -1,10 +1,9 @@
-import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
+import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
 import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import { requirePiGatekeeperPass, type HostGatekeeperActions } from "./pi/adapter.ts";
 
 import {
   JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
@@ -110,7 +109,7 @@ export function createJudgeRoleRuntime(
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
             // Gatekeeper runs after the draft is booked and before existing auditor.
-            await requirePiGatekeeperPass({
+            await pi.requireGatekeeperPass!({
               context: ctx,
               subject: { kind: "judge_draft", material: JSON.stringify(verdict) },
               ...(signal === undefined ? {} : { signal }),
