@@ -308,7 +308,10 @@ export default function roleRuntime(pi: ExtensionAPI): void {
       }
       return loadHomeCanonicalSkillBinding(name);
     },
-    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
+    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, {
+      ...options,
+      context: toPiContext(options.context),
+    }),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext: (context) => transcriptFromContext(toPiContext(context)),
     auditSoulCompliance: (options) => createPiJudgeAuditor()({

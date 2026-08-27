@@ -2,6 +2,8 @@ import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { executeAuditorChild, type AuditorCompletion, type AuditorDecisionTool } from "./evidence-child-executor.ts";
+import type { HostContext } from "./host-contracts.ts";
+import { toPiContext } from "./pi/adapter.ts";
 import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
@@ -69,7 +71,7 @@ export class GatekeeperDecisionError extends Error {
 }
 
 export type RunGatekeeperOptions = {
-  readonly context: ExtensionContext;
+  readonly context: HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
   readonly runCompletion?: AuditorCompletion;
@@ -77,7 +79,7 @@ export type RunGatekeeperOptions = {
 };
 
 export type GatekeeperPassHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
+  failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
   bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
 };
@@ -211,7 +213,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   try {
     // Seat identity only — shared executor owns model config/registry/auth (#453 / ADR 0018).
     provinceRun = await executeAuditorChild({
-      context: options.context,
+      context: toPiContext(options.context),
       roleLabel: "Gatekeeper",
       gateSeat: "gatekeeper",
       systemPrompt: await loadSoul("gatekeeper"),
@@ -234,7 +236,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   try {
     const roleLabel = officer === "inspector" ? "Inspector" : "Notary";
     const officerRun = await executeAuditorChild({
-      context: options.context,
+      context: toPiContext(options.context),
       roleLabel,
       gateSeat: officer,
       systemPrompt: await loadSoul(officer),
@@ -255,7 +257,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
 
 /** Project GatekeeperResult onto a submit path: transport→failInfrastructure; bounce/no_receipt→typed throw; pass silent. */
 export async function requireGatekeeperPass(options: {
-  readonly context: ExtensionContext;
+  readonly context: HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
   readonly hostActions: GatekeeperPassHostActions;
