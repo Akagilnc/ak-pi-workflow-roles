@@ -162,6 +162,9 @@ export function createPiRoleHostAdapter(
             : part.type === "toolCall"
               ? { type: "toolCall", id: part.id, name: part.name, arguments: part.arguments }
               : { type: part.type }) : [],
+          ...("toolName" in message && typeof message.toolName === "string" ? { toolName: message.toolName } : {}),
+          ...("isError" in message && typeof message.isError === "boolean" ? { isError: message.isError } : {}),
+          ...("stopReason" in message && typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
         })),
       }, context(ctx)));
       } else if (registration[0] === "agent_settled") {
