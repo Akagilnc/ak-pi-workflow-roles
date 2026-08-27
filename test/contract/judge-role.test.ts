@@ -65,8 +65,20 @@ import {
   setPersistentSeatConfig,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
-import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
+
+function scriptedGatekeeperModelRegistry(
+  model: { provider: string },
+  provider: unknown,
+  options: { matchProvider?: boolean; getProviderAuth?: () => Promise<unknown>; getApiKeyAndHeaders?: (...args: unknown[]) => Promise<unknown> } = {},
+) {
+  return {
+    getProvider: (name: string) => options.matchProvider === false || name === model.provider ? provider : undefined,
+    find: () => model,
+    getProviderAuth: () => options.getProviderAuth?.() ?? Promise.resolve({ auth: {} }),
+    getApiKeyAndHeaders: (...args: unknown[]) => options.getApiKeyAndHeaders?.(...args) ?? Promise.resolve({ ok: true }),
+  };
+}
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Tool = {
