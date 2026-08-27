@@ -67,11 +67,11 @@ export function validateMergerInput(value) {
 }
 export function validateMergerOutput(value, expectedAttemptId) {
     if (!record(value) || (expectedAttemptId !== undefined && value.attemptId !== expectedAttemptId))
-        throw new Error("Merger output attempt mismatch");
+        throw new Error("合并回执 attempt 不匹配");
     const status = typeof value.status === "string" ? value.status : undefined;
     if (status === "completed" && isFullGitObjectId(value.mergeCommitId))
         return structuredClone(value);
     if (status === "escalate")
         return structuredClone(value);
-    throw new Error("Merger output has no recognized execution discriminator");
+    throw new Error("合并回执无已识别的执行判别");
 }

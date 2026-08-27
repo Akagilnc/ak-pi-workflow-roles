@@ -14098,13 +14098,13 @@ function read2(value, key) {
 }
 function validateDoctorSubmissionShape(value) {
   const status = read2(value, "status");
-  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("\u592A\u533B\u7F72\u4EA4\u5377\u65E0\u5DF2\u8BC6\u522B\u7684\u6267\u884C\u72B6\u6001");
   return value;
 }
 function validateRecordedDoctorOutput(value) {
   const output = validateDoctorSubmissionShape(value);
   const status = read2(output, "status");
-  if (status === "completed" && read2(output, "cost") === void 0) throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+  if (status === "completed" && read2(output, "cost") === void 0) throw new Error("completed \u592A\u533B\u7F72\u56DE\u6267\u7F3A\u5C11 runtime \u6301\u6709\u7684 cost \u8BC1\u8BCD");
   return output;
 }
 var DOCTOR_OUTPUT_TOOL_NAME, DOCTOR_TARGET_KINDS, nonblank, count, evidenceIds, guardrail, lastRealBite, assetKinds, findingBody, finding, caseIdentity, cost, doctorSubmissionVariants, doctorSubmissionSchema, doctorOutputSchema, doctorEvidenceReadSchema, DoctorSubmissionContractError;
@@ -14255,11 +14255,11 @@ function validateMergerInput(value) {
   return deepFreeze(structuredClone(value));
 }
 function validateMergerOutput(value, expectedAttemptId) {
-  if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch");
+  if (!record(value) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("\u5408\u5E76\u56DE\u6267 attempt \u4E0D\u5339\u914D");
   const status = typeof value.status === "string" ? value.status : void 0;
   if (status === "completed" && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
   if (status === "escalate") return structuredClone(value);
-  throw new Error("Merger output has no recognized execution discriminator");
+  throw new Error("\u5408\u5E76\u56DE\u6267\u65E0\u5DF2\u8BC6\u522B\u7684\u6267\u884C\u5224\u522B");
 }
 var oidPattern, materialSchema, checkSchema, mergerInputSchema, mergerOutputVariants, mergerOutputSchema, MERGER_OUTPUT_TOOL_NAME, record, blank, MergerInputContractError;
 var init_merger_contracts = __esm({
@@ -19214,8 +19214,7 @@ var init_reviewer_construction = __esm({
     });
     REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
       adapterId: "reviewer-axis-output",
-      version: 1,
-      implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
+      version: 1
     });
   }
 });

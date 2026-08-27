@@ -57,8 +57,12 @@ test("aborted evidence without remote testimony projects unknown, not child", as
 
 test("nonzero engine diagnostic uses the last stdout row when stderr is empty", () => {
   const marker = "  terminal API Error: 529 Overloaded  ";
-  assert.equal(
-    engineDetourFailureDiagnostic({ code: 23, stderr: "", stdout: `earlier\n${marker}\n\n` }),
-    `engine detour exited with code 23: ${marker}`,
-  );
+  const diagnostic = engineDetourFailureDiagnostic({
+    code: 23,
+    stderr: "",
+    stdout: `earlier\n${marker}\n\n`,
+  });
+  assert.ok(diagnostic.includes(marker));
+  assert.ok(diagnostic.includes("23"));
+  assert.notEqual(diagnostic.trim(), marker.trim());
 });

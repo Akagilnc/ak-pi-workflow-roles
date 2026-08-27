@@ -801,7 +801,6 @@ async function assertInProcessRequestAbort(abortReason: unknown) {
       transport,
       clock,
     ),
-    /already used|process-local/i,
   );
 }
 

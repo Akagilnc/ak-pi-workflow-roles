@@ -36,5 +36,5 @@ test("Merger input rejects identity, path-set, scope, and check ambiguity", () =
 test("Merger terminal leaves are exact and attempt-bound", () => {
   assert.deepEqual(validateMergerOutput({ status: "completed", attemptId: "attempt-22-a", report: "resolved", mergeCommitId: oid("c") }, "attempt-22-a"), { status: "completed", attemptId: "attempt-22-a", report: "resolved", mergeCommitId: oid("c") });
   assert.deepEqual(validateMergerOutput({ status: "escalate", attemptId: "attempt-22-a", diagnosis: "intents conflict", report: "owner decision required" }, "attempt-22-a").status, "escalate");
-  assert.throws(() => validateMergerOutput({ status: "completed", attemptId: "wrong", report: "x", mergeCommitId: oid("c") }, "attempt-22-a"), /attempt/);
+  assert.throws(() => validateMergerOutput({ status: "completed", attemptId: "wrong", report: "x", mergeCommitId: oid("c") }, "attempt-22-a"));
 });

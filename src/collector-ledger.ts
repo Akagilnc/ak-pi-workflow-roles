@@ -379,19 +379,19 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     assertOutputObservationLaw(clock) {
       assertNotFatal();
       if (activationTime === undefined || deadlineTime === undefined || deadlineMono === undefined) {
-        throw new Error("Collector output requires activation timeline");
+        throw new Error("通进司回执需要激活时间线");
       }
       if (latestCompleteSnapshotId === undefined) {
-        throw new Error("Collector output requires a complete final snapshot");
+        throw new Error("通进司回执需要完整终局快照");
       }
       if (observedGeneration !== mutationGeneration) {
         throw new Error(
-          "Collector output requires a complete observe after the latest request/wait mutation",
+          "通进司回执要求在最近 request/wait 变更后完成一次 observe",
         );
       }
       const snapshot = snapshots.find((item) => item.snapshotId === latestCompleteSnapshotId);
       if (snapshot === undefined || !snapshot.complete) {
-        throw new Error("Collector final snapshot is missing or incomplete");
+        throw new Error("通进司终局快照缺失或不完整");
       }
 
       const mono = monoNowOrThrow(clock);
@@ -403,7 +403,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           snapshot.completedMono < deadlineMono
         ) {
           throw new Error(
-            "Collector output at/after cutoff requires a complete observation finished at or after the cutoff",
+            "通进司截止时/后回执要求不早于截止完成的完整观察",
           );
         }
         finalObservationCompleted = true;
@@ -432,7 +432,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           surfaces = await fetchObserveSurfaces(transport, observedAt, signal);
           if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
             throw new Error(
-              `PR identity drifted across observe bracket after retry (${prIdentity(surfaces.prInitial)} → ${prIdentity(surfaces.prTerminal)})`,
+              `PR 身份在 observe 括弧重试后仍漂移（${prIdentity(surfaces.prInitial)} → ${prIdentity(surfaces.prTerminal)}）`,
             );
           }
         }
@@ -580,15 +580,15 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       const request = config.manifest.requests.find((item) => item.id === input.requestId);
       if (request === undefined) {
-        throw new Error(`Unknown Collector requestId "${input.requestId}"`);
+        throw new Error(`未知通进司 requestId "${input.requestId}"`);
       }
 
       const snapshot = snapshots.find((item) => item.snapshotId === input.snapshotId);
       if (snapshot === undefined) {
-        throw new Error(`Unknown Collector snapshotId \"${input.snapshotId}\"`);
+        throw new Error(`未知通进司 snapshotId "${input.snapshotId}"`);
       }
       if (snapshot.snapshotId !== latestCompleteSnapshotId) {
-        throw new Error("Collector request requires the latest complete snapshot");
+        throw new Error("通进司请求要求最新完整快照");
       }
       if (snapshot.prState !== "OPEN") {
         throw latchFatal("通进司请求要求 OPEN 状态的 PR 快照");
@@ -609,7 +609,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       });
       if (existingMarker) {
         throw new Error(
-          `Collector already has an authenticated same-marker request for request \"${input.requestId}\" at this HEAD`,
+          `通进司在此 HEAD 已有同 marker 的已认证请求 "${input.requestId}"`,
         );
       }
 
@@ -621,7 +621,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       ].join("|");
       if (attemptKeys.has(attemptKey)) {
         throw new Error(
-          `Collector process-local request attempt already used for request \"${request.id}\" at HEAD ${snapshot.headOid}`,
+          `通进司进程内请求 "${request.id}" 在 HEAD ${snapshot.headOid} 的 attempt 已用`,
         );
       }
 
@@ -701,11 +701,11 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal("通进司等待需要激活");
       }
       if (!Number.isSafeInteger(input.durationMs) || input.durationMs < 1) {
-        throw new Error("Collector wait durationMs must be a positive safe integer");
+        throw new Error("通进司等待 durationMs 须为正安全整数");
       }
       if (input.durationMs > COLLECTOR_ELIGIBILITY_MS) {
         throw new Error(
-          `Collector wait durationMs must be at most ${COLLECTOR_ELIGIBILITY_MS}`,
+          `通进司等待 durationMs 至多为 ${COLLECTOR_ELIGIBILITY_MS}`,
         );
       }
       if (pastCutoff(clock)) {

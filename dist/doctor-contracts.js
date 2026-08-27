@@ -69,14 +69,14 @@ catch {
 export function validateDoctorSubmissionShape(value) {
     const status = read(value, "status");
     if (status !== "completed" && status !== "refused")
-        throw new DoctorSubmissionContractError("Doctor submission has no recognized execution status");
+        throw new DoctorSubmissionContractError("太医署交卷无已识别的执行状态");
     return value;
 }
 export function validateRecordedDoctorOutput(value) {
     const output = validateDoctorSubmissionShape(value);
     const status = read(output, "status");
     if (status === "completed" && read(output, "cost") === undefined)
-        throw new Error("Completed Doctor receipt has no runtime-owned cost testimony");
+        throw new Error("completed 太医署回执缺少 runtime 持有的 cost 证词");
     return output;
 }
 export class DoctorEvidenceStore {
@@ -88,9 +88,9 @@ export class DoctorEvidenceStore {
         this.entries = new Map(patient.evidence.map((entry) => [entry.id, entry]));
     }
     read(evidenceId, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry)
-        throw new Error(`Evidence ID is not admitted: ${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096)
-        throw new Error("Invalid evidence pagination"); if (offset > entry.contentLength)
-        throw new Error("Evidence offset exceeds content"); const end = Math.min(entry.contentLength, offset + limit); const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end]].sort((a, b) => a[0] - b[0]); const merged = []; for (const range of ranges) {
+        throw new Error(`证据 ID 未准入：${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096)
+        throw new Error("证据分页参数无效"); if (offset > entry.contentLength)
+        throw new Error("证据 offset 超出内容"); const end = Math.min(entry.contentLength, offset + limit); const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end]].sort((a, b) => a[0] - b[0]); const merged = []; for (const range of ranges) {
         const prior = merged.at(-1);
         if (prior && range[0] <= prior[1])
             prior[1] = Math.max(prior[1], range[1]);
@@ -104,11 +104,11 @@ export function validateDoctorOutput(value, patient, store) {
     const output = validateDoctorSubmissionShape(value);
     const lawfulTargets = new Set(["case", ...patient.cost.invocations.sources]);
     const assertTarget = (targetKey) => { if (typeof targetKey === "string" && !lawfulTargets.has(targetKey))
-        throw new Error(`Target key is not a lawful case target: ${targetKey}`); };
+        throw new Error(`targetKey 不是合法案目标：${targetKey}`); };
     const readCitations = (ids, label) => { if (!Array.isArray(ids))
         return; for (const id of ids)
         if (typeof id === "string" && (!store.entries.has(id) || !store.hasRead(id)))
-            throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
+            throw new Error(`${label} 须引用已准入/已读证据：${id}`); };
     if (read(output, "status") === "refused") {
         const missingEvidence = read(output, "missingEvidence");
         if (Array.isArray(missingEvidence))
@@ -124,7 +124,7 @@ export function validateDoctorOutput(value, patient, store) {
     const issueNumber = read(identity, "issueNumber");
     const runsPath = read(identity, "runsPath");
     if ((issueNumber !== undefined && issueNumber !== patient.identity.issueNumber) || (runsPath !== undefined && runsPath !== patient.identity.runsPath))
-        throw new Error("Doctor submission case must equal the activated case identity");
+        throw new Error("太医署交卷 case 须等于已激活案身份");
     const findings = read(output, "findings");
     if (!Array.isArray(findings))
         return output;
@@ -140,9 +140,9 @@ export function validateDoctorOutput(value, patient, store) {
         const assetTargetKind = read(assetEvidence, "targetKind");
         const assetEvidenceId = read(assetEvidence, "evidenceId");
         if (typeof assetTargetKey === "string" && assetTargetKey !== targetKey)
-            throw new Error("Typed asset evidence must establish the finding target key");
+            throw new Error("类型化资产证据须确立 finding 的 targetKey");
         if (typeof assetTargetKind === "string" && assetTargetKind !== read(finding, "targetKind"))
-            throw new Error("Typed asset evidence must establish the finding target kind");
+            throw new Error("类型化资产证据须确立 finding 的 targetKind");
         if (typeof assetEvidenceId === "string")
             readCitations([assetEvidenceId], "asset evidence");
         const guardrails = read(finding, "guardrails");
@@ -153,12 +153,12 @@ export function validateDoctorOutput(value, patient, store) {
         if (biteKind !== "actual" && biteKind !== "noRealBite")
             continue;
         if (read(bite, "targetKey") !== targetKey)
-            throw new Error("lastRealBite target mismatch");
+            throw new Error("lastRealBite 目标不匹配");
         if (biteKind === "actual") {
             const evidenceId = read(bite, "evidenceId");
             const entry = typeof evidenceId === "string" ? store.entries.get(evidenceId) : undefined;
             if (!entry || entry.kind !== "session" || !store.hasRead(entry.id))
-                throw new Error("actual bite must cite an admitted/read retained session");
+                throw new Error("actual bite 须引用已准入/已读的留存 session");
         }
         else {
             const eligible = patient.evidence.map((entry) => entry.id).sort();
@@ -166,7 +166,7 @@ export function validateDoctorOutput(value, patient, store) {
             if (Array.isArray(ids)) {
                 const claimed = ids.filter((id) => typeof id === "string").sort();
                 if (canonicalJson(claimed) !== canonicalJson(eligible))
-                    throw new Error("noRealBite must prove the complete eligible single-case evidence population");
+                    throw new Error("noRealBite 须证明完整的单案合格证据全集");
                 readCitations(eligible, "noRealBite");
             }
         }
