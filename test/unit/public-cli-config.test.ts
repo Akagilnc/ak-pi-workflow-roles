@@ -13,7 +13,7 @@ import {
   parseModelSpec,
   publicCliConfigPath,
   resolveEffectiveSeat,
-  resolveMenxiaOfficerModelSelection,
+  resolveGateOfficerModelSelection,
   savePublicCliConfig,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
@@ -147,7 +147,7 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
   ]);
   assert.equal(seats.includes("auditor" as never), false);
 
-  // #453: automatic menxia seats are configurable but never receive startup candidates.
+  // #453: automatic gate seats are configurable but never receive startup candidates.
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.source, "unconfigured");
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.selection, undefined);
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.automatic, true);
@@ -157,28 +157,28 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
 });
 
 // #453: province model selection is persistent-only with gatekeeper inheritance.
-test("menxia officer selection: own persistent > gatekeeper > unset inherit", () => {
+test("gate officer selection: own persistent > gatekeeper > unset inherit", () => {
   const empty: PublicCliConfig = { seats: {} };
-  assert.equal(resolveMenxiaOfficerModelSelection(empty, "gatekeeper"), undefined);
-  assert.equal(resolveMenxiaOfficerModelSelection(empty, "inspector"), undefined);
-  assert.equal(resolveMenxiaOfficerModelSelection(empty, "notary"), undefined);
+  assert.equal(resolveGateOfficerModelSelection(empty, "gatekeeper"), undefined);
+  assert.equal(resolveGateOfficerModelSelection(empty, "inspector"), undefined);
+  assert.equal(resolveGateOfficerModelSelection(empty, "notary"), undefined);
 
   const gateOnly = setPersistentSeatConfig(empty, "gatekeeper", {
     provider: "xai",
     model: "grok-4.5",
     thinking: "high",
   });
-  assert.deepEqual(resolveMenxiaOfficerModelSelection(gateOnly, "gatekeeper"), {
+  assert.deepEqual(resolveGateOfficerModelSelection(gateOnly, "gatekeeper"), {
     provider: "xai",
     model: "grok-4.5",
     thinking: "high",
   });
-  assert.deepEqual(resolveMenxiaOfficerModelSelection(gateOnly, "inspector"), {
+  assert.deepEqual(resolveGateOfficerModelSelection(gateOnly, "inspector"), {
     provider: "xai",
     model: "grok-4.5",
     thinking: "high",
   });
-  assert.deepEqual(resolveMenxiaOfficerModelSelection(gateOnly, "notary"), {
+  assert.deepEqual(resolveGateOfficerModelSelection(gateOnly, "notary"), {
     provider: "xai",
     model: "grok-4.5",
     thinking: "high",
@@ -194,17 +194,17 @@ test("menxia officer selection: own persistent > gatekeeper > unset inherit", ()
     model: "gpt-5.6-luna",
     thinking: "high",
   });
-  assert.deepEqual(resolveMenxiaOfficerModelSelection(both, "gatekeeper"), {
+  assert.deepEqual(resolveGateOfficerModelSelection(both, "gatekeeper"), {
     provider: "xai",
     model: "grok-4.5",
     thinking: "high",
   });
-  assert.deepEqual(resolveMenxiaOfficerModelSelection(both, "inspector"), {
+  assert.deepEqual(resolveGateOfficerModelSelection(both, "inspector"), {
     provider: "openai-codex",
     model: "gpt-5.6-sol",
     thinking: "medium",
   });
-  assert.deepEqual(resolveMenxiaOfficerModelSelection(both, "notary"), {
+  assert.deepEqual(resolveGateOfficerModelSelection(both, "notary"), {
     provider: "openai-codex",
     model: "gpt-5.6-luna",
     thinking: "high",
@@ -216,7 +216,7 @@ test("menxia officer selection: own persistent > gatekeeper > unset inherit", ()
     xai: false,
   });
   assert.equal(startupNotary.source, "startup");
-  assert.equal(resolveMenxiaOfficerModelSelection(empty, "notary"), undefined);
+  assert.equal(resolveGateOfficerModelSelection(empty, "notary"), undefined);
 });
 
 test("clearing a persistent seat restores unconfigured inheritance", async () => {
@@ -242,7 +242,7 @@ test("clearing a persistent seat restores unconfigured inheritance", async () =>
       model: "grok-4.5",
       thinking: "high",
     });
-    assert.deepEqual(resolveMenxiaOfficerModelSelection(reloaded, "inspector"), {
+    assert.deepEqual(resolveGateOfficerModelSelection(reloaded, "inspector"), {
       provider: "xai",
       model: "grok-4.5",
       thinking: "high",
@@ -252,8 +252,8 @@ test("clearing a persistent seat restores unconfigured inheritance", async () =>
     await savePublicCliConfig(config, home);
     const cleared = await loadPublicCliConfig(home);
     assert.equal(cleared.seats.gatekeeper, undefined);
-    assert.equal(resolveMenxiaOfficerModelSelection(cleared, "gatekeeper"), undefined);
-    assert.equal(resolveMenxiaOfficerModelSelection(cleared, "inspector"), undefined);
+    assert.equal(resolveGateOfficerModelSelection(cleared, "gatekeeper"), undefined);
+    assert.equal(resolveGateOfficerModelSelection(cleared, "inspector"), undefined);
 
     // Idempotent clear of an already-absent seat.
     assert.deepEqual(clearPersistentSeatConfig(cleared, "gatekeeper"), cleared);
@@ -276,7 +276,7 @@ test("#453 clear notary model keeps engine; unset-engine drops residual row", as
 
     // Model axis cleared; engine residual remains.
     assert.deepEqual(reloaded.seats.notary, { engine: "opus" });
-    assert.equal(resolveMenxiaOfficerModelSelection(reloaded, "notary"), undefined);
+    assert.equal(resolveGateOfficerModelSelection(reloaded, "notary"), undefined);
 
     const direct = resolveEffectiveSeat(reloaded, "notary", {
       "openai-codex": true,

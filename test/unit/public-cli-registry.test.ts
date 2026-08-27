@@ -17,7 +17,7 @@ test("public registry exposes callable roles plus automatic configurable seats",
   );
   assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
-  // #453: automatic menxia seats join navigator as configurable-only (never caller commands).
+  // #453: automatic gate seats join navigator as configurable-only (never caller commands).
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
     [...PUBLIC_CALLABLE_ROLES, "gatekeeper", "inspector", "navigator"],

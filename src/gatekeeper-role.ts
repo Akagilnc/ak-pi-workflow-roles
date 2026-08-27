@@ -38,7 +38,7 @@ export type GatekeeperNonPassResult = Extract<
   { status: "bounce" | "no_receipt" }
 >;
 
-function menxiaSeatLabel(stage: "gatekeeper" | "inspector" | "notary"): string {
+function gateSeatLabel(stage: "gatekeeper" | "inspector" | "notary"): string {
   switch (stage) {
     case "gatekeeper":
       return "门下省";
@@ -213,7 +213,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     provinceRun = await executeAuditorChild({
       context: options.context,
       roleLabel: "Gatekeeper",
-      menxiaSeat: "gatekeeper",
+      gateSeat: "gatekeeper",
       systemPrompt: await loadSoul("gatekeeper"),
       prompt: "卷宗已受理。",
       tool: createGatekeeperOutputTool(),
@@ -225,7 +225,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
   }
   if (provinceRun.noReceiptLifecycle !== undefined) {
-    return { status: "no_receipt", stage: "gatekeeper", reason: `${menxiaSeatLabel("gatekeeper")}未产生已接受回执即散局`, facts: provinceRun.noReceiptLifecycle };
+    return { status: "no_receipt", stage: "gatekeeper", reason: `${gateSeatLabel("gatekeeper")}未产生已接受回执即散局`, facts: provinceRun.noReceiptLifecycle };
   }
   const province = projectProvinceDecision(provinceRun.decision);
   if (province.status !== "dispatch") return province;
@@ -236,7 +236,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     const officerRun = await executeAuditorChild({
       context: options.context,
       roleLabel,
-      menxiaSeat: officer,
+      gateSeat: officer,
       systemPrompt: await loadSoul(officer),
       prompt: "卷宗已受理。",
       tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
@@ -245,7 +245,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
     });
     if (officerRun.noReceiptLifecycle !== undefined) {
-      return { status: "no_receipt", stage: officer, reason: `${menxiaSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
+      return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
     }
     return projectOfficerDecision(officer, officerRun.decision);
   } catch (error) {

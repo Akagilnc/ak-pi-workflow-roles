@@ -12,7 +12,7 @@ import { createEngineDetourToolDefinition } from "./engine-detour-tool.js";
 import { engineNameFromEnv } from "./engine-detour.js";
 import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
 import { readPackageMaterial } from "./session-opening-materials.js";
-import { formatModelSpec, loadPublicCliConfig, resolveMenxiaOfficerModelSelection, } from "./public-cli/config.js";
+import { formatModelSpec, loadPublicCliConfig, resolveGateOfficerModelSelection, } from "./public-cli/config.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus, projectConfirmedRemotePayload, } from "./upstream-error-testimony.js";
@@ -253,7 +253,7 @@ export async function createInheritedRuntime(options) {
         return wrapped;
     };
     // Provider id must match activeModel.provider so ModelRuntime auth lookup
-    // finds this registration when a menxia override changes provider (#453).
+    // finds this registration when a gate override changes provider (#453).
     const provider = options.idleRetry === true || options.runCompletion !== undefined
         ? {
             id: activeModel.provider,
@@ -596,8 +596,8 @@ export async function executeEvidenceChild(workspace, prompt, context, options =
  * Own override > gatekeeper override > unset (inherit parent). Availability
  * failures throw — createInheritedRuntime must not silent-fallback to parent.
  */
-async function resolveMenxiaSeatModelOptions(context, seat, roleLabel) {
-    const selection = resolveMenxiaOfficerModelSelection(await loadPublicCliConfig(), seat);
+async function resolveGateSeatModelOptions(context, seat, roleLabel) {
+    const selection = resolveGateOfficerModelSelection(await loadPublicCliConfig(), seat);
     if (selection === undefined)
         return {};
     const find = context.modelRegistry.find?.bind(context.modelRegistry);
@@ -622,14 +622,14 @@ async function resolveMenxiaSeatModelOptions(context, seat, roleLabel) {
 export async function executeAuditorChild(options) {
     const { createRecordSession } = await import("./archivist-record-entry.js");
     return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
-        const menxia = options.menxiaSeat === undefined
+        const gate = options.gateSeat === undefined
             ? {}
-            : await resolveMenxiaSeatModelOptions(options.context, options.menxiaSeat, options.roleLabel);
+            : await resolveGateSeatModelOptions(options.context, options.gateSeat, options.roleLabel);
         const inherited = await createInheritedRuntime({
             context: options.context,
             label: options.roleLabel,
             idleRetry: true,
-            ...(menxia.model === undefined ? {} : { model: menxia.model }),
+            ...(gate.model === undefined ? {} : { model: gate.model }),
             ...(options.runCompletion === undefined
                 ? {}
                 : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
@@ -685,7 +685,7 @@ export async function executeAuditorChild(options) {
             cwd,
             agentDir: scratch,
             model: inherited.model,
-            thinkingLevel: menxia.thinkingLevel ?? options.context.thinkingLevel ?? "off",
+            thinkingLevel: gate.thinkingLevel ?? options.context.thinkingLevel ?? "off",
             modelRuntime: inherited.runtime,
             systemPrompt: options.systemPrompt,
             customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],

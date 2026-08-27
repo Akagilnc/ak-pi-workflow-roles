@@ -196,8 +196,8 @@ test("config persistence round-trips across processes on the typed seat face", a
       thinking: "high",
     });
 
-    // #453: automatic menxia seats are configurable; unset restores absence.
-    const menxiaSet = await runAkRole(
+    // #453: automatic gate seats are configurable; unset restores absence.
+    const gateSet = await runAkRole(
       [
         "config",
         "set",
@@ -208,14 +208,14 @@ test("config persistence round-trips across processes on the typed seat face", a
       ],
       { packageRoot, home, io: captureIo().io },
     );
-    assert.equal(menxiaSet.exitCode, 0);
-    const menxiaPersisted = await loadPublicCliConfig(home);
-    assert.deepEqual(menxiaPersisted.seats.gatekeeper, {
+    assert.equal(gateSet.exitCode, 0);
+    const gatePersisted = await loadPublicCliConfig(home);
+    assert.deepEqual(gatePersisted.seats.gatekeeper, {
       provider: "xai",
       model: "grok-4.5",
       thinking: "high",
     });
-    assert.deepEqual(menxiaPersisted.seats.inspector, {
+    assert.deepEqual(gatePersisted.seats.inspector, {
       provider: "openai-codex",
       model: "gpt-5.6-sol",
       thinking: "medium",
@@ -229,14 +229,14 @@ test("config persistence round-trips across processes on the typed seat face", a
     });
     assert.equal(rolesAfter.exitCode, 0);
     assert.equal(
-      resolveEffectiveSeat(menxiaPersisted, "gatekeeper", {
+      resolveEffectiveSeat(gatePersisted, "gatekeeper", {
         "openai-codex": true,
         xai: true,
       }).source,
       "persistent",
     );
     assert.equal(
-      resolveEffectiveSeat(menxiaPersisted, "gatekeeper", {
+      resolveEffectiveSeat(gatePersisted, "gatekeeper", {
         "openai-codex": true,
         xai: true,
       }).automatic,
@@ -266,7 +266,7 @@ test("config persistence round-trips across processes on the typed seat face", a
   });
 });
 
-test("#453 config unset clears menxia model only; keeps notary engine; refuses non-menxia", async () => {
+test("#453 config unset clears gate model only; keeps notary engine; refuses non-gate", async () => {
   await withTempHome(async (home) => {
     const setModel = await runAkRole(
       ["config", "set", "notary", "xai/grok-4.5:high"],
@@ -290,7 +290,7 @@ test("#453 config unset clears menxia model only; keeps notary engine; refuses n
       engine: "opus",
     });
 
-    // Non-menxia seat with a real row: refused unset must leave it untouched.
+    // Non-gate seat with a real row: refused unset must leave it untouched.
     const withJudge = await runAkRole(
       ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
       { packageRoot, home, io: captureIo().io },

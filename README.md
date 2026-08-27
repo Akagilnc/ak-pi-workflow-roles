@@ -11,7 +11,7 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat model defaults with `ak-role config set <seat> <provider/model[:thinking]>` (callable seats plus automatic `gatekeeper` / `inspector` / `navigator`); clear a Menxia officer override with `ak-role config unset <gatekeeper|inspector|notary>`; set or clear a persistent labor engine (callable roles) with `ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`.
+Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat model defaults with `ak-role config set <seat> <provider/model[:thinking]>` (callable seats plus automatic `gatekeeper` / `inspector` / `navigator`); clear a Gate officer override with `ak-role config unset <gatekeeper|inspector|notary>`; set or clear a persistent labor engine (callable roles) with `ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`.
 
 ## Reading results
 
@@ -34,7 +34,7 @@ Every run also prepares Navigator advice in the same Terminal. Configure seats l
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# Menxia officers (automatic on submission; not caller commands except direct notary)
+# Gate officers (automatic on submission; not caller commands except direct notary)
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
@@ -45,13 +45,13 @@ ak-role config unset-engine judge
 ak-role config set-auto-resume-limit 3
 ```
 
-`config set` stores the seat model default. For Menxia officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. `config unset` clears only those officer overrides. `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on callable roles (same seats as `--engine`; navigator refused — no independent activation). `config set-auto-resume-limit` stores the single-call auto-resume ceiling. Usage and refusal text are owned by `ak-role config` / `ak-role help config`.
+`config set` stores the seat model default. For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. `config unset` clears only those officer overrides. `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on callable roles (same seats as `--engine`; navigator refused — no independent activation). `config set-auto-resume-limit` stores the single-call auto-resume ceiling. Usage and refusal text are owned by `ak-role config` / `ak-role help config`.
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
 
-### Menxia submission gate
+### Gate submission gate
 
-On completing-side submissions the package may spawn the Menxia province before the run settles: `gatekeeper` reads the subject and dispatches an officer (`inspector` or `notary`); existing auditor hooks stay where already wired. The gate runs inside the submission session; bounce means rewrite-and-resubmit in that same session — not role failure; the final receipt is the post-gate product. `planned` / `refused` / `unfinished` skip the province. Pointers only: [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md), [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md). Gate history is projected into the typed TerminalResult: an optional menxia section lists the seats that actually sat, each dispatch round (officer, optional reason verbatim), and each officer report (seat, status, findings). Absent when no gate ran. Do not scrape session prose for gate status — read the typed section.
+On completing-side submissions the package may spawn the Gate province before the run settles: `gatekeeper` reads the subject and dispatches an officer (`inspector` or `notary`); existing auditor hooks stay where already wired. The gate runs inside the submission session; bounce means rewrite-and-resubmit in that same session — not role failure; the final receipt is the post-gate product. `planned` / `refused` / `unfinished` skip the province. Pointers only: [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md), [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md). Gate history is projected into the typed TerminalResult: an optional gate section lists the seats that actually sat, each dispatch round (officer, optional reason verbatim), and each officer report (seat, status, findings). Absent when no gate ran. Do not scrape session prose for gate status — read the typed section.
 
 When a labor-engine detour process fails to spawn, exits nonzero, or produces no usable output, the role run stops through the existing infrastructure-failure path with the original cause visible. The seat does not continue the labor or produce a typed Receipt. Caller cancellation continues to propagate unchanged. See [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md).
 

@@ -13,7 +13,7 @@ import {
   effectiveSeatConfigurations,
   formatModelSpec,
   isEngineAxisSeat,
-  isMenxiaOfficerSeat,
+  isGateOfficerSeat,
   loadCredentialProviders,
   loadPublicCliConfig,
   parseModelSpec,
@@ -637,7 +637,7 @@ async function runConfigCommand(
     return 0;
   }
 
-  // #453: clear menxia officer model override only (engine axis preserved).
+  // #453: clear gate officer model override only (engine axis preserved).
   if (args[0] === "unset") {
     if (args.length !== 2) {
       throw new CliUsageError(
@@ -645,9 +645,9 @@ async function runConfigCommand(
       );
     }
     const seat = args[1]!;
-    if (!isMenxiaOfficerSeat(seat)) {
+    if (!isGateOfficerSeat(seat)) {
       throw new CliUsageError(
-        `config unset serves menxia officer overrides only (gatekeeper|inspector|notary); got ${seat}`,
+        `config unset serves gate officer overrides only (gatekeeper|inspector|notary); got ${seat}`,
       );
     }
     const config = clearPersistentSeatConfig(

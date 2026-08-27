@@ -7,13 +7,13 @@ import { dirname, join } from "node:path";
 import { assertLegalEngineName } from "../package-resources/engine-material.js";
 import { AUTOMATIC_CONFIGURABLE_SEATS, PUBLIC_CALLABLE_ROLES, PUBLIC_CONFIGURABLE_SEATS, isAutomaticConfigurableSeat, isPublicCallableRole, isPublicConfigurableSeat, publicStartupCandidates, } from "./registry.js";
 /** Province officers that may carry a persistent model override (#453). */
-export const MENXIA_OFFICER_SEATS = [
+export const GATE_OFFICER_SEATS = [
     "gatekeeper",
     "inspector",
     "notary",
 ];
-export function isMenxiaOfficerSeat(value) {
-    return MENXIA_OFFICER_SEATS.includes(value);
+export function isGateOfficerSeat(value) {
+    return GATE_OFFICER_SEATS.includes(value);
 }
 const THINKING_LEVELS = new Set([
     "off",
@@ -65,8 +65,8 @@ export function setPersistentSeatConfig(config, seat, selection) {
     };
 }
 /**
- * Clear a menxia officer's persistent model override (#453).
- * Scope is MenxiaOfficerSeat only — non-province seats have no destructive clear seam.
+ * Clear a gate officer's persistent model override (#453).
+ * Scope is GateOfficerSeat only — non-province seats have no destructive clear seam.
  * Only notary may retain an engine-only residual so direct notary activation keeps
  * its labor engine while model resolution returns to startup / province inheritance.
  * gatekeeper/inspector drop the whole row. Already-absent seats are a no-op.
@@ -94,7 +94,7 @@ export function clearPersistentSeatConfig(config, seat) {
  * direct `ak-role notary` keeps resolveEffectiveSeat; only province reads this.
  * Engine-only residual is not a model override.
  */
-export function resolveMenxiaOfficerModelSelection(config, officer) {
+export function resolveGateOfficerModelSelection(config, officer) {
     const ownModel = seatModelOnly(config.seats[officer]);
     if (ownModel !== undefined)
         return ownModel;
