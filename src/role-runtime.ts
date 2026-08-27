@@ -1229,7 +1229,11 @@ export function createRoleRuntimeExtension(
         // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
         if (engineDetourRegistration === undefined) {
-          engineDetourRegistration = registerEngineDetourTool(roleHost, { failInfrastructure });
+          engineDetourRegistration = registerEngineDetourTool(roleHost, {
+            failInfrastructure(error) {
+              failInfrastructure(error, ctx);
+            },
+          });
           if (!engineDetourRegistration.registered) {
             engineDetourRegistration = undefined;
           }
