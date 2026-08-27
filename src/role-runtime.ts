@@ -610,10 +610,10 @@ export function createRoleRuntimeExtension(
   return (pi) => {
     const piHostAdapter = injectedPiHostAdapter ?? createPiRoleHostAdapter(pi);
     const roleHost = piHostAdapter.host;
-    pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
+    roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {
-      pi.registerFlag(flag.name, flag.definition);
+      roleHost.registerFlag(flag.name, flag.definition);
     }
 
     let admitted = false;
@@ -639,7 +639,7 @@ export function createRoleRuntimeExtension(
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
     roleHost.on("input", (event) => {
-      const role = pi.getFlag(ROLE_FLAG.name);
+      const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       // Envelope exclusively owns Reviewer Skill invocation transform + original-request capture.
       if (
@@ -658,7 +658,7 @@ export function createRoleRuntimeExtension(
       return { action: "continue" as const };
     });
     roleHost.on("before_agent_start", (event, ctx) => {
-      const role = pi.getFlag(ROLE_FLAG.name);
+      const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
@@ -1118,7 +1118,7 @@ export function createRoleRuntimeExtension(
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
       oauthKeepalive.start(toPiContext(ctx));
-      const rawRole = pi.getFlag(ROLE_FLAG.name);
+      const rawRole = roleHost.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);
       if (entry === undefined) {
@@ -1135,7 +1135,7 @@ export function createRoleRuntimeExtension(
         coder,
         reviewer,
         decodeReviewerAdmitted() {
-          return decodeReviewerAdmittedInputs((name) => pi.getFlag(name));
+          return decodeReviewerAdmittedInputs((name) => roleHost.getFlag(name));
         },
         bindReviewerParent(activation) {
           activeReviewerParent = activation;

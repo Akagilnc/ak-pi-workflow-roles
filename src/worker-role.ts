@@ -1,4 +1,4 @@
-import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
+import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
 import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
@@ -24,7 +24,6 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
-import { requirePiGatekeeperPass, type HostGatekeeperActions } from "./pi/adapter.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -281,7 +280,7 @@ export function createFixerRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed" || output.status === "partially_completed") {
-              await requirePiGatekeeperPass({
+              await pi.requireGatekeeperPass!({
                 context: ctx,
                 subject: { kind: "worker_completion", material: JSON.stringify(output) },
                 ...(_signal === undefined ? {} : { signal: _signal }),
@@ -422,7 +421,7 @@ export function createCoderRoleRuntime(
               toolCallId,
             );
             if (output.status === "completed") {
-              await requirePiGatekeeperPass({
+              await pi.requireGatekeeperPass!({
                 context: ctx,
                 subject: { kind: "worker_completion", material: JSON.stringify(output) },
                 ...(_signal === undefined ? {} : { signal: _signal }),
