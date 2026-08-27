@@ -452,7 +452,6 @@ function activationCtx(home: string, extras: Record<string, unknown> = {}): Exte
   const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-role", "session");
   mkdirSync(sessionDir, { recursive: true });
   const sessionManager = SessionManager.create(home, sessionDir);
-  sessionManager.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
   return {
     abort: () => {},
     ...extras,
