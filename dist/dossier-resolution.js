@@ -36,30 +36,26 @@ export function resolveAuditDossier(env = process.env) {
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-/**
- * Judge subjects must already be on the parent session books before audit starts:
- * assignment (user message) + candidate verdict (sole judge output tool call).
- */
 export function readJudgeAuditSubjects(context) {
     const entries = context.sessionManager.getEntries?.() ?? [];
     let hasAssignment = false;
     let hasCandidate = false;
     for (const entry of entries) {
-        if (entry.type !== "message")
+        if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message))
             continue;
         const message = entry.message;
         if (message.role === "user") {
             const text = typeof message.content === "string"
                 ? message.content
                 : Array.isArray(message.content)
-                    ? message.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+                    ? message.content.map((part) => (isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : "")).join("")
                     : "";
             if (text.trim().length > 0)
                 hasAssignment = true;
         }
         if (message.role === "assistant" && Array.isArray(message.content)) {
             for (const part of message.content) {
-                if (part.type === "toolCall" && part.name === JUDGE_OUTPUT_TOOL_NAME && isRecord(part.arguments)) {
+                if (isRecord(part) && part.type === "toolCall" && part.name === JUDGE_OUTPUT_TOOL_NAME && isRecord(part.arguments)) {
                     hasCandidate = true;
                 }
             }
@@ -79,7 +75,7 @@ export function readJudgeAuditSubjects(context) {
 export function readDoctorAuditSubjects(context) {
     const entries = context.sessionManager.getEntries?.() ?? [];
     for (const entry of entries) {
-        if (entry.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
+        if (isRecord(entry) && entry.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
             return { status: "ok" };
         }
     }

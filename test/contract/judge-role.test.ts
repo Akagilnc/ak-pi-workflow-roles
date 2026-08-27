@@ -175,30 +175,8 @@ function extensionHarness(
 }
 
 /** Test host: infrastructure throws through; non-pass bind is a no-op unless a case wires tool_result. */
-function testHostActions(
-  adapter: PiRoleHostAdapter | undefined = undefined,
-  fail: (error: unknown) => never = (error): never => {
-    throw error instanceof Error ? error : new Error(String(error));
-  },
-): GatekeeperPassHostActions {
-  return {
-    failInfrastructure(error) { fail(error); },
-    bindGatekeeperNonPass() {},
-    executeGatekeeperChild: (request) => {
-      if (adapter === undefined) throw new Error("test Gatekeeper adapter is not configured");
-      return executeAuditorChild({
-      roleLabel: request.roleLabel,
-      gateSeat: request.gateSeat,
-      systemPrompt: request.systemPrompt,
-      prompt: request.prompt,
-      ...(request.signal === undefined ? {} : { signal: request.signal }),
-      context: request.context,
-      ...(request.runCompletion === undefined ? {} : { runCompletion: request.runCompletion as never }),
-      tool: request.tool as never,
-      dossierTool: request.dossierTool as never,
-      });
-    },
-  };
+function testHostActions(fail: (error: unknown) => never = (error): never => { throw error instanceof Error ? error : new Error(String(error)); }): GatekeeperPassHostActions {
+  return { failInfrastructure(error) { fail(error); }, bindGatekeeperNonPass() {}, executeGatekeeperChild: (request) => executeAuditorChild({ ...request, context: request.context as never, runCompletion: request.runCompletion as never, tool: request.tool as never, dossierTool: request.dossierTool as never }) };
 }
 
 function toolCallContext(
@@ -792,7 +770,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "judge",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
           },
-          testHostActions(piHostAdapter),
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -814,7 +792,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "fixer",
             loadPacket: async () => emptyFixPacket,
           },
-          testHostActions(piHostAdapter),
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -836,7 +814,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
             loadSoul: async () => "coder",
             loadTask: async () => "task",
           },
-          testHostActions(piHostAdapter),
+          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -1338,7 +1316,7 @@ test("coder completed submissions traverse the real Gatekeeper provider gate unt
       loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
       loadCanonicalSkillBinding: async () => tddBinding(),
     },
-    testHostActions(piHostAdapter),
+    testHostActions(),
   );
   await runtime.activate();
   await harness.handlers.get("input")?.({ text: request }, {});
@@ -1372,7 +1350,7 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
     const runtime = createFixerRoleRuntime(
       piHostAdapter.host,
       { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
-      testHostActions(piHostAdapter),
+      testHostActions(),
     );
     await runtime.activate();
     return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
@@ -1406,7 +1384,7 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
   const partialRuntime = createFixerRoleRuntime(partialPiHostAdapter.host, {
     loadSoul: async () => "FIXER LAW",
     loadPacket: async (path) => path.endsWith("prereqs.json") ? declaredFixPrerequisites : emptyFixPacket,
-  }, testHostActions(partialPiHostAdapter));
+  }, testHostActions());
   await partialRuntime.activate();
   assert.equal((await partialHarness.tools.get(FIXER_OUTPUT_TOOL_NAME)!.execute("partial", partial, undefined, undefined, submissionContext("partial"))).terminate, true);
 
@@ -1517,7 +1495,7 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
         loadCanonicalSkillBinding: async () => tddBinding(),
       },
-      testHostActions(piHostAdapter),
+      testHostActions(),
     );
     await runtime.activate();
     // Completed coder requires the canonical tdd expansion arming path.
@@ -1537,7 +1515,7 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
     const runtime = createFixerRoleRuntime(
       piHostAdapter.host,
       { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
-      testHostActions(piHostAdapter),
+      testHostActions(),
     );
     await runtime.activate();
     return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
@@ -1773,7 +1751,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
         loadCanonicalSkillBinding: async () => tddBinding(),
       },
-      testHostActions(piHostAdapter),
+      testHostActions(),
     );
     await runtime.activate();
     return Object.assign(harness, { model, provider, providerRequests: () => providerRequests });
@@ -2551,18 +2529,18 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           runtime = judgeRole.createJudgeRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "judge law",
             auditSoulCompliance: auditCompliance,
-          }, testHostActions(piHostAdapter));
+          }, testHostActions());
         } else if (role === "fixer") {
           runtime = workerRole.createFixerRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "fixer law",
             loadPacket: async () => "repair packet",
-          }, testHostActions(piHostAdapter));
+          }, testHostActions());
         } else if (role === "doctor") {
           runtime = doctorRole.createDoctorRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "doctor law",
             loadCase: async () => patient,
             auditCompliance,
-          }, testHostActions(piHostAdapter));
+          }, testHostActions());
         } else {
           const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
           runtime = reviewerRole.createReviewerRoleRuntime(piHostAdapter.host, {
@@ -2585,7 +2563,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
               readPinnedText: async () => undefined,
             }),
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
-          }, testHostActions(piHostAdapter));
+          }, testHostActions());
         }
         return {
           harness,
