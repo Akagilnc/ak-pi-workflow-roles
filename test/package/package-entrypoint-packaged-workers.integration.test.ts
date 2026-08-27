@@ -769,8 +769,8 @@ test("packaged coder apply proves canonical native tdd expansion including colli
               bounced?.type === "message" &&
                 bounced.message.role === "toolResult",
             );
+            // Bounce is typed isError; no rejection-prose pin (#495 S4).
             assert.equal(bounced.message.isError, true);
-            assert.match(textOf(bounced.message), /未观察到 commit/);
           }
           const accepted = sessionManager.getEntries().find(
             (entry) =>
