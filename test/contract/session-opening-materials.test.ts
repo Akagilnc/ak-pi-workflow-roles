@@ -9,7 +9,6 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 import { loadAuditorSoul, AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
-import { EVIDENCE_CHILD_SESSION_MATERIALS } from "../../src/evidence-child-executor.ts";
 import {
   joinPackageMaterials,
   loadGatekeeperSessionMaterials,
@@ -74,9 +73,6 @@ const TICKET_AUDITOR_MATERIALS = {
   doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
 } as const;
 
-/** Shared Standards/Spec evidence-child system material paths (#495 S2 / ADR 0073). */
-const TICKET_EVIDENCE_CHILD_MATERIALS = ["souls/quality-law.md"] as const;
-
 async function expectJoined(relativePaths: readonly string[]): Promise<string> {
   const parts = [];
   for (const relativePath of relativePaths) {
@@ -117,14 +113,6 @@ test("auditor loaders match ticket material roster byte-for-byte", async () => {
       `${role} auditor must carry ticket materials from package source`,
     );
   }
-});
-
-test("evidence-child material roster matches ticket path list", () => {
-  assert.deepEqual(
-    [...EVIDENCE_CHILD_SESSION_MATERIALS],
-    [...TICKET_EVIDENCE_CHILD_MATERIALS],
-    "evidence-child builder roster must carry ticket material paths",
-  );
 });
 
 test("missing injected material fails as native ENOENT, not a soft empty", async () => {

@@ -19,8 +19,9 @@ import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus, projectConfirmedRemo
 /**
  * Shared Standards/Spec evidence-child system materials — path roster only.
  * Builder consumes this unique roster; cadence prose stays in owner material (ADR 0073).
+ * Not exported — tests must not mirror internal roster structure.
  */
-export const EVIDENCE_CHILD_SESSION_MATERIALS = [
+const EVIDENCE_CHILD_SESSION_MATERIALS = [
     "souls/quality-law.md",
 ];
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */

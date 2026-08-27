@@ -56,18 +56,13 @@ function asStringArray(value: unknown): readonly string[] {
 }
 
 /**
- * Project one explicit Notary release. Throws when there is no lawful explicit
- * pass / bounce — callers map that to the existing non-zero failure channel.
+ * Project one lawful explicit Notary release (pass | bounce).
+ * No throw on shape — ADR 0055 / 第 0 条: already-submitted params are retained as-is;
+ * public-terminal projects non-usable releases via typed failure cause.
  */
-export function validateNotaryOutput(value: unknown): NotaryOutput {
-  if (!isRecord(value)) {
-    throw new Error("Notary output has no recognized execution discriminator");
-  }
-  const statusRaw = typeof value.status === "string" ? value.status : undefined;
-  if (statusRaw === undefined) {
-    throw new Error("Notary output has no recognized execution discriminator");
-  }
-  const status = statusRaw;
+export function projectLawfulNotaryOutput(value: unknown): NotaryOutput | undefined {
+  if (!isRecord(value)) return undefined;
+  const status = typeof value.status === "string" ? value.status : undefined;
   if (status === "bounce") {
     const clone = structuredClone(value) as Record<string, unknown>;
     if (clone.disposition === undefined) clone.disposition = "rewrite";
@@ -79,11 +74,29 @@ export function validateNotaryOutput(value: unknown): NotaryOutput {
     if (!Array.isArray(clone.findings)) clone.findings = asStringArray(clone.findings);
     return clone as NotaryOutput;
   }
-  throw new Error("Notary output has no recognized execution discriminator");
+  return undefined;
 }
 
+/** Retain submitted Notary params as-is for the failure channel (no shape rewrite). */
+export function retainNotarySubmission(value: unknown): unknown {
+  if (value === undefined) return { missing: "arguments" as const };
+  try {
+    return structuredClone(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Settlement/recording path: only lawful recorded pass/bounce.
+ * Does not gate role admission — callers must not use this to reject a submission.
+ */
 export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
-  return validateNotaryOutput(value);
+  const projected = projectLawfulNotaryOutput(value);
+  if (projected === undefined) {
+    throw new Error("Notary output has no recognized execution discriminator");
+  }
+  return projected;
 }
 
 export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknown> {
