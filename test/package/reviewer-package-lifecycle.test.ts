@@ -62,11 +62,12 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
       const discoveredRefs = ["docs/feature-login.md"];
       // #443: capture parent systemPrompt at the real packaged Reviewer output call.
       const promptCapturePath = resolve(home, "reviewer-system-prompt.txt");
-      // #470 御批四: reviewer main session carries audit-law.
+      // #470 御批四 + #495 S2: reviewer main session carries audit-law + quality-law.
       const reviewerSoul = [
         await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8"),
         await readFile(resolve(installedRoot, "souls/reviewer.md"), "utf8"),
         await readFile(resolve(installedRoot, "souls/audit-law.md"), "utf8"),
+        await readFile(resolve(installedRoot, "souls/quality-law.md"), "utf8"),
       ].join("\n\n").trim();
 
       // #236 no-caller-instruction path: fixed base alone launches real two-axis when

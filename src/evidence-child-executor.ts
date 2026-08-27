@@ -36,6 +36,7 @@ import {
   engineSessionMaterialFromOptions,
   type EngineSessionMaterial,
 } from "./package-resources/engine-material.ts";
+import { readPackageMaterial } from "./session-opening-materials.ts";
 import {
   formatModelSpec,
   loadPublicCliConfig,
@@ -53,11 +54,12 @@ import {
 } from "./upstream-error-testimony.ts";
 
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
-function buildEvidenceChildSystemPrompt(
+async function buildEvidenceChildSystemPrompt(
   engineMaterial?: EngineSessionMaterial,
-): string {
-  // ADR 0073: no instruction copy of soul; engine material is optional data only.
-  return appendEngineSessionMaterial([], engineMaterial).join("\n");
+): Promise<string> {
+  // ADR 0073: verification cadence lives in owner material only; no machine prose copy.
+  const qualityLaw = await readPackageMaterial("souls/quality-law.md");
+  return appendEngineSessionMaterial([qualityLaw], engineMaterial).join("\n");
 }
 
 // ── shared constants / types ──────────────────────────────────────────────
@@ -625,7 +627,7 @@ export async function executeEvidenceChild(
         model: inherited.model,
         thinkingLevel: context.thinkingLevel ?? "off",
         modelRuntime: inherited.runtime,
-        systemPrompt: buildEvidenceChildSystemPrompt(engineMaterial),
+        systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
         ...(engineDetourTool === undefined
           ? {}
           : { customTools: [engineDetourTool] }),

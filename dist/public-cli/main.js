@@ -20359,6 +20359,7 @@ var init_evidence_child_executor = __esm({
     init_engine_detour_tool();
     init_engine_detour();
     init_engine_material();
+    init_session_opening_materials();
     init_config2();
     init_receipt_delivery_policy();
     init_stream_idle_guard();
