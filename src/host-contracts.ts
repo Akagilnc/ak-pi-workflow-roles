@@ -30,7 +30,7 @@ export type HostSessionManager = {
   getLeafId(): string | null | undefined;
   getEntries(): Iterable<HostSessionEntry>;
   getSessionDir(): string;
-  getSessionFile?(): string | undefined;
+  getSessionFile(): string | undefined;
   appendMessage?(message: HostMessage): void;
   appendCustomEntry?(customType: string, data?: unknown): unknown;
 };
@@ -59,7 +59,15 @@ export type HostToolDefinition<S extends TSchema = TSchema, D = unknown> = {
   ): Promise<HostToolResult<D>>;
 };
 
-type BeforeAgentStartEvent = { prompt: string; systemPrompt: string; systemPromptOptions?: unknown };
+type BeforeAgentStartEvent = {
+  prompt: string;
+  systemPrompt: string;
+  systemPromptOptions: {
+    skills?: readonly unknown[];
+    contextFiles?: readonly unknown[];
+    appendSystemPrompt?: string;
+  };
+};
 type InputEvent = { text: string; images?: readonly unknown[]; source?: string };
 type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<string, unknown> };
 type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: readonly HostContentPart[]; details: unknown };

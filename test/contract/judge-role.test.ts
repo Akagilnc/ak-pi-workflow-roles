@@ -17,6 +17,7 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
+import { createPiRoleHost } from "../../src/pi/adapter.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -664,7 +665,7 @@ test("focused Judge controller registers output without narrowing host tools", a
     "arbitrary_sibling",
   ]);
   const runtime = createJudgeRoleRuntime(
-    harness.pi as ExtensionAPI,
+    createPiRoleHost(harness.pi as ExtensionAPI),
     {
       loadSoul: async () => "  JUDGE LAW  ",
       auditSoulCompliance: async () => ({ status: "pass" }),
@@ -756,7 +757,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       activate: async () => {
         const harness = extensionHarness(undefined);
         const runtime = createJudgeRoleRuntime(
-          harness.pi as ExtensionAPI,
+          createPiRoleHost(harness.pi as ExtensionAPI),
           {
             loadSoul: async () => "judge",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
@@ -777,7 +778,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           "ak-fixer-phase": "apply",
         });
         const runtime = createFixerRoleRuntime(
-          harness.pi as ExtensionAPI,
+          createPiRoleHost(harness.pi as ExtensionAPI),
           {
             loadSoul: async () => "fixer",
             loadPacket: async () => emptyFixPacket,
@@ -798,7 +799,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           "ak-coder-phase": "plan",
         });
         const runtime = createCoderRoleRuntime(
-          harness.pi as ExtensionAPI,
+          createPiRoleHost(harness.pi as ExtensionAPI),
           {
             loadSoul: async () => "coder",
             loadTask: async () => "task",
@@ -1296,7 +1297,7 @@ test("coder completed submissions traverse the real Gatekeeper provider gate unt
     "ak-coder-phase": "apply",
   });
   const runtime = createCoderRoleRuntime(
-    harness.pi as ExtensionAPI,
+    createPiRoleHost(harness.pi as ExtensionAPI),
     {
       loadSoul: async () => "CODER LAW",
       loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
@@ -1333,7 +1334,7 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
       "ak-fixer-phase": phase,
     });
     const runtime = createFixerRoleRuntime(
-      harness.pi as ExtensionAPI,
+      createPiRoleHost(harness.pi as ExtensionAPI),
       { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
       testHostActions(),
     );
@@ -1472,7 +1473,7 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
       "ak-coder-phase": "apply",
     });
     const runtime = createCoderRoleRuntime(
-      harness.pi as ExtensionAPI,
+      createPiRoleHost(harness.pi as ExtensionAPI),
       {
         loadSoul: async () => "CODER LAW",
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
@@ -1495,7 +1496,7 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
       "ak-fixer-phase": "apply",
     });
     const runtime = createFixerRoleRuntime(
-      harness.pi as ExtensionAPI,
+      createPiRoleHost(harness.pi as ExtensionAPI),
       { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
       testHostActions(),
     );
@@ -1726,7 +1727,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       streamSimple() { return this.stream(); },
     };
     const runtime = createCoderRoleRuntime(
-      harness.pi as ExtensionAPI,
+      createPiRoleHost(harness.pi as ExtensionAPI),
       {
         loadSoul: async () => "CODER LAW",
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
@@ -2503,24 +2504,24 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         };
         let runtime: any;
         if (role === "judge") {
-          runtime = judgeRole.createJudgeRoleRuntime(harness.pi, {
+          runtime = judgeRole.createJudgeRoleRuntime(createPiRoleHost(harness.pi as unknown as ExtensionAPI), {
             loadSoul: async () => "judge law",
             auditSoulCompliance: auditCompliance,
           }, testHostActions());
         } else if (role === "fixer") {
-          runtime = workerRole.createFixerRoleRuntime(harness.pi, {
+          runtime = workerRole.createFixerRoleRuntime(createPiRoleHost(harness.pi as unknown as ExtensionAPI), {
             loadSoul: async () => "fixer law",
             loadPacket: async () => "repair packet",
           }, testHostActions());
         } else if (role === "doctor") {
-          runtime = doctorRole.createDoctorRoleRuntime(harness.pi, {
+          runtime = doctorRole.createDoctorRoleRuntime(createPiRoleHost(harness.pi as unknown as ExtensionAPI), {
             loadSoul: async () => "doctor law",
             loadCase: async () => patient,
             auditCompliance,
           }, testHostActions());
         } else {
           const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
-          runtime = reviewerRole.createReviewerRoleRuntime(harness.pi, {
+          runtime = reviewerRole.createReviewerRoleRuntime(createPiRoleHost(harness.pi as unknown as ExtensionAPI), {
             loadSoul: async () => "reviewer law",
             loadCanonicalSkillBinding: async () => ({
               name: "code-review",
