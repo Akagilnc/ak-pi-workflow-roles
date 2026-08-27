@@ -11,6 +11,8 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
 
 import {
+  JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
+  JUDGE_ACCEPTED_TEXT,
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
   type JudgeVerdict,
@@ -134,13 +136,13 @@ export function createJudgeRoleRuntime(
               audit,
               {
                 pass: (usage) => ({
-                  content: [{ type: "text" as const, text: "Judge verdict accepted" }],
+                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
                   details: acceptedDetails,
                   terminate: true as const,
                   ...(usage === undefined ? {} : { usage }),
                 }),
                 noReceipt: (auditNoReceipt, usageProjection) => ({
-                  content: [{ type: "text" as const, text: "Judge verdict accepted; compliance audit produced no receipt" }],
+                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT }],
                   details: { ...acceptedDetails, auditNoReceipt },
                   terminate: true as const,
                   ...usageProjection,

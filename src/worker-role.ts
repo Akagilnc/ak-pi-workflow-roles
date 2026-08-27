@@ -12,7 +12,9 @@ import type {
   CanonicalSkillBinding,
 } from "./canonical-skill-binding.ts";
 import {
+  CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
+  FIXER_ACCEPTED_TEXT,
   FIXER_OUTPUT_TOOL_NAME,
   validateAcceptedWorkerDetails,
   type CoderOutput,
@@ -293,7 +295,7 @@ export function createFixerRoleRuntime(
             }
             const acceptedDetails = output;
             return {
-              content: [{ type: "text" as const, text: "Fixer report accepted" }],
+              content: [{ type: "text" as const, text: FIXER_ACCEPTED_TEXT }],
               details: acceptedDetails,
               terminate: true as const,
             };
@@ -434,7 +436,7 @@ export function createCoderRoleRuntime(
             }
             const acceptedDetails = output;
             return {
-              content: [{ type: "text" as const, text: "Coder report accepted" }],
+              content: [{ type: "text" as const, text: CODER_ACCEPTED_TEXT }],
               details: acceptedDetails,
               terminate: true as const,
             };

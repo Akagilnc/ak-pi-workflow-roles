@@ -3,7 +3,7 @@ import { FIXER_PREREQUISITE_ID_PATTERN, type FixerInvocationInput } from "./fixe
 import { openToolObjectFromUnion } from "../open-tool-schema.ts";
 
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
-export const FIXER_ACCEPTED_TEXT = "Fixer report accepted";
+export const FIXER_ACCEPTED_TEXT = "修内司回执已接受";
 
 const nonblankTransportString = Type.String({ minLength: 1 });
 const authorityBlockerSchema = Type.Object({ cause: Type.Literal("authority_violation"), evidence: nonblankTransportString });

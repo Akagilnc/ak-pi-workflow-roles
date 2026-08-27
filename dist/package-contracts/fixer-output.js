@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { FIXER_PREREQUISITE_ID_PATTERN } from "./fixer-packet.js";
 import { openToolObjectFromUnion } from "../open-tool-schema.js";
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
-export const FIXER_ACCEPTED_TEXT = "Fixer report accepted";
+export const FIXER_ACCEPTED_TEXT = "修内司回执已接受";
 const nonblankTransportString = Type.String({ minLength: 1 });
 const authorityBlockerSchema = Type.Object({ cause: Type.Literal("authority_violation"), evidence: nonblankTransportString });
 const prerequisiteBlockerSchema = Type.Object({ cause: Type.Literal("prerequisite_unmet"), prerequisiteId: Type.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }), evidence: nonblankTransportString });

@@ -36,6 +36,7 @@ import {
   collectorRequestArgsSchema,
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
+import { COLLECTOR_ACCEPTED_TEXT } from "./package-contracts/collector-output.ts";
 
 export { COLLECTOR_FIXED_KICKOFF } from "./collector-config.ts";
 export {
@@ -406,7 +407,7 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: "Collector receipt accepted",
+              text: COLLECTOR_ACCEPTED_TEXT,
             }],
             details: acceptedDetails,
             terminate: true as const,

@@ -28,7 +28,7 @@ export type MergerOutput =
   | { status: "completed"; attemptId: string; report: string; mergeCommitId: string }
   | { status: "escalate"; attemptId: string; diagnosis: string; report: string };
 export const MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
-export const MERGER_ACCEPTED_TEXT = "Merger output accepted";
+export const MERGER_ACCEPTED_TEXT = "合并回执已接受";
 
 const record = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const blank = (v: unknown) => typeof v !== "string" || v.trim().length === 0;
