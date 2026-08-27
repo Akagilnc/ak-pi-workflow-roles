@@ -18,10 +18,10 @@ export const NOTARY_SOURCE_RUN_FLAG = {
 export const NOTARY_FIXED_KICKOFF = "Notary review. Bound source-run locator is on the session materials; fetch authoritative ticket, git, and dossier evidence yourself; submit one typed decision.";
 export const notaryOutputSchema = openToolObject(Type.Object({
     status: Type.Unknown({
-        description: "pass | bounce — guidance, not a schema gate.",
+        description: "pass | bounce — 形状指引，非 schema 闸",
     }),
     findings: Type.Unknown({
-        description: "string[] findings retained with pass or bounce.",
+        description: "string[] findings，随 pass 或 bounce 留存",
     }),
 }));
 function isRecord(value) {

@@ -14030,10 +14030,10 @@ var init_fixer_output = __esm({
     blockerSchema = typebox_exports.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
     exceptionSchema = typebox_exports.Object({ where: nonblankTransportString, reason: nonblankTransportString });
     testEvidenceSchema = typebox_exports.Object({
-      contract: typebox_exports.String({ minLength: 1, description: "Contract the test change proves." }),
-      minimumNecessaryCost: typebox_exports.String({ minLength: 1, description: "One-line minimum necessary cost of the test change." }),
-      measuredDuration: typebox_exports.String({ minLength: 1, description: "Measured duration of the focused verification run." })
-    }, { description: "Test evidence slip (submit when diff includes test changes; machine does not verify)." });
+      contract: typebox_exports.String({ minLength: 1, description: "\u6D4B\u8BD5\u6539\u52A8\u6240\u8BC1\u660E\u7684\u5951\u7EA6" }),
+      minimumNecessaryCost: typebox_exports.String({ minLength: 1, description: "\u6D4B\u8BD5\u6539\u52A8\u7684\u4E00\u884C\u6700\u5C0F\u5FC5\u8981\u6210\u672C" }),
+      measuredDuration: typebox_exports.String({ minLength: 1, description: "\u805A\u7126\u9A8C\u8BC1\u5B9E\u6D4B\u65F6\u957F" })
+    }, { description: "\u6D4B\u8BD5\u8BC1\u636E\u6761\uFF1Bdiff \u542B\u6D4B\u8BD5\u6539\u52A8\u65F6\u63D0\u4EA4\uFF1B\u673A\u5668\u4E0D\u6838\u9A8C\u3002" });
     completedClassResultSchema = typebox_exports.Object({
       name: nonblankTransportString,
       disposition: typebox_exports.Literal("completed"),
@@ -14050,12 +14050,12 @@ var init_fixer_output = __esm({
     classResultSchema = typebox_exports.Union([completedClassResultSchema, refusedClassResultSchema]);
     completedClassResultsSchema = typebox_exports.Array(completedClassResultSchema, { minItems: 1 });
     fixerOutputVariants = typebox_exports.Union([
-      typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "Plan-phase proposal outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "Lawfully refused outcome." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work that cannot lawfully be performed." }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "Lawful blocker preventing completion." }) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "Apply outcome when a missing prerequisite or an unconstitutional constraint blocks completing this invocation; state the reason." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), remainingScope: typebox_exports.String({ minLength: 1, description: "Work remaining after this invocation." }), reason: typebox_exports.Optional(typebox_exports.String({ minLength: 1, description: "Blocking reason: prerequisite missing or unconstitutional. A missing pending owner decision or answer is a missing prerequisite." })), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "Completed class settlements from this invocation." })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "All assigned classes completed." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Completed class settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "All assigned classes lawfully refused." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class refusal settlements." }) }),
-      typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "Assigned classes include completions and lawful refusals." }), report: typebox_exports.String({ minLength: 1, description: "Truthful Fixer outcome report." }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "Per-class completion or refusal settlements." }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
+      typebox_exports.Object({ status: typebox_exports.Literal("planned", { description: "planned \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), remainingScope: typebox_exports.String({ minLength: 1, description: "\u4F9D\u6CD5\u4E0D\u80FD\u5B8C\u6210\u7684\u5DE5\u4F5C\u8303\u56F4" }), blocker: typebox_exports.Unsafe({ ...blockerSchema, description: "\u5408\u6CD5\u963B\u65AD\u5B8C\u6210\u7684 blocker" }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("unfinished", { description: "unfinished \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u81F4\u672C\u5C40\u672A\u5B8C\u6210\u65F6\u53EF\u7528\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), remainingScope: typebox_exports.String({ minLength: 1, description: "\u672C\u5C40\u540E\u5269\u4F59\u5DE5\u4F5C" }), reason: typebox_exports.Optional(typebox_exports.String({ minLength: 1, description: "\u963B\u65AD\u539F\u56E0\uFF1A\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002" })), classResults: typebox_exports.Optional(typebox_exports.Unsafe({ ...completedClassResultsSchema, description: "\u672C\u5C40\u5DF2\u5B8C\u6210\u7684 class \u7ED3\u7B97" })), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5DF2\u5B8C\u6210\u7684 class \u7ED3\u7B97" }), testEvidence: typebox_exports.Optional(testEvidenceSchema) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u62D2\u7EDD\u7ED3\u7B97" }) }),
+      typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "partially_completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u5B8C\u6210\u6216\u62D2\u7EDD\u7ED3\u7B97" }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
     ]);
     fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
   }
@@ -14156,22 +14156,22 @@ var init_doctor_contracts = __esm({
     }, { additionalProperties: false });
     doctorSubmissionVariants = typebox_exports.Union([
       typebox_exports.Object({
-        status: typebox_exports.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
-        case: typebox_exports.Unsafe({ ...caseIdentity, description: "Identity of the retained Doctor case." }),
-        findings: typebox_exports.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." })
-      }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
+        status: typebox_exports.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u5141\u8BB8\u7A7A findings\uFF1Bruntime \u8865\u8BB0\u6D3E\u751F\u6210\u672C\u5165\u56DE\u6267" }),
+        case: typebox_exports.Unsafe({ ...caseIdentity, description: "\u7559\u5B58\u592A\u533B\u7F72\u6848\u8EAB\u4EFD" }),
+        findings: typebox_exports.Array(finding, { description: "\u53EF\u7A7A\u6216\u4EC5\u542B\u975E\u5904\u65B9\u6848\u89C2\u5BDF\uFF1B\u7F3A\u53EF\u590D\u7528\u8D44\u4EA7\u6216 bounded-bite \u8BC1\u636E\u53EA\u6392\u9664\u5BF9\u5E94\u8D44\u4EA7\u5904\u65B9" })
+      }, { additionalProperties: false, description: "\u5355\u6848\u8BC1\u8BCD\uFF0C\u4E0D\u8981\u6C42\u4EFB\u4F55\u5904\u65B9\u6216\u53EF\u590D\u7528 finding" }),
       typebox_exports.Object({
-        status: typebox_exports.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
-        reason: typebox_exports.String({ minLength: 1, description: "Reason evidence is insufficient for truthful testimony." }),
-        missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "Evidence required before truthful testimony is possible." })
-      }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." })
+        status: typebox_exports.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u4EC5\u5F53\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" }),
+        reason: typebox_exports.String({ minLength: 1, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u8BC1\u8BCD\u7684\u539F\u56E0" }),
+        missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "\u5982\u5B9E\u8BC1\u8BCD\u6240\u9700\u800C\u5C1A\u7F3A\u7684\u8BC1\u636E" })
+      }, { additionalProperties: false, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" })
     ]);
     doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
     doctorOutputSchema = typebox_exports.Union([
       typebox_exports.Object({ status: typebox_exports.Literal("completed"), case: caseIdentity, findings: typebox_exports.Array(finding), cost }, { additionalProperties: false }),
       doctorSubmissionVariants.anyOf[1]
     ]);
-    doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: typebox_exports.String({ minLength: 1, description: "Identifier of the retained evidence to read." }), offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0, description: "Zero-based byte offset at which to begin reading." })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096, description: "Maximum number of bytes to return." })) }, { additionalProperties: false });
+    doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: typebox_exports.String({ minLength: 1, description: "\u5F85\u8BFB\u7559\u5B58\u8BC1\u636E\u6807\u8BC6" }), offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0, description: "\u8D77\u59CB\u5B57\u8282\u504F\u79FB\uFF08\u4ECE 0 \u8BA1\uFF09" })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096, description: "\u8FD4\u56DE\u5B57\u8282\u4E0A\u9650" })) }, { additionalProperties: false });
     DoctorSubmissionContractError = class extends Error {
       name = "DoctorSubmissionContractError";
     };
@@ -14286,8 +14286,8 @@ var init_merger_contracts = __esm({
       authorizedChecks: typebox_exports.Array(checkSchema)
     }, { additionalProperties: false });
     mergerOutputVariants = typebox_exports.Union([
-      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "Merge attempt completed." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "Verified completed merge commit object ID." }) }, { additionalProperties: false }),
-      typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "Merge attempt requires human authority." }), attemptId: typebox_exports.String({ minLength: 1, description: "Identity of the admitted merge attempt." }), diagnosis: typebox_exports.String({ minLength: 1, description: "Reason merge completion requires escalation." }), report: typebox_exports.String({ minLength: 1, description: "Truthful merge outcome report." }) }, { additionalProperties: false })
+      typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: typebox_exports.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "\u5DF2\u6838\u9A8C\u7684\u5B8C\u6210\u5408\u5E76 commit object ID" }) }, { additionalProperties: false }),
+      typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: typebox_exports.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), diagnosis: typebox_exports.String({ minLength: 1, description: "\u5408\u5E76\u5B8C\u6210\u9700\u5347\u7EA7\u7684\u539F\u56E0" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }, { additionalProperties: false })
     ]);
     mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
     MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
@@ -14358,10 +14358,10 @@ var init_notary_contracts = __esm({
     notaryOutputSchema = openToolObject(
       typebox_exports.Object({
         status: typebox_exports.Unknown({
-          description: "pass | bounce \u2014 guidance, not a schema gate."
+          description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
         }),
         findings: typebox_exports.Unknown({
-          description: "string[] findings retained with pass or bounce."
+          description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58"
         })
       })
     );
@@ -20327,7 +20327,7 @@ var init_engine_detour_tool = __esm({
       {
         argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), {
           minItems: 1,
-          description: "Executable argv for one engine subprocess. First element is the command (PATH lookup); remaining elements are arguments. Build argv from the host CLI actual interface for the configured engine name; when optional packaged notes are present in the session prompt, follow those bytes. Do not invent package flags."
+          description: "\u9996\u9879\u4E3A PATH \u4E2D\u7684\u53EF\u6267\u884C\u6587\u4EF6\uFF0C\u5176\u4F59\u9879\u4E3A\u53C2\u6570\u3002"
         })
       },
       { additionalProperties: false }
@@ -20391,7 +20391,7 @@ var init_evidence_child_executor = __esm({
 // src/compliance-transport.ts
 function createComplianceDecisionTool(name, description) {
   return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
-    return { content: [{ type: "text", text: "Compliance decision received" }], details: params, terminate: true };
+    return { content: [{ type: "text", text: "\u5BA1\u8BA1\u51B3\u8BAE\u5DF2\u6536" }], details: params, terminate: true };
   } };
 }
 function readListField(value) {
@@ -20438,7 +20438,7 @@ var init_compliance_transport = __esm({
     };
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
-    complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "Auditor decision status." }), violations: typebox_exports.Array(nonblank2, { description: "Observed compliance violations." }), conflicts: typebox_exports.Array(nonblank2, { description: "Unresolved authority or execution conflicts." }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "Escalation question and available options." }) }, { additionalProperties: true, required: [] });
+    complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "pass | revise | escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), violations: typebox_exports.Array(nonblank2, { description: "\u89C2\u5BDF\u5230\u7684\u5408\u89C4\u8FDD\u89C4" }), conflicts: typebox_exports.Array(nonblank2, { description: "\u672A\u51B3\u6743\u5A01\u6216\u6267\u884C\u51B2\u7A81" }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "\u5347\u7EA7\u95EE\u9898\u4E0E\u53EF\u9009\u9009\u9879" }) }, { additionalProperties: true, required: [] });
     COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
     AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
     AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
@@ -20465,7 +20465,7 @@ var init_doctor_auditor = __esm({
     DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
     tool = createComplianceDecisionTool(
       DOCTOR_AUDIT_TOOL_NAME,
-      "Return whether the proposed Doctor testimony demonstrably follows the Doctor Soul and frozen evidence record from the dossier. Completed receipts are later augmented with runtime-owned cost; empty findings are valid."
+      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u592A\u533B\u7F72\u5BA1\u5211\uFF09\u3002"
     );
   }
 });
@@ -20482,7 +20482,7 @@ var init_judge_auditor = __esm({
     JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
     auditDecisionTool = createComplianceDecisionTool(
       JUDGE_AUDIT_TOOL_NAME,
-      "Return whether the proposed verdict demonstrably follows the audit law and Judge role boundaries from the dossier evidence."
+      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5927\u7406\u5BFA\u5BA1\u5211\uFF09\u3002"
     );
   }
 });
@@ -20499,7 +20499,7 @@ var init_reviewer_auditor = __esm({
     REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
     reviewerDecisionTool = createComplianceDecisionTool(
       REVIEWER_AUDIT_TOOL_NAME,
-      "Decide whether the Reviewer receipt demonstrably followed its method and boundaries from the dossier."
+      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5FA1\u53F2\u53F0\u5BA1\u5211\uFF09\u3002"
     );
   }
 });
@@ -20529,11 +20529,11 @@ var init_collector_tool_schemas = __esm({
     init_collector_evidence();
     collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
     collectorRequestArgsSchema = typebox_exports.Object({
-      requestId: typebox_exports.String({ minLength: 1, description: "Configured request identity." }),
-      snapshotId: typebox_exports.String({ minLength: 1, description: "Latest retained observation snapshot." })
+      requestId: typebox_exports.String({ minLength: 1, description: "\u914D\u7F6E\u8BF7\u6C42\u8EAB\u4EFD" }),
+      snapshotId: typebox_exports.String({ minLength: 1, description: "\u6700\u65B0\u7559\u5B58\u89C2\u5BDF\u5FEB\u7167" })
     }, { additionalProperties: false });
     collectorWaitArgsSchema = typebox_exports.Object({
-      durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS })
+      durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "\u7B49\u5F85\u6BEB\u79D2\uFF1B\u5355\u6B21\u4E0A\u9650\u4E94\u5206\u949F\u4E14\u4E0D\u8D85\u5269\u4F59\u8D44\u683C" })
     }, { additionalProperties: false });
     collectorOutputArgsSchema = typebox_exports.Object({}, { additionalProperties: true });
     collectorOutputArgsSchema.required = [];
