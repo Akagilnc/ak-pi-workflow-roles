@@ -914,7 +914,7 @@ export function createRoleRuntimeExtension(
           systemPrompt: request.systemPrompt,
           prompt: request.prompt,
           ...(request.signal === undefined ? {} : { signal: request.signal }),
-          context: piHostAdapter.resolveContext(request.context),
+          context: request.context,
           ...(request.runCompletion === undefined ? {} : {
             runCompletion: request.runCompletion as NonNullable<Parameters<typeof executeAuditorChild>[0]["runCompletion"]>,
           }),
@@ -1134,7 +1134,7 @@ export function createRoleRuntimeExtension(
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
-      oauthKeepalive.start(piHostAdapter.resolveContext(ctx));
+      oauthKeepalive.start(ctx);
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);

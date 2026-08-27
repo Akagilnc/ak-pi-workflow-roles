@@ -1,3 +1,4 @@
+import type { Api, Model, Provider } from "@earendil-works/pi-ai";
 import { Type, type Static, type TLiteral, type TSchema } from "typebox";
 
 export type HostContentPart =
@@ -31,19 +32,52 @@ export type HostSessionManager = {
   getEntries(): Iterable<HostSessionEntry>;
   getSessionDir(): string;
   getSessionFile(): string | undefined;
-  getHeader?(): { readonly type: string } | null;
+  getHeader?(): { readonly type: string; readonly id?: string } | null;
   setSessionFile?(path: string): void;
   appendMessage?(message: HostMessage): void;
   appendCustomEntry?(customType: string, data?: unknown): unknown;
+};
+
+export type HostModelRegistry = {
+  getProvider(provider: string): Provider<Api> | undefined;
+  find(provider: string, modelId: string): Model<Api> | undefined;
+  getProviderAuth(provider: string): Promise<{
+    auth: { baseUrl?: string };
+    env?: Record<string, string>;
+  } | undefined>;
+  getApiKeyAndHeaders(model: Model<Api>): Promise<
+    | { ok: true; apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> }
+    | { ok: false; error: string }
+  >;
+  refresh(options?: {
+    allowNetwork?: boolean;
+    providers?: readonly string[];
+    force?: boolean;
+    signal?: AbortSignal;
+  }): Promise<{ aborted: boolean; errors: ReadonlyMap<string, Error> }>;
+};
+
+export type HostChildContext = {
+  cwd: string;
+  model: Model<Api> | undefined;
+  modelRegistry: HostModelRegistry;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  sessionManager: Pick<HostSessionManager, "getSessionFile" | "getLeafId" | "getHeader" | "appendCustomEntry"> & {
+    getEntries(): Iterable<unknown>;
+  };
 };
 
 /** Context supplied by a host for one activation and its interceptable events. */
 export type HostContext = {
   cwd: string;
   mode: string;
-  model?: { readonly provider: string };
+  model: Model<Api> | undefined;
+  modelRegistry: HostModelRegistry;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   sessionManager: HostSessionManager;
   signal?: AbortSignal;
+  ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void };
+  transcript?(): string;
   abort(): void;
 };
 

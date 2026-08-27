@@ -1,5 +1,6 @@
 import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type { HostChildContext } from "./host-contracts.ts";
 import { Type } from "typebox";
 import {
   executeAuditorChild,
@@ -55,7 +56,7 @@ export function createComplianceDecisionTool(name: string, description: string) 
   return { name, description, parameters: complianceDecisionSchema, async execute(_id: string, params: unknown): Promise<AgentToolResult<unknown>> { return { content: [{ type: "text", text: "审计决议已收" }], details: params, terminate: true }; } };
 }
 
-export async function prepareComplianceDispatch(model: Model<Api>, context: ExtensionContext, label: string): Promise<ComplianceDispatch> {
+export async function prepareComplianceDispatch(model: Model<Api>, context: HostChildContext, label: string): Promise<ComplianceDispatch> {
   const resolution = await context.modelRegistry.getProviderAuth(model.provider).catch((error: unknown) => { throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); });
   if (resolution === undefined) throw new Error(`${label} authentication failed: provider is not configured: ${model.provider}`);
   const auth = await context.modelRegistry.getApiKeyAndHeaders(model);
@@ -102,9 +103,9 @@ export function appendActiveSessionCustomEntry(
     );
   }
 }
-function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
+function retainComplianceResponse(context: HostChildContext, response: AssistantMessage): void {
   appendActiveSessionCustomEntry(
-    context as unknown as { sessionManager: ActiveSessionResponseAppender },
+    context,
     COMPLIANCE_RESPONSE_ENTRY_TYPE,
     { version: 1, response },
     {
@@ -141,7 +142,7 @@ export type RunComplianceAuditOptions = {
   roleLabel: string;
   invalidDecisionLabel: string;
   runCompletion?: ComplianceCompletion;
-  context: ExtensionContext;
+  context: HostChildContext;
   /** Exact machine-owned run binding; never sourced from AK_ROLE_RUN_DIR. */
   runDirectory?: string | undefined;
   signal?: AbortSignal;

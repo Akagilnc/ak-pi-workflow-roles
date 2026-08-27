@@ -18,10 +18,10 @@ import {
   type Usage,
 } from "@earendil-works/pi-ai";
 import type {
-  ExtensionContext,
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import type { HostChildContext } from "./host-contracts.ts";
 
 import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
@@ -138,7 +138,7 @@ export async function withInProcessScratch<T>(
 }
 
 export type InheritedRuntimeOptions = {
-  readonly context: ExtensionContext;
+  readonly context: HostChildContext;
   readonly label: string;
   readonly runCompletion?: AuditorCompletion;
   readonly injectedSystemPrompt?: string;
@@ -181,7 +181,7 @@ export async function createInheritedRuntime(options: InheritedRuntimeOptions): 
     modelsPath: null,
   });
   // Injected completions historically accepted the minimal model exposed by an
-  // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
+  // host context. AgentSession crosses ModelRuntime first, so complete the
   // model metadata required by that runtime without changing provider identity.
   const inheritedModel: Model<Api> = options.runCompletion === undefined
     ? dispatch.model
@@ -583,7 +583,7 @@ export type EvidenceChildExecuteOptions = Readonly<{
 export async function executeEvidenceChild(
   workspace: string,
   prompt: ReviewerPromptText,
-  context: ExtensionContext,
+  context: HostChildContext,
   options: EvidenceChildExecuteOptions = {},
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
   const signal = options.signal;
@@ -744,7 +744,7 @@ export type AuditorRoleOptions = {
   tool: AuditorDecisionTool;
   dossierTool: AuditorDecisionTool;
   roleLabel: string;
-  context: ExtensionContext;
+  context: HostChildContext;
   signal?: AbortSignal;
   runCompletion?: AuditorCompletion;
   retainResponse?(response: AssistantMessage): void;
@@ -761,7 +761,7 @@ export type AuditorRoleOptions = {
  * failures throw — createInheritedRuntime must not silent-fallback to parent.
  */
 async function resolveGateSeatModelOptions(
-  context: ExtensionContext,
+  context: HostChildContext,
   seat: GateOfficerSeat,
   roleLabel: string,
 ): Promise<{ model?: Model<Api>; thinkingLevel?: PublicThinkingLevel }> {

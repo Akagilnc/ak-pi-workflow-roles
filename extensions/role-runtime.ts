@@ -14,6 +14,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import type { HostContext } from "../src/host-contracts.ts";
 import type { Message } from "@earendil-works/pi-ai";
 
 import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../src/collector-github.ts";
@@ -143,7 +144,7 @@ export function transcriptFromContext(ctx: ExtensionContext): string {
 
 export async function loadNavigatorWorkContext(
   pi: Pick<ExtensionAPI, "getFlag">,
-  options: { context: ExtensionContext; role: string },
+  options: { context: HostContext; role: string },
 ): Promise<{ subjectKey: string; subject: string; authority: string; subjectProvenance: NavigatorSubjectProvenance }> {
   const reference = navigatorInputReference(pi as ExtensionAPI, options.role);
   const input = reference === undefined || options.role === "doctor" || options.role === "notary"
@@ -244,8 +245,7 @@ export async function loadNavigatorWorkContext(
 
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner({ packageRoot });
-  const piHostAdapter = createPiRoleHostAdapter(pi);
-  const resolveContext = piHostAdapter.resolveContext;
+  const piHostAdapter = createPiRoleHostAdapter(pi, { transcriptFromContext });
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   // #351: static provider list from extension setting (default ["kimi-coding"]).
@@ -266,19 +266,13 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     collectorPackageExtensionPath: extensionPath,
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
-    auditDoctorCompliance: (options) => createPiDoctorAuditor()({
-      ...options,
-      context: resolveContext(options.context),
-    }),
+    auditDoctorCompliance: (options) => createPiDoctorAuditor()(options),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
-    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, {
-      ...options,
-      context: resolveContext(options.context),
-    }),
+    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {
       return createNavigatorAttendance({
-        context: resolveContext(options.context),
+        context: options.context,
         role: options.role,
         phase: options.phase,
         subjectKey: options.subjectKey,
@@ -310,15 +304,9 @@ export default function roleRuntime(pi: ExtensionAPI): void {
       }
       return loadHomeCanonicalSkillBinding(name);
     },
-    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, {
-      ...options,
-      context: resolveContext(options.context),
-    }),
+    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
-    transcriptFromContext: (context) => transcriptFromContext(resolveContext(context)),
-    auditSoulCompliance: (options) => createPiJudgeAuditor()({
-      ...options,
-      context: resolveContext(options.context),
-    }),
+    transcriptFromContext: (context) => context.transcript?.() ?? "",
+    auditSoulCompliance: (options) => createPiJudgeAuditor()(options),
   }, piHostAdapter)(pi);
 }

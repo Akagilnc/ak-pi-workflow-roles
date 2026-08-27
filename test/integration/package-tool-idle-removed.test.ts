@@ -223,10 +223,7 @@ test(
               createRoleRuntimeExtension({
               loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
               transcriptFromContext: () => "adjudication evidence",
-              auditSoulCompliance: (options) => auditSoulCompliance({
-                ...options,
-                context: piHostAdapter.resolveContext(options.context),
-              }),
+              auditSoulCompliance,
               }, piHostAdapter)(pi);
             },
           ],

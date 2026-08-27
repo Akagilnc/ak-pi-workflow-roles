@@ -180,7 +180,7 @@ function testHostActions(
       systemPrompt: request.systemPrompt,
       prompt: request.prompt,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
-      context: adapter.resolveContext(request.context),
+      context: request.context,
       ...(request.runCompletion === undefined ? {} : { runCompletion: request.runCompletion as never }),
       tool: request.tool as never,
       dossierTool: request.dossierTool as never,
@@ -989,7 +989,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
           ...options,
-          context: piHostAdapter.resolveContext(options.context),
+          context: options.context,
           modelSettingPath: "/missing/navigator-model.json",
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
@@ -2263,7 +2263,7 @@ test(
         createNavigatorAttendance: async (options) => {
           attendance = createNavigatorAttendance({
             ...options,
-            context: piHostAdapter.resolveContext(options.context),
+            context: options.context,
             modelSettingPath,
             loadSoul: async () => "route law",
             loadRoutePlaybook: async () => {
@@ -2530,10 +2530,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         };
         // Judge/doctor: zero-arg materials (#233). Fixer (#242) / Reviewer (#495 S6) no LLM auditor.
         const auditCompliance = (options: { context: HostContext; signal?: AbortSignal }) => {
-          const piOptions = {
-            ...options,
-            context: piHostAdapter.resolveContext(options.context),
-          };
+          const piOptions = options;
           if (role === "judge") return judge.createPiJudgeAuditor(complete)(piOptions);
           return doctor.createPiDoctorAuditor(complete)(piOptions);
         };
