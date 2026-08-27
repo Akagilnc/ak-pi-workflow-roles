@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { fauxAssistantMessage, validateToolArguments } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   runGatekeeper,
   GATEKEEPER_OUTPUT_TOOL,
@@ -13,12 +13,23 @@ import {
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
 } from "../../src/gatekeeper-role.ts";
-import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
 import { executeAuditorChild } from "../../src/evidence-child-executor.ts";
 import { packageRoot, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
 
 const executeChild = (request: any) => executeAuditorChild(request);
+function completion(calls: Array<{ tool?: string; args?: object | undefined; text?: string }>, seen: string[]) {
+  return async (_model: unknown, context: { systemPrompt: string }) => {
+    seen.push(context.systemPrompt);
+    const next = calls.shift();
+    if (next === undefined) throw new Error("unexpected child turn");
+    if (next.text !== undefined) return fauxAssistantMessage(next.text);
+    const call = next.args === undefined
+      ? { type: "toolCall" as const, id: `call-${seen.length}`, name: next.tool!, arguments: undefined as never }
+      : fauxToolCall(next.tool!, next.args, { id: `call-${seen.length}` });
+    return fauxAssistantMessage(call, { stopReason: "toolUse" });
+  };
+}
 
 async function withParent(run: (context: any) => Promise<void>) {
   await withActivationHome({ prefix: "ak-gatekeeper-real-entry-" }, async ({ agentDir, home }) => {
