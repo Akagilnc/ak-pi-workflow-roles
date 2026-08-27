@@ -39,3 +39,27 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
 - Feeding raw JSON directly through `--prompt-file` is rejected by the CLI as
   non-ACP JSON (`JSON object must have a type field`; live-verified
   2026-08-21).
+
+## MCP host behavior
+
+- Repository MCP entries live under `[mcp_servers.<name>]` in
+  `.grok/config.toml`. They take effect only after the folder is trusted; pass
+  `--trust` on unattended/headless invocations. Without it, the project server
+  may be absent even though the file is present (`live-1787838141494`), and
+  `grok mcp doctor` reports `folder untrusted…re-run with --trust`
+  (`live-1787838491136`).
+- Diagnose server startup with `grok mcp doctor [<server>]`, then inspect
+  `~/.grok/logs/mcp/<server>.stderr.log`; Grok truncates that stderr log on
+  each stdio server launch.
+- MCP tools are exposed to the model as `<server>__<tool>` (for example,
+  `ak_489_coder__ak_coder_output`). Use the fully qualified name in prompts;
+  a bare tool name relies on the host's loose discovery/matching behavior.
+- Headless permissions otherwise default to interactive approval. For
+  unattended MCP calls pass `--always-approve` (equivalently `--yolo` or
+  `--permission-mode bypassPermissions`), or an explicit permission setup
+  that auto-approves the required call; an `ask` decision has no UI to answer.
+- Grok launches a stdio server from the task cwd. Make `command` and `args`
+  cwd-independent: use absolute entrypoint paths and do not rely on resolving
+  a task-local `node_modules` binary. A cwd-dependent `tsx` launcher failed in
+  `live-1787838491136`; the absolute-path form completed the MCP route in
+  `live-1787838776163`.
