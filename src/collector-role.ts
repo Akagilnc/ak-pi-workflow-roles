@@ -86,7 +86,7 @@ function assertSoleFinalCollectorOutput(
   ctx: HostContext,
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant") {
+  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant" || !Array.isArray(leaf.message.content)) {
     throw new Error("通进司回执非唯一终局工具调用");
   }
   const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");

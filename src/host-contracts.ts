@@ -1,7 +1,8 @@
 import { Type, type Static, type TLiteral, type TSchema } from "typebox";
 
 type HostContentPart = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments?: unknown } | { type: string };
-type HostMessage = { role: string; content: readonly HostContentPart[]; toolName?: string; isError?: boolean; stopReason?: string };
+type HostMessage = { role: string; content?: unknown; toolName?: string; isError?: boolean; stopReason?: string };
+type HostEventMessage = { role: string; content: readonly HostContentPart[]; toolName?: string; isError?: boolean; stopReason?: string };
 type HostSessionEntry = { type: string; message?: HostMessage };
 
 export type HostToolResult<T = unknown> = {
@@ -13,7 +14,7 @@ export type HostToolResult<T = unknown> = {
 type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
 /** Context supplied by a host for one activation and its interceptable events. */
-export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; signal?: AbortSignal; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; };
 
@@ -23,7 +24,7 @@ type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<strin
 type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: HostToolResult["content"]; details: unknown };
 type SessionStartEvent = { reason: string };
 type ProviderResponseEvent = { status?: number };
-type AgentEndEvent = { messages: readonly HostMessage[] };
+type AgentEndEvent = { messages: readonly HostEventMessage[] };
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
 type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };
