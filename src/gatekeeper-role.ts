@@ -66,30 +66,9 @@ export class GatekeeperDecisionError extends Error {
   }
 }
 
-export type AuditorDecisionTool = {
-  name: string;
-  description: string;
-  parameters: object;
-  execute(...args: unknown[]): Promise<HostToolResult<unknown>>;
-};
-
-export type GatekeeperChildRequest = {
-  readonly context: HostContext;
-  readonly roleLabel: string;
-  readonly gateSeat: "gatekeeper" | "inspector" | "notary";
-  readonly systemPrompt: string;
-  readonly prompt: string;
-  readonly tool: AuditorDecisionTool;
-  readonly dossierTool: AuditorDecisionTool;
-  readonly signal?: AbortSignal;
-  readonly runCompletion?: unknown;
-};
-
-export type GatekeeperChildResult = {
-  readonly decision?: unknown;
-  readonly noReceiptLifecycle?: NoReceiptLifecycleFacts;
-};
-
+export type AuditorDecisionTool = { name: string; description: string; parameters: object; execute(...args: unknown[]): Promise<HostToolResult<unknown>> };
+export type GatekeeperChildRequest = { readonly context: HostContext; readonly roleLabel: string; readonly gateSeat: "gatekeeper" | "inspector" | "notary"; readonly systemPrompt: string; readonly prompt: string; readonly tool: AuditorDecisionTool; readonly dossierTool: AuditorDecisionTool; readonly signal?: AbortSignal; readonly runCompletion?: unknown };
+export type GatekeeperChildResult = { readonly decision?: unknown; readonly noReceiptLifecycle?: NoReceiptLifecycleFacts };
 export type GatekeeperChildExecutor = (request: GatekeeperChildRequest) => Promise<GatekeeperChildResult>;
 
 export type RunGatekeeperOptions = {

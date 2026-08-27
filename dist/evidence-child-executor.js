@@ -96,7 +96,7 @@ export async function createInheritedRuntime(options) {
         modelsPath: null,
     });
     // Injected completions historically accepted the minimal model exposed by an
-    // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
+    // host context. AgentSession crosses ModelRuntime first, so complete the
     // model metadata required by that runtime without changing provider identity.
     const inheritedModel = options.runCompletion === undefined
         ? dispatch.model

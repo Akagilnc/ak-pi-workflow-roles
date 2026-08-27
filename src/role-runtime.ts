@@ -908,19 +908,7 @@ export function createRoleRuntimeExtension(
         pendingGatekeeperNonPassByToolCallId.set(toolCallId, result);
       },
       async executeGatekeeperChild(request: GatekeeperChildRequest) {
-        return executeAuditorChild({
-          roleLabel: request.roleLabel,
-          gateSeat: request.gateSeat,
-          systemPrompt: request.systemPrompt,
-          prompt: request.prompt,
-          ...(request.signal === undefined ? {} : { signal: request.signal }),
-          context: request.context,
-          ...(request.runCompletion === undefined ? {} : {
-            runCompletion: request.runCompletion as NonNullable<Parameters<typeof executeAuditorChild>[0]["runCompletion"]>,
-          }),
-          tool: request.tool as Parameters<typeof executeAuditorChild>[0]["tool"],
-          dossierTool: request.dossierTool as Parameters<typeof executeAuditorChild>[0]["dossierTool"],
-        });
+        return executeAuditorChild({ ...request, context: request.context as never, runCompletion: request.runCompletion as never, tool: request.tool as never, dossierTool: request.dossierTool as never });
       },
     };
     const judge = createJudgeRoleRuntime(
