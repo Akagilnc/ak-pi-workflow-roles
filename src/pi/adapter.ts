@@ -9,6 +9,7 @@ import { requireGatekeeperPass, type GatekeeperNonPassResult, type GatekeeperSub
 import type {
   HostContext,
   HostEventRegistration,
+  HostGatekeeperActions,
   HostToolDefinition,
   HostToolResult,
   RoleHost,
@@ -53,11 +54,6 @@ export function toPiContext(context: HostContext): ExtensionContext {
   return piContext;
 }
 
-export type HostGatekeeperActions = {
-  failInfrastructure(error: unknown, context: HostContext, toolCallId?: string): never;
-  bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
-};
-
 /** Keep the S3 Gatekeeper executor on its native Pi context until S3 owns that migration. */
 function requirePiGatekeeperPass(options: {
   context: HostContext;
@@ -78,11 +74,6 @@ function requirePiGatekeeperPass(options: {
     },
     toolCallId: options.toolCallId,
   });
-}
-
-/** Standalone projection for consumers that never need a reverse boundary conversion. */
-export function fromPiContext(context: ExtensionContext): HostContext {
-  return projectPiContext(context);
 }
 
 function toPiResult<D>(result: HostToolResult<D>): HostToolResult<D> {
@@ -184,8 +175,4 @@ export function createPiRoleHostAdapter(
     ...(typeof pi.getCommands === "function" ? { getCommands: () => pi.getCommands().map(({ name }) => ({ name })) } : {}),
   };
   return { host };
-}
-
-export function createPiRoleHost(pi: ExtensionAPI): RoleHost {
-  return createPiRoleHostAdapter(pi).host;
 }
