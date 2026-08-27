@@ -1,3 +1,10 @@
+/**
+ * Package-owned engine detour tool (#357 T2 / #378 / #380).
+ * Registered by shared role-runtime when any role + engine activation signal is present.
+ * Evidence-child legs install the same definition via customTools (no spawn in role modules).
+ * Engine process failures stop through the host infrastructure-failure seam.
+ * Caller AbortSignal cancellation propagates unchanged.
+ */
 import { Type } from "typebox";
 import { ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC, ENGINE_DETOUR_TOOL_NAME, engineDetourFailureDiagnostic, engineNameFromEnv, isEngineDetourFailure, runEngineDetourOnce, } from "./engine-detour.js";
 const engineDetourArgsSchema = Type.Object({

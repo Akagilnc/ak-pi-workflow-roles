@@ -31,6 +31,8 @@ export type HostSessionManager = {
   getEntries(): Iterable<HostSessionEntry>;
   getSessionDir(): string;
   getSessionFile(): string | undefined;
+  getHeader?(): { readonly type: string } | null;
+  setSessionFile?(path: string): void;
   appendMessage?(message: HostMessage): void;
   appendCustomEntry?(customType: string, data?: unknown): unknown;
 };

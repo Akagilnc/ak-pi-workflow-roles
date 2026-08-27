@@ -17,7 +17,8 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { createPiRoleHost, toPiContext } from "../../src/pi/adapter.ts";
+import { executeAuditorChild } from "../../src/evidence-child-executor.ts";
+import { createPiRoleHost, resolvePiContextAtCompositionRoot } from "../../src/pi/adapter.ts";
 import type { HostContext } from "../../src/host-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL,
@@ -170,6 +171,17 @@ function testHostActions(
   return {
     failInfrastructure(error) { fail(error); },
     bindGatekeeperNonPass() {},
+    executeGatekeeperChild: (request) => executeAuditorChild({
+      roleLabel: request.roleLabel,
+      gateSeat: request.gateSeat,
+      systemPrompt: request.systemPrompt,
+      prompt: request.prompt,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+      context: resolvePiContextAtCompositionRoot(request.context),
+      ...(request.runCompletion === undefined ? {} : { runCompletion: request.runCompletion as never }),
+      tool: request.tool as never,
+      dossierTool: request.dossierTool as never,
+    }),
   };
 }
 
@@ -970,7 +982,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
           ...options,
-          context: toPiContext(options.context),
+          context: resolvePiContextAtCompositionRoot(options.context),
           modelSettingPath: "/missing/navigator-model.json",
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
@@ -2237,7 +2249,7 @@ test(
         createNavigatorAttendance: async (options) => {
           attendance = createNavigatorAttendance({
             ...options,
-            context: toPiContext(options.context),
+            context: resolvePiContextAtCompositionRoot(options.context),
             modelSettingPath,
             loadSoul: async () => "route law",
             loadRoutePlaybook: async () => {
@@ -2505,7 +2517,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         const auditCompliance = (options: { context: HostContext; signal?: AbortSignal }) => {
           const piOptions = {
             ...options,
-            context: toPiContext(options.context),
+            context: resolvePiContextAtCompositionRoot(options.context),
           };
           if (role === "judge") return judge.createPiJudgeAuditor(complete)(piOptions);
           return doctor.createPiDoctorAuditor(complete)(piOptions);

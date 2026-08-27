@@ -79,15 +79,15 @@ export type AuditorParentAttemptBinding = {
 export class ComplianceResponseRetentionError extends Error {
   constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }
-export type ActiveSessionResponseAppender = { appendCustomEntry(customType: string, data?: unknown): string };
+export type ActiveSessionResponseAppender = { appendCustomEntry(customType: string, data?: unknown): unknown };
 /** Unique owner for session custom-entry append with availability check and typed failure. */
 export function appendActiveSessionCustomEntry(
-  context: ExtensionContext,
+  context: { sessionManager?: Partial<ActiveSessionResponseAppender> },
   customType: string,
   data?: unknown,
   labels: { unavailable?: string; failed?: string } = {},
-): string {
-  const manager = context.sessionManager as unknown as Partial<ActiveSessionResponseAppender> | undefined;
+): unknown {
+  const manager = context.sessionManager;
   if (typeof manager?.appendCustomEntry !== "function") {
     throw new ComplianceResponseRetentionError(
       labels.unavailable ?? "session custom entry append is unavailable",
@@ -104,7 +104,7 @@ export function appendActiveSessionCustomEntry(
 }
 function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
   appendActiveSessionCustomEntry(
-    context,
+    context as unknown as { sessionManager: ActiveSessionResponseAppender },
     COMPLIANCE_RESPONSE_ENTRY_TYPE,
     { version: 1, response },
     {

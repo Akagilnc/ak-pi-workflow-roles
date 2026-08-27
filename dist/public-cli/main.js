@@ -20313,6 +20313,13 @@ var init_engine_detour_tool = __esm({
   }
 });
 
+// src/pi/adapter.ts
+var init_adapter = __esm({
+  "src/pi/adapter.ts"() {
+    "use strict";
+  }
+});
+
 // src/receipt-delivery-policy.ts
 function isRecord7(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -20356,6 +20363,7 @@ var init_evidence_child_executor = __esm({
     "use strict";
     init_compliance_transport();
     init_engine_detour_tool();
+    init_adapter();
     init_engine_detour();
     init_engine_material();
     init_session_opening_materials();
