@@ -1,21 +1,126 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+
+import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { createDoctorRoleRuntime, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-role.ts";
-import { createPiRoleHost } from "../../src/pi/adapter.ts";
+import type { HostContext, HostSessionEntry, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
 
-const zero = { count: 0, sources: [] }; const patient: any = { version: 1, identity: { issueNumber: 28, runsPath: "/case/.ak/work/issues/28/runs" }, evidence: [{ id: "review/session/live.jsonl", kind: "session", byteLength: 6, contentLength: 2, sha256: "abc", content: "中文" }], cost: { invocations: zero, legs: zero, modelApiTurns: zero, outputTokens: zero, toolCalls: zero, retries: { ...zero, evidence: "literal run-dir naming" }, statuses: [], commits: [], sessions: [], outputBytes: { ...zero, payload: "raw JSONL bytes", providerWireBytes: "unavailable" } } };
-function harness() { const flags = new Map<string, unknown>([["ak-doctor-case", patient.identity.runsPath]]); const tools = new Map<string, any>(); const handlers = new Map<string, any>(); let active: string[] = []; const pi = { registerFlag(name: string, value: unknown) { if (!flags.has(name)) flags.set(name, value); }, getFlag(name: string) { return flags.get(name); }, registerTool(tool: any) { tools.set(tool.name, tool); }, getAllTools() { return ["read", "bash", ...tools.keys()].map((name) => ({ name })); }, setActiveTools(names: string[]) { active = names; }, getActiveTools() { return active; }, on(name: string, fn: any) { handlers.set(name, fn); } }; return { pi, tools, handlers, active: () => active }; }
-function context(id: string, abort = () => {}, extras: Record<string, unknown> = {}): ExtensionContext { const sessionManager = SessionManager.inMemory(); const message: AssistantMessage = { role: "assistant", content: [{ type: "toolCall", id, name: DOCTOR_OUTPUT_TOOL_NAME, arguments: {} }], api: "openai-responses", provider: "test", model: "test", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 0 }; sessionManager.appendMessage(message); return { sessionManager, abort, ...extras } as unknown as ExtensionContext; }
-const refusal = { status: "refused", reason: "Session bytes are incomplete.", missingEvidence: [{ need: "session header", targetKeys: ["case"] }] };
+const zero = { count: 0, sources: [] };
+const patient: DoctorCase = {
+  version: 1,
+  identity: { issueNumber: 28, runsPath: "/case/.ak/work/issues/28/runs" },
+  evidence: [{ id: "review/session/live.jsonl", kind: "session", byteLength: 6, contentLength: 2, sha256: "abc", content: "中文" }],
+  cost: {
+    invocations: zero,
+    legs: zero,
+    modelApiTurns: zero,
+    outputTokens: zero,
+    toolCalls: zero,
+    retries: { ...zero, evidence: "literal run-dir naming" },
+    statuses: [],
+    commits: [],
+    sessions: [],
+    outputBytes: { ...zero, payload: "raw JSONL bytes", providerWireBytes: "unavailable" },
+  },
+};
 
-test("Doctor activation exposes only paged session evidence and output tools", async () => { const h = harness(); const runtime = createDoctorRoleRuntime(createPiRoleHost(h.pi as ExtensionAPI), { loadSoul: async () => "DOCTOR LAW", loadCase: async () => patient, auditCompliance: async () => ({ status: "pass" }) }, { failInfrastructure(error) { throw error; } }); await runtime.activate(); assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME).parameters, "object"); assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME).parameters, "object"); const prompt = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, context("doctor-activation")); assert.equal(prompt.systemPrompt.includes("DOCTOR LAW"), true); });
+function harness() {
+  const flags = new Map<string, boolean | string>([["ak-doctor-case", patient.identity.runsPath]]);
+  const tools = new Map<string, HostToolDefinition>();
+  const handlers = new Map<string, (event: never, context: HostContext) => unknown>();
+  let active: string[] = [];
+  const host: RoleHost = {
+    registerFlag(name, definition) {
+      if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default);
+    },
+    getFlag: (name) => flags.get(name),
+    registerTool(tool) { tools.set(tool.name, tool); },
+    getAllTools: () => ["read", "bash", ...tools.keys()].map((name) => ({ name })),
+    setActiveTools(names) { active = names; },
+    getActiveTools: () => active,
+    on(name, handler) { handlers.set(name, handler); },
+    getCommands: () => [],
+  };
+  return { host, tools, handlers, active: () => active };
+}
 
-test("Doctor output audits testimony, seals runtime cost, and keeps failure behavior", async () => { let decision: "pass" | "revise" | "failure" = "revise"; let aborts = 0; let auditCalls = 0; const h = harness(); const runtime = createDoctorRoleRuntime(createPiRoleHost(h.pi as ExtensionAPI), { loadSoul: async () => "DOCTOR LAW", loadCase: async () => patient, async auditCompliance(options) { auditCalls += 1; assert.ok(options.context); if (decision === "failure") throw new Error("provider unavailable"); return decision === "revise" ? { status: "revise", violations: ["missing method proof"] } : { status: "pass" }; } }, { failInfrastructure(error, ctx) { ctx.abort(); throw error; } }); await runtime.activate(); const output = h.tools.get(DOCTOR_OUTPUT_TOOL_NAME); await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor")), /missing method proof/); decision = "pass"; assert.equal((await output.execute("doctor", refusal, undefined, undefined, context("doctor"))).terminate, true);
-  const testimony = { status: "completed", case: patient.identity, findings: [] };
+function context(id: string, abort = () => {}): HostContext {
+  const entries: HostSessionEntry[] = [{
+    type: "message",
+    message: {
+      role: "assistant",
+      content: [{ type: "toolCall", id, name: DOCTOR_OUTPUT_TOOL_NAME, arguments: {} }],
+    },
+  }];
+  return {
+    cwd: "/case",
+    mode: "json",
+    model: undefined,
+    modelRegistry: {
+      getProvider: () => undefined,
+      find: () => undefined,
+      getProviderAuth: async () => undefined,
+      getApiKeyAndHeaders: async () => ({ ok: false, error: "not configured" }),
+      refresh: async () => ({ aborted: false, errors: new Map() }),
+    },
+    sessionManager: {
+      getLeafEntry: () => entries.at(-1),
+      getLeafId: () => id,
+      getEntries: () => entries,
+      getSessionDir: () => "/case/session",
+      getSessionFile: () => "/case/session/record.jsonl",
+      appendCustomEntry: () => undefined,
+    },
+    abort,
+  };
+}
+
+const refusal = {
+  status: "refused" as const,
+  reason: "Session bytes are incomplete.",
+  missingEvidence: [{ need: "session header", targetKeys: ["case"] }],
+};
+
+test("Doctor activation exposes only paged session evidence and output tools", async () => {
+  const h = harness();
+  const runtime = createDoctorRoleRuntime(h.host, {
+    loadSoul: async () => "DOCTOR LAW",
+    loadCase: async () => patient,
+    auditCompliance: async () => ({ status: "pass" }),
+  }, { failInfrastructure(error) { throw error; } });
+  await runtime.activate();
+  assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]);
+  assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]);
+  assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME)?.parameters, "object");
+  assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME)?.parameters, "object");
+});
+
+test("Doctor output audits testimony, seals runtime cost, and keeps failure behavior", async () => {
+  let decision: "pass" | "revise" | "failure" = "revise";
+  let aborts = 0;
+  let auditCalls = 0;
+  const h = harness();
+  const runtime = createDoctorRoleRuntime(h.host, {
+    loadSoul: async () => "DOCTOR LAW",
+    loadCase: async () => patient,
+    async auditCompliance(options) {
+      auditCalls += 1;
+      assert.ok(options.context);
+      if (decision === "failure") throw new Error("provider unavailable");
+      return decision === "revise" ? { status: "revise", violations: ["missing method proof"] } : { status: "pass" };
+    },
+  }, { failInfrastructure(error, ctx) { ctx.abort(); throw error; } });
+  await runtime.activate();
+  const output = h.tools.get(DOCTOR_OUTPUT_TOOL_NAME);
+  assert.ok(output);
+  await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor")), /missing method proof/);
+  decision = "pass";
+  assert.equal((await output.execute("doctor", refusal, undefined, undefined, context("doctor"))).terminate, true);
+  const testimony = { status: "completed" as const, case: patient.identity, findings: [] };
   const accepted = await output.execute("doctor", testimony, undefined, undefined, context("doctor"));
   assert.deepEqual(accepted.details, { ...testimony, cost: patient.cost });
-  // Zero hand-delivery: auditor is called with context only; candidate already on books.
   assert.equal(auditCalls, 3);
-  decision = "failure"; await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts++; })), /provider unavailable/); assert.equal(aborts, 1); });
+  decision = "failure";
+  await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts += 1; })), /provider unavailable/);
+  assert.equal(aborts, 1);
+});

@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { HostChildContext } from "./host-contracts.ts";
 
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { loadAuditorSoul } from "./auditor-soul.ts";
@@ -17,7 +17,7 @@ import {
 export const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
 
 export type DoctorAuditOptions = {
-  context: ExtensionContext;
+  context: HostChildContext;
   signal?: AbortSignal;
 };
 

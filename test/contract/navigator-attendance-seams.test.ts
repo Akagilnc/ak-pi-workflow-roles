@@ -674,7 +674,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
         loadJudgeSoul: async () => "JUDGE LAW",
         transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
-        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, { ...options, context: piHostAdapter.resolveContext(options.context) }),
+        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, options),
         createNavigatorAttendance: (options) => {
           observed = {
             subject: options.subject,
