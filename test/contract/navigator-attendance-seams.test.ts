@@ -694,6 +694,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
       const sessionDir = join(runDir, "session");
       await mkdir(sessionDir, { recursive: true });
       const sessionManager = SessionManager.create(home, sessionDir);
+      sessionManager.appendMessage({ role: "user", content: "activation fixture", timestamp: Date.now() });
       await handlers.get("session_start")?.({}, {
         cwd: home,
         sessionManager,
@@ -805,6 +806,7 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
     );
     await mkdir(sessionDir, { recursive: true });
     const sessionManager = SessionManager.create(home, sessionDir);
+    sessionManager.appendMessage({ role: "user", content: "activation fixture", timestamp: Date.now() });
     const ctx = { cwd: home, sessionManager, abort() {} };
     await emit("session_start", {}, ctx);
 

@@ -436,6 +436,7 @@ function activationCtx(home: string, extras: Record<string, unknown> = {}): Exte
   const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-role", "session");
   mkdirSync(sessionDir, { recursive: true });
   const sessionManager = SessionManager.create(home, sessionDir);
+  sessionManager.appendMessage({ role: "user", content: "activation fixture", timestamp: Date.now() });
   return {
     abort: () => {},
     ...extras,
@@ -647,7 +648,7 @@ test("unsupported role fails with the frozen diagnostic before any loader runs",
   })(harness.pi as ExtensionAPI);
 
   await assert.rejects(
-    Promise.resolve(harness.handlers.get("session_start")?.({}, {})),
+    Promise.resolve(harness.handlers.get("session_start")?.({}, { abort() {} })),
     new Error("Unsupported workflow role: router"),
   );
   assert.equal(loads, 0);
@@ -2501,9 +2502,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           return fauxAssistantMessage(fauxToolCall(auditTool, selectedDecision), { stopReason: "toolUse" });
         };
         // Judge/doctor: zero-arg materials (#233). Fixer (#242) / Reviewer (#495 S6) no LLM auditor.
-        const auditCompliance = (options: any) => {
-          if (role === "judge") return judge.createPiJudgeAuditor(complete)(options);
-          return doctor.createPiDoctorAuditor(complete)(options);
+        const auditCompliance = (options: { context: HostContext; signal?: AbortSignal }) => {
+          const piOptions = {
+            ...options,
+            context: toPiContext(options.context),
+          };
+          if (role === "judge") return judge.createPiJudgeAuditor(complete)(piOptions);
+          return doctor.createPiDoctorAuditor(complete)(piOptions);
         };
         let runtime: any;
         if (role === "judge") {
