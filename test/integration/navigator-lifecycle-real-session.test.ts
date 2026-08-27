@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
+import { toPiContext } from "../../src/pi/adapter.ts";
 import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
@@ -438,6 +439,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         attendanceInvocationId = options.invocationId;
         const nav = createNavigatorAttendance({
           ...options,
+          context: toPiContext(options.context),
           modelSettingPath,
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
@@ -729,6 +731,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
       createNavigatorAttendance: (options) => {
         const nav = createNavigatorAttendance({
           ...options,
+          context: toPiContext(options.context),
           modelSettingPath: join(home, "navigator-model.json"),
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
