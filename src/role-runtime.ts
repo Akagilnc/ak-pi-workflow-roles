@@ -497,8 +497,8 @@ export type RoleRuntimeDependencies = {
   auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: NavigatorAttendanceOptions["context"]; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: { context: NavigatorAttendanceOptions["context"]; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
+  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
+  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -1169,7 +1169,7 @@ export function createRoleRuntimeExtension(
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           } else {
             try {
-              work = await dependencies.loadNavigatorWorkContext({ context: toPiContext(ctx), role: entry.role, phase: navigatorPhase(pi, entry.role) });
+              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
               contextError = work.contextError;
             } catch (error) {
               // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
@@ -1200,7 +1200,7 @@ export function createRoleRuntimeExtension(
             });
           }
           navigatorAttendance = await dependencies.createNavigatorAttendance({
-            context: toPiContext(ctx),
+            context: ctx,
             role: entry.role,
             phase: invocationPhase,
             subjectKey: work.subjectKey,
@@ -1229,7 +1229,7 @@ export function createRoleRuntimeExtension(
         // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
         if (engineDetourRegistration === undefined) {
-          engineDetourRegistration = registerEngineDetourTool(pi, { failInfrastructure });
+          engineDetourRegistration = registerEngineDetourTool(roleHost, { failInfrastructure });
           if (!engineDetourRegistration.registered) {
             engineDetourRegistration = undefined;
           }

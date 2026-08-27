@@ -268,10 +268,10 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     auditDoctorCompliance: (options) => createPiDoctorAuditor()({ ...options, context: toPiContext(options.context) }),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
-    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
+    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, { ...options, context: toPiContext(options.context) }),
     createNavigatorAttendance: (options) => {
       return createNavigatorAttendance({
-        context: options.context,
+        context: toPiContext(options.context),
         role: options.role,
         phase: options.phase,
         subjectKey: options.subjectKey,

@@ -1,17 +1,16 @@
 import { Type, type Static, type TLiteral, type TSchema } from "typebox";
 
-export type HostContentPart = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments?: unknown } | { type: string };
-export type HostMessage = { role: string; content: readonly HostContentPart[]; toolName?: string; isError?: boolean; stopReason?: string };
-export type HostSessionEntry = { type: string; message?: HostMessage };
+type HostContentPart = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments?: unknown } | { type: string };
+type HostMessage = { role: string; content?: readonly HostContentPart[]; toolName?: string; isError?: boolean; stopReason?: string };
+type HostSessionEntry = { type: string; message?: HostMessage };
 
 export type HostToolResult<T = unknown> = {
   content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
-  details?: T;
+  details: T;
   terminate?: boolean;
-  usage?: unknown;
 };
 
-export type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendMessage?(message: HostMessage): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
+type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
 /** Context supplied by a host for one activation and its interceptable events. */
 export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; signal?: AbortSignal; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
@@ -45,7 +44,7 @@ export type HostEventMap = {
 };
 
 /** The activation surface consumed by package role factories. */
-export interface RoleHost { registerFlag(name: string, definition: { description: string; type: "boolean" | "string"; default?: boolean | string }): void; getFlag(name: string): boolean | string | undefined; registerTool<S extends TSchema, D = unknown>(tool: HostToolDefinition<S, D>): void; getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>; setActiveTools(names: string[]): void; getActiveTools(): string[]; on<K extends keyof HostEventMap>(event: K, handler: (event: HostEventMap[K], ctx: HostContext) => unknown): void; getCommands(): Array<{ name: string }>; readonly sessionManager?: HostSessionManager; readonly abort?: () => void; }
+export interface RoleHost { registerFlag(name: string, definition: { description: string; type: "boolean" | "string"; default?: boolean | string }): void; getFlag(name: string): boolean | string | undefined; registerTool<S extends TSchema, D = unknown>(tool: HostToolDefinition<S, D>): void; getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>; setActiveTools(names: string[]): void; getActiveTools(): string[]; on<K extends keyof HostEventMap>(event: K, handler: (event: HostEventMap[K], ctx: HostContext) => unknown): void; getCommands?(): Array<{ name: string }>; }
 
 /** Local replacement for Pi AI's convenience constructor. */
 export function stringEnum<const V extends readonly string[]>(values: V, options: Record<string, unknown> = {}) {
