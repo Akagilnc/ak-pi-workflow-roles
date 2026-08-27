@@ -102,7 +102,7 @@ export function registerEngineDetourTool(roleHost, hostActions) {
             hostActions.failInfrastructure(error, ctx, toolCallId);
         },
     });
-    roleHost.registerTool(definition);
+    roleHost.registerNativeTool(definition);
     return {
         registered: true,
         resetLatch() {
