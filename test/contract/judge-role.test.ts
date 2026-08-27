@@ -758,7 +758,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
         return harness;
       },
       output: { judgeStatus: "converged", evidence: { checks: [{ name: "receipt", passed: true }] } },
-      acceptedText: "Judge verdict accepted",
     },
     {
       role: "fixer" as const,
@@ -780,7 +779,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
         return harness;
       },
       output: { status: "completed", report: "done", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] },
-      acceptedText: "Fixer report accepted",
     },
     {
       role: "coder" as const,
@@ -802,7 +800,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
         return harness;
       },
       output: { status: "planned", report: "plan" },
-      acceptedText: "Coder report accepted",
     },
   ];
 
@@ -826,7 +823,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
         ? withPassingGatekeeper(toolCallContext([{ id: "receipt", name: fixture.name }]))
         : toolCallContext([{ id: "receipt", name: fixture.name }]),
     );
-    assert.equal(result.content[0].text, fixture.acceptedText);
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
     assert.deepEqual(

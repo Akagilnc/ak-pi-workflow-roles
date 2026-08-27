@@ -4,6 +4,8 @@ import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
+export const DOCTOR_ACCEPTED_TEXT = "太医署回执已接受";
+export const DOCTOR_ACCEPTED_AUDIT_NO_RECEIPT_TEXT = "太医署回执已接受；审计无回执";
 export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "提交唯一终局单案证词；completed 允许空 findings；runtime 补记派生成本入回执。";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"] as const;
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];

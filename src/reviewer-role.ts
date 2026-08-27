@@ -13,7 +13,7 @@ import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedR
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
+import { REVIEWER_ACCEPTED_AUDIT_NO_RECEIPT_TEXT, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
@@ -188,11 +188,11 @@ export function createReviewerRoleRuntime(
               {
                 pass: async (usage) => {
                   try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                  return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
+                  return { content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_TEXT }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
                 },
                 noReceipt: async (auditNoReceipt, usageProjection) => {
                   try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                  return { content: [{ type: "text" as const, text: "Reviewer report accepted; compliance audit produced no receipt" }], details: { ...candidate, auditNoReceipt }, terminate: true as const, ...usageProjection };
+                  return { content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_AUDIT_NO_RECEIPT_TEXT }], details: { ...candidate, auditNoReceipt }, terminate: true as const, ...usageProjection };
                 },
                 revise: (violations) => {
                   throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });

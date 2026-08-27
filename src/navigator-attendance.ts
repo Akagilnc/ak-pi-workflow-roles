@@ -26,6 +26,7 @@ import {
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
+export const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "游奕使准备已接受";
 export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
 
 export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
@@ -451,7 +452,7 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
       // Rule 0: the unique prepare submission is accepted once. Ancillary shape is
       // normalized later; never open a format-correction retry loop here.
       onOutput(value as PrepareOutput);
-      return { content: [{ type: "text" as const, text: "Navigator preparation accepted" }], details: value, terminate: true as const };
+      return { content: [{ type: "text" as const, text: NAVIGATOR_PREPARE_ACCEPTED_TEXT }], details: value, terminate: true as const };
     },
   };
 }

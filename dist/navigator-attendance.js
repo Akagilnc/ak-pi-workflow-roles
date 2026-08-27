@@ -23,6 +23,7 @@ import {
 } from "./upstream-error-testimony.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
+const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "\u6E38\u5955\u4F7F\u51C6\u5907\u5DF2\u63A5\u53D7";
 const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
 const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
 class NavigatorUnavailableError extends Error {
@@ -257,7 +258,7 @@ function createNavigatorPrepareTool(onOutput) {
     parameters: prepareSchema,
     async execute(_id, value) {
       onOutput(value);
-      return { content: [{ type: "text", text: "Navigator preparation accepted" }], details: value, terminate: true };
+      return { content: [{ type: "text", text: NAVIGATOR_PREPARE_ACCEPTED_TEXT }], details: value, terminate: true };
     }
   };
 }
@@ -1055,6 +1056,7 @@ function registerNavigatorModelCommand(pi, path = navigatorModelSettingPath()) {
 export {
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_EVENT_TYPE,
+  NAVIGATOR_PREPARE_ACCEPTED_TEXT,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NAVIGATOR_TARGETS,
   NavigatorUnavailableError,
