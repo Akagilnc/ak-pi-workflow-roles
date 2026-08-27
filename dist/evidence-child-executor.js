@@ -16,11 +16,21 @@ import { formatModelSpec, loadPublicCliConfig, resolveMenxiaOfficerModelSelectio
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus, projectConfirmedRemotePayload, } from "./upstream-error-testimony.js";
+/**
+ * Shared Standards/Spec evidence-child system materials — path roster only.
+ * Builder consumes this unique roster; cadence prose stays in owner material (ADR 0073).
+ */
+export const EVIDENCE_CHILD_SESSION_MATERIALS = [
+    "souls/quality-law.md",
+];
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
 async function buildEvidenceChildSystemPrompt(engineMaterial) {
     // ADR 0073: verification cadence lives in owner material only; no machine prose copy.
-    const qualityLaw = await readPackageMaterial("souls/quality-law.md");
-    return appendEngineSessionMaterial([qualityLaw], engineMaterial).join("\n");
+    const materials = [];
+    for (const relativePath of EVIDENCE_CHILD_SESSION_MATERIALS) {
+        materials.push(await readPackageMaterial(relativePath));
+    }
+    return appendEngineSessionMaterial(materials, engineMaterial).join("\n");
 }
 // ── shared constants / types ──────────────────────────────────────────────
 export const AUDITOR_TURN_LIMIT = 32;

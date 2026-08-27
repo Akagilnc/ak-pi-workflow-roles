@@ -53,13 +53,24 @@ import {
   projectConfirmedRemotePayload,
 } from "./upstream-error-testimony.ts";
 
+/**
+ * Shared Standards/Spec evidence-child system materials — path roster only.
+ * Builder consumes this unique roster; cadence prose stays in owner material (ADR 0073).
+ */
+export const EVIDENCE_CHILD_SESSION_MATERIALS = [
+  "souls/quality-law.md",
+] as const;
+
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
 async function buildEvidenceChildSystemPrompt(
   engineMaterial?: EngineSessionMaterial,
 ): Promise<string> {
   // ADR 0073: verification cadence lives in owner material only; no machine prose copy.
-  const qualityLaw = await readPackageMaterial("souls/quality-law.md");
-  return appendEngineSessionMaterial([qualityLaw], engineMaterial).join("\n");
+  const materials: string[] = [];
+  for (const relativePath of EVIDENCE_CHILD_SESSION_MATERIALS) {
+    materials.push(await readPackageMaterial(relativePath));
+  }
+  return appendEngineSessionMaterial(materials, engineMaterial).join("\n");
 }
 
 // ── shared constants / types ──────────────────────────────────────────────
