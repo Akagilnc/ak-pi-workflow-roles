@@ -14104,7 +14104,7 @@ function validateDoctorSubmissionShape(value) {
 function validateRecordedDoctorOutput(value) {
   const output = validateDoctorSubmissionShape(value);
   const status = read2(output, "status");
-  if (status === "completed" && read2(output, "cost") === void 0) throw new Error("completed \u592A\u533B\u7F72\u56DE\u6267\u7F3A\u5C11 runtime \u6301\u6709\u7684 cost \u8BC1\u8BCD");
+  if (status === "completed" && read2(output, "cost") === void 0) throw new DoctorSubmissionContractError("completed \u592A\u533B\u7F72\u56DE\u6267\u7F3A\u5C11 runtime \u6301\u6709\u7684 cost \u8BC1\u8BCD");
   return output;
 }
 var DOCTOR_OUTPUT_TOOL_NAME, DOCTOR_TARGET_KINDS, nonblank, count, evidenceIds, guardrail, lastRealBite, assetKinds, findingBody, finding, caseIdentity, cost, doctorSubmissionVariants, doctorSubmissionSchema, doctorOutputSchema, doctorEvidenceReadSchema, DoctorSubmissionContractError;
