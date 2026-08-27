@@ -1094,7 +1094,7 @@ export function createRoleRuntimeExtension(
     roleHost.on("after_provider_response", async (event, ctx) => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
-      const provider = piHostAdapter.resolveContext(ctx).model?.provider;
+      const provider = ctx.model?.provider;
       if (typeof provider !== "string" || provider.trim() === "") return;
       const status = event.status;
       if (typeof status !== "number") return;
