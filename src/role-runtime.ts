@@ -67,7 +67,6 @@ import {
 import type { AcceptedReviewerExecution, ReviewerIssueFetcher, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
-  REVIEWER_VERIFICATION_BOUNDARY,
   type ReviewerSpecDisposition,
 } from "./reviewer-construction.ts";
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
@@ -166,7 +165,7 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
 
 /**
  * Parent system-prompt assembly for the shared activation envelope.
- * References REVIEWER_VERIFICATION_BOUNDARY as the single text true source (no copy).
+ * Verification cadence lives in soul/quality-law only (ADR 0073: no machine copy).
  */
 function assembleReviewerParentSystemPrompt(input: {
   baseSystemPrompt: string;
@@ -178,9 +177,7 @@ function assembleReviewerParentSystemPrompt(input: {
       ? [
           "",
           "<reviewer_spec_disposition>",
-          "Spec-Disposition: skipped-missing",
-          "Independent discovery confirmed authoritative Spec is absent.",
-          "No Spec evidence-child was launched. Note Spec skipped/missing honestly in the final report; do not invent requirements.",
+          "权威 Spec 不存在；未启动 Spec 取证腿。",
           "</reviewer_spec_disposition>",
         ]
       : [];
@@ -190,10 +187,6 @@ function assembleReviewerParentSystemPrompt(input: {
     "<reviewer_soul>",
     input.soul,
     "</reviewer_soul>",
-    "",
-    "<reviewer_verification_boundary>",
-    REVIEWER_VERIFICATION_BOUNDARY,
-    "</reviewer_verification_boundary>",
     ...specDispositionNote,
   ].join("\n");
 }

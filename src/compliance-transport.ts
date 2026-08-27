@@ -42,7 +42,7 @@ export class ComplianceCandidateUnreadableError extends Error {
 export type ComplianceDispatch = { model: Model<Api>; auth: { apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> } };
 
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
-export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier." as const;
+export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。" as const;
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });

@@ -47,14 +47,15 @@ test("assertLegalEngineName rejects only real path hazards; consecutive dots pas
   assert.equal(assertLegalEngineName("company..opus"), "company..opus");
 });
 
-test("appendEngineSessionMaterial: name-only omits read-these-bytes; notes keep it", () => {
+test("appendEngineSessionMaterial: header + engine name; notes also carry path", () => {
   const nameOnly = appendEngineSessionMaterial(["base"], { name: "company..opus" });
   const nameOnlyText = nameOnly.join("\n");
   assert.equal(nameOnlyText.includes("company..opus"), true);
+  assert.equal(nameOnlyText.includes("本次配置的劳务引擎及其手册："), true);
   assert.equal(
-    nameOnlyText.includes("Engine method material (read these bytes"),
+    nameOnlyText.includes("/resources/engines/"),
     false,
-    "name-only path must not claim packaged bytes to read",
+    "name-only path must not carry a material path",
   );
 
   const withNotes = appendEngineSessionMaterial(["base"], {
@@ -62,10 +63,7 @@ test("appendEngineSessionMaterial: name-only omits read-these-bytes; notes keep 
     materialPath: "/abs/resources/engines/cursor.md",
   });
   const withNotesText = withNotes.join("\n");
-  assert.equal(
-    withNotesText.includes("Engine method material (read these bytes"),
-    true,
-  );
+  assert.equal(withNotesText.includes("本次配置的劳务引擎及其手册："), true);
   assert.equal(withNotesText.includes("/abs/resources/engines/cursor.md"), true);
 });
 

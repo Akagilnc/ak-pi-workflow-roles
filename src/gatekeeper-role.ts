@@ -83,8 +83,6 @@ const gatekeeperDecisionSchema = openToolObject(Type.Object({
   officer: Type.Unknown({ description: "status 为 dispatch 时为 inspector | notary" }),
 }));
 
-const INVOCATION_OVERLAY = "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
-
 function result(content: string, details: unknown) {
   return { content: [{ type: "text" as const, text: content }], details };
 }
@@ -205,8 +203,8 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       context: options.context,
       roleLabel: "Gatekeeper",
       menxiaSeat: "gatekeeper",
-      systemPrompt: `${await loadSoul("gatekeeper")}\n\n${INVOCATION_OVERLAY}`,
-      prompt: "Read the admitted subject with ak_gatekeeper_subject, then dispatch it to one officer.",
+      systemPrompt: await loadSoul("gatekeeper"),
+      prompt: "卷宗已受理。",
       tool: createGatekeeperOutputTool(),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -228,8 +226,8 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       context: options.context,
       roleLabel,
       menxiaSeat: officer,
-      systemPrompt: `${await loadSoul(officer)}\n\n${INVOCATION_OVERLAY}`,
-      prompt: "Read the admitted subject with ak_gatekeeper_subject, then submit one typed decision on only your assigned axes.",
+      systemPrompt: await loadSoul(officer),
+      prompt: "卷宗已受理。",
       tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),

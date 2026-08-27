@@ -13,18 +13,12 @@ import { engineNameFromEnv } from "./engine-detour.js";
 import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
 import { formatModelSpec, loadPublicCliConfig, resolveMenxiaOfficerModelSelection, } from "./public-cli/config.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
-import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.js";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.js";
 import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus, projectConfirmedRemotePayload, } from "./upstream-error-testimony.js";
 /** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
 function buildEvidenceChildSystemPrompt(engineMaterial) {
-    const lines = [
-        "Work only in the supplied workspace.",
-        "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
-        REVIEWER_VERIFICATION_BOUNDARY,
-        "Return one substantive non-blank report.",
-    ];
-    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+    // ADR 0073: no instruction copy of soul; engine material is optional data only.
+    return appendEngineSessionMaterial([], engineMaterial).join("\n");
 }
 // ── shared constants / types ──────────────────────────────────────────────
 export const AUDITOR_TURN_LIMIT = 32;

@@ -19,7 +19,7 @@ export const NOTARY_SOURCE_RUN_FLAG = {
 
 /** Package-owned kickoff only — callers supply zero prompt bytes (ADR 0067 / #448). */
 export const NOTARY_FIXED_KICKOFF =
-  "Notary review. Bound source-run locator is on the session materials; fetch authoritative ticket, git, and dossier evidence yourself; submit one typed decision.";
+  "符宝郎案卷已受理；来源 run 定位见会话材料。";
 
 export const notaryOutputSchema = openToolObject(
   Type.Object({

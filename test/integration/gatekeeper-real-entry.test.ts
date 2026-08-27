@@ -44,8 +44,6 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
   const menxiaGuide = await readFile(resolve(packageRoot, "souls/gate-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
-  const overlay =
-    "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
 
   await withParent(async (context) => {
     const seen: string[] = [];
@@ -61,14 +59,15 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
     // Mechanical projection of the scripted officer receipt; session order Gatekeeper → officer.
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
     assert.equal(seen.length, 2);
-    // #443/#476: constitution + soul + menxia guide; inspector also gets quality-law.
+    // #443/#476: constitution + soul + gate guide; inspector also gets quality-law.
+    // #495 S2: machine INVOCATION_OVERLAY removed; 取证授权 lives in gate-output-guide only.
     assert.equal(
       seen[0],
-      [constitution, gatekeeperSoul, menxiaGuide, overlay].join("\n\n"),
+      [constitution, gatekeeperSoul, menxiaGuide].join("\n\n"),
     );
     assert.equal(
       seen[1],
-      [constitution, inspectorSoul, qualityLaw, menxiaGuide, overlay].join("\n\n"),
+      [constitution, inspectorSoul, qualityLaw, menxiaGuide].join("\n\n"),
     );
   });
 });
@@ -92,8 +91,6 @@ test("scripted officer bounce projects rewrite disposition and loads that office
   const menxiaGuide = await readFile(resolve(packageRoot, "souls/gate-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
-  const overlay =
-    "取证工具不受白名单限制；若取证产生临时副作用，取证结束后须自行恢复。";
 
   await withParent(async (context) => {
     const seen: string[] = [];
@@ -115,14 +112,15 @@ test("scripted officer bounce projects rewrite disposition and loads that office
       assert.deepEqual(result.submission, bounceSubmission);
     }
     assert.equal(seen.length, 2);
-    // #443/#476: scripted Notary real entry receives constitution + soul + menxia guide.
+    // #443/#476: scripted Notary real entry receives constitution + soul + gate guide.
+    // #495 S2: machine INVOCATION_OVERLAY removed; 取证授权 lives in gate-output-guide only.
     assert.equal(
       seen[0],
-      [constitution, gatekeeperSoul, menxiaGuide, overlay].join("\n\n"),
+      [constitution, gatekeeperSoul, menxiaGuide].join("\n\n"),
     );
     assert.equal(
       seen[1],
-      [constitution, notarySoul, menxiaGuide, overlay].join("\n\n"),
+      [constitution, notarySoul, menxiaGuide].join("\n\n"),
     );
   });
 });

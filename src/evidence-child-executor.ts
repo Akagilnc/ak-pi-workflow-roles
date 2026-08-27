@@ -44,7 +44,6 @@ import {
 } from "./public-cli/config.ts";
 import type { PublicThinkingLevel } from "./public-cli/registry.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { REVIEWER_VERIFICATION_BOUNDARY } from "./reviewer-construction.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
 import {
@@ -57,13 +56,8 @@ import {
 function buildEvidenceChildSystemPrompt(
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = [
-    "Work only in the supplied workspace.",
-    "Use the available evidence tools to investigate. Do not commit, push, or mutate remotes.",
-    REVIEWER_VERIFICATION_BOUNDARY,
-    "Return one substantive non-blank report.",
-  ];
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  // ADR 0073: no instruction copy of soul; engine material is optional data only.
+  return appendEngineSessionMaterial([], engineMaterial).join("\n");
 }
 
 // ── shared constants / types ──────────────────────────────────────────────

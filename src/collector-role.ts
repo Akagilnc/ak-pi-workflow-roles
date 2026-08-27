@@ -107,10 +107,6 @@ function assertSoleFinalCollectorOutput(
 function buildMethodContext(activation: CollectorActivation): string {
   return [
     "<collector_method>",
-    "Observe all GitHub review materials; machine identity groups are runtime-owned.",
-    "Use ak_collector_request only when an optional configured request is needed.",
-    "Wait and cutoff only stop observation; they never imply absent observers.",
-    "After a complete final observation, submit ak_collector_output with an empty object.",
     `host: github.com`,
     `repository: ${activation.repository.canonical}`,
     `prNumber: ${activation.prNumber}`,

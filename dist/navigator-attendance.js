@@ -515,16 +515,13 @@ ${text}
     };
     activeSession.appendEntry(CONTEXT_ENTRY, projection);
     const request = [
-      "Act as the Navigator direction advisor. Submit one next-step advice batch; do not execute or invoke any role.",
+      "\u672C\u6B21\u5BFC\u822A\u6750\u6599\u5982\u4E0B\uFF1A",
       `<navigator_soul>
 ${soul}
 </navigator_soul>`,
-      ...routePlaybookReadFailure === void 0 ? [
-        `<route_playbook>
+      ...routePlaybookReadFailure === void 0 ? [`<route_playbook>
 ${routePlaybook}
-</route_playbook>`,
-        "The route playbook is advisory material only. Exercise independent judgment: adopt, alter, or ignore it; the caller may also deviate."
-      ] : ["The optional route playbook could not be read. Continue independent judgment from the other supplied materials."],
+</route_playbook>`] : ["\u53EF\u9009\u8DEF\u7EBF\u624B\u518C\u672A\u80FD\u8BFB\u53D6\u3002"],
       `<work_subject>
 ${subject}
 </work_subject>`,
@@ -534,28 +531,18 @@ ${authority}
       `<current_role>
 ${JSON.stringify({ role: options.role, phase: options.phase })}
 </current_role>`,
-      ...boundSettlement === void 0 ? [] : [
-        `<current_settlement>
+      ...boundSettlement === void 0 ? [] : [`<current_settlement>
 ${JSON.stringify(boundSettlement)}
-</current_settlement>`,
-        "The current role has just reached this typed settlement. Recommend the next packaged role AFTER this settlement.",
-        "public_settlement_history is prior background only \u2014 a prior terminal does not consume or replace the work this settlement just produced."
-      ],
+</current_settlement>`],
       `<prior_route>
 ${JSON.stringify(prior ?? null)}
 </prior_route>`,
       `<public_settlement_history>
 ${JSON.stringify(projection.publicSettlementHistory)}
 </public_settlement_history>`,
-      ...boundSettlement === void 0 ? [
-        "Preparation is speculative while the current role still runs. Prefer candidates[].matches keyed to plausible accepted outcomes of the current role; prior history must not substitute for the current role's work."
-      ] : [],
       `<live_role_help>
 ${helpContext}
-</live_role_help>`,
-      `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call.`,
-      "v1 requires a usable next direction: candidates[].next.role, with phase only when present and meaningful. route, matches, id, reason, and command are optional context \u2014 never retry to satisfy optional shape.",
-      "Do not put task-specific paths, prompts, packets, or Skill bindings in any field. Command display is rendered by the host from next, not from model prose."
+</live_role_help>`
     ].join("\n\n");
     try {
       try {

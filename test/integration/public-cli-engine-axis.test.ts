@@ -104,11 +104,6 @@ function assertEngineCoordinatesNameOnly(
     );
   }
   assert.equal(
-    prompt.includes("Engine method material (read these bytes"),
-    false,
-    "name-only path must not emit read-these-bytes material header",
-  );
-  assert.equal(
     /warn/i.test(stderrText),
     false,
     `name-only path must not warn-bomb: ${stderrText}`,
