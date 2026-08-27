@@ -115,9 +115,9 @@ ak-role resume <runId> "<裁定>"
 | --- | --- | --- |
 | **将作监** | coder | **营造新作。** 承接新的谋划与需求，从一片空白开始设计、建造，直到形成可供使用的新成果。讲究先明其意，再定其形，不妄增枝节，只做当下所需之事。 |
 | **修内司** | fixer | **缮修旧物。** 面对已有问题，不急于表面修补，而是追寻问题根源，找到真正需要修整之处。既要修复眼前缺漏，也要防止同类问题再次出现。 |
-| **御史台** | reviewer | **察举百弊。** 置身事外，以旁观之眼审视成果，寻找其中的不妥、遗漏与隐患。只负责指出问题、陈明依据，不参与修改，也不替人作最终判断。 |
+| **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；Standards／Spec 两条取证腿由 runtime 代跑，本席收腿报告出薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
-| **审刑院** | judge-auditor／reviewer-auditor（无 CLI，共享内部接缝） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
+| **审刑院** | judge-auditor／reviewer-auditor／doctor-auditor（无 CLI，共享内部接缝） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
 | **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **质量保证省。** 交卷时判断受审物、够不够审、该谁审，派给事中或符宝郎；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。 |
 | **给事中** | inspector（无独立 CLI；可由门下省派发） | **复杂度与测试质量两轴质检。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。 |
 | **符宝郎** | notary | **引语真伪与票面对齐。** 受审物是大理寺拟判等文书；可被门下省派发，也可 `ak-role notary` 单独调。 |
@@ -132,6 +132,7 @@ ak-role resume <runId> "<裁定>"
 | doctor | **太医署** | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建 |
 | analyst | **太史** | 司天台分析席：只读司天记录、出高阶指标；确定性机制，非 LLM，可单独调用 | 已建（[ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
 | — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
+| gleaner-left | **左拾遗** | 合并前以无锚定冷眼审全幅合并候选，只上弹章、不封驳不裁决（风闻） | soul 已落＋[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案；机器席位待建 |
 | — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建 |
 | — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 留档，需要时另立票 |
 | — | **主簿** | 合并后勾稽销案：核实确已合上、清理残留、报到达 | 未建 |
