@@ -56,12 +56,10 @@ function appendEngineSessionMaterial(lines, engineMaterial) {
   }
   const out = [...lines];
   out.push("");
+  out.push("\u672C\u6B21\u914D\u7F6E\u7684\u52B3\u52A1\u5F15\u64CE\u53CA\u5176\u624B\u518C\uFF1A");
+  out.push(`- engine: ${engineMaterial.name}`);
   if (engineMaterial.materialPath !== void 0) {
-    out.push("Engine method material (read these bytes and follow them):");
-    out.push(`- engine: ${engineMaterial.name}`);
     out.push(`- ${engineMaterial.materialPath}`);
-  } else {
-    out.push(`- engine: ${engineMaterial.name}`);
   }
   return out;
 }
@@ -14354,7 +14352,7 @@ var init_notary_contracts = __esm({
     init_build();
     init_open_tool_schema();
     NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
-    NOTARY_FIXED_KICKOFF = "Notary review. Bound source-run locator is on the session materials; fetch authoritative ticket, git, and dossier evidence yourself; submit one typed decision.";
+    NOTARY_FIXED_KICKOFF = "\u7B26\u5B9D\u90CE\u6848\u5377\u5DF2\u53D7\u7406\uFF1B\u6765\u6E90 run \u5B9A\u4F4D\u89C1\u4F1A\u8BDD\u6750\u6599\u3002";
     notaryOutputSchema = openToolObject(
       typebox_exports.Object({
         status: typebox_exports.Unknown({
@@ -15669,7 +15667,7 @@ var init_collector_config = __esm({
     "use strict";
     COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
     COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
-    COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target. Observe GitHub materials and submit exactly one ak_collector_output when observation is complete.";
+    COLLECTOR_FIXED_KICKOFF = "\u91C7\u96C6\u76EE\u6807\u5DF2\u53D7\u7406\uFF0C\u672C\u5C40\u5F00\u59CB\u3002";
   }
 });
 
@@ -17799,7 +17797,7 @@ function buildJudgeTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -17883,7 +17881,7 @@ function buildCoderTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -18000,7 +17998,7 @@ function buildFixerTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -18467,7 +18465,7 @@ function buildDoctorTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -18710,8 +18708,7 @@ async function admitReviewerInvocation(options) {
 }
 function buildReviewerTransportPrompt(admitted, engineMaterial) {
   const lines = [
-    `Base revision for the fixed review target: ${admitted.baseRevision}`,
-    "Use this exact revision as the fixed review point."
+    `\u672C\u6B21\u5BA1\u67E5\u7684\u56FA\u5B9A\u57FA\u70B9\uFF1A${admitted.baseRevision}`
   ];
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
@@ -18900,7 +18897,7 @@ function buildMergerTransportPrompt(admitted, engineMaterial) {
   ];
   if (admitted.attachments.length > 0) {
     lines.push("");
-    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
     for (const attachment of admitted.attachments) {
       lines.push(`- ${attachment.frozenPath}`);
     }
@@ -19205,7 +19202,7 @@ var init_reviewer_scope_prompt = __esm({
 });
 
 // src/reviewer-construction.ts
-var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER, REVIEWER_VERIFICATION_BOUNDARY, REVIEWER_STANDARDS_CONCLUSION_KEYS, REVIEWER_STANDARDS_CONCLUSION_LABELS;
+var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER;
 var init_reviewer_construction = __esm({
   "src/reviewer-construction.ts"() {
     "use strict";
@@ -19221,24 +19218,6 @@ var init_reviewer_construction = __esm({
       adapterId: "reviewer-axis-output",
       version: 1,
       implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities")
-    });
-    REVIEWER_VERIFICATION_BOUNDARY = [
-      "Verification-Boundary: you may run focused product tests during this review turn when independent verification needs them.",
-      "A full repository test suite is not forbidden, but do not re-run it every review round;",
-      "prefer once at family wrap-up unless this review specifically requires a broader run.",
-      "Slice and review work should not trigger frequent full-suite reruns.",
-      "Independently discover test facts (including existing coder/fixer receipts and any tests you run);",
-      "do not treat caller prose as the source of those facts."
-    ].join(" ");
-    REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
-      "constitutionality",
-      "minimum-necessary-test-cost",
-      "complexity"
-    ]);
-    REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
-      constitutionality: "constitutionality",
-      "minimum-necessary-test-cost": "minimum-necessary test cost",
-      complexity: "complexity"
     });
   }
 });
@@ -20382,7 +20361,6 @@ var init_evidence_child_executor = __esm({
     init_engine_material();
     init_config2();
     init_receipt_delivery_policy();
-    init_reviewer_construction();
     init_stream_idle_guard();
     init_upstream_error_testimony();
   }

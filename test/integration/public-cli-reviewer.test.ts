@@ -368,7 +368,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args.includes("--ak-review-authority-refs"), false);
     assert.equal(args.includes("--ak-review-ticket-number"), false);
     assert.equal(
-      args.some((a) => a.includes("Base revision for the fixed review target: HEAD~1")),
+      args.some((a) => a.includes("本次审查的固定基点：HEAD~1")),
       true,
     );
 
@@ -485,7 +485,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
         acceptedReceipt: false,
       },
     };
-    const expansion = `<skill name="code-review" location="${material.skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: main\nUse this exact revision as the fixed review point.`;
+    const expansion = `<skill name="code-review" location="${material.skillPath}">\n${material.body}\n</skill>\n\n本次审查的固定基点：main`;
     const sessionLines = [
       JSON.stringify({
         type: "message",
@@ -681,7 +681,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
               packageRoot,
               "code-review",
             );
-            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: HEAD~1\nUse this exact revision as the fixed review point.`;
+            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\n本次审查的固定基点：HEAD~1`;
             const receipt = lawfulReviewerReceipt(["standards", "spec"]);
             await writeFile(
               sessionFile,
@@ -785,7 +785,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
               packageRoot,
               "code-review",
             );
-            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: HEAD~1\nUse this exact revision as the fixed review point.`;
+            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\n本次审查的固定基点：HEAD~1`;
             const receipt = lawfulReviewerReceipt(["standards", "spec"]);
             await writeFile(
               sessionFile,
@@ -974,7 +974,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
           packageRoot,
           "code-review",
         );
-        const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\nBase revision for the fixed review target: main\nUse this exact revision as the fixed review point.`;
+        const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>\n\n本次审查的固定基点：main`;
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({

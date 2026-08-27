@@ -82,8 +82,7 @@ export function engineSessionMaterialFromOptions(options) {
 /**
  * Append engine method-material delivery to session initial material lines.
  * No engine → identity copy (byte-stable when joined the same way).
- * With notes → read-these-bytes header + engine name + absolute material path.
- * Name only → engine name coordinate only (no read-these-bytes header, no path, no warning).
+ * With engine → Chinese neutral header + engine name; notes also carry absolute material path.
  * Never delivers material body.
  */
 export function appendEngineSessionMaterial(lines, engineMaterial) {
@@ -92,14 +91,10 @@ export function appendEngineSessionMaterial(lines, engineMaterial) {
     }
     const out = [...lines];
     out.push("");
+    out.push("本次配置的劳务引擎及其手册：");
+    out.push(`- engine: ${engineMaterial.name}`);
     if (engineMaterial.materialPath !== undefined) {
-        out.push("Engine method material (read these bytes and follow them):");
-        out.push(`- engine: ${engineMaterial.name}`);
         out.push(`- ${engineMaterial.materialPath}`);
-    }
-    else {
-        // Name-only pass-through: no packaged bytes to read.
-        out.push(`- engine: ${engineMaterial.name}`);
     }
     return out;
 }

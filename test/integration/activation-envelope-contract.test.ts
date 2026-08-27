@@ -60,7 +60,6 @@ import {
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
-import { REVIEWER_VERIFICATION_BOUNDARY } from "../../src/reviewer-construction.ts";
 
 function sha256Hex(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -378,7 +377,8 @@ test("packaged terminating tools expose the provider-open registration inventory
 test("remaining support tools expose their actual registration inventory", async () => {
   const cases = [
     { role: "doctor", name: DOCTOR_EVIDENCE_TOOL_NAME, fields: ["evidenceId", "offset", "limit"] },
-    { role: "navigator", name: NAVIGATOR_PREPARE_TOOL_NAME, fields: [] },
+    // #495 S1: candidates field guidance lives on the prepare schema (not an acceptance gate).
+    { role: "navigator", name: NAVIGATOR_PREPARE_TOOL_NAME, fields: ["candidates"] },
   ] as const;
   type Schema = {
     type?: unknown;
@@ -1216,7 +1216,7 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
     const raw = "# code-review skill\n";
     const skillPath = "/skill/code-review/SKILL.md";
     const skillBody = raw;
-    const originalRequest = "Base revision for the fixed review target: main~1";
+    const originalRequest = "本次审查的固定基点：main~1";
     const expectedContent = `References are relative to /skill/code-review.\n\n${skillBody}`;
     const lawfulExpansion =
       `<skill name="code-review" location="${skillPath}">\n${expectedContent}\n</skill>\n\n${originalRequest}`;
@@ -1279,16 +1279,16 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
         );
         assert.ok(promptResult?.systemPrompt, "envelope must assemble parent system prompt");
         assert.match(promptResult.systemPrompt, /<reviewer_soul>\nREVIEWER ENVELOPE LAW\n<\/reviewer_soul>/);
-        assert.ok(
-          promptResult.systemPrompt.includes(REVIEWER_VERIFICATION_BOUNDARY),
-          "parent prompt must reference single verification-boundary true source",
-        );
-        assert.ok(
+        // #495 S2 / ADR 0073: Verification-Boundary machine copy deleted; soul owns cadence.
+        assert.equal(
           promptResult.systemPrompt.includes("<reviewer_verification_boundary>"),
-          "parent prompt must carry verification-boundary carrier tags",
+          false,
         );
         // skipped-missing note is absent when Spec launched (fixture two-axis dispatch).
-        assert.equal(promptResult.systemPrompt.includes("Spec-Disposition: skipped-missing"), false);
+        assert.equal(
+          promptResult.systemPrompt.includes("权威 Spec 不存在；未启动 Spec 取证腿。"),
+          false,
+        );
       });
 
       // Separate admission: expansion mismatch aborts through real ExtensionRunner.

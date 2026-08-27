@@ -23,7 +23,7 @@ export class ComplianceCandidateUnreadableError extends Error {
     }
 }
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
-export const AUDITOR_DOSSIER_PROMPT = "Audit the current run dossier.";
+export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。";
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
 // Transport retains malformed candidates on ComplianceCandidateUnreadableError so

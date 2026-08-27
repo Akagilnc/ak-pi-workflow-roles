@@ -20,7 +20,7 @@ function axisFromPrompt(text: string): "standards" | "spec" | undefined {
 }
 
 function authorityRefsFromPrompt(text: string): string[] | undefined {
-  const marker = "Authority-Refs:\n";
+  const marker = "权威引用：\n";
   const index = text.indexOf(marker);
   if (index < 0) return undefined;
   const rest = text.slice(index + marker.length);
@@ -30,11 +30,11 @@ function authorityRefsFromPrompt(text: string): string[] | undefined {
     parsed = JSON.parse(line);
   } catch (error) {
     throw new Error(
-      `Authority-Refs payload is not recognized JSON: ${error instanceof Error ? error.message : String(error)}`,
+      `权威引用 payload is not recognized JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
-    throw new Error("Authority-Refs payload is not a string array");
+    throw new Error("权威引用 payload is not a string array");
   }
   return parsed as string[];
 }
@@ -62,22 +62,22 @@ function assertAuthorityRefsCarrier(axis: "standards" | "spec", prompt: string):
   const observed = authorityRefsFromPrompt(prompt);
   if (axis === "standards") {
     if (observed !== undefined) {
-      throw new Error("Standards child must not receive Authority-Refs material");
+      throw new Error("Standards child must not receive 权威引用 material");
     }
     return;
   }
   if (expected === undefined) {
     if (observed !== undefined) {
-      throw new Error("Spec child received unexpected Authority-Refs material");
+      throw new Error("Spec child received unexpected 权威引用 material");
     }
     return;
   }
   if (observed === undefined) {
-    throw new Error("Spec child prompt missing Authority-Refs material");
+    throw new Error("Spec child prompt missing 权威引用 material");
   }
   if (JSON.stringify(observed) !== JSON.stringify(expected)) {
     throw new Error(
-      `Spec child Authority-Refs mismatch: expected ${JSON.stringify(expected)} got ${JSON.stringify(observed)}`,
+      `Spec child 权威引用 mismatch: expected ${JSON.stringify(expected)} got ${JSON.stringify(observed)}`,
     );
   }
 }

@@ -199,8 +199,9 @@ test("production discovery: self-fetch bytes propagate from dispatch entry to re
     })
     .filter((index) => index >= 0);
   assert.equal(payloadLineIndexes.length, 1);
+  // Framing title precedes the single JSON payload (ADR 0073: no trailing instruction annotation).
   assert.notEqual(payloadLineIndexes[0], 0);
-  assert.notEqual(payloadLineIndexes[0], materialLines.length - 1);
+  assert.equal(payloadLineIndexes[0], materialLines.length - 1);
   const payload = JSON.parse(materialLines[payloadLineIndexes[0]!]!) as {
     source: string;
     ticketNumber: number;
@@ -232,7 +233,7 @@ test("production discovery: self-fetch bytes propagate from dispatch entry to re
   assert.equal(materialLines[1]!.includes(JSON.stringify(ISSUE_BODY_WITH_ADR)), true);
   assert.equal(
     result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes(
-      "Authority-Fetched-Spec:",
+      "权威取回-Spec：",
     ),
     false,
   );
@@ -496,7 +497,7 @@ test("production discovery: supplied authorityRefs launch Spec with material", a
   assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards", "spec"]);
   assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
   const material = reviewerAuthorityRefsMaterial(refs);
-  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes("Authority-Refs:"), false);
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes("权威引用："), false);
   assert.equal(result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
   assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
 });
@@ -596,7 +597,7 @@ test("constructed legs exclude caller task channel", async () => {
     assert.equal(leg.prompt.includes("supplied task"), false);
     assert.equal(leg.prompt.includes("review task"), false);
     assert.match(leg.prompt, /Canonical-Skill:/);
-    assert.match(leg.prompt, /Fixed-Range:/);
+    assert.match(leg.prompt, /固定范围：/);
   }
   assert.equal("task" in result.dispatch.input, false);
   assert.equal(result.dispatch.input.canonicalSkill, "review skill");
