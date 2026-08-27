@@ -937,7 +937,14 @@ test("R11 observe abort through ledger does not certify a snapshot", async () =>
   const controller = new AbortController();
   const pending = ledger.observe(transport, clock, controller.signal);
   queueMicrotask(() => controller.abort(new Error("observe canceled")));
-  await assert.rejects(() => pending, /observe failed|abort|cancel/i);
+  // Typed fatal latch — do not lock model-facing reason prose (ADR 0073 / #495).
+  await assert.rejects(
+    () => pending,
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as { collectorFatal?: unknown }).collectorFatal === true,
+  );
+  assert.equal(ledger.fatal, true);
   assert.equal(ledger.latestCompleteSnapshotId, undefined);
   assert.equal(ledger.allSnapshots().length, 0);
 });

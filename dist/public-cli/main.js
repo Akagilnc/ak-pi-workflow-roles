@@ -14308,15 +14308,9 @@ function asStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.filter((item) => typeof item === "string");
 }
-function validateNotaryOutput(value) {
-  if (!isRecord3(value)) {
-    throw new Error("Notary output has no recognized execution discriminator");
-  }
-  const statusRaw = typeof value.status === "string" ? value.status : void 0;
-  if (statusRaw === void 0) {
-    throw new Error("Notary output has no recognized execution discriminator");
-  }
-  const status = statusRaw;
+function projectLawfulNotaryOutput(value) {
+  if (!isRecord3(value)) return void 0;
+  const status = typeof value.status === "string" ? value.status : void 0;
   if (status === "bounce") {
     const clone = structuredClone(value);
     if (clone.disposition === void 0) clone.disposition = "rewrite";
@@ -14328,10 +14322,14 @@ function validateNotaryOutput(value) {
     if (!Array.isArray(clone.findings)) clone.findings = asStringArray(clone.findings);
     return clone;
   }
-  throw new Error("Notary output has no recognized execution discriminator");
+  return void 0;
 }
 function validateRecordedNotaryOutput(value) {
-  return validateNotaryOutput(value);
+  const projected = projectLawfulNotaryOutput(value);
+  if (projected === void 0) {
+    throw new Error("Notary output has no recognized execution discriminator");
+  }
+  return projected;
 }
 function notaryDecisiveFacts(output) {
   const status = String(output.status);
@@ -22594,6 +22592,21 @@ async function settleLawfulNotaryTerminalResult(admitted) {
         diagnostic: residual.diagnostic,
         details: { candidate: residual.candidate, acceptedReceipt: false }
       });
+    }
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      if (message.toolName !== NOTARY_OUTPUT_TOOL_NAME) continue;
+      if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
+      try {
+        validateRecordedNotaryOutput(message.details);
+      } catch {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
+          details: { candidate: message.details, acceptedReceipt: false }
+        });
+      }
     }
     return void 0;
   }

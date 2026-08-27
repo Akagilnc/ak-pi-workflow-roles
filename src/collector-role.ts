@@ -157,9 +157,7 @@ export function createCollectorRoleRuntime(
         return { action: "continue" as const };
       }
       if (inputCount >= 1) {
-        activation.ledger.latchFatal(
-          "Collector is one-shot and rejects later inputs",
-        );
+        activation.ledger.latchFatal("通进司已拒绝后续输入");
         if (process.exitCode === undefined || process.exitCode === 0) {
           process.exitCode = 1;
         }
@@ -182,7 +180,7 @@ export function createCollectorRoleRuntime(
       if (options.skills && options.skills.length > 0) {
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
-            "Collector detected ambient skills in systemPromptOptions",
+            "通进司检测到系统提示中的环境 skills",
           ),
           ctx,
         );
@@ -190,7 +188,7 @@ export function createCollectorRoleRuntime(
       if (options.contextFiles && options.contextFiles.length > 0) {
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
-            "Collector detected ambient context files in systemPromptOptions",
+            "通进司检测到系统提示中的环境 context files",
           ),
           ctx,
         );
@@ -201,7 +199,7 @@ export function createCollectorRoleRuntime(
       ) {
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
-            "Collector detected appendSystemPrompt drift",
+            "通进司检测到 appendSystemPrompt 漂移",
           ),
           ctx,
         );
@@ -210,7 +208,7 @@ export function createCollectorRoleRuntime(
       if (event.prompt !== COLLECTOR_FIXED_KICKOFF) {
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
-            "Collector first prompt must be the fixed packaged kickoff",
+            "通进司首条提示不是固定开场令",
           ),
           ctx,
         );

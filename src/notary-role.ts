@@ -13,7 +13,8 @@ import {
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
   notaryOutputSchema,
-  validateNotaryOutput,
+  projectLawfulNotaryOutput,
+  retainNotarySubmission,
   type NotarySourceRunLocator,
 } from "./notary-contracts.ts";
 
@@ -97,20 +98,14 @@ export function createNotaryRoleRuntime(
             if (activation === undefined) {
               throw new Error("Notary is not activated");
             }
-            let output;
-            try {
-              requireSingletonSubmissionCall(toolCallId, ctx);
-              output = validateNotaryOutput(parameters);
-            } catch (error) {
-              // Non-explicit release stays a rejected terminating call so public
-              // settlement can map it to the existing non-zero failure channel (#475).
-              throw error instanceof Error
-                ? error
-                : new Error(String(error));
-            }
+            // Unique submission + terminate only. Shape is not an admission gate
+            // (第 0 条 / ADR 0055): lawful pass/bounce projected; else params as-is.
+            requireSingletonSubmissionCall(toolCallId, ctx);
+            const lawful = projectLawfulNotaryOutput(parameters);
+            const details = lawful ?? retainNotarySubmission(parameters);
             return {
               content: [{ type: "text" as const, text: NOTARY_ACCEPTED_TEXT }],
-              details: output,
+              details,
               terminate: true as const,
             };
           },

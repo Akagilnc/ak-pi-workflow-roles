@@ -3102,7 +3102,8 @@ async function settleLawfulNotaryTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === undefined) {
-    // No usable Notary release → existing non-zero failure channel with candidate (#475).
+    // No usable Notary release → existing non-zero failure channel with candidate (#475 / ADR 0055).
+    // Prefer errored residual when present; else accepted-once non-usable details as-is.
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
@@ -3118,6 +3119,22 @@ async function settleLawfulNotaryTerminalResult(
         diagnostic: residual.diagnostic,
         details: { candidate: residual.candidate, acceptedReceipt: false },
       });
+    }
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      if (message.toolName !== NOTARY_OUTPUT_TOOL_NAME) continue;
+      if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
+      // Accepted once but not a lawful pass/bounce — project typed output failure.
+      try {
+        validateRecordedNotaryOutput(message.details);
+      } catch {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: "符宝郎回执无显式 pass/bounce",
+          details: { candidate: message.details, acceptedReceipt: false },
+        });
+      }
     }
     return undefined;
   }
