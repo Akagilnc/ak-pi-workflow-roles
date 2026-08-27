@@ -17,10 +17,7 @@ type FailureStage =
   | "child-preparation"
   | "child-provider"
   | "child-session"
-  | "child-malformed-output"
-  | "audit-auth"
-  | "audit-provider"
-  | "audit-malformed-decision";
+  | "child-malformed-output";
 
 export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   const stage = process.env["AK_REVIEWER_FAILURE_STAGE"] as FailureStage;
@@ -30,7 +27,6 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
     tokenSize: { min: 1000, max: 1000 },
   });
   const base = execFileSync("git", ["rev-parse", "HEAD~1"], { encoding: "utf8" }).trim();
-  const target = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const request = {
     tools: ["bash"],
     prerequisiteOperations: [
@@ -50,13 +46,6 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
     }, { id: "fatal-agent" }),
     { stopReason: "toolUse" },
   );
-  const outputCall = fauxAssistantMessage(
-    fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, {
-      status: "refused",
-      diagnostic: "The requested review cannot proceed because its runtime stage failed.",
-    }, { id: "fatal-reviewer-output" }),
-    { stopReason: "toolUse" },
-  );
   let providerCalls = 0;
   const first = () => {
     providerCalls += 1;
@@ -65,10 +54,6 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
       : fauxAssistantMessage("Independent review found no findings.");
   };
   const second = () => {
-    if (stage.startsWith("audit-")) {
-      providerCalls += 1;
-      return outputCall;
-    }
     if (stage === "child-session") {
       providerCalls += 1;
       console.error("INJECTED_REVIEWER_CHILD_SESSION_FAILURE");
@@ -84,24 +69,9 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
     }
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  const third = () => {
-    if (stage === "audit-malformed-decision") {
-      providerCalls += 1;
-      console.error("invalid reviewer audit decision");
-      return fauxAssistantMessage("MALFORMED_REVIEWER_AUDIT_DECISION_STAGE");
-    }
-    return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
-  };
   faux.setResponses([
     first,
-    ...(stage.startsWith("audit-")
-      ? [() => {
-          providerCalls += 1;
-          return fauxAssistantMessage("Second independent review found no findings.");
-        }]
-      : []),
     second,
-    third,
     fauxAssistantMessage(
       fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, {
         status: "refused",
@@ -133,21 +103,6 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
       (ctx.modelRegistry as any).getProvider = () => {
         console.error("Reviewer Agent provider not found");
         return undefined;
-      };
-    }
-    if (
-      stage === "audit-provider" &&
-      event.toolName === REVIEWER_OUTPUT_TOOL_NAME
-    ) {
-      (ctx.modelRegistry as any).getProvider = () => {
-        console.error("Reviewer compliance audit provider not found");
-        return undefined;
-      };
-    }
-    if (stage === "audit-auth" && event.toolName === REVIEWER_OUTPUT_TOOL_NAME) {
-      (ctx.modelRegistry as any).getProviderAuth = async () => {
-        console.error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
-        throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
       };
     }
   });

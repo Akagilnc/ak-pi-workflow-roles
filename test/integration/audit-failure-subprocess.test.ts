@@ -7,22 +7,14 @@ import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import test from "node:test";
 
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from "@earendil-works/pi-ai";
-
 import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
 import {
   packageRoot,
   runPiSubprocess,
   withActivationHome,
   withHermeticHome,
-  withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 
 async function runCli(mode: "print" | "json") {
   return withHermeticHome(
@@ -137,19 +129,12 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
   );
 }
 
-type ReviewerFailureStage =
-  | "preflight-git"
-  | "audit-auth"
-  | "audit-provider"
-  | "audit-malformed-decision";
+/** Reviewer fatal stages remaining after #495 S6 retired the reviewer-side auditor. */
+type ReviewerFailureStage = "preflight-git";
 
 /** Per-stage stderr identity — proves fail-closed came from this row's injection. */
 const REVIEWER_FATAL_STAGE_MARKERS: Record<ReviewerFailureStage, RegExp> = {
   "preflight-git": /INJECTED_REVIEWER_GIT_IO_FAILURE/,
-  "audit-auth": /INJECTED_REVIEWER_AUDIT_AUTH_FAILURE/,
-  "audit-provider": /Reviewer compliance audit provider not found/,
-  "audit-malformed-decision":
-    /invalid reviewer audit decision|MALFORMED_REVIEWER_AUDIT_DECISION_STAGE/,
 };
 
 function assertHealthyReviewerGitTree(cwd: string, label: string): void {
@@ -271,116 +256,6 @@ async function runReviewerCliOnCold(
       PI_OFFLINE: "1",
     },
   });
-}
-
-async function assertInProcessReviewerFatalNoReceipt(
-  cold: ReviewerFatalCold,
-  stage: "audit-auth" | "audit-malformed-decision",
-): Promise<void> {
-  const previous = process.env.AK_REVIEWER_FAILURE_STAGE;
-  const previousExitCode = process.exitCode;
-  process.env.AK_REVIEWER_FAILURE_STAGE = stage;
-  try {
-    const faux = fauxProvider({
-      api: "ak-reviewer-failure-inproc",
-      provider: "ak-reviewer-failure-inproc",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-    // Drive the same fatal output call the CLI fixture uses; audit injection
-    // still comes from the staged failure extension below.
-    faux.setResponses([
-      fauxAssistantMessage("Independent standards review found no findings."),
-      fauxAssistantMessage("Independent spec review found no findings."),
-      fauxAssistantMessage(
-        fauxToolCall(
-          REVIEWER_OUTPUT_TOOL_NAME,
-          {
-            status: "refused",
-            diagnostic:
-              "The requested review cannot proceed because its runtime stage failed.",
-          },
-          { id: "fatal-reviewer-output" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      stage === "audit-malformed-decision"
-        ? fauxAssistantMessage("MALFORMED_REVIEWER_AUDIT_DECISION_STAGE")
-        : async () => {
-            throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
-          },
-      fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE"),
-    ]);
-
-    let sawError = false;
-    await withInProcessPi(
-      {
-        activationLedgerSession: true,
-        cwd: cold.cwd,
-        agentDir: resolve(cold.agentDir, `inproc-${stage}`),
-        faux,
-        modelsPath: null,
-        additionalExtensionPaths: [
-          resolve(packageRoot, "extensions/role-runtime.ts"),
-        ],
-        additionalSkillPaths: [cold.skillPath],
-        noExtensions: true,
-        systemPrompt: "REVIEWER FATAL INPROC",
-        mode: "print",
-        flags: {
-          "ak-role": "reviewer",
-          "ak-review-base": cold.base,
-        },
-        reviewerShutdown: true,
-        extensionFactories: [
-          (pi) => {
-            pi.on("tool_call", (event, ctx) => {
-              if (
-                stage === "audit-auth" &&
-                event.toolName === REVIEWER_OUTPUT_TOOL_NAME
-              ) {
-                (ctx.modelRegistry as any).getProviderAuth = async () => {
-                  throw new Error("INJECTED_REVIEWER_AUDIT_AUTH_FAILURE");
-                };
-              }
-            });
-          },
-        ],
-      },
-      async ({ session, sessionManager }) => {
-        try {
-          await session.prompt("Review.");
-        } catch {
-          sawError = true;
-        }
-        const results = sessionManager
-          .getEntries()
-          .filter(
-            (entry) =>
-              entry.type === "message" && entry.message.role === "toolResult",
-          ) as Array<{ message: { toolName?: string; isError?: boolean; details?: any } }>;
-        const output = results.find(
-          (entry) => entry.message.toolName === REVIEWER_OUTPUT_TOOL_NAME,
-        );
-        // Gate negative: no accepted Reviewer receipt.
-        if (output !== undefined) {
-          assert.notEqual(output.message.isError, false);
-          assert.equal(output.message.details?.status === "completed", false);
-        }
-        assert.ok(
-          sawError ||
-            output?.message.isError === true ||
-            results.some((entry) => entry.message.isError === true),
-          `${stage} must fail closed without an accepted receipt`,
-        );
-      },
-    );
-  } finally {
-    // Production print/json audit failure sets process.exitCode = 1; restore so
-    // the in-process host test file does not inherit a failing exit status.
-    process.exitCode = previousExitCode;
-    if (previous === undefined) delete process.env.AK_REVIEWER_FAILURE_STAGE;
-    else process.env.AK_REVIEWER_FAILURE_STAGE = previous;
-  }
 }
 
 async function runCoderSkillFailureCli(
@@ -687,84 +562,46 @@ test("coder apply without skill expansion rejects completed as non-receipt", asy
   }
 });
 
-test("Reviewer fatal stages abort without a receipt on installed and in-process seams", async () => {
-  // #319 Batch 3 (M4): both no-receipt gates retained; table-driven on one cold fixture.
-  // M4.1 installed process boundary + M4.2 in-process fail-closed share skill/target/base.
+test("Reviewer fatal stages abort without a receipt on installed seams", async () => {
+  // #319 Batch 3 (M4) residual after #495 S6: preflight-git only (auditor stages retired).
   await withReviewerFatalCold(async (cold) => {
-    type InstalledRow = {
-      seam: "installed";
-      mode: "json" | "print";
-      stage: ReviewerFailureStage;
-      tool: "Agent" | "ak_reviewer_output";
-      requireError?: boolean;
-    };
-    type InProcessRow = {
-      seam: "in-process";
-      stage: "audit-auth" | "audit-malformed-decision";
-    };
-    const rows: Array<InstalledRow | InProcessRow> = [
-      // Process-level negative: one stage × print+json proves abort-without-receipt
-      // crosses the real CLI boundary for both modes (法条③).
-      { seam: "installed", mode: "json", stage: "audit-auth", tool: "ak_reviewer_output" },
-      { seam: "installed", mode: "print", stage: "audit-auth", tool: "ak_reviewer_output" },
-      // Remaining installed stages: one JSON process each.
-      { seam: "installed", mode: "json", stage: "preflight-git", tool: "ak_reviewer_output", requireError: false },
-      { seam: "installed", mode: "json", stage: "audit-provider", tool: "ak_reviewer_output" },
-      { seam: "installed", mode: "json", stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
-      // In-process seam for the audit-stage family (no CLI boot per row).
-      { seam: "in-process", stage: "audit-auth" },
-      { seam: "in-process", stage: "audit-malformed-decision" },
+    const rows: Array<{ mode: "json" | "print"; stage: ReviewerFailureStage; tool: "ak_reviewer_output" }> = [
+      { mode: "json", stage: "preflight-git", tool: "ak_reviewer_output" },
+      { mode: "print", stage: "preflight-git", tool: "ak_reviewer_output" },
     ];
 
     for (const row of rows) {
-      if (row.seam === "installed") {
-        const label = `${row.stage}-${row.mode}`;
-        // Shared cwd: later rows must not inherit a poisoned tree from preflight-git.
-        assertHealthyReviewerGitTree(cold.cwd, `before ${label}`);
-        try {
-          const result = await runReviewerCliOnCold(cold, row.mode, row.stage, label);
-          assert.equal(result.localTimeout, false, `${label} subprocess did not time out`);
-          assert.equal(result.code, 1, `${label} exits nonzero`);
-          assert.match(
-            `${result.stderr}\n${result.stdout}`,
-            REVIEWER_FATAL_STAGE_MARKERS[row.stage],
-            `${label} must fail closed from its own ${row.stage} injection, not residual poison`,
+      const label = `${row.stage}-${row.mode}`;
+      assertHealthyReviewerGitTree(cold.cwd, `before ${label}`);
+      try {
+        const result = await runReviewerCliOnCold(cold, row.mode, row.stage, label);
+        assert.equal(result.localTimeout, false, `${label} subprocess did not time out`);
+        assert.equal(result.code, 1, `${label} exits nonzero`);
+        assert.match(
+          `${result.stderr}\n${result.stdout}`,
+          REVIEWER_FATAL_STAGE_MARKERS[row.stage],
+          `${label} must fail closed from its own ${row.stage} injection, not residual poison`,
+        );
+        if (row.mode === "json") {
+          // Preflight aborts at activate/git pin — before any output tool — so
+          // the no-receipt proof is exit 1 + own injection marker + zero accepted receipt.
+          const events = jsonEvents(result.stdout);
+          assert.equal(
+            events.some(
+              (event) =>
+                event.type === "message_end" &&
+                event.message?.role === "toolResult" &&
+                event.message.toolName === row.tool &&
+                event.message.isError === false,
+            ),
+            false,
+            `${label} must not accept a ${row.tool} receipt`,
           );
-          if (row.mode === "json") {
-            if (row.stage === "preflight-git") {
-              // Preflight aborts at activate/git pin — before any output tool — so
-              // the no-receipt proof is exit 1 + own injection marker + zero accepted receipt.
-              const events = jsonEvents(result.stdout);
-              assert.equal(
-                events.some(
-                  (event) =>
-                    event.type === "message_end" &&
-                    event.message?.role === "toolResult" &&
-                    event.message.toolName === row.tool &&
-                    event.message.isError === false,
-                ),
-                false,
-                `${label} must not accept a ${row.tool} receipt`,
-              );
-            } else {
-              assertJsonFailureFacts(
-                result,
-                row.tool,
-                label,
-                row.requireError ?? true,
-              );
-            }
-          }
-        } finally {
-          if (row.stage === "preflight-git") {
-            restoreReviewerGitTreeAfterInjection(cold.cwd);
-            assertHealthyReviewerGitTree(cold.cwd, `after ${label} restore`);
-          }
         }
-        continue;
+      } finally {
+        restoreReviewerGitTreeAfterInjection(cold.cwd);
+        assertHealthyReviewerGitTree(cold.cwd, `after ${label} restore`);
       }
-      assertHealthyReviewerGitTree(cold.cwd, `before in-process ${row.stage}`);
-      await assertInProcessReviewerFatalNoReceipt(cold, row.stage);
     }
   });
 });

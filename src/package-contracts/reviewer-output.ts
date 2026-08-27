@@ -4,7 +4,6 @@ import type { ReviewerAcceptedEvidence, ReviewerFailureClassification, ReviewerW
 
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 export const REVIEWER_ACCEPTED_TEXT = "御史台回执已接受";
-export const REVIEWER_ACCEPTED_AUDIT_NO_RECEIPT_TEXT = "御史台回执已接受；审计无回执";
 
 /** Seat-owned per-axis delta relative to child reports — not a replacement report. */
 export type ReviewerAmendments = Readonly<Partial<Record<"standards" | "spec", string>>>;

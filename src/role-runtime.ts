@@ -316,7 +316,6 @@ export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisi
 export { AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
 export type { AuditorSoulRole } from "./auditor-soul.ts";
 export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME, createPiJudgeAuditor } from "./judge-auditor.ts";
-export { REVIEWER_AUDIT_TOOL_NAME, createPiReviewerAuditor } from "./reviewer-auditor.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";
 export {
@@ -510,9 +509,6 @@ export type RoleRuntimeDependencies = {
   auditSoulCompliance(
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
-  auditReviewerCompliance?(
-    options: { context: ExtensionContext; signal?: AbortSignal },
-  ): Promise<ComplianceDecision>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
@@ -985,12 +981,6 @@ export function createRoleRuntimeExtension(
         ...(dependencies.shutdownReviewerAgent === undefined
           ? {}
           : { shutdownAgent: dependencies.shutdownReviewerAgent }),
-        async auditCompliance(options) {
-          if (dependencies.auditReviewerCompliance === undefined) {
-            throw new Error("Reviewer runtime dependencies are not configured");
-          }
-          return dependencies.auditReviewerCompliance(options);
-        },
       },
       hostActions,
     );

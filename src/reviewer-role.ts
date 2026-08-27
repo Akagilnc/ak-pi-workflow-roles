@@ -4,16 +4,12 @@ import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 export type { CanonicalSkillBinding };
-import { disposeComplianceDecision } from "./audit-escalation.ts";
-import type { ComplianceDecision } from "./compliance-transport.ts";
-import { appendActiveSessionCustomEntry } from "./compliance-transport.ts";
-import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
 import { type ReviewerSpecDisposition } from "./reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerIssueFetcher, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
-import { REVIEWER_ACCEPTED_AUDIT_NO_RECEIPT_TEXT, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
+import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
@@ -52,7 +48,6 @@ export type ReviewerRoleDependencies = {
   fetchIssue?: ReviewerIssueFetcher;
   runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   shutdownAgent?(): Promise<void>;
-  auditCompliance(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never };
 
@@ -76,6 +71,7 @@ export type ReviewerActivation = Readonly<{
 /**
  * Reviewer behavior runtime: label, soul, evidence tools, decision tool, projection.
  * No flag registration/decoding and no agent_start prompt lifecycle (ADR 0018 / envelope).
+ * Reviewer-side 审刑院 gate retired (#495 S6 / 风闻奏事); accept on typed validate only.
  */
 export function createReviewerRoleRuntime(
   pi: ExtensionAPI,
@@ -148,8 +144,8 @@ export function createReviewerRoleRuntime(
 
       if (!registered) {
         registered = true;
-        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台薄回执；受理前经审刑院审计。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
-          async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
+          async execute(id, parameters, _signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
             requireSoleReviewerOutputCall(id, toolCtx);
             const output = validateReviewerIntent(parameters);
@@ -160,50 +156,12 @@ export function createReviewerRoleRuntime(
                 record,
                 canonicalSkillText: binding.snapshot.raw,
               });
-            // First-record-then-audit: candidate lands on the parent session books
-            // before the auditor is spawned (zero hand-delivery).
-            try {
-              appendActiveSessionCustomEntry(
-                toolCtx,
-                REVIEWER_CANDIDATE_ENTRY_TYPE,
-                { version: 1, candidate },
-                {
-                  unavailable: "御史台候选留存不可用",
-                  failed: "御史台候选留存失败",
-                },
-              );
-            } catch (error) {
-              hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id);
-            }
-            let audit: ComplianceDecision;
-            try {
-              audit = await dependencies.auditCompliance({
-                context: toolCtx,
-                ...(signal === undefined ? {} : { signal }),
-              });
-            }
-            catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-            return disposeComplianceDecision<AgentToolResult<unknown>>(
-              audit,
-              {
-                pass: async (usage) => {
-                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                  return { content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_TEXT }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
-                },
-                noReceipt: async (auditNoReceipt, usageProjection) => {
-                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                  return { content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_AUDIT_NO_RECEIPT_TEXT }], details: { ...candidate, auditNoReceipt }, terminate: true as const, ...usageProjection };
-                },
-                revise: (violations) => {
-                  throw new AggregateError([], `御史台回执违 soul：${violations.join("; ")}`, { cause: Object.freeze([...violations]) });
-                },
-                escalate: async (result) => {
-                  try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
-                  return result;
-                },
-              },
-              candidate,
-            );
+            try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
+            return {
+              content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_TEXT }],
+              details: candidate,
+              terminate: true as const,
+            };
           } });
         // Skill invocation transform + agent_start expansion/prompt lifecycle: shared envelope (ADR 0018).
         pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });

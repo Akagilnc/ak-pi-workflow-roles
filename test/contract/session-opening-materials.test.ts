@@ -70,8 +70,8 @@ const TICKET_AUDITOR_MATERIALS = {
     "souls/audit-law.md",
     "souls/quality-law.md",
   ],
-  reviewer: ["CLAUDE.md", "souls/reviewer-auditor.md", "souls/audit-law.md"],
   // #470 范围修正: doctor auditor 暂不装审刑院法典
+  // #495 S6: reviewer-side auditor roster retired with gate
   doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
 } as const;
 

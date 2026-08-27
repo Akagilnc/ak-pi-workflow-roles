@@ -1,6 +1,6 @@
 /**
  * #319 Batch 2 (M2): Reviewer-unique deep chain only
- * (public ak-role Reviewer → auditor → Judge).
+ * (public ak-role Reviewer → Judge; #495 S6 dropped reviewer-side auditor).
  * All-role cold smoke lives in public-cli-cold-matrix.test.ts.
  */
 import assert from "node:assert/strict";
@@ -9,12 +9,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { REVIEWER_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import {
-  REVIEWER_AMENDMENT_TRACE_A,
-  REVIEWER_AMENDMENT_TRACE_B,
-} from "../fixtures/reviewer-two-axis-provider.ts";
+import { REVIEWER_AMENDMENT_TRACE } from "../fixtures/reviewer-two-axis-provider.ts";
 import { withColdInstalledPackage, withHermeticHome, packageRoot } from "../helpers/pi-test-harness.ts";
 import { runPiSubprocess } from "../helpers/pi-test-harness.ts";
 
@@ -34,7 +30,7 @@ async function seedReviewerFixture(fixture: string): Promise<void> {
   await git(fixture, "branch", "review-base");
 }
 
-test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain", async () => {
+test("installed npm tarball runs public ak-role Reviewer→Judge chain", async () => {
   process.env.CI = "true";
   await withHermeticHome({ prefix: "ak-reviewer-package-" }, async ({ home }) => {
     await withColdInstalledPackage(home, async ({ fixture, pack, installedRoot }) => {
@@ -180,14 +176,14 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
         frozenReviewerReceipt.reports?.spec?.text,
         "Spec: fixed target satisfies the stated behavior.",
       );
-      // Final receipt/artifact keep only amendment B after real auditor revise + resubmit.
-      assert.deepEqual(frozenReviewerReceipt.amendments, REVIEWER_AMENDMENT_TRACE_B);
+      // #495 S6: single accept — no auditor revise/resubmit loop.
+      assert.deepEqual(frozenReviewerReceipt.amendments, REVIEWER_AMENDMENT_TRACE);
       assert.equal("aggregate" in frozenReviewerReceipt, false);
       assert.equal("report" in frozenReviewerReceipt, false);
       assert.deepEqual(published.outcome?.decisiveFacts?.amendmentAxes, ["standards"]);
       assert.equal("amendments" in (published.outcome?.decisiveFacts ?? {}), false);
 
-      // Session custom entries: real output A then B candidates; child reports shared by identity, not re-prosed.
+      // Session: one accepted output; no first-record candidate custom entries after gate retirement.
       const evidenceArtifact = reviewer.terminal?.artifacts.find((item) => item.kind === "evidence");
       assert.ok(evidenceArtifact, `reviewer must publish evidence artifact: ${JSON.stringify(reviewer.terminal)}`);
       const evidence = JSON.parse(await readFile(evidenceArtifact!.path, "utf8")) as {
@@ -201,15 +197,6 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
         .map((line) => JSON.parse(line) as {
           type?: string;
           customType?: string;
-          data?: {
-            version?: number;
-            candidate?: {
-              amendments?: { standards?: string; spec?: string };
-              reports?: { standards?: { text?: string }; spec?: { text?: string } };
-              aggregate?: unknown;
-              report?: unknown;
-            };
-          };
           message?: {
             role?: string;
             toolName?: string;
@@ -218,30 +205,18 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
           };
         });
       const candidates = sessionRows.filter(
-        (row) => row.type === "custom" && row.customType === REVIEWER_CANDIDATE_ENTRY_TYPE,
+        (row) => row.type === "custom" && row.customType === "ak_reviewer_audit_candidate",
       );
-      assert.equal(candidates.length, 2, `expected A then B candidates: ${JSON.stringify(candidates).slice(0, 500)}`);
-      const candidateA = candidates[0]!.data?.candidate;
-      const candidateB = candidates[1]!.data?.candidate;
-      assert.deepEqual(candidateA?.amendments, REVIEWER_AMENDMENT_TRACE_A);
-      assert.deepEqual(candidateB?.amendments, REVIEWER_AMENDMENT_TRACE_B);
-      // Non-text rewrite contract: A/B candidates share the same reports object as the final receipt.
-      assert.deepEqual(candidateA?.reports, frozenReviewerReceipt.reports);
-      assert.deepEqual(candidateB?.reports, frozenReviewerReceipt.reports);
-      for (const candidate of [candidateA, candidateB]) {
-        assert.equal("aggregate" in (candidate ?? {}), false);
-        assert.equal("report" in (candidate ?? {}), false);
-      }
+      assert.equal(candidates.length, 0, "reviewer-side audit candidate custom entries must not be written");
       const outputResults = sessionRows.filter(
         (row) =>
           row.type === "message" &&
           row.message?.role === "toolResult" &&
           row.message.toolName === "ak_reviewer_output",
       );
-      assert.equal(outputResults.length, 2, "real output tool must run twice: A revise-bounce then B pass");
-      assert.equal(outputResults[0]?.message?.isError, true);
-      assert.equal(outputResults[1]?.message?.isError, false);
-      assert.deepEqual(outputResults[1]?.message?.details?.amendments, REVIEWER_AMENDMENT_TRACE_B);
+      assert.equal(outputResults.length, 1, "single typed accept after legs");
+      assert.equal(outputResults[0]?.message?.isError, false);
+      assert.deepEqual(outputResults[0]?.message?.details?.amendments, REVIEWER_AMENDMENT_TRACE);
 
       // Caller-owned handoff: public Judge admits the frozen Reviewer receipt.
       const judgeProvider = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
@@ -256,7 +231,7 @@ test("installed npm tarball runs public ak-role Reviewer→auditor→Judge chain
           "off",
           "--project",
           fixture,
-          `Adjudicate this exact auditor-accepted frozen Reviewer receipt:\n${JSON.stringify(frozenReviewerReceipt)}`,
+          `Adjudicate this exact frozen Reviewer receipt:\n${JSON.stringify(frozenReviewerReceipt)}`,
         ],
         {
           packageRoot: installedRoot,

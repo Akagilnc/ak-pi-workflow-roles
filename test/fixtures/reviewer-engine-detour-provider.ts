@@ -18,7 +18,6 @@ import {
   ENGINE_DETOUR_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
-import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 
 const CANNED_LABOR = "canned-reviewer-engine-labor-378";
 
@@ -100,17 +99,6 @@ export default function reviewerEngineDetourProvider(pi: ExtensionAPI): void {
         axis === "standards"
           ? `Standards finding count: 0. engine-labor=${labor.trim() || "none"}`
           : `Spec: fixed target satisfies the stated behavior. engine-labor=${labor.trim() || "none"}`,
-      );
-    }
-
-    if (names.includes(REVIEWER_AUDIT_TOOL_NAME)) {
-      return fauxAssistantMessage(
-        fauxToolCall(
-          REVIEWER_AUDIT_TOOL_NAME,
-          { status: "pass", violations: [], conflicts: [], decisionGate: null },
-          { id: "audit" },
-        ),
-        { stopReason: "toolUse" },
       );
     }
 

@@ -11,7 +11,6 @@ import { JUDGE_OUTPUT_TOOL_NAME as JUDGE_OUTPUT_TOOL } from "./package-contracts
 
 export const JUDGE_OUTPUT_TOOL_NAME = JUDGE_OUTPUT_TOOL;
 export const AUDIT_RUN_DIR_ENV = "AK_ROLE_RUN_DIR" as const;
-export const REVIEWER_CANDIDATE_ENTRY_TYPE = "ak_reviewer_audit_candidate" as const;
 export const DOCTOR_CANDIDATE_ENTRY_TYPE = "ak_doctor_audit_candidate" as const;
 
 export type MissingDossierObservation = { readonly kind: "missing-dossier" };
@@ -102,19 +101,6 @@ export function readJudgeAuditSubjects(context: ExtensionContext): SubjectResolu
     return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-verdict" } };
   }
   return { status: "ok" };
-}
-
-/**
- * Reviewer candidate receipt must be recorded before audit (first-record-then-audit).
- */
-export function readReviewerAuditSubjects(context: ExtensionContext): SubjectResolution {
-  const entries = context.sessionManager.getEntries?.() ?? [];
-  for (const entry of entries) {
-    if (entry.type === "custom" && entry.customType === REVIEWER_CANDIDATE_ENTRY_TYPE) {
-      return { status: "ok" };
-    }
-  }
-  return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-receipt" } };
 }
 
 /**

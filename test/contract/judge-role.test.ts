@@ -2372,10 +2372,11 @@ test(
 
 // #420 整改移档（自 package-entrypoint-packaged-workers.integration.test.ts）：
 // 纯进程内模块逻辑（Source-tree imports，无任何装包边界），性质属快档。
-// 契约断言一字不减：revise→errored / pass→terminate / escalate 全矩阵在此。
+// Judge/doctor：revise→errored / pass→terminate / escalate 全矩阵。
+// Fixer (#242) / Reviewer (#495 S6)：无审刑院闸，typed validate 即受理。
 test("role outputs run nested audits through pass, revise, and escalation", async () => {
   // Source-tree imports: cold-install boundary is owned by neighbouring install tests;
-  // this carrier owns revise→errored / pass→terminate / escalate per role output tool.
+  // this carrier owns revise→errored / pass→terminate / escalate per audited role output tool.
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
   const nestedRunDir = await mkdtemp(join(tmpdir(), "ak-nested-audit-run-"));
@@ -2383,9 +2384,8 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   process.env.AK_ROLE_RUN_DIR = nestedRunDir;
   try {
   {
-      const [judge, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
+      const [judge, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/judge-auditor.ts"),
-        importSrc("src/reviewer-auditor.ts"),
         importSrc("src/doctor-auditor.ts"),
         importSrc("src/judge-role.ts"),
         importSrc("src/worker-role.ts"),
@@ -2433,7 +2433,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       } as const;
       const toolNames = {
         judge: judge.JUDGE_AUDIT_TOOL_NAME,
-        reviewer: reviewer.REVIEWER_AUDIT_TOOL_NAME,
         doctor: doctor.DOCTOR_AUDIT_TOOL_NAME,
       } as const;
       const acceptedNames = {
@@ -2494,13 +2493,12 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         let selectedDecision = decision;
         const complete = async (_model: unknown, _request: Context) => {
           auditCalls += 1;
-          const auditTool = toolNames[role as Exclude<typeof role, "fixer">];
+          const auditTool = toolNames[role as "judge" | "doctor"];
           return fauxAssistantMessage(fauxToolCall(auditTool, selectedDecision), { stopReason: "toolUse" });
         };
-// Judge/reviewer/doctor: zero-arg materials (#233). Fixer LLM auditor retired (#242).
+        // Judge/doctor: zero-arg materials (#233). Fixer (#242) / Reviewer (#495 S6) no LLM auditor.
         const auditCompliance = (options: any) => {
           if (role === "judge") return judge.createPiJudgeAuditor(complete)(options);
-          if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(options);
           return doctor.createPiDoctorAuditor(complete)(options);
         };
         let runtime: any;
@@ -2542,7 +2540,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
               readPinnedText: async () => undefined,
             }),
             runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
-            auditCompliance,
           }, testHostActions());
         }
         return {
@@ -2555,31 +2552,37 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
 
       for (const role of ["judge", "fixer", "reviewer", "doctor"] as const) {
         const toolName = role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME;
-        if (role === "fixer") {
-          // #242: Fixer LLM auditor retired — accept on schema validate only, no audit leg.
+        if (role === "fixer" || role === "reviewer") {
+          // #242 fixer / #495 S6 reviewer: no LLM auditor — accept on typed validate only.
           const plain = createRole(role, pass);
-          await plain.runtime.activate();
+          if (role === "reviewer") {
+            await plain.runtime.activate(undefined, { baseRevision: "review-base" });
+            assert.deepEqual(
+              plain.harness.activeTools(),
+              ["read", "write", "grep", "find", "bash"],
+              "Reviewer activation must preserve Pi's evidence tool surface",
+            );
+          } else {
+            await plain.runtime.activate();
+          }
           const tool = plain.harness.tools.get(toolName);
           assert.ok(tool);
-          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, withPassingGatekeeper(outputContext(tool.name, `${role}-pass`)));
+          const ctx = role === "fixer"
+            ? withPassingGatekeeper(outputContext(tool.name, `${role}-pass`))
+            : outputContext(tool.name, `${role}-pass`, outputs[role] as Record<string, unknown>);
+          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, ctx);
           assert.equal(accepted.terminate, true);
-          assert.deepEqual(accepted.details, outputs[role]);
+          if (role === "fixer") {
+            assert.deepEqual(accepted.details, outputs[role]);
+          } else {
+            // Reviewer receipt is assembled from ledger + intent; status rides the face.
+            assert.equal(accepted.details.status, outputs[role].status);
+          }
           assert.equal(plain.auditCalls, 0);
           continue;
         }
         const retriable = createRole(role, revise);
-        if (role === "reviewer") {
-          await retriable.runtime.activate(undefined, { baseRevision: "review-base" });
-        } else {
-          await retriable.runtime.activate();
-        }
-        if (role === "reviewer") {
-          assert.deepEqual(
-            retriable.harness.activeTools(),
-            ["read", "write", "grep", "find", "bash"],
-            "Reviewer activation must preserve Pi's evidence tool surface",
-          );
-        }
+        await retriable.runtime.activate();
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
         const submissionContext = (id: string) => {
@@ -2592,15 +2595,11 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         assert.equal(accepted.terminate, true);
         if (role === "judge") assert.equal(accepted.details.judgeStatus, outputs[role].judgeStatus);
         else assert.equal(accepted.details.status, outputs[role].status);
-        if (role !== "reviewer") assert.deepEqual(accepted.details, outputs[role]);
+        assert.deepEqual(accepted.details, outputs[role]);
         assert.equal(retriable.auditCalls, 2, `${role} must audit the rejected submission and its resubmission`);
 
         const escalated = createRole(role, escalation);
-        if (role === "reviewer") {
-          await escalated.runtime.activate(undefined, { baseRevision: "review-base" });
-        } else {
-          await escalated.runtime.activate();
-        }
+        await escalated.runtime.activate();
         const escalationTool = escalated.harness.tools.get(tool.name);
         const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, submissionContext(`${role}-escalate`));
         assert.equal(result.terminate, true);

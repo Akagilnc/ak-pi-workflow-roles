@@ -20465,23 +20465,6 @@ var init_judge_auditor = __esm({
   }
 });
 
-// src/reviewer-auditor.ts
-var REVIEWER_AUDIT_TOOL_NAME, reviewerDecisionTool;
-var init_reviewer_auditor = __esm({
-  "src/reviewer-auditor.ts"() {
-    "use strict";
-    init_auditor_dossier_tool();
-    init_auditor_soul();
-    init_compliance_transport();
-    init_dossier_resolution();
-    REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
-    reviewerDecisionTool = createComplianceDecisionTool(
-      REVIEWER_AUDIT_TOOL_NAME,
-      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5FA1\u53F2\u53F0\u5BA1\u5211\uFF09\u3002"
-    );
-  }
-});
-
 // src/collector-evidence.ts
 var COLLECTOR_ELIGIBILITY_MS;
 var init_collector_evidence = __esm({
@@ -21597,8 +21580,6 @@ function auditToolNameForRole(role) {
   switch (role) {
     case "judge":
       return JUDGE_AUDIT_TOOL_NAME;
-    case "reviewer":
-      return REVIEWER_AUDIT_TOOL_NAME;
     case "doctor":
       return DOCTOR_AUDIT_TOOL_NAME;
   }
@@ -22733,26 +22714,10 @@ function extractReviewerRoleOutcome(entries) {
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "reviewer",
-      REVIEWER_OUTPUT_TOOL_NAME
-    );
-    if (escalation !== void 0) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "reviewer",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details }
-        }
-      };
-    }
-    if (isUnboundAuditEscalationFace(message.details)) continue;
+    const details = message.details;
+    if (isUnboundAuditEscalationFace(details)) continue;
     try {
-      const receipt = validateRuntimeReviewerReceipt(message.details);
+      const receipt = validateRuntimeReviewerReceipt(details);
       const outcome = {
         kind: "accepted",
         role: "reviewer",
@@ -23289,7 +23254,6 @@ var init_settlement = __esm({
     init_auditor_soul();
     init_doctor_auditor();
     init_judge_auditor();
-    init_reviewer_auditor();
     init_explicit_internal();
     init_run_lifecycle();
     init_compliance_transport();

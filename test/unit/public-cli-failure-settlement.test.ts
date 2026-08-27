@@ -9,13 +9,13 @@ import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/aud
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import { REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
+
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
+
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { ExplicitInternalActivationError } from "../../src/public-cli/explicit-internal.ts";
-import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, CONCISE_DIAGNOSTIC_MAX_CHARS, exitCodeForTerminalOutcome, extractDoctorRoleOutcome, extractJudgeRoleOutcome, extractReviewerRoleOutcome, isChildDiagnosticFloodLine, isChildDiagnosticHelpFooterLine, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, CONCISE_DIAGNOSTIC_MAX_CHARS, exitCodeForTerminalOutcome, extractDoctorRoleOutcome, extractJudgeRoleOutcome, isChildDiagnosticFloodLine, isChildDiagnosticHelpFooterLine, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -630,7 +630,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
 test("audit escalation requires the retained seat-bound response across all audited seats", () => {
   const seats = {
     judge: { output: JUDGE_OUTPUT_TOOL_NAME, audit: JUDGE_AUDIT_TOOL_NAME },
-    reviewer: { output: REVIEWER_OUTPUT_TOOL_NAME, audit: REVIEWER_AUDIT_TOOL_NAME },
     doctor: { output: DOCTOR_OUTPUT_TOOL_NAME, audit: DOCTOR_AUDIT_TOOL_NAME },
   } as const;
   const auditCandidate = {
@@ -641,7 +640,6 @@ test("audit escalation requires the retained seat-bound response across all audi
   const extract = (role: (typeof AUDITOR_SOUL_ROLES)[number], entries: readonly unknown[]) => {
     switch (role) {
       case "judge": return extractJudgeRoleOutcome(entries as never);
-      case "reviewer": return extractReviewerRoleOutcome(entries as never);
       case "doctor": return extractDoctorRoleOutcome(entries as never);
     }
   };
@@ -653,7 +651,6 @@ test("audit escalation requires the retained seat-bound response across all audi
   };
   const hostileRows = {
     judge: { source: "public", property: "conflicts" },
-    reviewer: { source: "public", property: "auditDecisionGate" },
     doctor: { source: "retained", property: "decisionGate" },
   } as const;
   for (const role of AUDITOR_SOUL_ROLES) {
