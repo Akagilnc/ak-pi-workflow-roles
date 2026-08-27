@@ -41,7 +41,7 @@ async function withParent(run: (context: any) => Promise<void>) {
 test("scripted Inspector pass projects typed receipt and loads Inspector session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
   const qualityLaw = await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8");
-  const menxiaGuide = await readFile(resolve(packageRoot, "souls/menxia-output-guide.md"), "utf8");
+  const menxiaGuide = await readFile(resolve(packageRoot, "souls/gate-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
   const overlay =
@@ -89,7 +89,7 @@ test("Gatekeeper accepts its typed officer choice instead of machine-rejecting d
 
 test("scripted officer bounce projects rewrite disposition and loads that officer's session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
-  const menxiaGuide = await readFile(resolve(packageRoot, "souls/menxia-output-guide.md"), "utf8");
+  const menxiaGuide = await readFile(resolve(packageRoot, "souls/gate-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
   const overlay =
