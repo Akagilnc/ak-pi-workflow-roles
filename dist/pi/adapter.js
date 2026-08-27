@@ -1,11 +1,3 @@
-const projectedPiContexts = new WeakMap();
-/** Composition-root-only native context resolution for Pi-backed dependencies. */
-export function resolvePiContextAtCompositionRoot(context) {
-    const native = projectedPiContexts.get(context);
-    if (native === undefined)
-        throw new Error("Host context did not originate at a Pi adapter boundary");
-    return native;
-}
 /** Project Pi's activation context onto the package-owned host contract. */
 function projectPiContext(context, contexts) {
     const host = {
@@ -26,7 +18,6 @@ function projectPiContext(context, contexts) {
         abort: () => context.abort(),
     };
     contexts.set(host, context);
-    projectedPiContexts.set(host, context);
     return host;
 }
 /** Standalone projection for consumers that never need a reverse boundary conversion. */

@@ -16,7 +16,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
-import { resolvePiContextAtCompositionRoot } from "../../src/pi/adapter.ts";
+import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import {
   context,
   candidate,
@@ -669,11 +669,12 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
         },
       };
 
+      const piHostAdapter = createPiRoleHostAdapter(pi as never);
       createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
         transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
-        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, { ...options, context: resolvePiContextAtCompositionRoot(options.context) }),
+        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, { ...options, context: piHostAdapter.resolveContext(options.context) }),
         createNavigatorAttendance: (options) => {
           observed = {
             subject: options.subject,
@@ -689,7 +690,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
             dispose() {},
           };
         },
-      })(pi as never);
+      }, piHostAdapter)(pi as never);
 
       const sessionDir = join(runDir, "session");
       await mkdir(sessionDir, { recursive: true });
