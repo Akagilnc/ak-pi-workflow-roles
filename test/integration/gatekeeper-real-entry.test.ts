@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -13,6 +13,7 @@ import {
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
 } from "../../src/gatekeeper-role.ts";
+import { INSTITUTIONAL_RESOLUTION_FILE } from "../../src/institutional-resolution.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
@@ -318,4 +319,69 @@ context,
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
     assert.equal(turns, 1);
   });
+});
+
+test("Gatekeeper real entry maps missing, corrupt, and absent-seat resolution page to transport_failure", async () => {
+  const cases = [
+    {
+      name: "missing page",
+      setup: async (_dir: string) => { /* no file written */ },
+      expectedErrorSubstring: "institutional resolution page is missing",
+    },
+    {
+      name: "corrupt page",
+      setup: async (dir: string) => {
+        await writeFile(resolve(dir, INSTITUTIONAL_RESOLUTION_FILE), "not-valid-json {{{{", "utf8");
+      },
+      expectedErrorSubstring: "institutional resolution page is corrupted",
+    },
+    {
+      name: "absent seat",
+      setup: async (dir: string) => {
+        await writeInstitutionalSeatTable(dir, {
+          inspector: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
+        });
+      },
+      expectedErrorSubstring: 'institutional resolution page has no resolution for seat "gatekeeper"',
+    },
+  ] as const;
+
+  for (const tc of cases) {
+    await withActivationHome({ prefix: "ak-gatekeeper-resolution-" }, async ({ agentDir, home }) => {
+      const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent" });
+      faux.setResponses([fauxAssistantMessage("parent")]);
+      await withInProcessPi(
+        { cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} },
+        async ({ session, model }) => {
+          await tc.setup(home);
+          const result = await runGatekeeper({
+            context: {
+              cwd: home,
+              model,
+              modelRegistry: {
+                getProvider() { return undefined; },
+                find() { return model; },
+                async getProviderAuth() { return { auth: {} }; },
+                async getApiKeyAndHeaders() { return { ok: true }; },
+              },
+              thinkingLevel: "off",
+              sessionManager: session.sessionManager,
+              runDirectory: home,
+            } as unknown as any,
+            runDirectory: home,
+            subject: { kind: "worker_completion", material: "completion" },
+          });
+          assert.equal(result.status, "transport_failure", `${tc.name}: status must be transport_failure`);
+          if (result.status === "transport_failure") {
+            assert.equal(result.stage, "gatekeeper", `${tc.name}: stage must be gatekeeper`);
+            assert.match(
+              result.reason,
+              new RegExp(`InstitutionalResolutionError: ${tc.expectedErrorSubstring}`),
+              `${tc.name}: reason must contain InstitutionalResolutionError name and message`,
+            );
+          }
+        },
+      );
+    });
+  }
 });
