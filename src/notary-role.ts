@@ -17,6 +17,9 @@ import {
   retainNotarySubmission,
   type NotarySourceRunLocator,
 } from "./notary-contracts.ts";
+import {
+  failOnInfrastructureFailureDeclaration,
+} from "./package-contracts/terminating-infrastructure.ts";
 
 export {
   NOTARY_ACCEPTED_TEXT,
@@ -98,6 +101,9 @@ export function createNotaryRoleRuntime(
             if (activation === undefined) {
               throw new Error("符宝郎未激活");
             }
+            // #541: infra declaration fails via the shared host seam before any
+            // pass/bounce projection.
+            failOnInfrastructureFailureDeclaration(parameters, host, ctx, toolCallId);
             // Unique submission + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055): lawful pass/bounce projected; else params as-is.
             requireSingletonSubmissionCall(toolCallId, ctx);

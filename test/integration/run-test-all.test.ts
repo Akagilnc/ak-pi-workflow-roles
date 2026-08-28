@@ -27,6 +27,7 @@ const THIS_CONTRACT_REL = "test/integration/run-test-all.test.ts";
 const TICKET_HEAVYWEIGHT = [
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
+  "test/integration/public-cli-judge-engine-detour.test.ts",
   "test/package/package-entrypoint-cold-help.integration.test.ts",
   "test/package/package-entrypoint-navigator.integration.test.ts",
   "test/package/package-entrypoint-observation.integration.test.ts",

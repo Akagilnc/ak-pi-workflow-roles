@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { canonicalJson } from "./canonical-json.ts";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -87,7 +88,9 @@ const doctorSubmissionVariants = Type.Union([
     missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "如实证词所需而尚缺的证据" }),
   }, { additionalProperties: false, description: "证据不足以支撑如实案证词" }),
 ]);
-export const doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
+export const doctorSubmissionSchema = withInfrastructureFailureDeclaration(
+  openToolObjectFromUnion(doctorSubmissionVariants),
+);
 export const doctorOutputSchema = Type.Union([
   Type.Object({ status: Type.Literal("completed"), case: caseIdentity, findings: Type.Array(finding), cost }, { additionalProperties: false }),
   doctorSubmissionVariants.anyOf[1]!,

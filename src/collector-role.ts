@@ -31,6 +31,9 @@ import {
   type CollectorReceipt,
 } from "./collector-receipt.ts";
 import {
+  failOnInfrastructureFailureDeclaration,
+} from "./package-contracts/terminating-infrastructure.ts";
+import {
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
   collectorRequestArgsSchema,
@@ -388,6 +391,9 @@ export function createCollectorRoleRuntime(
           throw new Error("通进司未激活");
         }
         try {
+          // #541: infra declaration fails via the shared host seam before the
+          // operational ledger begins / a receipt is built.
+          failOnInfrastructureFailureDeclaration(params, hostActions, ctx, toolCallId);
           assertSoleFinalCollectorOutput(toolCallId, ctx);
           activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
           const receipt: CollectorReceipt = buildCollectorReceipt(

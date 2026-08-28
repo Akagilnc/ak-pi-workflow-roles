@@ -18,3 +18,27 @@ test("Doctor output audits testimony, seals runtime cost, and keeps failure beha
   // Zero hand-delivery: auditor is called with context only; candidate already on books.
   assert.equal(auditCalls, 3);
   decision = "failure"; await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts++; })), /provider unavailable/); assert.equal(aborts, 1); });
+
+test("Doctor output routes an infrastructure-failure declaration to the host before any audit", async () => {
+  let aborts = 0;
+  let auditCalls = 0;
+  const h = harness();
+  const runtime = createDoctorRoleRuntime(h.pi as ExtensionAPI, {
+    loadSoul: async () => "DOCTOR LAW",
+    loadCase: async () => patient,
+    async auditCompliance() { auditCalls += 1; return { status: "pass" }; },
+  }, { failInfrastructure(error, ctx) { ctx.abort(); throw error; } });
+  await runtime.activate();
+  const output = h.tools.get(DOCTOR_OUTPUT_TOOL_NAME);
+  const parameters = { infrastructureFailure: { diagnostic: "doctor engine 541" } };
+  await assert.rejects(
+    output.execute("infra", parameters, undefined, undefined, context("infra", () => { aborts++; })),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "doctor engine 541");
+      return true;
+    },
+  );
+  assert.equal(auditCalls, 0, "no audit may run for an infrastructure-failure declaration");
+  assert.equal(aborts, 1, "the host abort seam fires exactly once");
+});

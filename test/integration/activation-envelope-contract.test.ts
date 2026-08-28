@@ -294,14 +294,14 @@ test("packaged terminating tools expose the provider-open registration inventory
 
   const declaredFields = (role: string): readonly string[] => {
     switch (role) {
-      case "coder": return ["status", "report", "remainingScope", "reason"];
-      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence", "reason"];
-      case "reviewer": return ["status", "diagnostic", "amendments"];
-      case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"];
-      case "collector": return [];
-      case "doctor": return ["status", "case", "findings", "reason", "missingEvidence"];
-      case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis"];
-      case "notary": return ["status", "findings"];
+      case "coder": return ["status", "report", "remainingScope", "reason", "infrastructureFailure"];
+      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence", "reason", "infrastructureFailure"];
+      case "reviewer": return ["status", "diagnostic", "amendments", "infrastructureFailure"];
+      case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate", "infrastructureFailure"];
+      case "collector": return ["infrastructureFailure"];
+      case "doctor": return ["status", "case", "findings", "reason", "missingEvidence", "infrastructureFailure"];
+      case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis", "infrastructureFailure"];
+      case "notary": return ["status", "findings", "infrastructureFailure"];
       default: throw new Error(`unexpected packaged role ${role}`);
     }
   };

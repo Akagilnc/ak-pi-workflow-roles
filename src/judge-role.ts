@@ -9,6 +9,10 @@ import { Type, type Static } from "typebox";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
+import {
+  failOnInfrastructureFailureDeclaration,
+  withInfrastructureFailureDeclaration,
+} from "./package-contracts/terminating-infrastructure.ts";
 
 import {
   JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
@@ -21,34 +25,36 @@ import {
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
 
-const judgeVerdictSchema = Type.Object(
-  {
-    judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
-    fix: Type.Optional(
-      Type.Object(
-        { summary: Type.String({ minLength: 1, description: "continue 时的补救摘要" }) },
-        { additionalProperties: false, description: "continue 时的补救说明" },
+export const judgeVerdictSchema = withInfrastructureFailureDeclaration(
+  Type.Object(
+    {
+      judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
+      fix: Type.Optional(
+        Type.Object(
+          { summary: Type.String({ minLength: 1, description: "continue 时的补救摘要" }) },
+          { additionalProperties: false, description: "continue 时的补救说明" },
+        ),
       ),
-    ),
-    classes: Type.Optional(Type.Array(Type.Object({
-      name: Type.String({ minLength: 1 }),
-      owner: Type.String({ minLength: 1 }),
-      boundary: Type.String({ minLength: 1 }),
-      disposition: Type.String({ minLength: 1 }),
-    }, { additionalProperties: false }), { minItems: 1, description: "已裁决 finding 类及其 owner 与修理边界" })),
-    note: Type.Optional(Type.String({ minLength: 1, description: "可选裁决附注" })),
-    evidence: Type.Optional(Type.Unknown({ description: "留存的裁决证据" })),
-    decisionGate: Type.Optional(
-      Type.Object(
-        {
-          question: Type.String({ minLength: 1 }),
-          options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-        },
-        { additionalProperties: false, description: "需人权威处置的问题与选项" },
+      classes: Type.Optional(Type.Array(Type.Object({
+        name: Type.String({ minLength: 1 }),
+        owner: Type.String({ minLength: 1 }),
+        boundary: Type.String({ minLength: 1 }),
+        disposition: Type.String({ minLength: 1 }),
+      }, { additionalProperties: false }), { minItems: 1, description: "已裁决 finding 类及其 owner 与修理边界" })),
+      note: Type.Optional(Type.String({ minLength: 1, description: "可选裁决附注" })),
+      evidence: Type.Optional(Type.Unknown({ description: "留存的裁决证据" })),
+      decisionGate: Type.Optional(
+        Type.Object(
+          {
+            question: Type.String({ minLength: 1 }),
+            options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+          },
+          { additionalProperties: false, description: "需人权威处置的问题与选项" },
+        ),
       ),
-    ),
-  },
-  { additionalProperties: true },
+    },
+    { additionalProperties: true },
+  ),
 );
 (judgeVerdictSchema as unknown as { required: string[] }).required = [];
 
@@ -109,6 +115,9 @@ export function createJudgeRoleRuntime(
           parameters: judgeVerdictSchema,
           async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
+            // #541: infra declaration fails via the shared host seam before any
+            // Gatekeeper + audit courtyard work.
+            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
             requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this

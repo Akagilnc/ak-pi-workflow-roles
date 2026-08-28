@@ -14,6 +14,8 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/role-runtime.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
+import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
+import { CODE0_ERROR_BODY } from "../fixtures/engine-detour-provider.ts";
 import {
   packageRoot,
   piCli,
@@ -356,6 +358,75 @@ test(
           row.message?.details?.judgeStatus === "converged",
       );
       assert.equal(judgeAccepted, true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "AC code0+error body: fake engine exit 0 with error body → Judge infra declaration → typed failure",
+  { timeout: 120_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-code0-"));
+    try {
+      const project = join(home, "work");
+      const binDir = join(home, "bin");
+      await mkdir(project, { recursive: true });
+      await mkdir(binDir, { recursive: true });
+      seedGitProject(project);
+      // Engine process exits 0 yet carries a non-empty error body in stdout —
+      // the exact gap #541 closes (detour predicate treats code0+nonempty as success).
+      await writeExecutable(
+        join(binDir, "kimi"),
+        `#!/bin/sh\nprintf '%s\\n' '${CODE0_ERROR_BODY} 529 upstream failure'\\nexit 0\n`,
+      );
+
+      const result = await runJudgeWithEngine({
+        home,
+        project,
+        binDir,
+        runId: "run-engine-detour-code0-001",
+        engine: "kimi",
+      });
+
+      assert.equal(result.exitCode, 1, result.stderr.join(""));
+      assert.equal(result.terminal?.roleOutcome.kind, "failure");
+      if (result.terminal?.roleOutcome.kind !== "failure") assert.fail("expected typed failure");
+      assert.equal(result.terminal.roleOutcome.cause, "output");
+      assert.equal(
+        result.terminal.roleOutcome.diagnostic.includes(CODE0_ERROR_BODY),
+        true,
+        result.terminal.roleOutcome.diagnostic,
+      );
+
+      // No business receipt / no-receipt: the only judge output is the infra failure.
+      const bookKey = resolveBookKeyFromGit(project);
+      const runDir = join(
+        home,
+        ".ak-roles",
+        "books",
+        bookKey,
+        "runs",
+        "run-engine-detour-code0-001@judge",
+      );
+      const sessionFile = join(runDir, "session", "session.jsonl");
+      const rows = (await readFile(sessionFile, "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as any);
+      const acceptedJudge = rows.some(
+        (row) =>
+          row.type === "message" &&
+          row.message?.role === "toolResult" &&
+          row.message?.toolName === "ak_judge_output" &&
+          row.message?.isError !== true &&
+          row.message?.details?.judgeStatus,
+      );
+      assert.equal(acceptedJudge, false, "no accepted judge receipt may exist for an infra failure");
+      // Half-finished labor location stays openable: typed Error Artifact present.
+      const errArtifact = await readRunTerminalArtifact(runDir);
+      assert.equal(errArtifact.status, "present", "failure must publish an openable Error Artifact");
     } finally {
       await rm(home, { recursive: true, force: true });
     }
