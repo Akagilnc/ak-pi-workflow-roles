@@ -10,7 +10,7 @@ import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
-import { failOnInfrastructureFailureDeclaration, withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
@@ -145,7 +145,7 @@ export function createReviewerRoleRuntime(
 
       if (!registered) {
         registered = true;
-        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "Standards/Spec 评审腿由 runtime 以取证子会话代跑，本席收腿报告后交薄回执。", promptSnippet: "提交御史台终局回执", parameters: withInfrastructureFailureDeclaration(reviewerOutputSchema),
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "Standards/Spec 评审腿由 runtime 以取证子会话代跑，本席收腿报告后交薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(id, parameters, _signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
             // #541: infra declaration fails via the shared host seam before the

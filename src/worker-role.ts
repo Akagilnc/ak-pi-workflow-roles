@@ -8,7 +8,6 @@ import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import {
   failOnInfrastructureFailureDeclaration,
-  withInfrastructureFailureDeclaration,
 } from "./package-contracts/terminating-infrastructure.ts";
 
 import type {
@@ -268,7 +267,7 @@ export function createFixerRoleRuntime(
           label: "修内司输出",
           description: "提交修内司终局回执；本工具经共享 host seam 承接基础设施失败。",
           promptSnippet: "提交修内司终局回执",
-          parameters: withInfrastructureFailureDeclaration(fixerOutputSchema),
+          parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (packet === undefined || phase === undefined) {
               throw new Error("修内司修理包与阶段未装载");
@@ -402,7 +401,7 @@ export function createCoderRoleRuntime(
           label: "将作监输出",
           description: "提交将作监终局回执；本工具无 escalate 通道。",
           promptSnippet: "提交将作监终局回执",
-          parameters: withInfrastructureFailureDeclaration(coderOutputSchema),
+          parameters: coderOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
             if (task === undefined || phase === undefined) {
               throw new Error("将作监任务与阶段未装载");
