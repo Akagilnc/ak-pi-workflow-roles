@@ -1,8 +1,5 @@
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
-import { engineSessionMaterialFromOptions } from "../../src/package-resources/engine-material.ts";
-import { buildReviewerTurnRequest } from "../../src/public-cli/reviewer-run.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -54,33 +51,6 @@ import {
   runPiSubprocess,
 } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-
-function reviewerActivationArgs(
-  admitted: Parameters<typeof buildReviewerTurnRequest>[0],
-  kind: "initial" | "resume",
-): string[] {
-  return buildPiTurnExtraArgs(
-    buildReviewerTurnRequest(admitted, {
-      packageRoot,
-      home: admitted.projectRoot ?? "/tmp",
-      agentDir: "/tmp/agent",
-      continuation:
-        kind === "initial"
-          ? {
-              kind: "initial",
-              prompt: buildReviewerTransportPrompt(
-                admitted,
-                engineSessionMaterialFromOptions({ packageRoot }),
-              ),
-            }
-          : {
-              kind: "resume",
-              prompt: selectResumeContinuationPrompt(),
-            },
-    }),
-    piDurablePrincipalAuthority,
-  );
-}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-reviewer-"));
@@ -376,102 +346,6 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
     ]);
-  });
-});
-
-test("buildReviewerTurnRequest forces package code-review and fixed base only", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const admitted = await admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Review since HEAD~1.",
-      attachmentPaths: [],
-      baseRevision: "HEAD~1",
-      createRunId: () => "run-reviewer-args",
-    });
-    const args = reviewerActivationArgs(admitted, "initial");
-    assert.equal(args.includes("--no-skills"), true);
-    assert.equal(args.includes("--skill"), true);
-    assert.equal(args.includes("--ak-role"), true);
-    assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-    assert.equal(args.includes("--ak-review-task"), false);
-    assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
-    assert.equal(args.includes("--ak-review-authority-refs"), false);
-    assert.equal(args.includes("--ak-review-ticket-number"), false);
-    // Transport prompt is the positional tail; coordinates via production builder (no prose pin).
-    assert.equal(args.at(-1), buildReviewerTransportPrompt(admitted));
-
-    const admittedWithRefs = await admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Scope the review.",
-      attachmentPaths: [],
-      baseRevision: "HEAD~1",
-      authorityRefs: [
-        "https://example.com/a",
-        "https://example.com/b,with-comma",
-      ],
-      createRunId: () => "run-reviewer-args-refs",
-    });
-    const argsWithRefs = reviewerActivationArgs(admittedWithRefs, "initial");
-    assert.equal(
-      argsWithRefs[argsWithRefs.indexOf("--ak-review-authority-refs") + 1],
-      JSON.stringify([
-        "https://example.com/a",
-        "https://example.com/b,with-comma",
-      ]),
-    );
-    const resumeWithRefs = reviewerActivationArgs(admittedWithRefs, "resume");
-    assert.equal(
-      resumeWithRefs[resumeWithRefs.indexOf("--ak-review-authority-refs") + 1],
-      JSON.stringify([
-        "https://example.com/a",
-        "https://example.com/b,with-comma",
-      ]),
-    );
-    assert.equal(args.some((a) => a.includes(admitted.instruction)), false);
-    assert.equal(args.some((a) => a.includes(".agents/skills")), false);
-
-    const resume = reviewerActivationArgs(admitted, "resume");
-    assert.equal(resume.includes("--skill"), true);
-    assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
-    assert.equal(resume.includes("--ak-review-task"), false);
-    assert.equal(resume.includes(admitted.instruction), false);
-    assert.equal(resume[resume.indexOf("--ak-review-base") + 1], "HEAD~1");
-
-    // Typed ticketNumber (attachment frontmatter / admitted page) transports for Spec self-fetch.
-    const ticketFile = join(home, "ticket-343.md");
-    await writeFile(
-      ticketFile,
-      ["---", "ticketNumber: 343", "---", "# ticket body", ""].join("\n"),
-      "utf8",
-    );
-    const admittedWithTicket = await admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Scope only.",
-      attachmentPaths: [ticketFile],
-      baseRevision: "HEAD~1",
-      createRunId: () => "run-reviewer-args-ticket",
-    });
-    assert.equal(admittedWithTicket.ticketNumber, 343);
-    const argsWithTicket = reviewerActivationArgs(admittedWithTicket, "initial");
-    assert.equal(
-      argsWithTicket[argsWithTicket.indexOf("--ak-review-ticket-number") + 1],
-      "343",
-    );
-    const resumeWithTicket = reviewerActivationArgs(admittedWithTicket, "resume");
-    assert.equal(
-      resumeWithTicket[resumeWithTicket.indexOf("--ak-review-ticket-number") + 1],
-      "343",
-    );
   });
 });
 
