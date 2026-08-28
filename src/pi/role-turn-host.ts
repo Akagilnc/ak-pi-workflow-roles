@@ -296,6 +296,13 @@ export function createDefaultPiSpawnRunner(options: {
       // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
       // SIGKILL is unconditionally forbidden — graceful SIGTERM only.
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      // `error` fires for pre-spawn failures (ENOENT after identity check is a
+      // true activation failure) or kill/dispatch errors. Retain it so `close`
+      // remains the SOLE settlement point (spec-B: child close once). Only
+      // fall back to rejecting on `error` if `close` never fires (e.g. spawn
+      // never succeeded so no `close` event will arrive).
+      let hasSpawned = false;
       const armTimeoutAfterChildReady = (): void => {
         if (spawnOptions.timeoutMs === undefined) return;
         timer = setTimeout(() => {
@@ -305,6 +312,7 @@ export function createDefaultPiSpawnRunner(options: {
       };
       let identityRecorded: Promise<void> = Promise.resolve();
       child.once("spawn", () => {
+        hasSpawned = true;
         armTimeoutAfterChildReady();
         const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
         if (
@@ -319,19 +327,32 @@ export function createDefaultPiSpawnRunner(options: {
         stderr += chunk;
       });
       child.on("error", (error) => {
-        if (timer !== undefined) clearTimeout(timer);
-        reject(error);
+        // If the child never spawned, `close` will not fire — reject is the
+        // only way to avoid hanging. Once `spawn` has fired, `close` always
+        // follows and owns settlement (spec-B: child close once).
+        if (settled === false && !hasSpawned) {
+          if (timer !== undefined) clearTimeout(timer);
+          settled = true;
+          reject(error);
+        }
       });
       child.on("close", (code) => {
         if (timer !== undefined) clearTimeout(timer);
         void identityRecorded.then(
-          () =>
+          () => {
+            if (settled) return;
+            settled = true;
             resolveResult({
               code,
               stderr,
               timedOut,
-            }),
-          reject,
+            });
+          },
+          (error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          },
         );
       });
     });
