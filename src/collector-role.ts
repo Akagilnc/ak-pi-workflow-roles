@@ -31,6 +31,10 @@ import {
   type CollectorReceipt,
 } from "./collector-receipt.ts";
 import {
+  failOnInfrastructureFailureDeclaration,
+  withInfrastructureFailureDeclaration,
+} from "./package-contracts/terminating-infrastructure.ts";
+import {
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
   collectorRequestArgsSchema,
@@ -382,12 +386,15 @@ export function createCollectorRoleRuntime(
       label: "通进司输出",
       description: "观察完成后提交；回执由 runtime 组装。",
       promptSnippet: "提交通进司回执",
-      parameters: outputSchema,
+      parameters: withInfrastructureFailureDeclaration(outputSchema),
       async execute(toolCallId, params: OutputParams, _signal, _onUpdate, ctx) {
         if (activation === undefined) {
           throw new Error("通进司未激活");
         }
         try {
+          // #541: infra declaration fails via the shared host seam before the
+          // operational ledger begins / a receipt is built.
+          failOnInfrastructureFailureDeclaration(params, hostActions, ctx, toolCallId);
           assertSoleFinalCollectorOutput(toolCallId, ctx);
           activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
           const receipt: CollectorReceipt = buildCollectorReceipt(

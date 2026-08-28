@@ -163,6 +163,21 @@ test("Merger accepts one honest escalation without Git success verification", as
   await assert.rejects(h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("again", args, undefined, undefined, context("again", args)));
 });
 
+test("Merger output routes an infrastructure-failure declaration to the host before any verification", async () => {
+  const h = setup(); await h.runtime.activate(); let aborted = 0;
+  const parameters = { infrastructureFailure: { diagnostic: "merger engine 541" } };
+  await assert.rejects(
+    h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("infra", parameters, undefined, undefined, context("infra", parameters, 1, () => aborted++)),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "merger engine 541");
+      return true;
+    },
+  );
+  assert.equal(h.completedCalls(), 0, "no Git verification runs for an infrastructure-failure declaration");
+  assert.equal(aborted, 1, "the host abort seam fires exactly once");
+});
+
 test("Merger terminal contract and singleton failures abort without accepting a receipt", async () => {
   const valid = { status: "escalate", attemptId: "attempt", diagnosis: "new product decision", report: "both authorized intents cannot coexist" };
   for (const { args, calls } of [
