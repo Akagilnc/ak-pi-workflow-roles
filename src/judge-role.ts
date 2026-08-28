@@ -9,6 +9,10 @@ import { Type, type Static } from "typebox";
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
+import {
+  failOnInfrastructureFailureDeclaration,
+  withInfrastructureFailureDeclaration,
+} from "./package-contracts/terminating-infrastructure.ts";
 
 import {
   JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
@@ -106,9 +110,12 @@ export function createJudgeRoleRuntime(
           label: "大理寺输出",
           description: "提交大理寺终局判词；受理前经审刑院审计。",
           promptSnippet: "提交大理寺终局判词",
-          parameters: judgeVerdictSchema,
+          parameters: withInfrastructureFailureDeclaration(judgeVerdictSchema),
           async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
+            // #541: infra declaration fails via the shared host seam before any
+            // Gatekeeper + audit courtyard work.
+            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
             requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this

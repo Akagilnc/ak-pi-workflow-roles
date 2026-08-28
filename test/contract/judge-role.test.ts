@@ -2671,3 +2671,101 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
     await rm(nestedRunDir, { recursive: true, force: true });
   }
 });
+
+test("Judge output routes an infrastructure-failure declaration to the host before any audit", async () => {
+  let auditCalls = 0;
+  await withActivationHome({ prefix: "ak-judge-infra-" }, async ({ home }) => {
+    const harness = extensionHarness("judge");
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "JUDGE LAW",
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => {
+        auditCalls += 1;
+        return { status: "pass" };
+      },
+    })(harness.pi as ExtensionAPI);
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    const parameters = { infrastructureFailure: { diagnostic: "engine body 541" } };
+    await assert.rejects(
+      tool.execute(
+        "infra",
+        parameters,
+        undefined,
+        undefined,
+        withPassingGatekeeper(toolCallContext([{ id: "infra", arguments: parameters }])),
+      ),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, "engine body 541");
+        return true;
+      },
+    );
+    // The declaration fails before Gatekeeper + soul audit: zero follow-up work.
+    assert.equal(auditCalls, 0, "no audit may run for an infrastructure-failure declaration");
+  });
+});
+
+function infraHostActionHarness(hostCalls: { count: number }, toolCallId: string) {
+  return {
+    failInfrastructure(error: unknown, _ctx: unknown, id?: string) {
+      hostCalls.count += 1;
+      assert.equal(id, toolCallId);
+      throw error instanceof Error ? error : new Error(String(error));
+    },
+    bindGatekeeperNonPass() {},
+  };
+}
+
+test("Fixer output routes an infrastructure-failure declaration to the host before any gate", async () => {
+  const harness = extensionHarness("fixer", {
+    "ak-fix-packet": "/packet",
+    "ak-fixer-phase": "apply",
+  });
+  const hostCalls = { count: 0 };
+  const runtime = createFixerRoleRuntime(
+    harness.pi as ExtensionAPI,
+    { loadSoul: async () => "FIXER LAW", loadPacket: async () => "repair packet" },
+    infraHostActionHarness(hostCalls, "infra"),
+  );
+  await runtime.activate();
+  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  const parameters = { infrastructureFailure: { diagnostic: "fixer engine 541" } };
+  await assert.rejects(
+    tool.execute("infra", parameters, undefined, undefined, toolCallContext([{ id: "infra", arguments: parameters, name: FIXER_OUTPUT_TOOL_NAME }])),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "fixer engine 541");
+      return true;
+    },
+  );
+  assert.equal(hostCalls.count, 1, "the fixer infra declaration reaches the host exactly once");
+});
+
+test("Coder output routes an infrastructure-failure declaration to the host before any gate", async () => {
+  const harness = extensionHarness("coder", {
+    "ak-coder-task": "/task",
+    "ak-coder-phase": "plan",
+  });
+  const hostCalls = { count: 0 };
+  const runtime = createCoderRoleRuntime(
+    harness.pi as ExtensionAPI,
+    { loadSoul: async () => "CODER LAW", loadTask: async () => "IMPLEMENT" },
+    infraHostActionHarness(hostCalls, "infra"),
+  );
+  await runtime.activate();
+  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  const parameters = { infrastructureFailure: { diagnostic: "coder engine 541" } };
+  await assert.rejects(
+    tool.execute("infra", parameters, undefined, undefined, toolCallContext([{ id: "infra", arguments: parameters, name: CODER_OUTPUT_TOOL_NAME }])),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "coder engine 541");
+      return true;
+    },
+  );
+  assert.equal(hostCalls.count, 1, "the coder infra declaration reaches the host exactly once");
+});
