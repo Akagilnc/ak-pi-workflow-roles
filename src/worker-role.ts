@@ -6,6 +6,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import {
+  failOnInfrastructureFailureDeclaration,
+  withInfrastructureFailureDeclaration,
+} from "./package-contracts/terminating-infrastructure.ts";
 
 import type {
   AnyCanonicalSkillBinding,
@@ -262,13 +266,16 @@ export function createFixerRoleRuntime(
         pi.registerTool({
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "修内司输出",
-          description: "提交修内司终局回执；基础设施失败走 abort，不经本工具。",
+          description: "提交修内司终局回执；本工具经共享 host seam 承接基础设施失败。",
           promptSnippet: "提交修内司终局回执",
-          parameters: fixerOutputSchema,
+          parameters: withInfrastructureFailureDeclaration(fixerOutputSchema),
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (packet === undefined || phase === undefined) {
               throw new Error("修内司修理包与阶段未装载");
             }
+            // #541: infra declaration fails via the shared host seam before any
+            // submission gate + Gatekeeper work.
+            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
             requireSingletonSubmissionCall(
               toolCallId,
               FIXER_OUTPUT_TOOL_NAME,
@@ -395,11 +402,14 @@ export function createCoderRoleRuntime(
           label: "将作监输出",
           description: "提交将作监终局回执；本工具无 escalate 通道。",
           promptSnippet: "提交将作监终局回执",
-          parameters: coderOutputSchema,
+          parameters: withInfrastructureFailureDeclaration(coderOutputSchema),
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
             if (task === undefined || phase === undefined) {
               throw new Error("将作监任务与阶段未装载");
             }
+            // #541: infra declaration fails via the shared host seam before any
+            // submission gate + Gatekeeper work.
+            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
             requireSingletonSubmissionCall(
               toolCallId,
               CODER_OUTPUT_TOOL_NAME,

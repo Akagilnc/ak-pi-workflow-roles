@@ -21,6 +21,27 @@ export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
 export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 
+/**
+ * Schema reuse for every terminating output tool: merge the shared declaration
+ * fragment into an existing open tool-object schema so the model may declare an
+ * infrastructure failure. All output transport schemas are already open
+ * (additionalProperties: true) and required-free; this only surfaces the typed
+ * declaration on each seat's parameters without a per-seat schema copy.
+ */
+export function withInfrastructureFailureDeclaration(schema: unknown): unknown {
+  const source = schema as { properties?: Record<string, unknown> };
+  const object = Type.Object(
+    {
+      ...(source.properties ?? {}),
+      [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]:
+        infrastructureFailureDeclarationSchema,
+    },
+    { additionalProperties: true },
+  );
+  (object as unknown as { required: unknown[] }).required = [];
+  return object;
+}
+
 /** Shared schema fragment reused by every terminating output tool's parameters. */
 export const infrastructureFailureDeclarationSchema = Type.Object(
   {
@@ -35,8 +56,8 @@ export const infrastructureFailureDeclarationSchema = Type.Object(
 );
 
 /** Structural host seam subset shared by all eight terminating execute paths. */
-export type TerminatingInfrastructureHostActions = {
-  failInfrastructure(error: unknown, ctx: unknown, toolCallId?: string): never;
+export type TerminatingInfrastructureHostActions<C> = {
+  failInfrastructure(error: unknown, ctx: C, toolCallId?: string): never;
 };
 
 /** Safe recognition of the typed declaration (hostile getters / non-shapes fail closed). */
@@ -92,10 +113,10 @@ export function infrastructureFailureError(diagnostic: string): Error {
  * carry the infra declaration, hand the diagnostic error to the shared host
  * `failInfrastructure` seam (which aborts the run). No-op otherwise.
  */
-export function failOnInfrastructureFailureDeclaration(
+export function failOnInfrastructureFailureDeclaration<C>(
   parameters: unknown,
-  hostActions: TerminatingInfrastructureHostActions,
-  ctx: unknown,
+  hostActions: TerminatingInfrastructureHostActions<C>,
+  ctx: C,
   toolCallId: string,
 ): void {
   const diagnostic = infrastructureFailureDiagnostic(parameters);
