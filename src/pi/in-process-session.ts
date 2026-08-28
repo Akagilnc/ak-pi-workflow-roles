@@ -260,24 +260,16 @@ function enrichStreamEvent(event: unknown, observedHttpStatus: number | undefine
 // ── S3 Institutional Session Open Seam ─────────────────────────────────────
 
 export type OpenPiInstitutionalSessionOptions = HostInstitutionalSessionOptions & {
-  readonly runCompletion?: (
-    model: Model<Api>,
-    context: Context,
-    options: ProviderStreamOptions,
-  ) => Promise<AssistantMessage>;
-  readonly injectedSystemPrompt?: string;
   readonly label?: string;
 };
 
 /**
- * Result of the Pi institutional open seam. The host-neutral handle is the
- * public open-turn-close surface; `session` is the underlying AgentSession the
- * adapter opened (auth resolved per explicit selection, own runtime/provider).
- * Internal institutional consumers drive the session and close via the handle.
+ * Result of the Pi institutional open seam (#518 §1②).
+ * The host-neutral handle is the open-turn-close surface and does not leak
+ * AgentSession, ModelRuntime, or Provider objects out of the adapter.
  */
 export type OpenPiInstitutionalSessionResult = {
   readonly handle: HostInstitutionalSessionHandle;
-  readonly session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   /**
    * Primary provider-stream failure held at the adapter boundary when a
    * provider stream errors after idle-only retries are exhausted. Consumers
@@ -310,15 +302,23 @@ export async function openPiInstitutionalSession(
     const childRuntime = await ModelRuntime.create();
     const childRegistry = new ModelRegistry(childRuntime);
 
+    const childProvider: Provider | undefined = typeof childRegistry.getProvider === "function"
+      ? childRegistry.getProvider(selection.provider)
+      : undefined;
+
     const foundModel = typeof childRegistry.find === "function"
       ? childRegistry.find(selection.provider, selection.model)
       : undefined;
+    const providerDefaultModel = childProvider?.getModels?.()[0];
+    const fallbackApi = providerDefaultModel?.api
+      ?? (childProvider as any)?.api
+      ?? (selection.provider === "openai-codex" ? "openai-codex-responses" : "openai-completions");
     const modelToUse = foundModel ?? {
       id: selection.model,
       name: selection.model,
-      api: (selection.provider === "openai-codex" ? "openai-codex-responses" : selection.provider) as any,
+      api: fallbackApi as any,
       provider: selection.provider,
-      baseUrl: "",
+      baseUrl: providerDefaultModel?.baseUrl ?? "",
       reasoning: selection.thinking !== undefined && selection.thinking !== "off",
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -329,12 +329,9 @@ export async function openPiInstitutionalSession(
     let resolution: { auth: { baseUrl?: string; apiKey?: string; headers?: Record<string, string | null> }; env?: Record<string, string> } | undefined;
     if (typeof childRegistry.getProviderAuth === "function") {
       resolution = await childRegistry.getProviderAuth(selection.provider).catch((error: unknown) => {
-        if (options.runCompletion === undefined) {
-          throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-        }
-        return undefined;
+        throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
       });
-      if (resolution === undefined && options.runCompletion === undefined) {
+      if (resolution === undefined) {
         throw new Error(`${label} authentication failed: provider is not configured: ${selection.provider}`);
       }
     }
@@ -342,7 +339,7 @@ export async function openPiInstitutionalSession(
     let authResult: { ok: boolean; error?: string; apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> } | undefined;
     if (typeof childRegistry.getApiKeyAndHeaders === "function") {
       authResult = await childRegistry.getApiKeyAndHeaders(modelToUse as any);
-      if (authResult && !authResult.ok && options.runCompletion === undefined) {
+      if (authResult && !authResult.ok) {
         throw new Error(`${label} authentication failed: ${authResult.error}`);
       }
     }
@@ -367,13 +364,6 @@ export async function openPiInstitutionalSession(
       credentials,
       modelsPath: null,
     });
-
-    // The provider this child runtime will serve requests for. Resolved by
-    // explicit selection from the child registry (Pi auth true source), not
-    // captured from the parent session's ambient provider.
-    const childProvider: Provider | undefined = typeof childRegistry.getProvider === "function"
-      ? childRegistry.getProvider(selection.provider)
-      : undefined;
 
     // Seed the child runtime's own credential store with the explicitly
     // resolved auth so stream auth resolution is self-contained. No ambient
@@ -439,33 +429,6 @@ export async function openPiInstitutionalSession(
               },
             };
 
-            if (options.runCompletion !== undefined) {
-              await new Promise<void>((resolve) => setImmediate(resolve));
-              if (streamSignal.aborted) throw abortReason(streamSignal);
-              const completed = await waitForStream(
-                options.runCompletion(
-                  model,
-                  options.injectedSystemPrompt === undefined
-                    ? context
-                    : { ...context, systemPrompt: options.injectedSystemPrompt },
-                  retriedRequest,
-                ),
-                streamSignal,
-              );
-              const response: AssistantMessage = attachObservedHttpStatus({
-                ...completed,
-                api: model.api,
-                provider: model.provider,
-                model: model.id,
-              }, observedHttpStatus);
-              if (response.stopReason === "error" || response.stopReason === "aborted") {
-                wrapped.push({ type: "error", reason: response.stopReason, error: response });
-              } else {
-                wrapped.end(response);
-              }
-              return;
-            }
-
             if (childProvider === undefined) {
               throw new Error(`${label} provider not found: ${model.provider}`);
             }
@@ -486,7 +449,18 @@ export async function openPiInstitutionalSession(
               await waitForStream(source.result(), idle.signal),
               observedHttpStatus,
             );
-            if (!sawEvent) wrapped.end(response);
+            // Some stream APIs (e.g. OpenAI-completions over an HTTP error)
+            // surface the failure as an error-stop message rather than throwing.
+            // Hold that primary provider failure at the adapter boundary so
+            // consumers surface a real transport failure, never a projected
+            // step-machine "error" response (ADR 0018 / #518 §3).
+            if (response.stopReason === "error") {
+              streamFailureValue = new Error(
+                response.errorMessage ?? `${label} provider stream failed`,
+                { cause: response },
+              );
+            }
+            wrapped.end(response);
             return;
           } catch (error) {
             if (request?.signal?.aborted) {
@@ -650,7 +624,11 @@ export async function openPiInstitutionalSession(
       agentDir: resolvedAgentDir,
       resourceLoader: loader,
       ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
-      ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
+      ...(options.toolsAllowlist
+        ? { tools: options.toolsAllowlist as string[] }
+        : customTools.length > 0
+          ? { tools: customTools.map((t) => t.name) }
+          : {}),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
 
@@ -668,6 +646,7 @@ export async function openPiInstitutionalSession(
           listener({
             type: "message_end",
             role: msg.role,
+            message: msg,
             ...(msg.usage === undefined ? {} : { usage: msg.usage as HostSessionUsage }),
           });
         }
@@ -762,7 +741,6 @@ export async function openPiInstitutionalSession(
 
     return {
       handle,
-      session,
       // Read lazily: the provider stream runs during session.prompt, so the
       // primary failure is only known after that turn completes. A getter keeps
       // this reflecting the latest value instead of freezing it at open time.

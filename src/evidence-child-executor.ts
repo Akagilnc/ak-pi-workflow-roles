@@ -41,6 +41,7 @@ import type {
   OpenPiInstitutionalSessionOptions,
   OpenPiInstitutionalSessionResult,
 } from "./pi/in-process-session.ts";
+import type { HostAssistantTurnResult, HostContext } from "./host-contracts.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import {
@@ -91,11 +92,6 @@ export class AuditorTurnLimitError extends Error {
     this.name = "AuditorTurnLimitError";
   }
 }
-export type AuditorCompletion = (
-  model: Model<Api>,
-  context: Context,
-  options: ProviderStreamOptions,
-) => Promise<AssistantMessage>;
 export type AuditorDecisionTool = {
   name: string;
   description: string;
@@ -402,21 +398,22 @@ export async function executeEvidenceChild(
       } catch (error) {
         throw classifiedError(error, "provider");
       }
-      const { handle, session } = opened;
+      const { handle } = opened;
       const usage = emptyUsage();
-      const unsubscribe = session.subscribe((event) => {
-        if (event.type === "message_end" && event.message.role === "assistant") {
-          addUsage(usage, event.message.usage);
+      const unsubscribe = handle.subscribe((event) => {
+        if (event.type === "message_end" && event.role === "assistant") {
+          if (event.usage) addUsage(usage, event.usage);
         }
       });
-      const abortChild = () => { void session.abort(); };
+      const abortChild = () => { handle.abort(); };
       if (signal?.aborted) abortChild();
       else signal?.addEventListener("abort", abortChild, { once: true });
       let primaryFailure: unknown;
       try {
         const delivered = prompt;
+        let turnResult: HostAssistantTurnResult;
         try {
-          await session.prompt(delivered);
+          turnResult = await handle.prompt(delivered);
         } catch (error) {
           if (engineDetourFailure !== undefined) {
             throw classifiedError(engineDetourFailure, "child");
@@ -427,30 +424,31 @@ export async function executeEvidenceChild(
           throw classifiedError(engineDetourFailure, "child");
         }
         if (signal?.aborted) throw new Error("Evidence child was cancelled");
-        const lastAssistant = [...session.messages]
-          .reverse()
-          .find((message) => message.role === "assistant");
+        const lastAssistant = turnResult.messages !== undefined
+          ? [...turnResult.messages].reverse().find((message: any) => message?.role === "assistant") as AssistantMessage | undefined
+          : undefined;
         // error|aborted assistant stops share the upstream-testimony rule: provider only
         // with direct HTTP/SDK testimony, otherwise existing unknown. child is reserved
         // for real local child/report failures (no assistant / blank report / cleanup).
         if (
-          lastAssistant?.role === "assistant"
-          && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")
+          turnResult.stopReason === "error" || turnResult.stopReason === "aborted"
+          || (lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted"))
         ) {
+          const errMsg = turnResult.errorMessage ?? lastAssistant?.errorMessage ?? "";
           throw classifiedError(
-            new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }),
-            projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown",
+            new Error(errMsg, { cause: lastAssistant }),
+            lastAssistant && projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown",
           );
         }
-        if (lastAssistant?.role !== "assistant") {
+        if (lastAssistant !== undefined && lastAssistant.role !== "assistant") {
           throw classifiedError(
             new Error("Evidence child child terminated without a report", {
-              cause: lastAssistant ?? session.messages,
+              cause: lastAssistant ?? turnResult.messages,
             }),
             "child",
           );
         }
-        const report = session.getLastAssistantText() ?? "";
+        const report = turnResult.text;
         if (report.trim().length === 0) {
           throw new Error("Evidence child returned a blank child report");
         }
@@ -474,9 +472,8 @@ export type AuditorRoleOptions = {
   tool: AuditorDecisionTool;
   dossierTool: AuditorDecisionTool;
   roleLabel: string;
-  context: ExtensionContext;
+  context: ExtensionContext | HostContext;
   signal?: AbortSignal;
-  runCompletion?: AuditorCompletion;
   retainResponse?(response: AssistantMessage): void;
   /** Province seat identity only — shared executor owns seat resolution, and
    * loud auth/availability failure (#453 / ADR 0018). */
@@ -537,7 +534,7 @@ export async function executeAuditorChild(
           decisionToolFailure = undefined;
           decisionToolFailures.delete(args[0]);
           decisionSubmitted = true;
-          return result;
+          return { ...result, terminate: true };
         } catch (error) {
           decisionToolFailure = error;
           decisionToolFailures.set(args[0], error);
@@ -559,21 +556,31 @@ export async function executeAuditorChild(
     // Shared session open — no tools allowlist (ADR 0064). Auth resolved
     // child-locally from the explicit seat selection; adapter owns runtime/provider.
     const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    const evidenceToolFailures = new Map<string, unknown>();
+    const wrappedDossierTool = {
+      ...options.dossierTool,
+      label: options.roleLabel,
+      async execute(...args: any[]) {
+        try {
+          return await options.dossierTool.execute(...args);
+        } catch (error) {
+          evidenceToolFailures.set(args[0], error);
+          throw error;
+        }
+      },
+    };
     const opened = await openPiInstitutionalSession({
       cwd,
       agentDir: scratch,
       selection,
       systemPrompt: options.systemPrompt,
-      customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
+      customTools: [wrappedDossierTool, tool],
       sessionManager: auditorSessionManager,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       idleRetry: true,
-      ...(options.runCompletion === undefined
-        ? {}
-        : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
       label: options.roleLabel,
     });
-    const { handle, session } = opened;
+    const { handle } = opened;
 
     const binding: AuditorParentAttemptBinding = {
       version: 1,
@@ -597,31 +604,13 @@ export async function executeAuditorChild(
     let rejectedDecisionResponse: AssistantMessage | undefined;
     let promptNeighboringFailure: unknown;
     let promptDecisionFailures: unknown[] = [];
-    const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
-    const evidenceToolFailures = new Map<string, unknown>();
-    for (const name of registeredToolNames) {
-      if (name === tool.name) continue;
-      const definition = session.getToolDefinition(name);
-      if (definition === undefined) continue;
-      const execute = definition.execute.bind(definition);
-      definition.execute = async (...args: any[]) => {
-        try {
-          return await (execute as (...executeArgs: any[]) => Promise<any>)(...args);
-        } catch (error) {
-          evidenceToolFailures.set(args[0], error);
-          throw error;
-        }
-      };
-    }
     const findToolFailure = (response: AssistantMessage): unknown => {
       const callIds = response.content.flatMap((part) =>
-        part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []);
+        part.type === "toolCall" && part.name !== tool.name ? [part.id] : []);
       for (const callId of callIds) {
         if (evidenceToolFailures.has(callId)) return evidenceToolFailures.get(callId);
       }
-      const callIdSet = new Set(callIds);
-      return [...session.messages].reverse().find((message) =>
-        message.role === "toolResult" && callIdSet.has(message.toolCallId) && message.isError);
+      return undefined;
     };
     const drainRejectedDecisionFailures = (response: AssistantMessage) => {
       for (const part of response.content) {
@@ -631,29 +620,41 @@ export async function executeAuditorChild(
         decisionToolFailures.delete(part.id);
       }
     };
-    const unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
+    const retainedAssistants: AssistantMessage[] = [];
+    const unsubscribe = handle.subscribe((event) => {
+      if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
-        addUsage(sessionUsage, event.message.usage);
-        retainedResponse = event.message;
-        try { options.retainResponse?.(event.message); } catch (error) { retentionFailure = error; }
-        // A tool call in assistant output is only an observation. Preserve its
-        // candidate for typed malformed-decision settlement, but the wrapped
-        // execute path above is the sole owner of accepted-receipt state; a
-        // rejected execution must remain retryable in this same session.
-        for (const part of event.message.content) {
-          if (part.type === "toolCall" && part.name === tool.name) {
-            rejectedDecisionResponse = event.message;
-            if (decision === undefined) {
-              decision = part.arguments;
-              decisionCallId = part.id;
-              // Pi can reject malformed root arguments before invoking execute;
-              // that remains the existing unreadable-candidate failure path.
-              if (part.arguments === undefined) decisionSubmitted = true;
+        if (event.usage) addUsage(sessionUsage, event.usage);
+        const msg = event.message as AssistantMessage | undefined;
+        retainedResponse = msg;
+        if (msg) {
+          retainedAssistants.push(msg);
+          try { options.retainResponse?.(msg); } catch (error) { retentionFailure = error; }
+          // A tool call in assistant output is only an observation. Preserve its
+          // candidate for typed malformed-decision settlement, but the wrapped
+          // execute path above is the sole owner of accepted-receipt state; a
+          // rejected execution must remain retryable in this same session.
+          for (const part of msg.content) {
+            if (part.type === "toolCall" && part.name === tool.name) {
+              rejectedDecisionResponse = msg;
+              if (decision === undefined) {
+                decision = part.arguments;
+                decisionCallId = part.id;
+                // Pi can reject malformed root arguments before invoking execute;
+                // that remains the existing unreadable-candidate failure path.
+                // A missing root argument reaches the real provider adapter as an
+                // empty object after serialization — treat it as missing too so a
+                // one-shot typed missing-args settlement does not solicit another turn.
+                if (part.arguments === undefined
+                  || (typeof part.arguments === "object" && part.arguments !== null
+                    && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0)) {
+                  decisionSubmitted = true;
+                }
+              }
             }
           }
+          if (turns >= AUDITOR_TURN_LIMIT) boundaryResponse = msg;
         }
-        if (turns >= AUDITOR_TURN_LIMIT) boundaryResponse = event.message;
       }
       if (event.type === "turn_end") {
         if (rejectedDecisionResponse !== undefined) {
@@ -663,11 +664,11 @@ export async function executeAuditorChild(
         if (decisionSubmitted || promptNeighboringFailure !== undefined
           || (boundaryResponse !== undefined && rejectedDecisionResponse === undefined)
           || retentionFailure !== undefined) {
-          void session.abort();
+          handle.abort();
         }
       }
     });
-    const abort = () => { void session.abort(); };
+    const abort = () => { handle.abort(); };
     if (options.signal?.aborted) abort();
     else options.signal?.addEventListener("abort", abort, { once: true });
 
@@ -681,7 +682,7 @@ export async function executeAuditorChild(
           promptDecisionFailures = [];
           let promptFailure: unknown;
           try {
-            await session.prompt(prompt);
+            await handle.prompt(prompt);
           } catch (error) {
             promptFailure = error;
           }
@@ -703,6 +704,7 @@ export async function executeAuditorChild(
             return;
           }
           if (decisionToolFailure !== undefined) return;
+          if (opened.streamFailure !== undefined) throw opened.streamFailure;
           if (promptFailure !== undefined) throw promptFailure;
         };
         const chargeAndClearRejectedDecisionFailures = (failures: unknown[]) => {
@@ -758,8 +760,9 @@ export async function executeAuditorChild(
       if (!decisionSubmitted && decisionToolFailure !== undefined) throw decisionToolFailure;
       const relevantResponse = !decisionSubmitted
         ? boundaryResponse
-        : [...session.messages].reverse().find((message): message is AssistantMessage =>
-          message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
+        : (retainedResponse && retainedResponse.role === "assistant" && retainedResponse.content.some((part) => part.type === "toolCall" && part.name === tool.name)
+          ? retainedResponse
+          : undefined);
       if (relevantResponse !== undefined) {
         const toolFailure = findToolFailure(relevantResponse);
         if (toolFailure !== undefined) throw toolFailure;
@@ -773,9 +776,7 @@ export async function executeAuditorChild(
         });
       }
 
-      const assistants = [...session.messages]
-        .reverse()
-        .filter((message): message is AssistantMessage => message.role === "assistant");
+      const assistants = [...retainedAssistants].reverse();
       const response = !decisionSubmitted
         ? assistants[0]
         : assistants.find((message) =>
@@ -856,8 +857,7 @@ export async function executeAuditorChild(
       if (
         response === undefined
         || response.stopReason === "error"
-        || response.stopReason === "aborted"
-        || (!decisionSubmitted && decision === undefined)
+        || (!decisionSubmitted && (response.stopReason === "aborted" || decision === undefined))
       ) {
         throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
       }
