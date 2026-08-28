@@ -418,6 +418,8 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
   };
 }
 
+import { sitianReport } from "../sitian-facade.ts";
+
 /**
  * Append one custom JSONL entry to the durable principal's session file.
  * Pi session codec only — AK artifact O_EXCL retention stays in public-cli.
@@ -445,4 +447,13 @@ export async function appendPiSessionCustomEntry(
     timestamp,
   })}\n`;
   await appendFile(sessionFile, pointerLine, "utf8");
+  try {
+    sitianReport({
+      level: "event",
+      kind: "dispatch-error",
+      sessionParent: sessionFile,
+      payload: { customType, data },
+      source: "pi-role-turn-host",
+    });
+  } catch {}
 }

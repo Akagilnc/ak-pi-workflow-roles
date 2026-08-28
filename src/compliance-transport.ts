@@ -76,42 +76,27 @@ export type AuditorParentAttemptBinding = {
     readonly attemptEntryId?: string;
   };
 };
+import { sitianReport } from "./sitian-facade.ts";
+
 export class ComplianceResponseRetentionError extends Error {
   constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
 }
-export type ActiveSessionResponseAppender = { appendCustomEntry(customType: string, data?: unknown): string };
-/** Unique owner for session custom-entry append with availability check and typed failure. */
-export function appendActiveSessionCustomEntry(
-  context: ExtensionContext,
-  customType: string,
-  data?: unknown,
-  labels: { unavailable?: string; failed?: string } = {},
-): string {
-  const manager = context.sessionManager as unknown as Partial<ActiveSessionResponseAppender> | undefined;
-  if (typeof manager?.appendCustomEntry !== "function") {
-    throw new ComplianceResponseRetentionError(
-      labels.unavailable ?? "session custom entry append is unavailable",
-    );
-  }
+function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
   try {
-    return manager.appendCustomEntry(customType, data);
+    sitianReport({
+      level: "event",
+      kind: "auditor",
+      cwd: context.cwd,
+      sessionParent: context.sessionManager.getSessionFile(),
+      payload: { version: 1, response },
+      source: "compliance-transport",
+    });
   } catch (error) {
     throw new ComplianceResponseRetentionError(
-      labels.failed ?? "session custom entry append failed",
+      `compliance response retention failed: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
   }
-}
-function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
-  appendActiveSessionCustomEntry(
-    context,
-    COMPLIANCE_RESPONSE_ENTRY_TYPE,
-    { version: 1, response },
-    {
-      unavailable: "compliance response retention is unavailable",
-      failed: "compliance response retention failed",
-    },
-  );
 }
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {

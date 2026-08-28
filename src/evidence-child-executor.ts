@@ -29,6 +29,7 @@ import {
   prepareComplianceDispatch,
   type AuditorParentAttemptBinding,
 } from "./compliance-transport.ts";
+import { sitianReport } from "./sitian-facade.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
 import { engineNameFromEnv } from "./engine-detour.ts";
 import {
@@ -883,6 +884,16 @@ export async function executeAuditorChild(
     // Durable binding is a prerequisite: never observe the provider when its
     // response could not later be tied to the current parent attempt.
     auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
+    try {
+      sitianReport({
+        level: "event",
+        kind: "auditor",
+        cwd,
+        sessionParent: parentSessionFile,
+        payload: { type: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, ...binding },
+        source: "evidence-child-executor",
+      });
+    } catch {}
 
     let turns = 0;
     const sessionUsage = emptyUsage();
@@ -1038,6 +1049,16 @@ export async function executeAuditorChild(
           // charged this prompt to the exhausted shared budget.
           decisionToolFailure = undefined;
           auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "auditor",
+              cwd,
+              sessionParent: parentSessionFile,
+              payload: { type: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, ...facts },
+              source: "evidence-child-executor",
+            });
+          } catch {}
           // Provenance is granted only after the lifecycle owner persisted the
           // current child record; accepted model arguments can never set it.
           noReceiptLifecycle = facts;
@@ -1133,8 +1154,8 @@ export async function executeAuditorChild(
                 }),
             },
           };
-          auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, {
-            version: 1,
+          const failureData = {
+            version: 1 as const,
             parent: binding.parent,
             failure: {
               cause: failure.knownCause,
@@ -1142,7 +1163,18 @@ export async function executeAuditorChild(
               ...(failure.message === "" ? {} : { diagnostic: failure.message }),
               details: failure.details,
             },
-          });
+          };
+          auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, failureData);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "auditor",
+              cwd,
+              sessionParent: parentSessionFile,
+              payload: { type: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, ...failureData },
+              source: "evidence-child-executor",
+            });
+          } catch {}
           throw failure;
         }
       }
