@@ -213,6 +213,10 @@ function toolCallContext(
   abort: () => void = () => {},
 ): ExtensionContext {
   const sessionManager = SessionManager.inMemory();
+  if (activeRunDirs.length > 0) {
+    const runDir = activeRunDirs[activeRunDirs.length - 1];
+    (sessionManager as any).getSessionFile = () => join(runDir, "session", "session.jsonl");
+  }
   const message: AssistantMessage = {
     role: "assistant",
     content: calls.map((call) => ({
@@ -236,7 +240,10 @@ function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
   const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
   const model = faux.getModel();
   // Gatekeeper children read their seat from the institutional resolution page.
-  installInstitutionalRunDir(parentInheritedSeats(model));
+  const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
+  if (context.sessionManager !== undefined) {
+    (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
+  }
   const responses = [
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
     fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })),
@@ -252,9 +259,15 @@ function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
     },
     streamSimple() { return this.stream(); },
   };
+  const runCompletion = async () => {
+    const next = responses.shift();
+    if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+    return next;
+  };
   return Object.assign(context, {
     cwd: process.cwd(), model,
     modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
+    runCompletion,
     thinkingLevel: "off",
   });
 }
@@ -318,9 +331,17 @@ function workerCompletionGatekeeperHarness(options: {
   return {
     context(id: string, toolName: string) {
       installInstitutionalRunDir(parentInheritedSeats(model));
+      const runCompletion = async () => {
+        providerRequests += 1;
+        const next = responses.shift();
+        if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+        if (next instanceof Error) throw next;
+        return next;
+      };
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(), model,
         modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
+        runCompletion,
         thinkingLevel: "off",
       });
     },
@@ -446,10 +467,16 @@ function realEntryGateModelHarness(options: {
     parentModel,
     seen,
     context(id: string, toolName: string) {
-      // B-lane: the real gatekeeper child consumes an already-produced page
-      // (parent-inherited by default, or the explicit produced seats a case
-      // wires). Config→page derivation is A→B scope, covered separately.
-      installInstitutionalRunDir(options.seats ?? parentInheritedSeats(parentModel));
+      const runDirectory = installInstitutionalRunDir(options.seats ?? parentInheritedSeats(parentModel));
+      const runCompletion = async (m: any) => {
+        if (authFailIds.has(m.id ?? m.model ?? "")) {
+          throw new Error("override credentials missing");
+        }
+        seen.push({ provider: m.provider, id: m.id });
+        const next = responses.shift();
+        if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+        return next;
+      };
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(),
         model: parentModel,
@@ -468,6 +495,7 @@ function realEntryGateModelHarness(options: {
             return { ok: true, apiKey: "k" };
           },
         },
+        runCompletion,
         thinkingLevel: "off",
       });
     },
@@ -1308,6 +1336,11 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     };
     // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
     installInstitutionalRunDir(parentInheritedSeats(model));
+    const runCompletion = async () => {
+      const next = responses.shift();
+      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+      return next;
+    };
     const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
       cwd: process.cwd(),
       model,
@@ -1317,6 +1350,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
         async getProviderAuth() { return { auth: {} }; },
         async getApiKeyAndHeaders() { return { ok: true }; },
       },
+      runCompletion,
       thinkingLevel: "off",
     });
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
@@ -1814,7 +1848,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       testHostActions(),
     );
     await runtime.activate();
-    return Object.assign(harness, { model, provider, providerRequests: () => providerRequests });
+    return Object.assign(harness, { model, provider, providerRequests: () => providerRequests, incRequests: () => ++providerRequests });
   };
   const submitCompleted = async (
     harness: Awaited<ReturnType<typeof start>>,
@@ -1822,6 +1856,12 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   ) => {
     const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(tool);
+    const runCompletion = async () => {
+      const resp = harness.incRequests() % 2 === 1
+        ? fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }))
+        : fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }));
+      return resp;
+    };
     return withInstitutionalRunDir(parentInheritedSeats(harness.model), () =>
       tool.execute(
         id,
@@ -1834,6 +1874,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
           modelRegistry: scriptedGatekeeperModelRegistry(harness.model, harness.provider, {
             matchProvider: false,
           }),
+          runCompletion,
           thinkingLevel: "off",
         }),
       ),
@@ -1960,6 +2001,12 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     const refusalTool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(refusalTool);
     const requestsBeforeRefusal = harness.providerRequests();
+    const runCompletion = async () => {
+      const resp = harness.incRequests() % 2 === 1
+        ? fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }))
+        : fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }));
+      return resp;
+    };
     await withInstitutionalRunDir(parentInheritedSeats(harness.model), async () => {
       assert.deepEqual((await refusalTool.execute(
         "coder-refused",
@@ -1972,6 +2019,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
           modelRegistry: scriptedGatekeeperModelRegistry(harness.model, harness.provider, {
             matchProvider: false,
           }),
+          runCompletion,
           thinkingLevel: "off",
         }),
       )).details, refused);
@@ -2473,6 +2521,9 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
   const nestedRunDir = await mkdtemp(join(tmpdir(), "ak-nested-audit-run-"));
+  await writeInstitutionalSeatTable(nestedRunDir, {
+    auditor: { provider: "installed-auditor", model: "installed-auditor" },
+  });
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   process.env.AK_ROLE_RUN_DIR = nestedRunDir;
   try {
@@ -2553,6 +2604,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       };
       const outputContext = (name: string, id: string, arguments_: Record<string, unknown> = {}) => {
         const sessionManager = SessionManager.inMemory();
+        (sessionManager as any).getSessionFile = () => join(nestedRunDir, "session", "session.jsonl");
         sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
         sessionManager.appendMessage({
           role: "assistant",

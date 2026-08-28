@@ -270,6 +270,7 @@ export async function requireGatekeeperPass(options: {
     context: options.context,
     subject: options.subject,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...((options.context as any)?.runCompletion !== undefined ? { runCompletion: (options.context as any).runCompletion } : {}),
   });
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {
