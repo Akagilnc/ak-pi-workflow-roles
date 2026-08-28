@@ -43,7 +43,7 @@ import {
 import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
-import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
@@ -101,9 +101,11 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         installed("src/doctor-auditor.ts"),
       ]);
 
+      const faux = fauxProvider({ provider: "installed-auditor", api: "openai-responses" });
       const context = {
-        model: { provider: "installed-auditor", id: "installed-auditor", api: "openai-responses" },
+        model: faux.getModel(),
         modelRegistry: {
+          getProvider() { return faux.provider; },
           async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
           async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
         },
@@ -118,6 +120,9 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       await mkdir(resolve(runDirectory, "attachments"));
       await mkdir(resolve(runDirectory, "artifacts"));
       await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n");
+      await writeInstitutionalSeatTable(runDirectory, {
+        auditor: seatSelection("installed-auditor", "installed-auditor"),
+      });
       context.sessionManager = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
       context.sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
       context.sessionManager.appendMessage({
@@ -129,8 +134,8 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       });
       context.sessionManager.appendCustomEntry("ak_doctor_audit_candidate", { version: 1, testimony: {} });
       const roles = [
-        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)({ context }) },
-        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)({ context }) },
+        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: () => judge.createPiJudgeAuditor()({ context }) },
+        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: () => doctor.createPiDoctorAuditor()({ context }) },
       ] as const;
       // #470: judge = constitution + soul + audit-law + quality-law; doctor omits audit-law.
       // #495 S6: reviewer auditor roster retired.
@@ -147,14 +152,16 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
         let prompt = "";
-        const completion: ComplianceCompletion = async (_model, request) => {
-          calls += 1;
-          prompt = request.systemPrompt ?? "";
-          const locator = request.tools?.find((tool) => tool.name === "ak_get_run_dossier");
-          assert.ok(locator, `${role.name} must expose the shared dossier locator`);
-          return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-        };
-        await role.run(completion);
+        faux.setResponses([
+          (_model: any, request: any) => {
+            calls += 1;
+            prompt = request.systemPrompt ?? "";
+            const locator = request.tools?.find((tool: any) => tool.name === "ak_get_run_dossier");
+            assert.ok(locator, `${role.name} must expose the shared dossier locator`);
+            return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+          },
+        ]);
+        await role.run();
         assert.equal(calls, 1, `${role.name} audit must make one decision call`);
         assert.equal(
           prompt,
@@ -189,18 +196,18 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         const original = await readFile(role.soulPath, "utf8");
         await rm(role.soulPath, { force: true });
         try {
-          await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
+          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
         } finally {
           await writeFile(role.soulPath, original, "utf8");
         }
 
         await writeFile(role.soulPath, " \n", "utf8");
-        await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), new RegExp(`${role.name} auditor Soul is blank`));
+        await assert.rejects(role.run(), new RegExp(`${role.name} auditor Soul is blank`));
 
         await rm(role.soulPath, { force: true });
         await mkdir(role.soulPath);
         try {
-          await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
+          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
         } finally {
           await rm(role.soulPath, { recursive: true, force: true });
           await writeFile(role.soulPath, original, "utf8");

@@ -53,7 +53,6 @@ import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,

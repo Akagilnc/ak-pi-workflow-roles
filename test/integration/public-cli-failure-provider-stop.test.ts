@@ -67,7 +67,6 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
           tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
           systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
           runDirectory: join(project, "run"),
-          runCompletion: async () => fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" }),
           context: {
             cwd: project, model: faux.getModel(), thinkingLevel: "off",
             sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data }); return "entry"; } },
@@ -832,6 +831,15 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
     const sessionFile = sessionManager.getSessionFile();
     assert.ok(sessionFile);
     const faux = fauxProvider({ provider: "xai" });
+    faux.setResponses([{
+      ...fauxAssistantMessage("", {
+        stopReason: "aborted",
+        errorMessage: "stream aborted mid-token",
+      }),
+      body: "{\"abort\":true}",
+      code: "aborted_upstream",
+      errno: -1,
+    } as any]);
     // Real auditor projector entry: return aborted stop without HTTP/diagnostics testimony.
     // Config provider/model and local-looking body/code/errno are not upstream testimony.
     await assert.rejects(runComplianceAudit({
@@ -840,15 +848,6 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
       serializedInput: "aborted raw",
       roleLabel: "judge auditor",
       invalidDecisionLabel: "invalid audit decision",
-      runCompletion: async () => ({
-        ...fauxAssistantMessage("", {
-          stopReason: "aborted",
-          errorMessage: "stream aborted mid-token",
-        }),
-        body: "{\"abort\":true}",
-        code: "aborted_upstream",
-        errno: -1,
-      }),
       context: {
         cwd: project,
         model: faux.getModel(),
@@ -908,16 +907,8 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     const sessionFile = sessionManager.getSessionFile();
     assert.ok(sessionFile);
     const faux = fauxProvider({ provider: "openai-codex" });
-    // Real evidence-child/auditor projector seam: throw structured remote diagnostics
-    // through runCompletion → projectStructuredRemote → ak_compliance_response retain.
-    // Target session JSON is never hand-written by piRunner.
-    await assert.rejects(runComplianceAudit({
-      tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
-      systemPrompt: "Audit.",
-      serializedInput: "SDK structured payload",
-      roleLabel: "judge auditor",
-      invalidDecisionLabel: "invalid audit decision",
-      runCompletion: async () => {
+    faux.setResponses([
+      () => {
         throw Object.assign(new Error(padded), {
           status: 500,
           statusCode: 500,
@@ -927,6 +918,16 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
           diagnostics: [{ type: "provider_error", error: { message: padded } }],
         });
       },
+    ]);
+    // Real evidence-child/auditor projector seam: throw structured remote diagnostics
+    // through adapter provider stream → projectStructuredRemote → ak_compliance_response retain.
+    // Target session JSON is never hand-written by piRunner.
+    await assert.rejects(runComplianceAudit({
+      tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
+      systemPrompt: "Audit.",
+      serializedInput: "SDK structured payload",
+      roleLabel: "judge auditor",
+      invalidDecisionLabel: "invalid audit decision",
       context: {
         cwd: project,
         model: faux.getModel(),

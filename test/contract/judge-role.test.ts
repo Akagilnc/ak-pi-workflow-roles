@@ -261,15 +261,9 @@ function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
     },
     streamSimple() { return this.stream(); },
   };
-  const runCompletion = async () => {
-    const next = responses.shift();
-    if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
-    return next;
-  };
   return Object.assign(context, {
     cwd: process.cwd(), model,
     modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
-    runCompletion,
     thinkingLevel: "off",
   });
 }
@@ -289,31 +283,27 @@ function workerCompletionGatekeeperHarness(options: {
     output,
     unusableSubmission = { status: "not-a-release" } as Record<string, unknown>,
     officer = "inspector",
-    officerUnusableSubmission = { status: "not-a-release", stage: "officer" } as Record<string, unknown>,
+    officerUnusableSubmission = { status: "not-an-audit-verdict" } as Record<string, unknown>,
     passingRuns = 1,
   } = options;
-  const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
+  const officerToolName = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
   const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
   const model = faux.getModel();
   const responses: Array<AssistantMessage | Error> = [
-    new Error("provider disconnected"),
+    // 1. Gatekeeper child transport failure throws.
+    new Error("Gatekeeper transport dropped"),
+    // 2. Unusable Gatekeeper submission projects unusable_release error.
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, unusableSubmission)),
-    fauxAssistantMessage("not a receipt"),
-    fauxAssistantMessage("still not a receipt"),
-    fauxAssistantMessage("settled without a receipt"),
+    // 3. Officer child transport failure throws.
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
-    new Error("officer provider disconnected"),
+    new Error("Officer transport dropped"),
+    // 4. Unusable officer submission projects unusable_release error.
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
-    fauxAssistantMessage(fauxToolCall(officerTool, officerUnusableSubmission)),
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
-    fauxAssistantMessage("officer did not submit a receipt"),
-    fauxAssistantMessage("officer still did not submit a receipt"),
-    fauxAssistantMessage("officer settled without a receipt"),
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
-    fauxAssistantMessage(fauxToolCall(officerTool, { status: "bounce", findings: ["add a focused regression"] })),
+    fauxAssistantMessage(fauxToolCall(officerToolName, officerUnusableSubmission)),
+    // 5. Passing gate runs project pass.
     ...Array.from({ length: passingRuns }, () => [
       fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
-      fauxAssistantMessage(fauxToolCall(officerTool, { status: "pass", findings: [] })),
+      fauxAssistantMessage(fauxToolCall(officerToolName, { status: "pass", findings: [] })),
     ]).flat(),
   ];
   let providerRequests = 0;
@@ -333,17 +323,9 @@ function workerCompletionGatekeeperHarness(options: {
   return {
     context(id: string, toolName: string) {
       installInstitutionalRunDir(parentInheritedSeats(model));
-      const runCompletion = async () => {
-        providerRequests += 1;
-        const next = responses.shift();
-        if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
-        if (next instanceof Error) throw next;
-        return next;
-      };
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(), model,
         modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
-        runCompletion,
         thinkingLevel: "off",
       });
     },
@@ -470,15 +452,6 @@ function realEntryGateModelHarness(options: {
     seen,
     context(id: string, toolName: string) {
       const runDirectory = installInstitutionalRunDir(options.seats ?? parentInheritedSeats(parentModel));
-      const runCompletion = async (m: any) => {
-        if (authFailIds.has(m.id ?? m.model ?? "")) {
-          throw new Error("override credentials missing");
-        }
-        seen.push({ provider: m.provider, id: m.id });
-        const next = responses.shift();
-        if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
-        return next;
-      };
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(),
         model: parentModel,
@@ -497,7 +470,6 @@ function realEntryGateModelHarness(options: {
             return { ok: true, apiKey: "k" };
           },
         },
-        runCompletion,
         thinkingLevel: "off",
       });
     },
@@ -1338,11 +1310,6 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     };
     // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
     installInstitutionalRunDir(parentInheritedSeats(model));
-    const runCompletion = async () => {
-      const next = responses.shift();
-      if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
-      return next;
-    };
     const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
       cwd: process.cwd(),
       model,
@@ -1352,7 +1319,6 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
         async getProviderAuth() { return { auth: {} }; },
         async getApiKeyAndHeaders() { return { ok: true }; },
       },
-      runCompletion,
       thinkingLevel: "off",
     });
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
@@ -1858,12 +1824,6 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   ) => {
     const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(tool);
-    const runCompletion = async () => {
-      const resp = harness.incRequests() % 2 === 1
-        ? fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }))
-        : fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }));
-      return resp;
-    };
     return withInstitutionalRunDir(parentInheritedSeats(harness.model), () =>
       tool.execute(
         id,
@@ -1876,7 +1836,6 @@ test("coder apply binds completion to the immediately following canonical tdd ex
           modelRegistry: scriptedGatekeeperModelRegistry(harness.model, harness.provider, {
             matchProvider: false,
           }),
-          runCompletion,
           thinkingLevel: "off",
         }),
       ),
@@ -2003,12 +1962,6 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     const refusalTool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(refusalTool);
     const requestsBeforeRefusal = harness.providerRequests();
-    const runCompletion = async () => {
-      const resp = harness.incRequests() % 2 === 1
-        ? fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }))
-        : fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }));
-      return resp;
-    };
     await withInstitutionalRunDir(parentInheritedSeats(harness.model), async () => {
       assert.deepEqual((await refusalTool.execute(
         "coder-refused",
@@ -2021,7 +1974,6 @@ test("coder apply binds completion to the immediately following canonical tdd ex
           modelRegistry: scriptedGatekeeperModelRegistry(harness.model, harness.provider, {
             matchProvider: false,
           }),
-          runCompletion,
           thinkingLevel: "off",
         }),
       )).details, refused);

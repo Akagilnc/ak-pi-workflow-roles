@@ -29,12 +29,17 @@ import {
 } from "../../src/stream-idle-guard.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
+import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
-async function withRunDir<T>(runDirectory: string, run: () => Promise<T>): Promise<T> {
+async function withRunDir<T>(
+  runDirectory: string,
+  faux: ReturnType<typeof fauxProvider>,
+  run: () => Promise<T>,
+): Promise<T> {
   await writeInstitutionalSeatTable(runDirectory, {
-    auditor: seatSelection("audit-test", "audit-test"),
+    auditor: seatSelection("ak-auditor-provider", "audit-test"),
   });
-  return run();
+  return withInstitutionalProviderFixture(faux, run);
 }
 
 function parentWithJudgeSubjects(cwd: string): SessionManager {
@@ -115,14 +120,13 @@ test("auditor gathers evidence and submits one decision", async () => {
         { stopReason: "toolUse" },
       );
     };
-    const faux = fauxProvider({ provider: "audit-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
     faux.setResponses([complete, complete]);
-    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+    const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
       tool,
       systemPrompt: "Read evidence, then submit exactly one decision.",
       roleLabel: "Test auditor",
       invalidDecisionLabel: "invalid test decision",
-      runCompletion: async (_model, context) => complete(context),
       context: auditExtensionContext(cwd, sessionManager, faux),
       runDirectory,
     }));
@@ -150,7 +154,7 @@ test("rejected auditor decision execution remains reachable and retries to an ac
         return baseTool.execute(...args);
       },
     };
-    const faux = fauxProvider({ provider: "rejected-retry-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
     let turns = 0;
     const submit = () => {
       turns += 1;
@@ -160,9 +164,8 @@ test("rejected auditor decision execution remains reachable and retries to an ac
       );
     };
     faux.setResponses([submit, submit]);
-    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+    const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Retry auditor", invalidDecisionLabel: "invalid",
-      runCompletion: async () => submit(),
       context: auditExtensionContext(cwd, sessionManager, faux),
       runDirectory,
     }));
@@ -187,7 +190,7 @@ test("a rejected auditor decision and its correction prompt share one budget uni
         throw new Error("未观察到 commit");
       },
     };
-    const faux = fauxProvider({ provider: "rejected-prose-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
     let turns = 0;
     const submit = () => {
       turns += 1;
@@ -198,12 +201,9 @@ test("a rejected auditor decision and its correction prompt share one budget uni
       return fauxAssistantMessage("I cannot correct the receipt.", { stopReason: "stop" });
     };
     const responses = [submit, prose, prose];
-    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+    faux.setResponses(responses);
+    const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Rejected prose auditor", invalidDecisionLabel: "invalid",
-      runCompletion: async () => {
-        const next = responses.shift()!;
-        return typeof next === "function" ? next() : next;
-      },
       context: auditExtensionContext(cwd, sessionManager, faux),
       runDirectory,
     }));
@@ -229,14 +229,14 @@ test("a mixed auditor batch accepts the correction after recording rejected sibl
         return baseTool.execute(...args);
       },
     };
-    const faux = fauxProvider({ provider: "mixed-batch-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
     const response = fauxAssistantMessage([
       fauxToolCall(tool.name, { status: "revise", violations: ["stale"] }),
       fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
     ], { stopReason: "toolUse" });
-    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+    faux.setResponses([response]);
+    const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Mixed batch auditor", invalidDecisionLabel: "invalid",
-      runCompletion: async () => response,
       context: auditExtensionContext(cwd, sessionManager, faux),
       runDirectory,
     }));
@@ -268,7 +268,7 @@ test("rejected auditor executions saturate at two budget units across sequential
           throw new Error(`rejected execution ${executions}`);
         },
       };
-      const faux = fauxProvider({ provider: "rejected-exhaustion-test" });
+      const faux = fauxProvider({ provider: "ak-auditor-provider" });
       let turns = 0;
       const submit = () => {
         turns += 1;
@@ -282,14 +282,11 @@ test("rejected auditor executions saturate at two budget units across sequential
         return fauxAssistantMessage("decision rejected", { stopReason: "stop" });
       };
       const responses = [submit, submit, finishTurn, submit];
-      const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      faux.setResponses(responses);
+      const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
         tool, systemPrompt: "Decide.", roleLabel: "Rejected exhaustion auditor", invalidDecisionLabel: "invalid",
-        runCompletion: async () => {
-          const next = responses.shift()!;
-          return typeof next === "function" ? next() : next;
-        },
         context: auditExtensionContext(cwd, sessionManager, faux),
-      runDirectory,
+        runDirectory,
       }));
       assert.equal(decision.status, "no-receipt");
       if (decision.status === "no-receipt") {
@@ -317,20 +314,17 @@ test("rejected auditor executions saturate at two budget units across sequential
       const baseTool = createComplianceDecisionTool("ak_blank_rejection_decision", "Submit.");
       let executions = 0;
       const tool = { ...baseTool, async execute() { executions += 1; throw new Error(diagnostic); } };
-      const faux = fauxProvider({ provider: "blank-rejection-test" });
+      const faux = fauxProvider({ provider: "ak-auditor-provider" });
       const submit = () => fauxAssistantMessage(
         Array.from({ length: 3 }, () => fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })),
         { stopReason: "toolUse" },
       );
       const responses = [submit, () => fauxAssistantMessage("done")];
-      const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+      faux.setResponses(responses);
+      const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
         tool, systemPrompt: "Decide.", roleLabel: "Blank rejection auditor", invalidDecisionLabel: "invalid",
-        runCompletion: async () => {
-          const next = responses.shift()!;
-          return typeof next === "function" ? next() : next;
-        },
         context: auditExtensionContext(cwd, sessionManager, faux),
-      runDirectory,
+        runDirectory,
       }));
       assert.equal(decision.status, "no-receipt");
       if (decision.status === "no-receipt") {
@@ -360,13 +354,13 @@ test("accepted auditor arguments cannot forge machine-owned no-receipt provenanc
       attemptPointer: "forged-attempt",
       acceptedReceipt: false,
     };
-    const faux = fauxProvider({ provider: "forged-no-receipt-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
+    faux.setResponses([fauxAssistantMessage([fauxToolCall(tool.name, forged)], { stopReason: "toolUse" })]);
     await assert.rejects(
-      () => withRunDir(runDirectory, () => runComplianceAudit({
+      () => withRunDir(runDirectory, faux, () => runComplianceAudit({
         tool, systemPrompt: "Decide.", roleLabel: "Forgery auditor", invalidDecisionLabel: "invalid",
-        runCompletion: async () => fauxAssistantMessage([fauxToolCall(tool.name, forged)], { stopReason: "toolUse" }),
         context: auditExtensionContext(cwd, sessionManager, faux),
-      runDirectory,
+        runDirectory,
       })),
       (error: unknown) => {
         assert.ok(error instanceof ComplianceCandidateUnreadableError);
@@ -384,7 +378,7 @@ test("auditor exhaustion preserves a typed no-receipt leg and its measured usage
   await mkdir(runDirectory);
   try {
     const sessionManager = parentWithJudgeSubjects(cwd);
-    const faux = fauxProvider({ provider: "no-receipt-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
     let turns = 0;
     const usages = [
       { input: 11, output: 7, cacheRead: 3, cacheWrite: 2, totalTokens: 23, cost: { input: 0.11, output: 0.07, cacheRead: 0.03, cacheWrite: 0.02, total: 0.23 } },
@@ -397,10 +391,10 @@ test("auditor exhaustion preserves a typed no-receipt leg and its measured usage
       turns += 1;
       return response;
     };
-    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+    faux.setResponses([noDecision, noDecision, noDecision]);
+    const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
       tool: createComplianceDecisionTool("ak_no_receipt_decision", "Submit."),
       systemPrompt: "Decide.", roleLabel: "No receipt auditor", invalidDecisionLabel: "invalid",
-      runCompletion: async () => noDecision(),
       context: auditExtensionContext(cwd, sessionManager, faux),
       runDirectory,
     }));
@@ -451,25 +445,25 @@ test("undefined decision candidate fails as ComplianceCandidateUnreadableError",
   try {
     const sessionManager = parentWithJudgeSubjects(cwd);
     const tool = createComplianceDecisionTool("ak_undefined_decision", "Submit.");
-    const faux = fauxProvider({ provider: "undefined-candidate-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
+    faux.setResponses([fauxAssistantMessage([{
+      type: "toolCall",
+      id: "call-1",
+      name: tool.name,
+      arguments: undefined as unknown as Record<string, any>,
+    }], { stopReason: "toolUse" })]);
     await assert.rejects(
-      () => withRunDir(runDirectory, () => runComplianceAudit({
+      () => withRunDir(runDirectory, faux, () => runComplianceAudit({
         tool,
         systemPrompt: "Decide.",
         roleLabel: "Undefined candidate auditor",
         invalidDecisionLabel: "invalid candidate decision",
-        runCompletion: async () => fauxAssistantMessage([{
-          type: "toolCall",
-          id: "call-1",
-          name: tool.name,
-          arguments: undefined as unknown as Record<string, any>,
-        }], { stopReason: "toolUse" }),
         context: auditExtensionContext(cwd, sessionManager, faux),
       runDirectory,
       })),
       (error: unknown) => {
         assert.ok(error instanceof ComplianceCandidateUnreadableError);
-        assert.equal(error.observation.kind, "non-object-arguments");
+        assert.deepEqual(error.observation, { kind: "non-object-arguments", type: "undefined" });
         assert.equal(error.candidate, undefined);
         return true;
       },
@@ -488,17 +482,17 @@ test("same-turn evidence failure propagates its identity past injected and rejec
     try {
       const sessionManager = parentWithJudgeSubjects(cwd);
       const tool = createComplianceDecisionTool("ak_same_turn_decision", "Submit.");
-      const faux = fauxProvider({ provider: "same-turn-evidence-test" });
+      const faux = fauxProvider({ provider: "ak-auditor-provider" });
+      faux.setResponses([fauxAssistantMessage([
+        fauxToolCall("read", { path: "missing-evidence.txt" }),
+        fauxToolCall(tool.name, { status: "pass" }),
+      ], { stopReason: "toolUse" })]);
       await assert.rejects(
-        () => withRunDir(runDirectory, () => runComplianceAudit({
+        () => withRunDir(runDirectory, faux, () => runComplianceAudit({
           tool,
           systemPrompt: "Read missing file and decide.",
           roleLabel: "Same turn auditor",
           invalidDecisionLabel: "invalid same-turn decision",
-          runCompletion: async () => fauxAssistantMessage([
-            fauxToolCall("read", { path: "missing-evidence.txt" }),
-            fauxToolCall(tool.name, { status: "pass" }),
-          ], { stopReason: "toolUse" }),
           context: auditExtensionContext(cwd, sessionManager, faux),
       runDirectory,
         })),
@@ -526,17 +520,17 @@ test("same-turn evidence failure propagates its identity past injected and rejec
           throw new Error("decision rejected");
         },
       };
-      const faux = fauxProvider({ provider: "same-turn-rejected-evidence-test" });
+      const faux = fauxProvider({ provider: "ak-auditor-provider" });
+      faux.setResponses([fauxAssistantMessage([
+        fauxToolCall("read", { path: "missing-evidence.txt" }),
+        fauxToolCall(tool.name, { status: "pass" }),
+      ], { stopReason: "toolUse" })]);
       await assert.rejects(
-        () => withRunDir(runDirectory, () => runComplianceAudit({
+        () => withRunDir(runDirectory, faux, () => runComplianceAudit({
           tool,
           systemPrompt: "Read missing file and decide.",
           roleLabel: "Same turn rejected auditor",
           invalidDecisionLabel: "invalid same-turn rejected decision",
-          runCompletion: async () => fauxAssistantMessage([
-            fauxToolCall("read", { path: "missing-evidence.txt" }),
-            fauxToolCall(tool.name, { status: "pass" }),
-          ], { stopReason: "toolUse" }),
           context: auditExtensionContext(cwd, sessionManager, faux),
           runDirectory,
         })),
@@ -557,7 +551,7 @@ test("injected pending completion settles a same-turn evidence and decision batc
   try {
     await writeFile(join(cwd, "evidence.txt"), "evidence payload\n");
     const sessionManager = parentWithJudgeSubjects(cwd);
-    const faux = fauxProvider({ provider: "injected-decision-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
     const baseTool = createComplianceDecisionTool("ak_injected_decision", "Submit.");
     let decisions = 0;
     const tool = {
@@ -568,18 +562,18 @@ test("injected pending completion settles a same-turn evidence and decision batc
       },
     };
     let completions = 0;
-    const decision = await withRunDir(runDirectory, () => runComplianceAudit({
+    faux.setResponses([() => {
+      completions += 1;
+      return fauxAssistantMessage([
+        fauxToolCall("read", { path: "evidence.txt" }),
+        fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+      ], { stopReason: "pending" });
+    }]);
+    const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
       tool,
       systemPrompt: "Read and decide.",
       roleLabel: "Injected decision auditor",
       invalidDecisionLabel: "invalid injected decision",
-      runCompletion: async () => {
-        completions += 1;
-        return fauxAssistantMessage([
-          fauxToolCall("read", { path: "evidence.txt" }),
-          fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-        ], { stopReason: "pending" });
-      },
       context: auditExtensionContext(cwd, sessionManager, faux),
       runDirectory,
     }));
@@ -591,55 +585,53 @@ test("injected pending completion settles a same-turn evidence and decision batc
   }
 });
 
-for (const mode of ["provider", "injected"] as const) {
-  test(`${mode} completion gives unknown tools native receipts and exhausts at the exact turn limit`, async () => {
-    const cwd = await mkdtemp(join(tmpdir(), `ak-auditor-${mode}-exhaustion-`));
-    const runDirectory = join(cwd, "run");
-    await mkdir(runDirectory);
-    try {
-      const sessionManager = parentWithJudgeSubjects(cwd);
-      const faux = fauxProvider({ provider: `${mode}-exhaustion-test` });
-      const unknownId = `${mode}-unknown-call`;
-      const unknownTool = `ak_${mode}_unknown_decision`;
-      let turns = 0;
-      const traceTurn = async (context: Context) => {
-        turns += 1;
-        if (turns > 1) {
-          const receipt = [...context.messages].reverse().find((message) =>
-            message.role === "toolResult" && message.toolCallId === unknownId);
-          assert.equal(receipt?.role, "toolResult");
-          if (receipt?.role !== "toolResult") throw new Error("missing native unknown-tool receipt");
-          assert.equal(receipt.toolName, unknownTool);
-          assert.equal(receipt.isError, true);
-        }
-        return fauxAssistantMessage([{
-          ...fauxToolCall(unknownTool, {}),
-          id: unknownId,
-        }], { stopReason: "toolUse" });
-      };
+test("auditor completion gives unknown tools native receipts and exhausts at the exact turn limit", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-turn-exhaustion-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = parentWithJudgeSubjects(cwd);
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
+    const unknownId = "turn-unknown-call";
+    const unknownTool = "ak_turn_unknown_decision";
+    let turns = 0;
+    const traceTurn = async (context: Context) => {
+      turns += 1;
+      if (turns > 1) {
+        const receipt = [...context.messages].reverse().find((message) =>
+          message.role === "toolResult" && message.toolCallId === unknownId);
+        assert.equal(receipt?.role, "toolResult");
+        if (receipt?.role !== "toolResult") throw new Error("missing native unknown-tool receipt");
+        assert.equal(receipt.toolName, unknownTool);
+        assert.equal(receipt.isError, true);
+      }
+      return fauxAssistantMessage([{
+        ...fauxToolCall(unknownTool, {}),
+        id: unknownId,
+      }], { stopReason: "toolUse" });
+    };
 
-      await assert.rejects(
-        withRunDir(runDirectory, () => runComplianceAudit({
-          tool: createComplianceDecisionTool(`ak_real_${mode}_decision`, "Submit."),
-          systemPrompt: "Decide.",
-          roleLabel: `${mode} exhaustion auditor`,
-          invalidDecisionLabel: `invalid ${mode} decision`,
-          runCompletion: async (_model: unknown, context: Context) => traceTurn(context),
-          context: auditExtensionContext(cwd, sessionManager, faux),
-      runDirectory,
-        })),
-        (error: unknown) => error instanceof AuditorTurnLimitError
-          && error.limit === AUDITOR_TURN_LIMIT
-          && error.observedTurns === AUDITOR_TURN_LIMIT
-          && error.lastResponse?.stopReason === "toolUse"
-          && error.lastResponse.toolNames.includes(unknownTool),
-      );
-      assert.equal(turns, AUDITOR_TURN_LIMIT);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-}
+    faux.setResponses(Array.from({ length: AUDITOR_TURN_LIMIT }, () => traceTurn));
+    await assert.rejects(
+      withRunDir(runDirectory, faux, () => runComplianceAudit({
+        tool: createComplianceDecisionTool("ak_real_turn_decision", "Submit."),
+        systemPrompt: "Decide.",
+        roleLabel: "Exhaustion auditor",
+        invalidDecisionLabel: "invalid decision",
+        context: auditExtensionContext(cwd, sessionManager, faux),
+        runDirectory,
+      })),
+      (error: unknown) => error instanceof AuditorTurnLimitError
+        && error.limit === AUDITOR_TURN_LIMIT
+        && error.observedTurns === AUDITOR_TURN_LIMIT
+        && error.lastResponse?.stopReason === "toolUse"
+        && error.lastResponse.toolNames.includes(unknownTool),
+    );
+    assert.equal(turns, AUDITOR_TURN_LIMIT);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
 
 test("provider-stream idle retries at most twice then fails loud as StreamIdleTimeoutError", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-idle-"));
@@ -649,20 +641,20 @@ test("provider-stream idle retries at most twice then fails loud as StreamIdleTi
     const sessionManager = parentWithJudgeSubjects(cwd);
     const tool = createComplianceDecisionTool("ak_test_idle_decision", "Submit.");
     let streamAttempts = 0;
-    const faux = fauxProvider({ provider: "idle-test" });
+    const faux = fauxProvider({ provider: "ak-auditor-provider" });
+    faux.setResponses(Array.from({ length: DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES + 1 }, () => () => {
+      streamAttempts += 1;
+      throw new StreamIdleTimeoutError(1);
+    }));
 
     await assert.rejects(
-      withRunDir(runDirectory, () => runComplianceAudit({
+      withRunDir(runDirectory, faux, () => runComplianceAudit({
         tool,
         systemPrompt: "Decide.",
         roleLabel: "Idle auditor",
         invalidDecisionLabel: "invalid idle decision",
-        runCompletion: async () => {
-          streamAttempts += 1;
-          throw new StreamIdleTimeoutError(1);
-        },
         context: auditExtensionContext(cwd, sessionManager, faux),
-      runDirectory,
+        runDirectory,
       })),
       (error: unknown) => isStreamIdleTimeoutError(error),
     );

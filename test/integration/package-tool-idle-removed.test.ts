@@ -19,7 +19,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
+import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
 import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-executor.ts";
 import {
@@ -203,11 +203,7 @@ test(
           provider: "ak-judge-stream-idle-kept",
           tokenSize: { min: 1000, max: 1000 },
         });
-        const auditSoulCompliance = createPiJudgeAuditor(async () => {
-          complianceStreamAttempts += 1;
-          await new Promise<never>(() => {});
-          throw new Error("unreachable compliance completion");
-        });
+        const auditSoulCompliance = createPiJudgeAuditor();
         await withInProcessPi({
           activationLedgerSession: true,
           cwd: home,
@@ -243,8 +239,13 @@ test(
               auditor: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
             });
           }
-          const respond = (context: { tools?: Array<{ name: string }> }) => {
+          const respond = async (context: { tools?: Array<{ name: string }> }) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
+            if (names.includes(JUDGE_AUDIT_TOOL_NAME)) {
+              complianceStreamAttempts += 1;
+              await new Promise<never>(() => {});
+              throw new Error("unreachable compliance completion");
+            }
             if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
               return fauxAssistantMessage(
                 fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
@@ -269,7 +270,7 @@ test(
             }
             return fauxAssistantMessage("continuation after compliance idle exhaustion");
           };
-          faux.setResponses(Array.from({ length: 6 }, () => respond));
+          faux.setResponses(Array.from({ length: 12 }, () => respond));
 
           const promptDone = session.prompt("adjudicate with silent compliance child");
           void promptDone.then(
