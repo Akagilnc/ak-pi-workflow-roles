@@ -1,4 +1,4 @@
-import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -39,8 +39,6 @@ export class ComplianceCandidateUnreadableError extends Error {
     if (usage !== undefined) this.usage = usage;
   }
 }
-export type ComplianceDispatch = { model: Model<Api>; auth: { apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> } };
-
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
 export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。" as const;
 
@@ -53,15 +51,6 @@ export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ des
 
 export function createComplianceDecisionTool(name: string, description: string) {
   return { name, description, parameters: complianceDecisionSchema, async execute(_id: string, params: unknown): Promise<AgentToolResult<unknown>> { return { content: [{ type: "text", text: "审计决议已收" }], details: params, terminate: true }; } };
-}
-
-export async function prepareComplianceDispatch(model: Model<Api>, context: ExtensionContext, label: string): Promise<ComplianceDispatch> {
-  const resolution = await context.modelRegistry.getProviderAuth(model.provider).catch((error: unknown) => { throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); });
-  if (resolution === undefined) throw new Error(`${label} authentication failed: provider is not configured: ${model.provider}`);
-  const auth = await context.modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok) throw new Error(`${label} authentication failed: ${auth.error}`);
-  const env = auth.env ?? resolution.env;
-  return { model: resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model, auth: { ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }), ...(auth.headers === undefined ? {} : { headers: auth.headers }), ...(env === undefined ? {} : { env }) } };
 }
 
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
@@ -157,6 +146,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     roleLabel: options.roleLabel,
     context: options.context,
     retainResponse: (response) => retainComplianceResponse(options.context, response),
+    ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
     ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });

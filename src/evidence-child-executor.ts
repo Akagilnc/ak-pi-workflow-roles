@@ -7,28 +7,24 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  createAssistantMessageEventStream,
-  InMemoryCredentialStore,
   type Api,
   type AssistantMessage,
   type Context,
   type Model,
-  type Provider,
   type ProviderStreamOptions,
   type Usage,
 } from "@earendil-works/pi-ai";
 import type {
   ExtensionContext,
-  ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
 import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-  prepareComplianceDispatch,
   type AuditorParentAttemptBinding,
 } from "./compliance-transport.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
 import { engineNameFromEnv } from "./engine-detour.ts";
 import {
@@ -38,15 +34,11 @@ import {
 } from "./package-resources/engine-material.ts";
 import { readPackageMaterial } from "./session-opening-materials.ts";
 import {
-  formatModelSpec,
-  loadPublicCliConfig,
-  resolveGateOfficerModelSelection,
   type GateOfficerSeat,
 } from "./public-cli/config.ts";
-import type { PublicThinkingLevel } from "./public-cli/registry.ts";
+import { readInstitutionalSeatSelection } from "./institutional-resolution.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
-import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
 import {
   hasUpstreamErrorTestimony,
   isNonSuccessHttpStatus,
@@ -134,290 +126,6 @@ export async function withInProcessScratch<T>(
       throw cleanupFailure;
     }
   }
-}
-
-export type InheritedRuntimeOptions = {
-  readonly context: ExtensionContext;
-  readonly label: string;
-  readonly runCompletion?: AuditorCompletion;
-  readonly injectedSystemPrompt?: string;
-  readonly signal?: AbortSignal;
-  /** When true, wrap provider streams with ADR 0059 idle-only retry. */
-  readonly idleRetry?: boolean;
-  /**
-   * Explicit child model. When set, auth/availability failures do not fall back
-   * to the parent session model (#453 gate overrides).
-   */
-  readonly model?: Model<Api>;
-};
-
-export type InheritedRuntime = {
-  readonly runtime: ModelRuntime;
-  readonly model: Model<Api>;
-  readonly dispatch: Awaited<ReturnType<typeof prepareComplianceDispatch>>;
-  /** Present when a stream failed under idle-retry instrumentation. */
-  streamFailure: unknown;
-};
-
-/**
- * Build an inherited ModelRuntime + provider. Optional idle-only retry is the
- * ADR 0059 provider-stream seam (not package-owned-tool idle).
- */
-export async function createInheritedRuntime(options: InheritedRuntimeOptions): Promise<InheritedRuntime> {
-  const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
-  // Explicit override wins; never silent-fallback to parent when override is set (#453).
-  const activeModel = options.model ?? options.context.model;
-  if (activeModel === undefined) throw new Error(`${options.label} requires an active model`);
-  const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.label);
-  const parentProvider = options.runCompletion === undefined
-    ? options.context.modelRegistry.getProvider(activeModel.provider)
-    : undefined;
-  if (parentProvider === undefined && options.runCompletion === undefined) {
-    throw new Error(`${options.label} provider not found: ${activeModel.provider}`);
-  }
-  const runtime = await ModelRuntime.create({
-    credentials: new InMemoryCredentialStore(),
-    modelsPath: null,
-  });
-  // Injected completions historically accepted the minimal model exposed by an
-  // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
-  // model metadata required by that runtime without changing provider identity.
-  const inheritedModel: Model<Api> = options.runCompletion === undefined
-    ? dispatch.model
-    : {
-      ...dispatch.model,
-      name: dispatch.model.name ?? dispatch.model.id,
-      baseUrl: dispatch.model.baseUrl ?? "",
-      reasoning: dispatch.model.reasoning ?? false,
-      input: dispatch.model.input ?? ["text"],
-      cost: dispatch.model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: dispatch.model.contextWindow ?? 1,
-      maxTokens: dispatch.model.maxTokens ?? 1,
-    };
-  const state: InheritedRuntime = {
-    runtime,
-    model: inheritedModel,
-    dispatch,
-    streamFailure: undefined,
-  };
-
-  const abortReason = (signal: AbortSignal): unknown =>
-    signal.reason ?? new Error(`${options.label} provider stream aborted`);
-
-  async function waitForStream<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-    if (signal.aborted) throw abortReason(signal);
-    let onAbort: (() => void) | undefined;
-    try {
-      return await Promise.race([
-        promise,
-        new Promise<never>((_resolve, reject) => {
-          onAbort = () => reject(abortReason(signal));
-          signal.addEventListener("abort", onAbort, { once: true });
-        }),
-      ]);
-    } finally {
-      if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
-    }
-  }
-
-  const createRetriedStream = (
-    simple: boolean,
-    model: Model<Api>,
-    context: Context,
-    request?: ProviderStreamOptions,
-  ): ReturnType<Provider["stream"]> => {
-    const wrapped = createAssistantMessageEventStream();
-    void (async () => {
-      for (let attempt = 0; ; attempt += 1) {
-        const idle = createStreamIdleGuard(
-          options.signal === undefined ? {} : { parentSignal: options.signal },
-        );
-        // Typed HTTP status observed via onResponse — never inferred from prose.
-        let observedHttpStatus: number | undefined;
-        try {
-          const requestSignal = request?.signal;
-          const streamSignal = requestSignal === undefined
-            ? idle.signal
-            : AbortSignal.any([idle.signal, requestSignal]);
-          const priorOnResponse = request?.onResponse;
-          const inheritedRequest = {
-            ...(request ?? {}),
-            ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
-            signal: streamSignal,
-            onResponse: async (
-              response: { status: number; headers: Record<string, string> },
-              model: Model<Api>,
-            ) => {
-              if (typeof response?.status === "number") observedHttpStatus = response.status;
-              await priorOnResponse?.(response, model);
-            },
-          } as ProviderStreamOptions;
-          if (options.runCompletion !== undefined) {
-            await new Promise<void>((resolve) => setImmediate(resolve));
-            if (streamSignal.aborted) throw abortReason(streamSignal);
-            const completed = await waitForStream(
-              options.runCompletion(
-                model,
-                options.injectedSystemPrompt === undefined
-                  ? context
-                  : { ...context, systemPrompt: options.injectedSystemPrompt },
-                inheritedRequest,
-              ),
-              streamSignal,
-            );
-            const response: AssistantMessage = attachObservedHttpStatus({
-              ...completed,
-              api: model.api,
-              provider: model.provider,
-              model: model.id,
-            }, observedHttpStatus);
-            if (response.stopReason === "error" || response.stopReason === "aborted") {
-              wrapped.push({ type: "error", reason: response.stopReason, error: response });
-            } else {
-              wrapped.end(response);
-            }
-            return;
-          }
-          const source = simple
-            ? parentProvider!.streamSimple(model, context, inheritedRequest as any)
-            : parentProvider!.stream(model, context, inheritedRequest as any);
-          let sawEvent = false;
-          const iterator = source[Symbol.asyncIterator]();
-          while (true) {
-            const next = await waitForStream(iterator.next(), idle.signal);
-            if (next.done) break;
-            sawEvent = true;
-            idle.poke();
-            wrapped.push(enrichStreamEvent(next.value, observedHttpStatus) as any);
-          }
-          const response = attachObservedHttpStatus(
-            await waitForStream(source.result(), idle.signal),
-            observedHttpStatus,
-          );
-          if (!sawEvent) wrapped.end(response);
-          return;
-        } catch (error) {
-          if (request?.signal?.aborted) {
-            const response: AssistantMessage = {
-              role: "assistant",
-              content: [],
-              api: model.api,
-              provider: model.provider,
-              model: model.id,
-              usage: emptyUsage(),
-              stopReason: "aborted",
-              errorMessage: "Auditor session aborted",
-              timestamp: Date.now(),
-            };
-            wrapped.push({ type: "error", reason: "aborted", error: response });
-            wrapped.end(response);
-            return;
-          }
-          const failure = isStreamIdleTimeoutError(idle.signal.reason) ? idle.signal.reason : error;
-          if (
-            options.idleRetry === true
-            && isStreamIdleTimeoutError(failure)
-            && attempt < DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES
-            && options.signal?.aborted !== true
-          ) {
-            continue;
-          }
-          state.streamFailure = failure;
-          const projected = projectStructuredRemote(failure);
-          // Prefer structured fields on the thrown failure; fall back to onResponse observation.
-          const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
-          const response = {
-            role: "assistant" as const,
-            content: [] as [],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
-            usage: emptyUsage(),
-            stopReason: "error" as const,
-            // Preserve the held failure message bytes — do not rewrite.
-            errorMessage: failure instanceof Error ? failure.message : String(failure),
-            timestamp: Date.now(),
-            ...(projected.diagnostics === undefined ? {} : { diagnostics: projected.diagnostics }),
-            ...(httpStatus === undefined ? {} : { status: httpStatus, statusCode: httpStatus }),
-            ...(projected.body === undefined ? {} : { body: projected.body }),
-            ...(projected.code === undefined ? {} : { code: projected.code }),
-            ...(projected.errno === undefined ? {} : { errno: projected.errno }),
-          } as unknown as AssistantMessage;
-          wrapped.push({ type: "error", reason: "error", error: response });
-          wrapped.end(response);
-          return;
-        } finally {
-          idle.dispose();
-        }
-      }
-    })();
-    return wrapped as ReturnType<Provider["stream"]>;
-  };
-
-  // Provider id must match activeModel.provider so ModelRuntime auth lookup
-  // finds this registration when a gate override changes provider (#453).
-  const provider: Provider = options.idleRetry === true || options.runCompletion !== undefined
-    ? {
-      id: activeModel.provider,
-      name: parentProvider?.name ?? options.label,
-      auth: {
-        apiKey: {
-          name: `Inherited ${options.label} authentication`,
-          async resolve() {
-            const { env, ...auth } = dispatch.auth;
-            return {
-              auth: {
-                ...auth,
-                ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }),
-              },
-              ...(env === undefined ? {} : { env }),
-            };
-          },
-        },
-      },
-      getModels() { return [inheritedModel]; },
-      stream(model, context, request) {
-        return createRetriedStream(false, model, context, request as ProviderStreamOptions | undefined);
-      },
-      streamSimple(model, context, request) {
-        return createRetriedStream(true, model, context, request as ProviderStreamOptions | undefined);
-      },
-    }
-    : {
-      id: parentProvider!.id,
-      name: parentProvider!.name,
-      ...(parentProvider!.baseUrl === undefined ? {} : { baseUrl: parentProvider!.baseUrl }),
-      ...(parentProvider!.headers === undefined ? {} : { headers: parentProvider!.headers }),
-      auth: {
-        apiKey: {
-          name: `Inherited ${options.label} authentication`,
-          async resolve() {
-            return {
-              auth: {
-                ...(dispatch.auth.apiKey === undefined ? {} : { apiKey: dispatch.auth.apiKey }),
-                ...(dispatch.auth.headers === undefined ? {} : { headers: dispatch.auth.headers }),
-                ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }),
-              },
-              ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
-            };
-          },
-        },
-      },
-      getModels() { return [inheritedModel]; },
-      stream(model, childContext, streamOptions) {
-        return parentProvider!.stream(model, childContext, streamOptions);
-      },
-      streamSimple(model, childContext, streamOptions) {
-        return parentProvider!.streamSimple(model, childContext, streamOptions);
-      },
-    };
-
-  runtime.registerNativeProvider(provider);
-  // registerNativeProvider fires a background refresh; await it so child
-  // AgentSession.prompt sees configured auth without racing void refresh
-  // (mock timers / slow CI otherwise stall before the compliance stream).
-  await runtime.refresh({ allowNetwork: false });
-  return state;
 }
 
 type EvidenceChildFailureClassification = "provider" | "child" | "unknown";
@@ -572,6 +280,9 @@ export type EvidenceChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   /** Parent directory for credential/config scratch. Defaults to os.tmpdir(). */
   credentialScratchParent?: string;
+  /** Run directory carrying the institutional resolution page (#518). Derives
+   * from context when absent. */
+  runDirectory?: string;
   /**
    * Package root for optional engine method-material resolution (#378).
    * Required only when AK_ROLE_ENGINE is set and packaged notes should attach.
@@ -586,6 +297,11 @@ export async function executeEvidenceChild(
   options: EvidenceChildExecuteOptions = {},
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
   const signal = options.signal;
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(context);
+  if (runDirectory === undefined) {
+    throw new Error("Evidence child requires a run directory carrying the institutional resolution page");
+  }
+  const selection = await readInstitutionalSeatSelection(runDirectory, "evidenceChild");
   return withInProcessScratch(
     {
       prefix: "ak-evidence-child-",
@@ -594,17 +310,8 @@ export async function executeEvidenceChild(
         : { parentDirectory: options.credentialScratchParent }),
     },
     async (childConfigDir) => {
-      const { openInProcessAgentSession } = await import("./in-process-session.ts");
+      const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
       const { createRecordSession } = await import("./archivist-record-entry.ts");
-      let inherited: InheritedRuntime;
-      try {
-        inherited = await createInheritedRuntime({
-          context,
-          label: "Evidence child",
-        });
-      } catch (error) {
-        throw classifiedError(error, "provider");
-      }
       // #378: when labor engine is configured, legs get the same detour tool + material
       // dual-path as the parent seat (ADR 0069 detour-rejoins-main-road).
       const engineName = engineNameFromEnv();
@@ -632,23 +339,30 @@ export async function executeEvidenceChild(
               },
             });
       // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
-      // Single createAgentSession owner: in-process-session.ts.
-      const { session, dispose } = await openInProcessAgentSession({
-        cwd: workspace,
-        agentDir: childConfigDir,
-        model: inherited.model,
-        thinkingLevel: context.thinkingLevel ?? "off",
-        modelRuntime: inherited.runtime,
-        systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
-        ...(engineDetourTool === undefined
-          ? {}
-          : { customTools: [engineDetourTool] }),
-        sessionManager: createRecordSession({
+      // Single open seam owner: pi/in-process-session.ts.
+      let opened: Awaited<ReturnType<typeof openPiInstitutionalSession>>;
+      try {
+        opened = await openPiInstitutionalSession({
           cwd: workspace,
-          kind: "evidence-children",
-          ...(context.sessionManager === undefined ? {} : { parent: context.sessionManager }),
-        }),
-      });
+          agentDir: childConfigDir,
+          selection,
+          systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
+          ...(engineDetourTool === undefined
+            ? {}
+            : { customTools: [engineDetourTool] }),
+          sessionManager: createRecordSession({
+            cwd: workspace,
+            kind: "evidence-children",
+            ...(context.sessionManager === undefined ? {} : { parent: context.sessionManager }),
+          }),
+          ...(signal === undefined ? {} : { signal }),
+          modelRegistry: context.modelRegistry,
+          label: "Evidence child",
+        });
+      } catch (error) {
+        throw classifiedError(error, "provider");
+      }
+      const { handle, session } = opened;
       const usage = emptyUsage();
       const unsubscribe = session.subscribe((event) => {
         if (event.type === "message_end" && event.message.role === "assistant") {
@@ -707,9 +421,9 @@ export async function executeEvidenceChild(
       } finally {
         signal?.removeEventListener("abort", abortChild);
         let cleanupFailure: unknown;
-        for (const cleanup of [() => unsubscribe(), () => dispose()]) {
+        for (const cleanup of [() => unsubscribe(), () => handle.close()]) {
           try {
-            cleanup();
+            await cleanup();
           } catch (failure) {
             cleanupFailure = cleanupFailure === undefined
               ? failure
@@ -747,41 +461,22 @@ export type AuditorRoleOptions = {
   signal?: AbortSignal;
   runCompletion?: AuditorCompletion;
   retainResponse?(response: AssistantMessage): void;
-  /**
-   * Province seat identity only — shared executor owns config load, registry
-   * resolve, and loud auth/availability failure (#453 / ADR 0018).
-   */
+  /** Province seat identity only — shared executor owns seat resolution, and
+   * loud auth/availability failure (#453 / ADR 0018). */
   gateSeat?: GateOfficerSeat;
+  /** Run directory carrying the institutional resolution page (#518). Derives
+   * from context when absent. */
+  runDirectory?: string;
 };
 
-/**
- * Resolve province child model from public-cli persistent config (#453).
- * Own override > gatekeeper override > unset (inherit parent). Availability
- * failures throw — createInheritedRuntime must not silent-fallback to parent.
- */
-async function resolveGateSeatModelOptions(
-  context: ExtensionContext,
-  seat: GateOfficerSeat,
-  roleLabel: string,
-): Promise<{ model?: Model<Api>; thinkingLevel?: PublicThinkingLevel }> {
-  const selection = resolveGateOfficerModelSelection(await loadPublicCliConfig(), seat);
-  if (selection === undefined) return {};
-  const find = context.modelRegistry.find?.bind(context.modelRegistry);
-  if (typeof find !== "function") {
-    throw new Error(`${roleLabel} model registry cannot resolve models`);
-  }
-  const model = find(selection.provider, selection.model);
-  if (model === undefined) {
-    throw new Error(`${roleLabel} model is unavailable: ${formatModelSpec(selection)}`);
-  }
-  return {
-    model,
-    ...(selection.thinking === undefined ? {} : { thinkingLevel: selection.thinking }),
-  };
+/** Resolution-page seat key for an auditor invocation: province gate seats map
+ * to their own page seats; doctor/judge compliance audits use the auditor seat. */
+function auditorSeatKey(gateSeat: GateOfficerSeat | undefined): string {
+  return gateSeat ?? "auditor";
 }
 
 /**
- * Auditor lifecycle via the shared in-process helper.
+ * Auditor lifecycle via the shared institutional sub-session adapter.
  * Adapter keeps role label / soul / decision tool / result projection only.
  * No tools allowlist (ADR 0064). Provider-stream idle-only retry (ADR 0059).
  * Durable child session via ADR 0065 archivist entry.
@@ -790,27 +485,14 @@ export async function executeAuditorChild(
   options: AuditorRoleOptions,
 ): Promise<{ decision: unknown; response: AssistantMessage; noReceiptLifecycle?: NoReceiptLifecycleFacts }> {
   const { createRecordSession } = await import("./archivist-record-entry.ts");
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  if (runDirectory === undefined) {
+    throw new Error(`${options.roleLabel} requires a run directory carrying the institutional resolution page`);
+  }
+  const seat = auditorSeatKey(options.gateSeat);
+  const selection = await readInstitutionalSeatSelection(runDirectory, seat);
 
   return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
-    const gate =
-      options.gateSeat === undefined
-        ? {}
-        : await resolveGateSeatModelOptions(
-            options.context,
-            options.gateSeat,
-            options.roleLabel,
-          );
-    const inherited = await createInheritedRuntime({
-      context: options.context,
-      label: options.roleLabel,
-      idleRetry: true,
-      ...(gate.model === undefined ? {} : { model: gate.model }),
-      ...(options.runCompletion === undefined
-        ? {}
-        : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-
     const cwd = options.context.cwd ?? process.cwd();
 
     let decision: unknown;
@@ -857,18 +539,25 @@ export async function executeAuditorChild(
       ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
     });
 
-    // Shared session open — no tools allowlist (ADR 0064).
-    const { openInProcessAgentSession: openSession } = await import("./in-process-session.ts");
-    const { session, dispose } = await openSession({
+    // Shared session open — no tools allowlist (ADR 0064). Auth resolved
+    // child-locally from the explicit seat selection; adapter owns runtime/provider.
+    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    const opened = await openPiInstitutionalSession({
       cwd,
       agentDir: scratch,
-      model: inherited.model,
-      thinkingLevel: gate.thinkingLevel ?? options.context.thinkingLevel ?? "off",
-      modelRuntime: inherited.runtime,
+      selection,
       systemPrompt: options.systemPrompt,
       customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
       sessionManager: auditorSessionManager,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      idleRetry: true,
+      ...(options.runCompletion === undefined
+        ? {}
+        : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
+      modelRegistry: options.context.modelRegistry,
+      label: options.roleLabel,
     });
+    const { handle, session } = opened;
 
     const binding: AuditorParentAttemptBinding = {
       version: 1,
@@ -1008,7 +697,7 @@ export async function executeAuditorChild(
         };
         await promptAllowingRejectedDecision(options.prompt);
         while (!decisionSubmitted && (boundaryResponse === undefined || decisionToolFailure !== undefined)
-          && inherited.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
+          && opened.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
           if (decisionToolFailure !== undefined) {
             const failures = promptDecisionFailures.length === 0
               ? [decisionToolFailure]
@@ -1028,7 +717,7 @@ export async function executeAuditorChild(
             await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
           }
         }
-        if (!decisionSubmitted && inherited.streamFailure === undefined
+        if (!decisionSubmitted && opened.streamFailure === undefined
           && delivery.nextAction() === "no-receipt") {
           const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
           const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
@@ -1044,11 +733,11 @@ export async function executeAuditorChild(
         }
       } catch (error) {
         if (options.signal?.aborted) throw options.signal.reason;
-        if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
+        if (opened.streamFailure !== undefined) throw opened.streamFailure;
         throw error;
       }
       if (options.signal?.aborted) throw options.signal.reason;
-      if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
+      if (opened.streamFailure !== undefined) throw opened.streamFailure;
       if (!decisionSubmitted && decisionToolFailure !== undefined) throw decisionToolFailure;
       const relevantResponse = !decisionSubmitted
         ? boundaryResponse
@@ -1163,7 +852,7 @@ export async function executeAuditorChild(
     } finally {
       options.signal?.removeEventListener("abort", abort);
       unsubscribe();
-      dispose();
+      await handle.close();
     }
   });
 }

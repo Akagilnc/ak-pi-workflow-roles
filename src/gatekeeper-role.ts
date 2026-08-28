@@ -74,6 +74,9 @@ export type RunGatekeeperOptions = {
   readonly signal?: AbortSignal;
   readonly runCompletion?: AuditorCompletion;
   readonly loadSoul?: (role: "gatekeeper" | "inspector" | "notary") => Promise<string>;
+  /** Run directory carrying the institutional resolution page (#518). Derives
+   * from context when absent. */
+  readonly runDirectory?: string;
 };
 
 export type GatekeeperPassHostActions = {
@@ -220,6 +223,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
     });
   } catch (error) {
     return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
@@ -243,6 +247,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
     });
     if (officerRun.noReceiptLifecycle !== undefined) {
       return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
