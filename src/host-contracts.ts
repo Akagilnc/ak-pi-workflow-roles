@@ -254,7 +254,115 @@ export interface RoleHost {
   getCommands?(): Array<{ name: string }>;
 }
 
+/** Institutional sub-session seats (#518 §1). */
+export type InstitutionalSeat =
+  | "gatekeeper"
+  | "inspector"
+  | "notary"
+  | "auditor"
+  | "evidenceChild"
+  | (string & {});
+
+/** Non-secret host-neutral seat model selection. */
+export type HostInstitutionalModelSelection = {
+  readonly provider: string;
+  readonly model: string;
+  readonly thinking?: string;
+};
+
+/** Usage statistics for institutional sub-session events and turns. */
+export type HostSessionUsage = {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly totalTokens: number;
+  readonly cost: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+    readonly total: number;
+  };
+};
+
+/** Closed stream event union consumed by institutional callers (#518 §1③). */
+export type HostInstitutionalSessionEvent =
+  | {
+      readonly type: "message_end";
+      readonly role: "assistant" | "user" | string;
+      readonly usage?: HostSessionUsage;
+    }
+  | {
+      readonly type: "turn_end";
+      readonly stopReason?: string;
+    }
+  | {
+      readonly type: "tool_call";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly args?: unknown;
+    }
+  | {
+      readonly type: "tool_result";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly isError?: boolean;
+      readonly details?: unknown;
+    };
+
+/** Terminal result of an institutional assistant turn (#518 §1③). */
+export type HostAssistantTurnResult = {
+  readonly text: string;
+  readonly stopReason?: string;
+  readonly errorMessage?: string;
+  readonly usage?: HostSessionUsage;
+  readonly messages?: readonly unknown[];
+};
+
+/**
+ * Handle to an active institutional sub-session (#518 §1②).
+ * Does not leak AgentSession, ModelRuntime, or Provider objects out of the adapter.
+ */
+export interface HostInstitutionalSessionHandle {
+  readonly sessionFile?: string;
+  readonly sessionId?: string;
+  prompt(text: string): Promise<HostAssistantTurnResult>;
+  subscribe(listener: (event: HostInstitutionalSessionEvent) => void): () => void;
+  abort(): void;
+  close(): Promise<void>;
+}
+
+/** Open options for an institutional sub-session (#518 §1①). */
+export type HostInstitutionalSessionOptions = {
+  readonly cwd: string;
+  readonly selection: HostInstitutionalModelSelection;
+  readonly systemPrompt: string;
+  readonly tools?: readonly HostToolDefinition[];
+  readonly customTools?: readonly unknown[];
+  readonly noTools?: "all" | "builtin";
+  readonly toolsAllowlist?: readonly string[];
+  readonly agentDir?: string;
+  readonly credentialScratchParent?: string;
+  readonly signal?: AbortSignal;
+  readonly idleRetry?: boolean;
+  readonly sessionIdentity?: {
+    readonly kind: string;
+    readonly subject?: string;
+    readonly parent?: { getSessionFile(): string | undefined };
+  };
+  readonly sessionManager?: unknown;
+};
+
+/** Host-neutral institutional sub-session open seam. */
+export interface InstitutionalSessionHost {
+  openInstitutionalSession(
+    options: HostInstitutionalSessionOptions,
+  ): Promise<HostInstitutionalSessionHandle>;
+}
+
 /** Local replacement for Pi AI's convenience constructor. */
 export function stringEnum<const V extends readonly string[]>(values: V, options: Record<string, unknown> = {}) {
   return Type.Union(values.map((value) => Type.Literal(value)) as [TLiteral<V[number]>, ...TLiteral<V[number]>[]], options);
 }
+
