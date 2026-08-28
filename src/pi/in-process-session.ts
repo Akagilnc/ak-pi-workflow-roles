@@ -338,15 +338,34 @@ export async function openPiInstitutionalSession(
       baseUrl: effectiveBaseUrl,
     };
 
-    // 3. Standalone ModelRuntime + Provider with idle-only retry
+    // 3. Standalone ModelRuntime + Provider with idle-only retry.
+    // spec-2: the adapter constructs its OWN runtime/provider registration.
+    // Auth is resolved only by explicit selection above and seeded into the
+    // child runtime's own credential store — never inherited ambiently from
+    // the parent ExtensionContext/Provider.
+    const credentials = new InMemoryCredentialStore();
     const runtime = await ModelRuntime.create({
-      credentials: new InMemoryCredentialStore(),
+      credentials,
       modelsPath: null,
     });
 
-    const parentProvider: Provider | undefined = typeof sourceRegistry.getProvider === "function"
+    // The provider this child runtime will serve requests for. Resolved by
+    // explicit selection from the source registry (Pi auth true source), not
+    // captured from the parent session's ambient provider.
+    const childProvider: Provider | undefined = typeof sourceRegistry.getProvider === "function"
       ? sourceRegistry.getProvider(selection.provider)
       : undefined;
+
+    // Seed the child runtime's own credential store with the explicitly
+    // resolved auth so stream auth resolution is self-contained. No ambient
+    // fallback: absence of a resolved apiKey is not silently supplied.
+    if (resolvedApiKey !== undefined) {
+      await credentials.modify(selection.provider, async () => ({
+        type: "api_key",
+        key: resolvedApiKey,
+        ...(resolvedEnv === undefined ? {} : { env: resolvedEnv }),
+      }));
+    }
 
     const abortReason = (signal: AbortSignal): unknown =>
       signal.reason ?? new Error(`${label} provider stream aborted`);
@@ -426,13 +445,13 @@ export async function openPiInstitutionalSession(
               return;
             }
 
-            if (parentProvider === undefined) {
+            if (childProvider === undefined) {
               throw new Error(`${label} provider not found: ${model.provider}`);
             }
 
             const source = simple
-              ? parentProvider.streamSimple(model, context, retriedRequest as any)
-              : parentProvider.stream(model, context, retriedRequest as any);
+              ? childProvider.streamSimple(model, context, retriedRequest as any)
+              : childProvider.stream(model, context, retriedRequest as any);
             let sawEvent = false;
             const iterator = source[Symbol.asyncIterator]();
             while (true) {
@@ -505,7 +524,7 @@ export async function openPiInstitutionalSession(
 
     const provider: Provider = {
       id: selection.provider,
-      name: parentProvider?.name ?? label,
+      name: childProvider?.name ?? label,
       ...(effectiveBaseUrl ? { baseUrl: effectiveBaseUrl } : {}),
       ...(resolvedHeaders ? { headers: resolvedHeaders as any } : {}),
       auth: {
