@@ -18,9 +18,7 @@
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { piDurablePrincipalAuthority } from "../src/pi/durable-principal.ts";
-import { buildPiTurnExtraArgs } from "../src/pi/role-turn-host.ts";
-import { buildJudgeTurnRequest } from "../src/public-cli/judge-run.ts";
+import { buildJudgeActivationExtraArgs } from "../src/public-cli/judge-run.ts";
 import {
   buildJudgeTransportPrompt,
   type AdmittedJudgeInvocation,
@@ -58,18 +56,7 @@ const golden = {
   outputs: {
     judge: {
       transportPrompt: buildJudgeTransportPrompt(judge),
-      activationArgv: buildPiTurnExtraArgs(
-        buildJudgeTurnRequest(judge, {
-          packageRoot,
-          home: judge.projectRoot ?? "/tmp",
-          agentDir: "/tmp/agent",
-          continuation: {
-            kind: "initial",
-            prompt: buildJudgeTransportPrompt(judge),
-          },
-        }),
-        piDurablePrincipalAuthority,
-      ),
+      activationArgv: buildJudgeActivationExtraArgs(judge, {}),
     },
   },
 };
