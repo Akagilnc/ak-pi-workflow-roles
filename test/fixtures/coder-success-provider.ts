@@ -1,6 +1,7 @@
 /**
  * Offline faux provider for cold-installed Public Coder production-chain proofs.
  * Emits one lawful completed ak_coder_output after Pi expands package-owned TDD.
+ * Supports injected typed 429 provider stop via AK_TEST_PROVIDER_STOP=1.
  */
 import {
   fauxAssistantMessage,
@@ -17,6 +18,7 @@ import {
   GATEKEEPER_OUTPUT_TOOL,
   NAVIGATOR_PREPARE_TOOL_NAME,
 } from "../../src/role-runtime.ts";
+import { recordTypedProviderHttpStatus } from "../../src/typed-provider-http.ts";
 
 export default function coderSuccessProvider(pi: ExtensionAPI): void {
   const faux = fauxProvider({
@@ -42,6 +44,19 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
         }),
         { stopReason: "toolUse" },
       );
+    }
+    if (process.env.AK_TEST_PROVIDER_STOP === "1") {
+      const runDir = process.env.AK_ROLE_RUN_DIR;
+      if (runDir) {
+        await recordTypedProviderHttpStatus(runDir, {
+          httpStatus: 429,
+          provider: "openai-codex",
+        });
+      }
+      return fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage: "Rate limit reached (429)",
+      });
     }
     if (toolNames.includes(GATEKEEPER_OUTPUT_TOOL)) {
       return fauxAssistantMessage(

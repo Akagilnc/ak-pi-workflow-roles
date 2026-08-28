@@ -1,11 +1,10 @@
 /**
- * #109 cold-installed Public Coder production chain:
- * installed `ak-role coder apply` → real Pi child + explicit extension →
- * package Skill expansion/gates → shared Terminal + report/evidence refs.
- * Only the model provider is faux.
+ * #109 cold-installed Public Coder production chain (#526 spec-A):
+ * Single cold install → auto-resume limit=0 → first process real Pi child
+ * returns typed 429 provider stop → second process executes `ak-role resume <same runId>`
+ * and completes with accepted typed Coder terminal + frozen materials + artifacts.
  *
- * #319 Batch 2 (M3): sole owner of the coder installed deep chain 🔒.
- * public-cli-install keeps only shallow bin/skill-path admits.
+ * Deletes §3.A.4 named argv logs/indices, report prose locks, and raw JSONL text checks.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -81,20 +80,18 @@ async function runAkRoleBin(
     agentDir: options.agentDir,
     cwd: options.cwd,
     ...(options.env === undefined ? {} : { env: options.env }),
-    // Historical coder fixture had no harness deadline; do not invent one.
     timeoutMs: null,
   });
 }
 
 /**
- * Thin PI_BINARY wrapper: keeps every production argv from ak-role, injects only
- * the offline faux provider extension, then forwards to the real Pi binary.
+ * Thin PI_BINARY wrapper: forwards real Pi argv, injects offline faux provider
+ * extension, and runs the real Pi child without argv inspection logs.
  */
 async function writeProviderForwardingPiShim(input: {
   home: string;
   realPi: string;
   providerPath: string;
-  argvLogPath: string;
 }): Promise<string> {
   const shimDir = resolve(input.home, "pi-provider-forward");
   await mkdir(shimDir, { recursive: true });
@@ -102,11 +99,9 @@ async function writeProviderForwardingPiShim(input: {
   await writeFile(
     shimPath,
     `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 const providerPath = ${JSON.stringify(input.providerPath)};
 const realPi = ${JSON.stringify(input.realPi)};
-const argvLogPath = ${JSON.stringify(input.argvLogPath)};
 const incoming = process.argv.slice(2);
 const forwarded = [];
 let injected = false;
@@ -122,7 +117,6 @@ for (let i = 0; i < incoming.length; i += 1) {
     }
   }
 }
-writeFileSync(argvLogPath, JSON.stringify({ incoming, forwarded }, null, 2), "utf8");
 const child = spawn(realPi, forwarded, {
   stdio: "inherit",
   env: process.env,
@@ -146,7 +140,7 @@ child.on("close", (code, signal) => {
 }
 
 test(
-  "cold-installed ak-role coder apply retains production chain to lawful Terminal artifacts",
+  "cold-installed ak-role coder: provider-stop then resume reaches accepted terminal",
   { timeout: 180_000 },
   async () => {
     await withHermeticHome(
@@ -183,7 +177,6 @@ test(
           packageRoot,
           "test/fixtures/coder-success-provider.ts",
         );
-        const argvLogPath = resolve(home, "coder-chain-pi-argv.json");
         const realPi = await import("node:fs/promises").then((fs) =>
           fs.realpath(piCli),
         );
@@ -191,12 +184,25 @@ test(
           home,
           realPi,
           providerPath,
-          argvLogPath,
         });
+
+        // Set auto-resume limit to 0 so the first dispatch exits on typed provider stop
+        const limitResult = await runAkRoleBin(
+          installed.akRoleBin,
+          ["config", "set-auto-resume-limit", "0"],
+          {
+            home,
+            agentDir: piAgentDir,
+            cwd: project,
+          },
+        );
+        assert.equal(limitResult.code, 0);
 
         const instruction =
           "Implement the approved vertical slice with package TDD.";
-        const result = await runAkRoleBin(
+
+        // Process 1: Real Pi child encounters typed provider stop (429)
+        const firstResult = await runAkRoleBin(
           installed.akRoleBin,
           [
             "coder",
@@ -215,43 +221,16 @@ test(
             env: {
               PI_BINARY: shimPath,
               PI_OFFLINE: "1",
+              AK_TEST_PROVIDER_STOP: "1",
             },
           },
         );
 
-        assert.equal(
-          result.code,
+        assert.notEqual(
+          firstResult.code,
           0,
-          `installed coder chain failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+          "first process must exit nonzero on typed provider stop",
         );
-
-        // Production argv retained real explicit Internal load + package skill path.
-        const argvRecord = JSON.parse(await readFile(argvLogPath, "utf8")) as {
-          incoming: string[];
-          forwarded: string[];
-        };
-        assert.equal(argvRecord.incoming.includes("--no-extensions"), true);
-        assert.equal(argvRecord.incoming.includes("-e"), true);
-        assert.equal(argvRecord.incoming.includes("--skill"), true);
-        assert.equal(argvRecord.incoming.includes("--ak-role"), true);
-        assert.equal(
-          argvRecord.incoming[argvRecord.incoming.indexOf("--ak-role") + 1],
-          "coder",
-        );
-        assert.equal(
-          argvRecord.incoming[argvRecord.incoming.indexOf("--ak-coder-phase") + 1],
-          "apply",
-        );
-        const skillPath =
-          argvRecord.incoming[argvRecord.incoming.indexOf("--skill") + 1]!;
-        assert.equal(skillPath.includes("resources/methods/tdd/SKILL.md"), true);
-        assert.equal(skillPath.includes(".agents/skills"), false);
-        // Only provider injection is extra; role-runtime load stays from installed package.
-        const incomingE = argvRecord.incoming.filter((a) => a === "-e").length;
-        const forwardedE = argvRecord.forwarded.filter((a) => a === "-e").length;
-        assert.equal(incomingE, 1);
-        assert.equal(forwardedE, 2);
-        assert.equal(argvRecord.forwarded.includes(providerPath), true);
 
         const bookKey = resolveBookKeyFromGit(project);
         const runsRoot = join(home, ".ak-roles", "books", bookKey, "runs");
@@ -261,10 +240,71 @@ test(
         assert.ok(coderRun, `expected coder run under ${runsRoot}, got ${runDirs.join(",")}`);
         const runDirectory = join(runsRoot, coderRun!);
 
+        const firstState = JSON.parse(
+          await readFile(join(runDirectory, "run-state.json"), "utf8"),
+        ) as {
+          runId: string;
+          state: string;
+          sessionFile: string;
+          sessionDirectory: string;
+          resumable?: { httpStatus: number };
+        };
+        assert.equal(firstState.state, "resumable", "first process must settle as resumable");
+        assert.equal(firstState.resumable?.httpStatus, 429, "resumable state must record HTTP 429");
+        const runId = firstState.runId;
+        const frozenSessionFile = firstState.sessionFile;
+
+        // Process 2: ak-role resume <same runId> completes lawfully
+        const secondResult = await runAkRoleBin(
+          installed.akRoleBin,
+          [
+            "resume",
+            runId,
+          ],
+          {
+            home,
+            agentDir: piAgentDir,
+            cwd: project,
+            env: {
+              PI_BINARY: shimPath,
+              PI_OFFLINE: "1",
+              AK_TEST_PROVIDER_STOP: "0",
+            },
+          },
+        );
+
+        assert.equal(
+          secondResult.code,
+          0,
+          `installed coder resume failed\nstdout:\n${secondResult.stdout}\nstderr:\n${secondResult.stderr}`,
+        );
+
+        // Verification: same runId, exact frozen principal/sessionFile, typed terminal/artifacts
+        const secondState = JSON.parse(
+          await readFile(join(runDirectory, "run-state.json"), "utf8"),
+        ) as {
+          runId: string;
+          state: string;
+          sessionFile: string;
+          sessionDirectory: string;
+        };
+        assert.equal(secondState.runId, runId, "resume must keep exact same runId");
+        assert.equal(secondState.state, "terminal", "resumed run must settle as terminal");
+        assert.equal(
+          secondState.sessionFile,
+          frozenSessionFile,
+          "exact frozen sessionFile",
+        );
+
         const reportPath = join(runDirectory, "artifacts", "report.json");
         const evidencePath = join(runDirectory, "artifacts", "evidence.json");
-        const reportText = await readFile(reportPath, "utf8");
-        assert.equal(reportText.includes("TDD red/green evidence"), true);
+        const report = JSON.parse(await readFile(reportPath, "utf8")) as {
+          role: string;
+          outcome?: { kind: string };
+        };
+        assert.equal(report.role, "coder");
+        assert.equal(report.outcome?.kind, "accepted");
+
         const evidence = JSON.parse(await readFile(evidencePath, "utf8")) as {
           methodProvenance?: {
             upstream: { commit: string; tag?: string; path: string };
@@ -288,44 +328,36 @@ test(
           evidence.methodProvenance!.files["SKILL.md"]?.gitBlob,
           "d6b6bebaa1d1fed58812f8809b9ebc1ff9a5d1e4",
         );
-        assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
 
-        // Session retained accepted Coder receipt. completed is rejected without native
-        // package TDD expansion, so acceptance is the gate proof on this production chain.
-        const sessionFile = join(runDirectory, "session", "session.jsonl");
-        const sessionText = await readFile(sessionFile, "utf8");
+        // Attendance remains valid
         const recommendationAttendance = await readNavigatorAttendance(runDirectory);
         assert.equal(recommendationAttendance.disposition, "recommendation");
         assert.equal(recommendationAttendance.routePlaybookReadFailure, undefined);
-        assert.equal(sessionText.includes("ak_coder_output"), true);
-        assert.equal(sessionText.includes('"status":"completed"'), true);
-        assert.equal(sessionText.includes('"isError":true') &&
-          !sessionText.includes('"isError":false'), false);
 
-        // Installed package root owns the skill bytes used on this chain.
-        const installedSkill = join(
-          installed.installedRoot,
-          "resources/methods/tdd/SKILL.md",
+        // Session retained accepted Coder receipt without raw string-include checking
+        const sessionFile = join(runDirectory, "session", "session.jsonl");
+        const sessionLines = (await readFile(sessionFile, "utf8"))
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as {
+            type?: string;
+            message?: {
+              role?: string;
+              toolName?: string;
+              isError?: boolean;
+              details?: { status?: string };
+            };
+          });
+        const coderReceipt = sessionLines.findLast(
+          (entry) =>
+            entry.type === "message" &&
+            entry.message?.role === "toolResult" &&
+            entry.message.toolName === "ak_coder_output",
         );
-        const { realpath } = await import("node:fs/promises");
-        assert.equal(
-          await realpath(skillPath),
-          await realpath(installedSkill),
-        );
-
-        const roleReport = reportText;
-        assert.equal(roleReport.includes("COLD_INSTALLED_ROUTEBOOK_MARKER"), false);
-
-        // 尺②同根收拢（#420 类一）：本 tracer 的独有根＝冷装 ak-role coder apply 的
-        // 生产链到合法 Terminal。routebook 不可读降级与 Navigator unavailable 矩阵
-        // 属另一根，其承接者为：
-        //   - test/package/package-entrypoint-cold-help.integration.test.ts
-        //     （真装配上 routebook 读失败 → typed routePlaybookReadFailure 事件，
-        //       且诊断不泄入下一次 preparation）
-        //   - test/contract/judge-role.test.ts（attendance details 携带
-        //     routePlaybookReadFailure）
-        //   - test/contract/navigator-attendance*.test.ts（unavailable 的
-        //     reason/source/cause 类型矩阵：transport/session/model/thinking/context）
+        assert.ok(coderReceipt, "session must retain accepted Coder receipt");
+        assert.equal(coderReceipt.message?.isError, false);
+        assert.equal(coderReceipt.message?.details?.status, "completed");
       },
     );
   },
