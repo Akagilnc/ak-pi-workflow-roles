@@ -7,10 +7,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 
-/**
- * Shared notary session materials — one definition for public notary and
- * gatekeeper-province notary (#524; eliminates the prior dual path arrays).
- */
+/** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/notary.md",
@@ -18,9 +15,8 @@ export const NOTARY_SESSION_MATERIALS = [
 ] as const;
 
 /**
- * One record per public callable role: attendance/settlement metadata plus
- * ordered main-session materials. Navigator is intentionally absent (name-only
- * materials live in the session-opening projection).
+ * One record per public callable role. Navigator is absent (name-only materials
+ * live on the session-opening projection).
  */
 export const PUBLIC_ROLE_RECORDS = [
   {
@@ -122,7 +118,7 @@ export const PUBLIC_ROLE_RECORDS = [
 export type PublicRoleRecord = (typeof PUBLIC_ROLE_RECORDS)[number];
 export type PackagedRole = PublicRoleRecord["role"];
 
-/** Read-only metadata projection of PUBLIC_ROLE_RECORDS (no sessionMaterials). */
+/** Read-only metadata projection (no sessionMaterials). */
 export type PackagedRoleMetadata = {
   readonly role: PublicRoleRecord["role"];
   readonly phases: PublicRoleRecord["phases"];
@@ -132,20 +128,9 @@ export type PackagedRoleMetadata = {
   readonly activationStage: PublicRoleRecord["activationStage"];
 };
 
-function metadataProjection(record: PublicRoleRecord): PackagedRoleMetadata {
-  return {
-    role: record.role,
-    phases: record.phases,
-    outputTool: record.outputTool,
-    inputFlag: record.inputFlag,
-    phaseFlag: record.phaseFlag,
-    activationStage: record.activationStage,
-  };
-}
-
-/** Read-only derived projection — consumers keep the historical symbol. */
+/** Historical symbol — derived from PUBLIC_ROLE_RECORDS. */
 export const PACKAGED_ROLE_REGISTRY: readonly PackagedRoleMetadata[] =
-  PUBLIC_ROLE_RECORDS.map(metadataProjection);
+  PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
 
 export function packagedRoleMetadata(role: string): PackagedRoleMetadata | undefined {
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
@@ -161,14 +146,4 @@ export function packagedRolePhaseFlag(role: string): string | undefined {
 
 export function packagedRoleOutputTool(role: string): string | undefined {
   return packagedRoleMetadata(role)?.outputTool;
-}
-
-export function publicRoleSessionMaterials(
-  role: PackagedRole,
-): PublicRoleRecord["sessionMaterials"] {
-  const record = PUBLIC_ROLE_RECORDS.find((entry) => entry.role === role);
-  if (!record) {
-    throw new Error(`unknown public role: ${role}`);
-  }
-  return record.sessionMaterials;
 }

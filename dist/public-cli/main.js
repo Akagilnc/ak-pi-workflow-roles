@@ -14747,16 +14747,6 @@ var init_notary_contracts = __esm({
 });
 
 // src/packaged-role-registry.ts
-function metadataProjection(record4) {
-  return {
-    role: record4.role,
-    phases: record4.phases,
-    outputTool: record4.outputTool,
-    inputFlag: record4.inputFlag,
-    phaseFlag: record4.phaseFlag,
-    activationStage: record4.activationStage
-  };
-}
 var NOTARY_SESSION_MATERIALS, PUBLIC_ROLE_RECORDS, PACKAGED_ROLE_REGISTRY;
 var init_packaged_role_registry = __esm({
   "src/packaged-role-registry.ts"() {
@@ -14869,7 +14859,7 @@ var init_packaged_role_registry = __esm({
         sessionMaterials: NOTARY_SESSION_MATERIALS
       }
     ];
-    PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(metadataProjection);
+    PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
   }
 });
 
@@ -20438,19 +20428,17 @@ var init_analyst_gate_cycles_read = __esm({
 });
 
 // src/session-opening-materials.ts
-var packageRootUrl, NAVIGATOR_SESSION_MATERIALS, PUBLIC_MAIN_ROLE_SESSION_MATERIALS, MAIN_ROLE_SESSION_MATERIALS;
+var packageRootUrl, MAIN_ROLE_SESSION_MATERIALS;
 var init_session_opening_materials = __esm({
   "src/session-opening-materials.ts"() {
     "use strict";
     init_packaged_role_registry();
     packageRootUrl = new URL("..", import.meta.url);
-    NAVIGATOR_SESSION_MATERIALS = ["CLAUDE.md", "souls/navigator.md"];
-    PUBLIC_MAIN_ROLE_SESSION_MATERIALS = Object.fromEntries(
-      PUBLIC_ROLE_RECORDS.map((record4) => [record4.role, record4.sessionMaterials])
-    );
     MAIN_ROLE_SESSION_MATERIALS = {
-      ...PUBLIC_MAIN_ROLE_SESSION_MATERIALS,
-      navigator: NAVIGATOR_SESSION_MATERIALS
+      ...Object.fromEntries(
+        PUBLIC_ROLE_RECORDS.map((record4) => [record4.role, record4.sessionMaterials])
+      ),
+      navigator: ["CLAUDE.md", "souls/navigator.md"]
     };
   }
 });
