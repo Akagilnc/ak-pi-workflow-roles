@@ -8,24 +8,18 @@ import {
   listHelpCapabilities,
   publicStartupCandidates,
 } from "../../src/public-cli/registry.ts";
-import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
-import {
-  CODER_OUTPUT_TOOL_NAME,
-  FIXER_OUTPUT_TOOL_NAME,
-} from "../../src/package-contracts/worker-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
-import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 
-/** External metadata oracle — all 8 roles, every field, roster order (#524 验收 1). */
+/**
+ * External metadata oracle — all 8 roles, every field, roster order (#524 验收 1).
+ * Baseline string literals only: do not import production contract constants, or
+ * constant drift would move expected and actual together and hide the failure.
+ */
 const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "judge",
     phases: [null],
-    outputTool: JUDGE_OUTPUT_TOOL_NAME,
+    outputTool: "ak_judge_output",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -33,7 +27,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "fixer",
     phases: ["plan", "apply"],
-    outputTool: FIXER_OUTPUT_TOOL_NAME,
+    outputTool: "ak_fixer_output",
     inputFlag: "ak-fix-packet",
     phaseFlag: "ak-fixer-phase",
     activationStage: "load-and-install",
@@ -41,7 +35,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "coder",
     phases: ["plan", "apply"],
-    outputTool: CODER_OUTPUT_TOOL_NAME,
+    outputTool: "ak_coder_output",
     inputFlag: "ak-coder-task",
     phaseFlag: "ak-coder-phase",
     activationStage: "load-and-install",
@@ -49,7 +43,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "reviewer",
     phases: [null],
-    outputTool: REVIEWER_OUTPUT_TOOL_NAME,
+    outputTool: "ak_reviewer_output",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -57,7 +51,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "collector",
     phases: [null],
-    outputTool: COLLECTOR_OUTPUT_TOOL,
+    outputTool: "ak_collector_output",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -65,7 +59,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "doctor",
     phases: [null],
-    outputTool: DOCTOR_OUTPUT_TOOL_NAME,
+    outputTool: "ak_doctor_output",
     inputFlag: "ak-doctor-case",
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -73,7 +67,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "merger",
     phases: [null],
-    outputTool: MERGER_OUTPUT_TOOL_NAME,
+    outputTool: "ak_merger_output",
     inputFlag: "ak-merger-input",
     phaseFlag: undefined,
     activationStage: "prepare-git-and-install",
@@ -81,7 +75,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "notary",
     phases: [null],
-    outputTool: NOTARY_OUTPUT_TOOL_NAME,
+    outputTool: "ak_notary_output",
     inputFlag: "ak-notary-source-run",
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -90,24 +84,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
 
 test("public registry exposes callable roles plus automatic configurable seats", () => {
   // #524 验收 1: full metadata fields + order for all 8 roles (external oracle).
-  assert.deepEqual(
-    PACKAGED_ROLE_REGISTRY.map((entry) => ({
-      role: entry.role,
-      phases: [...entry.phases],
-      outputTool: entry.outputTool,
-      inputFlag: entry.inputFlag,
-      phaseFlag: entry.phaseFlag,
-      activationStage: entry.activationStage,
-    })),
-    EXPECTED_PACKAGED_ROLE_METADATA.map((entry) => ({
-      role: entry.role,
-      phases: [...entry.phases],
-      outputTool: entry.outputTool,
-      inputFlag: entry.inputFlag,
-      phaseFlag: entry.phaseFlag,
-      activationStage: entry.activationStage,
-    })),
-  );
+  assert.deepEqual([...PACKAGED_ROLE_REGISTRY], [...EXPECTED_PACKAGED_ROLE_METADATA]);
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     EXPECTED_PACKAGED_ROLE_METADATA.map((entry) => entry.role),
