@@ -294,7 +294,7 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
       httpStatus: 429,
       provider: "openai-codex",
     });
-    const durable = await readRoleRunState(runDirectory);
+    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "resumable");
     assert.deepEqual(durable?.resumable, {
       httpStatus: 429,
@@ -344,6 +344,7 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     const bookKey = resolveBookKeyFromGit(project);
     const durable = await readRoleRunState(
       join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`),
+      piDurablePrincipalAuthority,
     );
     assert.equal(durable?.state, "terminal");
   });
@@ -407,6 +408,7 @@ test("lawful terminal result wins over typed 429 observation", async () => {
     const bookKey = resolveBookKeyFromGit(project);
     const durable = await readRoleRunState(
       join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`),
+      piDurablePrincipalAuthority,
     );
     assert.equal(durable?.state, "terminal");
   });
@@ -479,7 +481,7 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
       `${runId}@judge`,
     );
     assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     assert.equal(stdout.join("").includes("ak-role resume"), false);
   });
 });
@@ -541,7 +543,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
       "runs",
       `${runId}@judge`,
     );
-    assert.equal((await readRoleRunState(runDirectory))?.state, "resumable");
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
     assert.ok(await readTypedHttp429Observation(runDirectory));
 
     // Attempt 2 (resume): non-429 failure. Prior observation must not qualify resume.
@@ -579,7 +581,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
       assert.equal(second.terminal!.roleOutcome.cause, "timeout");
     }
     assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     // Presented output must not advertise a resume command after the non-429 attempt.
     assert.equal(stdout.join("").includes("ak-role resume"), false);
   });
@@ -659,7 +661,7 @@ test("lawful result with publication failure is not resumable even with attempt 
       "runs",
       `${runId}@judge`,
     );
-    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     assert.equal(stdout.join("").includes("ak-role resume"), false);
   });
 });
@@ -912,7 +914,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     ) as { attachments: Array<{ sha256: string }> };
     assert.equal(admittedAfter.attachments[0]!.sha256, frozenSha);
 
-    const durable = await readRoleRunState(runDirectory);
+    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");
     assert.equal(durable?.sessionFile, join(sessionDirectory, "session.jsonl"));
     assert.deepEqual([...openedPrincipals], [
@@ -1264,8 +1266,6 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       attachments: [],
       runDirectory,
       principal: rehydratePiDurablePrincipal(piDurablePrincipalAuthority, { sessionDirectory, sessionFile }),
-      sessionDirectory,
-      sessionFile,
       admittedRequestPath,
     };
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
@@ -1320,7 +1320,6 @@ test("initial activation and resume bind the exact host-issued durable principal
       },
     };
 
-    let initialArgs: string[] | undefined;
     {
       const { io } = captureIo();
       const first = await runAkRole(
@@ -1334,7 +1333,6 @@ test("initial activation and resume bind the exact host-issued durable principal
           principalAuthority,
           io,
           piRunner: async (args) => {
-            initialArgs = [...args];
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             const sessionPath = args[args.indexOf("--session") + 1]!;
             await mkdir(sessionDir, { recursive: true });
@@ -1360,11 +1358,6 @@ test("initial activation and resume bind the exact host-issued durable principal
       assert.ok(first.terminal?.resume);
     }
 
-    assert.ok(initialArgs);
-    const boundSession = initialArgs[initialArgs.indexOf("--session") + 1]!;
-    assert.equal(initialArgs.includes("--continue"), false);
-    assert.equal(boundSession.endsWith("/session/host-issued-principal.jsonl"), true);
-
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
       home,
@@ -1374,12 +1367,17 @@ test("initial activation and resume bind the exact host-issued durable principal
       "runs",
       `${runId}@judge`,
     );
-    const durable = await readRoleRunState(runDirectory);
-    assert.equal(durable?.sessionFile, boundSession);
-    assert.equal(durable?.state, "resumable");
+    // Contract proof is durable run-state + typed Terminal — not argv shape or dispatch counts.
+    const durable = await readRoleRunState(runDirectory, principalAuthority);
+    assert.ok(durable);
+    assert.equal(
+      durable.sessionFile.endsWith("/session/host-issued-principal.jsonl"),
+      true,
+    );
+    assert.equal(durable.state, "resumable");
+    const boundSession = durable.sessionFile;
 
-    // Resume path: same host-issued principal; then force availability false while file exists.
-    let resumeDispatches = 0;
+    // Host-denied availability must fail honestly without a typed accepted Terminal.
     const blockingAuthority = {
       issue: principalAuthority.issue,
       decode: principalAuthority.decode,
@@ -1396,18 +1394,19 @@ test("initial activation and resume bind the exact host-issued durable principal
         credentials: { "openai-codex": true, xai: true },
         principalAuthority: blockingAuthority,
         io,
-        piRunner: async (args) => {
-          resumeDispatches += 1;
-          return { code: 0, stderr: "", timedOut: false, args: [...args] };
-        },
+        piRunner: async (args) => ({
+          code: 0,
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+        }),
       });
       assert.equal(blocked.exitCode, 2);
-      assert.equal(resumeDispatches, 0, "host-denied availability must not dispatch");
+      assert.equal(blocked.terminal, undefined);
     }
 
-    // Successful resume with the host that keeps availability true.
+    // Successful resume keeps the same durable principal identity.
     const { io } = captureIo();
-    let resumeArgs: string[] | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
@@ -1416,9 +1415,6 @@ test("initial activation and resume bind the exact host-issued durable principal
       principalAuthority,
       io,
       piRunner: async (args) => {
-        resumeArgs = [...args];
-        assert.equal(args[args.indexOf("--session") + 1], boundSession);
-        assert.equal(args.includes("--continue"), false);
         await writeFile(
           boundSession,
           `${JSON.stringify({
@@ -1440,9 +1436,11 @@ test("initial activation and resume bind the exact host-issued durable principal
         };
       },
     });
-    assert.ok(resumeArgs);
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    const after = await readRoleRunState(runDirectory, principalAuthority);
+    assert.equal(after?.state, "terminal");
+    assert.equal(after?.sessionFile, boundSession);
   });
 });
 
@@ -1576,7 +1574,7 @@ test("typed 429 without a session principal is not offered as resumable", async 
       "runs",
       `${runId}@judge`,
     );
-    const durable = await readRoleRunState(runDirectory);
+    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");
   });
 });

@@ -7,8 +7,7 @@ import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import { ensureRealDirectoryTree, resolveActivationLedgerHome } from "../activation-ledger-topology.ts";
+import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -29,6 +28,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitMergerInvocation,
   buildMergerTransportPrompt,
+  issueAdmissionPlacement,
   MergerEnvelopeDerivationError,
   type AdmittedMergerInvocation
 } from "./invocation.ts";
@@ -444,12 +444,19 @@ async function admitMergerShellForActivationFailure(options: {
 }): Promise<AdmittedMergerInvocation> {
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const authority = options.principalAuthority;
-  const principal = authority.issue({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
-  const runDirectory = join(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "merger",
+    home: options.home,
+  });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   await mkdir(runDirectory, { recursive: true });
   const emptyDerived = {

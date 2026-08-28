@@ -136,7 +136,7 @@ test("block2: auto retry up to 2 per single call, observation on terminal", asyn
     assert.equal(calls,3);
     assert.equal(result.exitCode,1);
     assert.equal(result.terminal?.autoResumeCount,2);
-    const state=await readRoleRunState(join(home,".ak-roles","books",resolveBookKeyFromGit(project),"runs",`${runId}@judge`));
+    const state=await readRoleRunState(join(home,".ak-roles","books",resolveBookKeyFromGit(project),"runs",`${runId}@judge`), piDurablePrincipalAuthority);
     assert.equal(state?.state,"terminal");
     // Only final terminal presented once
     assert.equal(calls,3);

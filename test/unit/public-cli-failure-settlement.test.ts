@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
@@ -331,21 +332,19 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
       ].join("\n") + "\n",
       "utf8",
     );
-    const admitted = {
-      role: "judge" as const,
+    const admitted = fixtureJudgeAdmitted({
       runId,
       bookKey,
       projectRoot: project,
       instruction: "x",
       instructionEmpty: false,
-      attachments: [],
       runDirectory,
-      principal: { sessionDirectory, sessionFile },
-      admittedRequestPath: join(runDirectory, "admitted-request.json"),
-    };
+      sessionDirectory,
+      sessionFile,
+    });
     await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
 
-    const terminal = await settleJudgeFailureTerminalResult(admitted as any, {
+    const terminal = await settleJudgeFailureTerminalResult(admitted, {
       cause: "activation",
       diagnostic: "role infrastructure failed",
     }, piDurablePrincipalAuthority);
@@ -910,23 +909,16 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
         `${runId}@judge`,
       );
       await mkdir(join(runDirectory, "session"), { recursive: true });
-      const admitted = {
-        role: "judge" as const,
+      const admitted = fixtureJudgeAdmitted({
         runId,
         bookKey,
         projectRoot: project,
         instruction: "x",
         instructionEmpty: false,
-        attachments: [],
         runDirectory,
-        principal: {
-          sessionDirectory: join(runDirectory, "session"),
-          sessionFile: join(runDirectory, "session", "session.jsonl"),
-        },
-        admittedRequestPath: join(runDirectory, "admitted-request.json"),
-      };
+      });
       await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-      const terminal = await settleJudgeFailureTerminalResult(admitted as any, {
+      const terminal = await settleJudgeFailureTerminalResult(admitted, {
         cause,
         diagnostic: `diagnostic for ${cause}`,
         identity: { name: "CauseProbeError", code: cause },

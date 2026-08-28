@@ -13,7 +13,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
-import { readRoleRunState } from "./public-cli/run-lifecycle.ts";
+import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 
 const RUN_DIR_NAME =
   /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@([A-Za-z][A-Za-z0-9_-]*)$/i;
@@ -109,7 +109,8 @@ export async function resolveNotarySourceRunLocator(options: {
   }
 
   // Authoritative retained record only — legal role/state via shared reader (DRY #14).
-  const runState = await readRoleRunState(real);
+  // Identity envelope only: principal payload is not interpreted here.
+  const runState = await readRoleRunIdentity(real);
   if (runState === undefined) {
     throw new NotarySourceRunError(
       "notary --source-run lacks retained run-state identity",
@@ -144,7 +145,7 @@ export async function loadNotarySourceRunLocator(
 ): Promise<NotarySourceRunLocator> {
   const real = await requireRunDirectory(path, path);
   const identity = parseRunDirectoryName(basename(real))!;
-  const runState = await readRoleRunState(real);
+  const runState = await readRoleRunIdentity(real);
   if (runState === undefined) {
     throw new NotarySourceRunError(
       "notary source-run lacks retained run-state identity",
