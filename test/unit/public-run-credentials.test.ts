@@ -1,7 +1,7 @@
 /**
  * Shared public-run credential seam — one owner for missing-credential
  * detection, typed failure construction, pre-dispatch fail-closed, and
- * post-run annotation used by all seven public role runners.
+ * post-run annotation used by the post-admission coordinator (#517).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -15,19 +15,19 @@ import {
 } from "../../src/public-cli/public-run-credentials.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-/** Role runners that still own local dispatch and import the credential seam directly. */
-const DIRECT_CREDENTIAL_RUNNERS = [
+/** All 8 public role runners dispatch through the unified post-admission coordinator. */
+const ALL_ROLE_RUNNERS = [
   "coder-run.ts",
   "collector-run.ts",
+  "doctor-run.ts",
   "fixer-run.ts",
   "judge-run.ts",
   "merger-run.ts",
+  "notary-run.ts",
   "reviewer-run.ts",
 ] as const;
 
-/** Doctor/Notary lifecycle lives on the shared one-shot seam (ADR 0018 / #448). */
-const ONE_SHOT_DISPATCH = "one-shot-dispatch.ts";
-const ONE_SHOT_ROLE_RUNNERS = ["doctor-run.ts", "notary-run.ts"] as const;
+const POST_ADMISSION_COORDINATOR = "post-admission.ts";
 
 test("shared seam constructs MissingProviderCredential from public credential facts", () => {
   const missing = knownFailureForMissingProviderCredential(
@@ -92,13 +92,33 @@ test("post-run annotation only attaches on nonzero or timeout exits", () => {
   );
 });
 
-test("credential seam ownership follows current dispatch topology", async () => {
-  for (const name of DIRECT_CREDENTIAL_RUNNERS) {
+test("credential seam ownership follows post-admission coordinator topology", async () => {
+  const coordinatorSource = await readFile(
+    join(packageRoot, "src/public-cli", POST_ADMISSION_COORDINATOR),
+    "utf8",
+  );
+  assert.match(
+    coordinatorSource,
+    /from "\.\/public-run-credentials\.ts"/,
+    `${POST_ADMISSION_COORDINATOR} must own credential checks for post-admission dispatch`,
+  );
+  assert.equal(
+    coordinatorSource.includes("const missingCredential = knownFailureForMissingProviderCredential"),
+    false,
+    `${POST_ADMISSION_COORDINATOR} must use the shared pre-dispatch helper`,
+  );
+
+  for (const name of ALL_ROLE_RUNNERS) {
     const source = await readFile(join(packageRoot, "src/public-cli", name), "utf8");
     assert.match(
       source,
-      /from "\.\/public-run-credentials\.ts"/,
-      `${name} must import the shared credential seam`,
+      /from "\.\/post-admission\.ts"/,
+      `${name} must dispatch through the shared post-admission coordinator`,
+    );
+    assert.equal(
+      /from "\.\/public-run-credentials\.ts"/.test(source),
+      false,
+      `${name} must not re-import credentials outside the post-admission coordinator`,
     );
     assert.equal(
       source.includes("const missingCredential = knownFailureForMissingProviderCredential"),
@@ -112,48 +132,5 @@ test("credential seam ownership follows current dispatch topology", async () => 
       false,
       `${name} must not keep a local post-run credential ternary`,
     );
-    if (name !== "judge-run.ts") {
-      assert.equal(
-        source.includes('from "./judge-run.ts"'),
-        false,
-        `${name} must not import credential helpers from judge-run`,
-      );
-    }
   }
-
-  const shared = await readFile(
-    join(packageRoot, "src/public-cli", ONE_SHOT_DISPATCH),
-    "utf8",
-  );
-  assert.match(
-    shared,
-    /from "\.\/public-run-credentials\.ts"/,
-    `${ONE_SHOT_DISPATCH} must own credential checks for one-shot roles`,
-  );
-  assert.equal(
-    shared.includes("const missingCredential = knownFailureForMissingProviderCredential"),
-    false,
-    `${ONE_SHOT_DISPATCH} must use the shared pre-dispatch helper`,
-  );
-
-  for (const name of ONE_SHOT_ROLE_RUNNERS) {
-    const source = await readFile(join(packageRoot, "src/public-cli", name), "utf8");
-    assert.match(
-      source,
-      /from "\.\/one-shot-dispatch\.ts"/,
-      `${name} must dispatch through the shared one-shot seam`,
-    );
-    assert.equal(
-      /from "\.\/public-run-credentials\.ts"/.test(source),
-      false,
-      `${name} must not re-import credentials outside the shared seam`,
-    );
-  }
-
-  const judge = await readFile(join(packageRoot, "src/public-cli/judge-run.ts"), "utf8");
-  assert.equal(
-    judge.includes("export function knownFailureForMissingProviderCredential"),
-    false,
-    "judge-run must not own the shared credential helper",
-  );
 });

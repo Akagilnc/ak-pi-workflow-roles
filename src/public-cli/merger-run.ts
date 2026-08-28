@@ -1,24 +1,18 @@
 /**
  * Public Merger Role run: derive active-merge envelope → force package
- * merge-only method → host turn execute → settle Terminal result (#114).
- * Controlled-failure settlement reuses the #107 shared owner.
+ * merge-only method → post-admission coordinator → settle Terminal result (#114 / #517).
  * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
 import type {
   DurablePrincipalAuthority,
   MethodBinding,
-  RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
-  RoleTurnResult,
-  SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import type { ControlledFailureCause } from "../host-contracts.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -33,73 +27,36 @@ import {
   buildMergerTransportPrompt,
   issueAdmissionPlacement,
   MergerEnvelopeDerivationError,
-  type AdmittedMergerInvocation
+  type AdmittedMergerInvocation,
 } from "./invocation.ts";
 import {
-  type CredentialProviders,
-  type SeatModelConfig,
-} from "./config.ts";
-import {
-  missingCredentialPreDispatchFailure,
-  postRunMissingCredentialFailure,
-} from "./public-run-credentials.ts";
-import {
-  acquireRunWriterLease,
-  clearTypedProviderHttpObservation,
-  isV1ResumableFailure,
   loadResumableMergerRun,
   markRunAdmitted,
-  markRunResumable,
-  markRunRunning,
-  markRunTerminal,
-  renderResumeCommand,
-  type PublicResumeRequest,
   selectResumeContinuationPrompt,
-  RunWriterLeaseHeldError,
-  type RunWriterLease,
-  type TypedProviderHttpObservation,
+  type PublicResumeRequest,
 } from "./run-lifecycle.ts";
-import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
-  classifyPostAdmissionFailure,
-  exitCodeForTerminalOutcome,
-  formatCliDiagnostic,
-  formatTerminalResult,
   hasLawfulMergerTerminalResult,
-  inspectJudgeSession,
   isLawfulTypedTerminalOutcome,
-  presentFailureTerminal,
   presentStructuralRejection,
-  explicitInternalKnownFailureClassificationInput,
-  resolveAuditedRunnerFailureResolution,
-  resolveControlledFailureResumeObservation,
-  controlledFailureInputFromResolution,
-  settleFailureTerminalResult,
   trySettleMergerTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type {
-  TerminalResult,
-} from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+import {
+  presentControlledFailure,
+  runPostAdmissionManualResume,
+  runPostAdmissionResumable,
+  type PostAdmissionAdapters,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
 
-export type MergerRunEnv = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  agentDir: string;
-  packageRoot: string;
-  cwd: string;
-  correlationId?: string;
-  roleTurnHost: RoleTurnHost;
-  model?: SeatModelConfig;
-  /** Optional labor engine name (config→activation; session material + env signal). */
-  engine?: string;
-  credentials?: CredentialProviders;
+export type MergerRunEnv = PostAdmissionEnv & {
   createRunId?: () => string;
-  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
-  autoResumeLimit?: number;
-  timeoutMs?: number;
-  /** Host-neutral Pi session codec for dispatch-error retention (#526 S1b-2). */
-  sessionAppender: SessionCustomEntryAppender;
 };
 
 function mergerMethods(packageRoot: string): readonly MethodBinding[] {
@@ -110,11 +67,6 @@ function mergerMethods(packageRoot: string): readonly MethodBinding[] {
     },
   ];
 }
-
-import {
-  projectRoleTurnRequest,
-  type RoleTurnRequestProjectionOptions,
-} from "./turn-request.ts";
 
 /** Project admitted Merger invocation onto the host-neutral turn request. */
 export function buildMergerTurnRequest(
@@ -134,221 +86,27 @@ export function buildMergerTurnRequest(
   );
 }
 
-async function presentControlledFailure(
-  admitted: AdmittedMergerInvocation,
-  failureInput: {
-    timedOut: boolean;
-    code: number | null;
-    stderr: string;
-    thrown?: unknown;
-    knownFailure?: RoleTurnKnownFailure;
-    knownCause?: ControlledFailureCause;
-    knownIdentity?: {
-      readonly name?: string;
-      readonly code?: string | number;
-    };
-    knownDiagnostic?: string;
-    typedHttpObservationSettled?: true;
-    typedHttpObservation?: TypedProviderHttpObservation;
-  },
-  authority: DurablePrincipalAuthority,
-  io: CliIo,
-): Promise<{
-  exitCode: number;
-  admitted: AdmittedMergerInvocation;
-  terminal: TerminalResult;
-}> {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...(failureInput.typedHttpObservationSettled === true
-      ? {
-        typedHttpObservationSettled: true as const,
-        ...(failureInput.typedHttpObservation === undefined
-          ? {}
-          : { typedHttpObservation: failureInput.typedHttpObservation }),
-      }
-      : {}),
-  });
-  const knownFailure =
-    failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session =
-    !hasThrown &&
-    !failureInput.timedOut &&
-    knownFailure === undefined &&
-    failureInput.knownCause === undefined
-      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
-      : undefined;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
-    ...(failureInput.knownCause === undefined
-      ? {}
-      : { knownCause: failureInput.knownCause }),
-    ...(failureInput.knownIdentity === undefined
-      ? {}
-      : { knownIdentity: failureInput.knownIdentity }),
-    ...(failureInput.knownDiagnostic === undefined
-      ? {}
-      : { knownDiagnostic: failureInput.knownDiagnostic }),
-    ...(session === undefined ? {} : { session }),
-  });
-
-  const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted, authority);
-  const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
-  const resumable =
-    sessionPrincipalAvailable &&
-    isV1ResumableFailure({
-      hasLawfulTerminalResult,
-      ...(typedHttp429 === undefined ? {} : { typedHttp429 }),
-    });
-  if (resumable && typedHttp429 !== undefined) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-  }
-
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    authority,
-    resumable
-      ? { resume: { command: renderResumeCommand(admitted.runId) } }
-      : {},
-  );
-  presentFailureTerminal(terminal, io);
+function mergerAdapters(
+  packageRoot: string,
+  methodMaterial?: PackagedMethodSkillMaterial,
+): PostAdmissionAdapters<AdmittedMergerInvocation> {
   return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal,
+    trySettle: (admitted, authority) =>
+      methodMaterial === undefined
+        ? Promise.resolve(undefined)
+        : trySettleMergerTerminalResult(admitted, authority, {
+            methodProvenance: methodMaterial.provenance,
+            methodSkillPath: methodMaterial.skillPath,
+            methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+              packageRoot,
+              "resolving-merge-conflicts",
+            ),
+          }),
+    shouldPresentSettled: (t) =>
+      isLawfulTypedTerminalOutcome(t.roleOutcome) || t.roleOutcome.kind === "incomplete",
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulMergerTerminalResult(admitted, authority),
+    isResumableRole: true,
   };
-}
-
-async function dispatchAdmittedMerger(input: {
-  admitted: AdmittedMergerInvocation;
-  env: MergerRunEnv;
-  io: CliIo;
-  request: RoleTurnRequest;
-  lease: RunWriterLease;
-  methodMaterial: PackagedMethodSkillMaterial;
-  effectiveEngine?: string;
-}): Promise<{
-  exitCode: number;
-  admitted: AdmittedMergerInvocation;
-  terminal?: TerminalResult;
-}> {
-  const { admitted, env, io, request, lease, methodMaterial, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials,
-    );
-    if (missingCredential !== undefined) {
-      return await presentControlledFailure(
-        admitted,
-        missingCredential,
-        env.principalAuthority,
-        io,
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-
-    let result: RoleTurnResult;
-    try {
-      result = await env.roleTurnHost.executeTurn(request);
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-        },
-        env.principalAuthority,
-        io,
-      );
-    }
-
-    try {
-      await writeFile(
-        join(admitted.runDirectory, "stderr.log"),
-        result.stderr,
-        "utf8",
-      );
-    } catch {
-      // continue to lawful / controlled-failure settlement
-    }
-
-    let lawful: TerminalResult | undefined;
-    try {
-      lawful = await trySettleMergerTerminalResult(admitted, env.principalAuthority, {
-        methodProvenance: methodMaterial.provenance,
-        methodSkillPath: methodMaterial.skillPath,
-        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-          env.packageRoot,
-          "resolving-merge-conflicts",
-        ),
-      });
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: result.code,
-          stderr: result.stderr,
-          thrown: error,
-        },
-        env.principalAuthority,
-        io,
-      );
-    }
-    // Residual malformed output is a typed incomplete Terminal, not a missing
-    // lawful outcome — do not wash it into the generic failure channel.
-    if (
-      lawful !== undefined &&
-      (isLawfulTypedTerminalOutcome(lawful.roleOutcome) ||
-        lawful.roleOutcome.kind === "incomplete")
-    ) {
-      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful,
-      };
-    }
-
-    const credentialFailure = postRunMissingCredentialFailure(
-      result,
-      env.model,
-      env.credentials,
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result.knownFailure,
-      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory,
-    });
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...controlledFailureInputFromResolution(resolution),
-      },
-      env.principalAuthority,
-      io,
-    );
-  } finally {
-    await lease.release();
-  }
 }
 
 async function loadMergerMethodMaterial(
@@ -443,7 +201,7 @@ function mergerTurnOptions(
   packageRoot: string;
   home: string;
   agentDir: string;
-  model?: SeatModelConfig;
+  model?: import("./config.ts").SeatModelConfig;
   engine?: string;
   timeoutMs?: number;
   correlationId?: string;
@@ -508,11 +266,9 @@ export async function runPublicMerger(
       return { exitCode: 2 };
     }
     if (error instanceof MergerEnvelopeDerivationError) {
-      // No active merge / incomplete conflict set: honest activation failure.
-      // Place a shell admitted run so Terminal identity stays role-correct.
       const shell = await admitMergerShellForActivationFailure({
         home: env.home,
-      principalAuthority: env.principalAuthority,
+        principalAuthority: env.principalAuthority,
         cwd: env.cwd,
         instruction: parsed.instruction,
         ...(parsed.project === undefined ? {} : { project: parsed.project }),
@@ -521,7 +277,7 @@ export async function runPublicMerger(
           : { createRunId: env.createRunId }),
       });
       await markRunAdmitted(shell, env.principalAuthority);
-      return await presentControlledFailure(
+      return (await presentControlledFailure(
         shell,
         {
           timedOut: false,
@@ -531,20 +287,19 @@ export async function runPublicMerger(
           knownCause: "activation",
           knownDiagnostic: error.message,
         },
+        mergerAdapters(env.packageRoot),
         env.principalAuthority,
         io,
-      );
+      )) as { exitCode: number; admitted: AdmittedMergerInvocation; terminal: TerminalResult };
     }
     throw error;
   }
-
-  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
-    return await presentControlledFailure(
+    return (await presentControlledFailure(
       admitted,
       {
         timedOut: false,
@@ -553,19 +308,17 @@ export async function runPublicMerger(
         thrown: error,
         knownCause: "activation",
       },
+      mergerAdapters(env.packageRoot),
       env.principalAuthority,
       io,
-    );
+    )) as { exitCode: number; admitted: AdmittedMergerInvocation; terminal: TerminalResult };
   }
 
-  return runWithAutoResumeLoop({
+  return await runPostAdmissionResumable({
     admitted,
-    principalAuthority: env.principalAuthority,
+    env,
     io,
-    sessionAppender: env.sessionAppender,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialPayload: () =>
+    buildInitialRequest: () =>
       buildMergerTurnRequest(admitted, {
         ...mergerTurnOptions(admitted, env),
         continuation: {
@@ -579,7 +332,7 @@ export async function runPublicMerger(
           ),
         },
       }),
-    buildResumePayload: () =>
+    buildResumeRequest: () =>
       buildMergerTurnRequest(admitted, {
         packageRoot: env.packageRoot,
         home: env.home,
@@ -595,19 +348,8 @@ export async function runPublicMerger(
           prompt: selectResumeContinuationPrompt(),
         },
       }),
-    dispatch: (request, lease, isFirst, attemptIo) =>
-      dispatchAdmittedMerger({
-        admitted,
-        env: {
-          ...env,
-          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-        },
-        io: attemptIo,
-        request,
-        lease,
-        methodMaterial,
-        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
-      }),
+    adapters: mergerAdapters(env.packageRoot, methodMaterial),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
@@ -637,23 +379,11 @@ export async function runPublicMergerResume(
 
   const { admitted } = loaded;
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
-
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
-    return await presentControlledFailure(
+    return (await presentControlledFailure(
       admitted,
       {
         timedOut: false,
@@ -662,9 +392,10 @@ export async function runPublicMergerResume(
         thrown: error,
         knownCause: "activation",
       },
+      mergerAdapters(env.packageRoot),
       env.principalAuthority,
       io,
-    );
+    )) as { exitCode: number; admitted: AdmittedMergerInvocation; terminal: TerminalResult };
   }
 
   const turnRequest = buildMergerTurnRequest(admitted, {
@@ -683,19 +414,13 @@ export async function runPublicMergerResume(
     },
   });
 
-  const result = await dispatchAdmittedMerger({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
+    env,
     io,
     request: turnRequest,
-    lease,
-    methodMaterial,
+    adapters: mergerAdapters(env.packageRoot, methodMaterial),
   });
-  if (result.terminal !== undefined) (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
-  return result;
 }
 
 export type { RoleTurnKnownFailure, PackagedMethodSkillProvenance };
