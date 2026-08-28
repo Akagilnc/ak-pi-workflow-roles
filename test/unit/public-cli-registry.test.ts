@@ -8,13 +8,12 @@ import {
   listHelpCapabilities,
   publicStartupCandidates,
 } from "../../src/public-cli/registry.ts";
-import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 
 test("public registry exposes callable roles plus automatic configurable seats", () => {
-  // #524: callable roster derives from composition-root PUBLIC_ROLE_RECORDS.
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
-    PUBLIC_ROLE_RECORDS.map((entry) => entry.role),
+    PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
   );
   assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
