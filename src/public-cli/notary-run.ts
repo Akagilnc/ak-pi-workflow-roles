@@ -16,6 +16,7 @@ import {
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
+import { markRunAdmitted } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleNotaryTerminalResult,
@@ -76,6 +77,8 @@ export async function runPublicNotary(
     }
     throw error;
   }
+
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   const turnRequest = buildNotaryTurnRequest(admitted, {
     packageRoot: env.packageRoot,

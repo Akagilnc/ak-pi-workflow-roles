@@ -26,6 +26,7 @@ import {
 } from "./invocation.ts";
 import {
   loadResumableFixerRun,
+  markRunAdmitted,
   selectResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
@@ -148,6 +149,8 @@ export async function runPublicFixer(
     }
     throw error;
   }
+
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {

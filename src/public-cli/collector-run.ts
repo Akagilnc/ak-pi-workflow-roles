@@ -16,6 +16,7 @@ import {
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
+import { markRunAdmitted } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   readCollectorInfrastructureFailure,
@@ -84,6 +85,8 @@ export async function runPublicCollector(
     }
     throw error;
   }
+
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   const turnRequest = buildCollectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,

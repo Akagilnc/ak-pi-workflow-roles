@@ -23,6 +23,7 @@ import {
 } from "./invocation.ts";
 import {
   loadResumableCoderRun,
+  markRunAdmitted,
   selectResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
@@ -126,6 +127,8 @@ export async function runPublicCoder(
     }
     throw error;
   }
+
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodProvenance: PackagedMethodSkillProvenance | undefined;
   if (admitted.phase === "apply") {

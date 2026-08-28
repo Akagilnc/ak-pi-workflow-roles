@@ -17,6 +17,7 @@ import {
 } from "./invocation.ts";
 import {
   loadResumableJudgeRun,
+  markRunAdmitted,
   selectResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
@@ -108,6 +109,8 @@ export async function runPublicJudge(
     }
     throw error;
   }
+
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   return await runPostAdmissionResumable({
     admitted,
