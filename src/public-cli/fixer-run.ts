@@ -1,15 +1,23 @@
+import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
- * Public Fixer Role run: admit → explicit Internal activate → settle Terminal result.
+ * Public Fixer Role run: admit → host turn execute → settle Terminal result.
  * #110/#177: package-owned diagnosing-bugs and tdd methods (available, not forced),
  * common Invocation + structural prerequisites, default apply / explicit plan,
  * shared #106 success interface. Controlled-failure settlement reuses #107.
+ * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import type {
+  DurablePrincipalAuthority,
+  MethodBinding,
+  RoleTurnHost,
+  RoleTurnKnownFailure,
+  RoleTurnRequest,
+  RoleTurnResult,
+} from "../host-contracts.ts";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -17,12 +25,6 @@ import {
   type PackagedMethodSkillMaterial,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitFixerInvocation,
@@ -30,7 +32,6 @@ import {
   type AdmittedFixerInvocation
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -74,7 +75,6 @@ import {
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type {
-  ControlledFailureCause,
   TerminalResult,
 } from "./terminal.ts";
 
@@ -85,7 +85,10 @@ export type FixerRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
+  roleTurnHost?: RoleTurnHost;
+  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
+  piRunner?: LegacyPiRunner;
+  extraPiArgs?: readonly string[];
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material + env signal). */
   engine?: string;
@@ -93,117 +96,53 @@ export type FixerRunEnv = {
   createRunId?: () => string;
   /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
   autoResumeLimit?: number;
-  extraPiArgs?: readonly string[];
   timeoutMs?: number;
 };
 
-/**
- * Build Internal activation extra-args for an admitted Fixer run.
- * Package diagnosing-bugs and tdd Skills are available via --skill on every phase
- * (not forced into the first prompt). Ambient home skills stay disabled.
- */
-export function buildFixerActivationExtraArgs(
-  admitted: AdmittedFixerInvocation,
-  options: {
-    principalAuthority: DurablePrincipalAuthority;
-    packageRoot: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    extraPiArgs?: readonly string[];
-  },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const prompt = buildFixerTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs",
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs =
-    admitted.prerequisitesPath === undefined
-      ? []
-      : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
+function fixerMethods(packageRoot: string): readonly MethodBinding[] {
   return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
+    { kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "diagnosing-bugs") },
+    { kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "tdd") },
   ];
 }
 
-/**
- * Reopen the exact Fixer Pi session for resume. Preserves admitted phase,
- * prerequisites, and package diagnosis/tdd availability; does not resubmit instruction.
- */
-export function buildFixerResumeActivationExtraArgs(
+/** Project admitted Fixer invocation onto the host-neutral turn request. */
+export function buildFixerTurnRequest(
   admitted: AdmittedFixerInvocation,
   options: {
-    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
+    home: string;
+    agentDir: string;
     model?: SeatModelConfig;
-    extraPiArgs?: readonly string[];
-    message?: string;
+    engine?: string;
+    timeoutMs?: number;
+    correlationId?: string;
+    continuation: RoleTurnRequest["continuation"];
   },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs",
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs =
-    admitted.prerequisitesPath === undefined
-      ? []
-      : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
-  return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message),
-  ];
+): RoleTurnRequest {
+  return {
+    principal: admitted.principal!,
+    activation: {
+      role: "fixer",
+      phase: admitted.phase,
+      packetPath: admitted.packetPath,
+      ...(admitted.prerequisitesPath === undefined
+        ? {}
+        : { prerequisitesPath: admitted.prerequisitesPath }),
+    },
+    methods: fixerMethods(options.packageRoot),
+    continuation: options.continuation,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.engine === undefined ? {} : { engine: options.engine }),
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...(options.correlationId === undefined || options.correlationId.trim() === ""
+      ? {}
+      : { correlationId: options.correlationId }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  };
 }
 
 async function presentControlledFailure(
@@ -213,7 +152,7 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
+    knownFailure?: RoleTurnKnownFailure;
     typedHttpObservationSettled?: true;
     typedHttpObservation?: TypedProviderHttpObservation;
   },
@@ -289,7 +228,7 @@ async function dispatchAdmittedFixer(input: {
   admitted: AdmittedFixerInvocation;
   env: FixerRunEnv;
   io: CliIo;
-  extraArgs: string[];
+  request: RoleTurnRequest;
   lease: RunWriterLease;
   methodMaterial: PackagedMethodSkillMaterial;
   /** Mechanical engine provenance for initial Fixer dispatch only. */
@@ -299,7 +238,7 @@ async function dispatchAdmittedFixer(input: {
   admitted: AdmittedFixerInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -316,30 +255,9 @@ async function dispatchAdmittedFixer(input: {
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== undefined && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
+    let result: RoleTurnResult;
     try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
+      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -496,22 +414,44 @@ export async function runPublicFixer(
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () =>
-      buildFixerActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+    buildInitialPayload: () =>
+      buildFixerTurnRequest(admitted, {
         packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "initial",
+          prompt: buildFixerTransportPrompt(
+            admitted,
+            engineSessionMaterialFromOptions({
+              ...(env.engine === undefined ? {} : { engine: env.engine }),
+              packageRoot: env.packageRoot,
+            }),
+          ),
+        },
       }),
-    buildResumeArgs: () =>
-      buildFixerResumeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+    buildResumePayload: () =>
+      buildFixerTurnRequest(admitted, {
         packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "resume",
+          prompt: selectResumeContinuationPrompt(),
+        },
       }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+    dispatch: (request, lease, isFirst, attemptIo) =>
       dispatchAdmittedFixer({
         admitted,
         env: {
@@ -519,7 +459,7 @@ export async function runPublicFixer(
           ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
         },
         io: attemptIo,
-        extraArgs,
+        request,
         lease,
         methodMaterial,
         ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
@@ -582,12 +522,19 @@ export async function runPublicFixerResume(
     );
   }
 
-  const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+  const turnRequest = buildFixerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    ...(request.message === undefined ? {} : { message: request.message }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message),
+    },
   });
 
   const result = await dispatchAdmittedFixer({
@@ -597,7 +544,7 @@ export async function runPublicFixerResume(
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     methodMaterial,
   });
@@ -606,4 +553,4 @@ export async function runPublicFixerResume(
 }
 
 // Re-export for tests that assert typed credential failure channel shape.
-export type { ExplicitInternalKnownFailure, PackagedMethodSkillProvenance };
+export type { RoleTurnKnownFailure, PackagedMethodSkillProvenance };
