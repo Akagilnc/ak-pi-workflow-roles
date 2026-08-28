@@ -163,89 +163,202 @@ export async function writeRoleRunState(
   );
 }
 
-export async function readRoleRunState(
+/**
+ * Uninterpreted principal wire as stored on run-state.json.
+ * Legacy rows may omit sessionFile; only DurablePrincipalAuthority decodes it.
+ */
+type RoleRunPrincipalWire = {
+  readonly sessionDirectory: string;
+  readonly sessionFile?: string;
+};
+
+/** Envelope I/O only — principal payload is carried uninterpreted. */
+type RoleRunStateDisk = {
+  readonly runId: string;
+  readonly role: RoleRunRecord["role"];
+  readonly state: RoleRunState;
+  readonly bookKey: string;
+  readonly projectRoot: string;
+  readonly runDirectory: string;
+  readonly admittedRequestPath: string;
+  readonly principalWire: RoleRunPrincipalWire;
+  readonly phase?: CoderPhase | FixerPhase;
+  readonly resumable?: TypedHttp429Observation;
+};
+
+async function readRoleRunStateDisk(
   runDirectory: string,
-): Promise<RoleRunRecord | undefined> {
+): Promise<RoleRunStateDisk | undefined> {
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return undefined;
   }
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      return undefined;
-    }
-    const record = raw as Record<string, unknown>;
-    if (typeof record.runId !== "string" || record.runId.trim() === "") {
-      return undefined;
-    }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  if (typeof record.runId !== "string" || record.runId.trim() === "") {
+    return undefined;
+  }
+  if (
+    record.role !== "judge" &&
+    record.role !== "coder" &&
+    record.role !== "fixer" &&
+    record.role !== "collector" &&
+    record.role !== "doctor" &&
+    record.role !== "reviewer" &&
+    record.role !== "merger" &&
+    record.role !== "notary"
+  ) {
+    return undefined;
+  }
+  if (
+    record.state !== "admitted" &&
+    record.state !== "running" &&
+    record.state !== "resumable" &&
+    record.state !== "terminal"
+  ) {
+    return undefined;
+  }
+  if (typeof record.bookKey !== "string") return undefined;
+  if (typeof record.projectRoot !== "string") return undefined;
+  if (typeof record.sessionDirectory !== "string") return undefined;
+  if (typeof record.admittedRequestPath !== "string") return undefined;
+  const runDir =
+    typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
+      ? record.runDirectory
+      : runDirectory;
+  // Principal wire stays uninterpreted — authority owns legacy sessionFile fallback.
+  const principalWire: RoleRunPrincipalWire = {
+    sessionDirectory: record.sessionDirectory,
+    ...(typeof record.sessionFile === "string"
+      ? { sessionFile: record.sessionFile }
+      : {}),
+  };
+  let resumable: TypedHttp429Observation | undefined;
+  if (record.resumable !== undefined && record.resumable !== null) {
     if (
-      record.role !== "judge" &&
-      record.role !== "coder" &&
-      record.role !== "fixer" &&
-      record.role !== "collector" &&
-      record.role !== "doctor" &&
-      record.role !== "reviewer" &&
-      record.role !== "merger" &&
-      record.role !== "notary"
+      typeof record.resumable === "object" &&
+      !Array.isArray(record.resumable)
     ) {
-      return undefined;
-    }
-    if (
-      record.state !== "admitted" &&
-      record.state !== "running" &&
-      record.state !== "resumable" &&
-      record.state !== "terminal"
-    ) {
-      return undefined;
-    }
-    if (typeof record.bookKey !== "string") return undefined;
-    if (typeof record.projectRoot !== "string") return undefined;
-    if (typeof record.sessionDirectory !== "string") return undefined;
-    if (typeof record.admittedRequestPath !== "string") return undefined;
-    const runDir =
-      typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
-        ? record.runDirectory
-        : runDirectory;
-    // Legacy states predate sessionFile. Their persisted session directory is
-    // the authority for the historical principal, even if project topology moved.
-    const sessionFile =
-      typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
-        ? record.sessionFile
-        : join(record.sessionDirectory, "session.jsonl");
-    let resumable: TypedHttp429Observation | undefined;
-    if (record.resumable !== undefined && record.resumable !== null) {
+      const r = record.resumable as Record<string, unknown>;
       if (
-        typeof record.resumable === "object" &&
-        !Array.isArray(record.resumable)
+        r.httpStatus === 429 &&
+        typeof r.provider === "string" &&
+        isV1ResumableProvider(r.provider)
       ) {
-        const r = record.resumable as Record<string, unknown>;
-        if (
-          r.httpStatus === 429 &&
-          typeof r.provider === "string" &&
-          isV1ResumableProvider(r.provider)
-        ) {
-          resumable = { httpStatus: 429, provider: r.provider };
-        }
+        resumable = { httpStatus: 429, provider: r.provider };
       }
     }
-    const phase =
-      record.phase === "plan" || record.phase === "apply"
-        ? record.phase
-        : undefined;
+  }
+  const phase =
+    record.phase === "plan" || record.phase === "apply"
+      ? record.phase
+      : undefined;
+  return {
+    runId: record.runId,
+    role: record.role,
+    state: record.state,
+    bookKey: record.bookKey,
+    projectRoot: record.projectRoot,
+    runDirectory: runDir,
+    admittedRequestPath: record.admittedRequestPath,
+    principalWire,
+    ...(phase === undefined ? {} : { phase }),
+    ...(resumable === undefined ? {} : { resumable }),
+  };
+}
+
+async function writeRoleRunStateDisk(
+  runDirectory: string,
+  disk: RoleRunStateDisk,
+): Promise<void> {
+  const payload = {
+    runId: disk.runId,
+    role: disk.role,
+    state: disk.state,
+    bookKey: disk.bookKey,
+    projectRoot: disk.projectRoot,
+    runDirectory: disk.runDirectory,
+    sessionDirectory: disk.principalWire.sessionDirectory,
+    ...(disk.principalWire.sessionFile === undefined
+      ? {}
+      : { sessionFile: disk.principalWire.sessionFile }),
+    admittedRequestPath: disk.admittedRequestPath,
+    ...(disk.phase === undefined ? {} : { phase: disk.phase }),
+    ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
+  };
+  await writeFile(
+    join(runDirectory, RUN_STATE_FILE),
+    `${JSON.stringify(payload, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+function materializeRoleRunRecord(
+  disk: RoleRunStateDisk,
+  authority: DurablePrincipalAuthority,
+): RoleRunRecord | undefined {
+  try {
+    const coordinates = authority.decode(disk.principalWire);
     return {
-      runId: record.runId,
-      role: record.role,
-      state: record.state,
-      bookKey: record.bookKey,
-      projectRoot: record.projectRoot,
-      sessionDirectory: record.sessionDirectory,
-      sessionFile,
-      runDirectory: runDir,
-      admittedRequestPath: record.admittedRequestPath,
-      ...(phase === undefined ? {} : { phase }),
-      ...(resumable === undefined ? {} : { resumable }),
+      runId: disk.runId,
+      role: disk.role,
+      state: disk.state,
+      bookKey: disk.bookKey,
+      projectRoot: disk.projectRoot,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      runDirectory: disk.runDirectory,
+      admittedRequestPath: disk.admittedRequestPath,
+      ...(disk.phase === undefined ? {} : { phase: disk.phase }),
+      ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
     };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read durable run-state and materialize principal coordinates through the
+ * injected host authority (legacy sessionFile fallback lives only in the codec).
+ */
+export async function readRoleRunState(
+  runDirectory: string,
+  authority: DurablePrincipalAuthority,
+): Promise<RoleRunRecord | undefined> {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === undefined) return undefined;
+  return materializeRoleRunRecord(disk, authority);
+}
+
+/**
+ * Envelope identity only — no principal payload interpretation.
+ * Used by notary locator / role peek that never consume session coordinates.
+ */
+export async function readRoleRunIdentity(
+  runDirectory: string,
+): Promise<
+  | {
+      readonly runId: string;
+      readonly role: RoleRunRecord["role"];
+      readonly bookKey: string;
+      readonly runDirectory: string;
+      readonly state: RoleRunState;
+    }
+  | undefined
+> {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === undefined) return undefined;
+  return {
+    runId: disk.runId,
+    role: disk.role,
+    bookKey: disk.bookKey,
+    runDirectory: disk.runDirectory,
+    state: disk.state,
+  };
 }
 
 export async function markRunAdmitted(
@@ -293,20 +406,20 @@ export async function markRunRunning(
       effectiveEngine,
     );
   }
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark running: run state missing");
   }
-  // Omit resumable while a writer is active.
-  await writeRoleRunState(runDirectory, {
+  // Omit resumable while a writer is active. Principal wire is passed through uninterpreted.
+  await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
     state: "running",
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
+    runDirectory: current.runDirectory,
     admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
     ...(current.phase === undefined ? {} : { phase: current.phase }),
   });
 }
@@ -316,11 +429,11 @@ export async function markRunResumable(
   runDirectory: string,
   observation: TypedHttp429Observation,
 ): Promise<void> {
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark resumable: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     ...current,
     state: "resumable",
     resumable: observation,
@@ -328,19 +441,19 @@ export async function markRunResumable(
 }
 
 export async function markRunTerminal(runDirectory: string): Promise<void> {
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark terminal: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
     state: "terminal",
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
+    runDirectory: current.runDirectory,
     admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
     ...(current.phase === undefined ? {} : { phase: current.phase }),
   });
 }
@@ -550,6 +663,7 @@ async function loadResumableRunRecord(
   authority: DurablePrincipalAuthority,
 ): Promise<{
   readonly run: RoleRunRecord;
+  readonly principal: DurablePrincipal;
   readonly observation?: TypedHttp429Observation;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }> {
@@ -557,17 +671,18 @@ async function loadResumableRunRecord(
   if (runDirectory === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const run = await readRoleRunState(runDirectory);
-  if (run === undefined) {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   // #416: removed terminal/resumable gates per owner decision "根本不要有限制" (2026-08-22).
   // Only the exact Pi session principal check remains as honest failure.
-  // Exact Pi session principal must be present before resume dispatches.
-  const principal = rehydratePiDurablePrincipal(authority, {
-    sessionDirectory: run.sessionDirectory,
-    sessionFile: run.sessionFile,
-  });
+  // Hand the uninterpreted principal wire to the host authority — no local fallback/reassembly.
+  const principal = rehydratePiDurablePrincipal(authority, disk.principalWire);
+  const run = materializeRoleRunRecord(disk, authority);
+  if (run === undefined) {
+    throw new CliUsageError(`unknown role run id: ${runId}`);
+  }
   if (!(await isDurablePrincipalAvailable(principal, authority))) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`,
@@ -715,6 +830,7 @@ async function loadResumableRunRecord(
   }
   return {
     run,
+    principal,
     ...(run.resumable === undefined ? {} : { observation: run.resumable }),
     admittedFields: {
       instruction,
@@ -784,10 +900,7 @@ export async function loadResumableJudgeRun(
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile,
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     ...restoredTicketFields(loaded.admittedFields),
   };
@@ -840,10 +953,7 @@ export async function loadResumableCoderRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile,
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
     ...restoredTicketFields(loaded.admittedFields),
@@ -898,10 +1008,7 @@ export async function loadResumableFixerRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile,
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...(loaded.admittedFields.prerequisitesPath === undefined
@@ -951,10 +1058,7 @@ export async function loadResumableReviewerRun(
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile,
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
@@ -1014,10 +1118,7 @@ export async function loadResumableMergerRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile,
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
@@ -1046,6 +1147,6 @@ export async function peekRoleRunRole(
 > {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
-  const run = await readRoleRunState(runDirectory);
+  const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }

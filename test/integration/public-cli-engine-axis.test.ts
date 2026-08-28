@@ -1,4 +1,8 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import {
+  fixtureJudgeAdmitted,
+  fixtureReviewerAdmitted,
+} from "../helpers/admitted-principal-fixture.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -299,23 +303,19 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
 // --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
 
 test("engine material delivery: cursor with-notes coordinates; argv gains no engine flags", () => {
-  const judge = {
-    role: "judge",
+  const judge = fixtureJudgeAdmitted({
     runId: "run-engine-oracle",
     bookKey: "book",
     projectRoot: "/project",
     instruction: "Decide the matter.",
     instructionEmpty: false,
-    attachments: [],
     runDirectory: "/runs/r",
-    principal: {
-      sessionDirectory: "/runs/r/session",
-      sessionFile: "/runs/r/session/session.jsonl",
-    },
+    sessionDirectory: "/runs/r/session",
+    sessionFile: "/runs/r/session/session.jsonl",
     admittedRequestPath: "/runs/r/admitted-request.json",
-  } as any;
-  const without = buildJudgeActivationExtraArgs(judge as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
-  const withEngine = buildJudgeActivationExtraArgs(judge as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
+  });
+  const without = buildJudgeActivationExtraArgs(judge, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+  const withEngine = buildJudgeActivationExtraArgs(judge, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     engine: "cursor",
   });
   assert.notEqual(without.at(-1), withEngine.at(-1));
@@ -329,24 +329,20 @@ test("engine material delivery: cursor with-notes coordinates; argv gains no eng
 });
 
 test("engine name-only delivery: free name without notes carries name, no path", () => {
-  const judge = {
-    role: "judge",
+  const judge = fixtureJudgeAdmitted({
     runId: "run-engine-name-only",
     bookKey: "book",
     projectRoot: "/project",
     instruction: "Decide the matter.",
     instructionEmpty: false,
-    attachments: [],
     runDirectory: "/runs/r",
-    principal: {
-      sessionDirectory: "/runs/r/session",
-      sessionFile: "/runs/r/session/session.jsonl",
-    },
+    sessionDirectory: "/runs/r/session",
+    sessionFile: "/runs/r/session/session.jsonl",
     admittedRequestPath: "/runs/r/admitted-request.json",
-  } as any;
+  });
   // Use a well-formed name that has no packaged notes file.
   const freeName = "nope-engine";
-  const withEngine = buildJudgeActivationExtraArgs(judge as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
+  const withEngine = buildJudgeActivationExtraArgs(judge, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     engine: freeName,
   });
   const prompt = withEngine.at(-1)!;
@@ -357,29 +353,25 @@ test("engine name-only delivery: free name without notes carries name, no path",
 });
 
 function sampleReviewer(): AdmittedReviewerInvocation {
-  return {
-    role: "reviewer",
+  return fixtureReviewerAdmitted({
     runId: "run-reviewer-engine",
     bookKey: "book",
     projectRoot: "/project",
     instruction: "",
     instructionEmpty: true,
-    attachments: [],
     runDirectory: "/runs/r",
-    principal: {
-      sessionDirectory: "/runs/r/session",
-      sessionFile: "/runs/r/session/session.jsonl",
-    },
+    sessionDirectory: "/runs/r/session",
+    sessionFile: "/runs/r/session/session.jsonl",
     admittedRequestPath: "/runs/r/admitted-request.json",
     baseRevision: "abc123",
     authorityRefs: [],
-  } as any;
+  });
 }
 
 test("reviewer engine material delivery: cursor with-notes + free name-only (#378)", () => {
   const reviewer = sampleReviewer();
-  const without = buildReviewerActivationExtraArgs(reviewer as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
-  const withNotes = buildReviewerActivationExtraArgs(reviewer as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
+  const without = buildReviewerActivationExtraArgs(reviewer, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+  const withNotes = buildReviewerActivationExtraArgs(reviewer, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     engine: "cursor",
   });
   assert.notEqual(without.at(-1), withNotes.at(-1));
@@ -390,7 +382,7 @@ test("reviewer engine material delivery: cursor with-notes + free name-only (#37
   assertNoEngineFlagsInArgv(withNotes);
 
   const freeName = "nope-engine";
-  const nameOnly = buildReviewerActivationExtraArgs(reviewer as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
+  const nameOnly = buildReviewerActivationExtraArgs(reviewer, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     engine: freeName,
   });
   const nameOnlyPrompt = nameOnly.at(-1)!;

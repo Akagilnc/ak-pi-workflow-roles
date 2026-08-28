@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
@@ -296,42 +297,41 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
 });
 
 test("structurally empty request stays empty while attachments remain typed transport", () => {
-  const empty = buildJudgeTransportPrompt({
-    role: "judge",
-    runId: "r",
-    bookKey: "b",
-    projectRoot: "/p",
-    instruction: "   ",
-    instructionEmpty: true,
-    attachments: [],
-    runDirectory: "/r",
-    sessionDirectory: "/r/session",
-    sessionFile: "/r/session/session.jsonl",
-    admittedRequestPath: "/r/admitted-request.json",
-  } as any);
+  const empty = buildJudgeTransportPrompt(
+    fixtureJudgeAdmitted({
+      runId: "r",
+      bookKey: "b",
+      projectRoot: "/p",
+      instruction: "   ",
+      instructionEmpty: true,
+      runDirectory: "/r",
+      sessionDirectory: "/r/session",
+      sessionFile: "/r/session/session.jsonl",
+    }),
+  );
   assert.equal(empty, "");
 
-  const withAttach = buildJudgeTransportPrompt({
-    role: "judge",
-    runId: "r",
-    bookKey: "b",
-    projectRoot: "/p",
-    instruction: "",
-    instructionEmpty: true,
-    attachments: [
-      {
-        provenancePath: "/orig",
-        frozenPath: "/frozen/00-a.txt",
-        byteLength: 1,
-        sha256: "abc",
-        mediaKind: "regular-file",
-      },
-    ],
-    runDirectory: "/r",
-    sessionDirectory: "/r/session",
-    sessionFile: "/r/session/session.jsonl",
-    admittedRequestPath: "/r/admitted-request.json",
-  } as any);
+  const withAttach = buildJudgeTransportPrompt(
+    fixtureJudgeAdmitted({
+      runId: "r",
+      bookKey: "b",
+      projectRoot: "/p",
+      instruction: "",
+      instructionEmpty: true,
+      attachments: [
+        {
+          provenancePath: "/orig",
+          frozenPath: "/frozen/00-a.txt",
+          byteLength: 1,
+          sha256: "abc",
+          mediaKind: "regular-file",
+        },
+      ],
+      runDirectory: "/r",
+      sessionDirectory: "/r/session",
+      sessionFile: "/r/session/session.jsonl",
+    }),
+  );
   assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
@@ -1232,21 +1232,17 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       "runs",
       "run-cli-judge-001@judge",
     );
-    const terminal = await settleJudgeTerminalResult({
-      role: "judge",
-      runId: "run-cli-judge-001",
-      runDirectory: runDir,
-      principal: {
-        sessionDirectory: join(runDir, "session"),
-        sessionFile: join(runDir, "session", "session.jsonl"),
-      },
-      projectRoot: project,
-      bookKey,
-      instruction: "Decide whether the attachment is sufficient.",
-      instructionEmpty: false,
-      attachments: [],
-      admittedRequestPath: join(runDir, "admitted-request.json"),
-    } as any, piDurablePrincipalAuthority);
+    const terminal = await settleJudgeTerminalResult(
+      fixtureJudgeAdmitted({
+        runId: "run-cli-judge-001",
+        runDirectory: runDir,
+        projectRoot: project,
+        bookKey,
+        instruction: "Decide whether the attachment is sufficient.",
+        instructionEmpty: false,
+      }),
+      piDurablePrincipalAuthority,
+    );
     assert.equal(stdout.length, 1);
     assert.notEqual(stdout[0]?.trim(), "");
     // #416 autoResumeCount is call-local observation (0 for first-attempt lawful) and is part of Terminal presentation
@@ -1344,21 +1340,17 @@ test("runAkRole judge empty request does not invent semantic task content on the
       "runs",
       "run-empty-001@judge",
     );
-    const terminal = await settleJudgeTerminalResult({
-      role: "judge",
-      runId: "run-empty-001",
-      runDirectory: runDir,
-      principal: {
-        sessionDirectory: join(runDir, "session"),
-        sessionFile: join(runDir, "session", "session.jsonl"),
-      },
-      projectRoot: project,
-      bookKey,
-      instruction: "",
-      instructionEmpty: true,
-      attachments: [],
-      admittedRequestPath: join(runDir, "admitted-request.json"),
-    } as any, piDurablePrincipalAuthority);
+    const terminal = await settleJudgeTerminalResult(
+      fixtureJudgeAdmitted({
+        runId: "run-empty-001",
+        runDirectory: runDir,
+        projectRoot: project,
+        bookKey,
+        instruction: "",
+        instructionEmpty: true,
+      }),
+      piDurablePrincipalAuthority,
+    );
     // Missing attendance is not successful no-advice — require affirmative typed fact.
     assert.equal(terminal.navigator.disposition, "unavailable");
     if (terminal.navigator.disposition === "unavailable") {

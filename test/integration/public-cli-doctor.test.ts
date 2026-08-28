@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -559,44 +560,36 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       caseRunsPath: string;
       caseIdentity: { issueNumber: number; runsPath: string };
     };
-    const settled = await settleDoctorTerminalResult({
-      role: "doctor",
-      runId: "run-doctor-settle",
-      bookKey,
-      projectRoot: project,
-      instruction: "inspect",
-      instructionEmpty: false,
-      attachments: [],
-      runDirectory,
-      principal: {
-        sessionDirectory: join(runDirectory, "session"),
-        sessionFile: join(runDirectory, "session", "session.jsonl"),
-      },
-      admittedRequestPath: join(runDirectory, "admitted-request.json"),
-      issueNumber: admittedSnap.issueNumber,
-      caseRunsPath: admittedSnap.caseRunsPath,
-      caseIdentity: admittedSnap.caseIdentity,
-    } as any, piDurablePrincipalAuthority);
-    assert.equal(settled.roleOutcome.kind, "accepted");
-    assert.equal(
-      await trySettleDoctorTerminalResult({ 
-        role: "doctor",
-        runId: "missing",
+    const settled = await settleDoctorTerminalResult(
+      fixtureDoctorAdmitted({
+        runId: "run-doctor-settle",
         bookKey,
         projectRoot: project,
-        instruction: "",
-        instructionEmpty: true,
-        attachments: [],
-        runDirectory: join(runDirectory, "nope"),
-        principal: {
-          sessionDirectory: join(runDirectory, "nope", "session"),
-          sessionFile: join(runDirectory, "nope", "session", "session.jsonl"),
-        },
-        admittedRequestPath: join(runDirectory, "nope", "admitted-request.json"),
+        instruction: "inspect",
+        instructionEmpty: false,
+        runDirectory,
         issueNumber: admittedSnap.issueNumber,
         caseRunsPath: admittedSnap.caseRunsPath,
         caseIdentity: admittedSnap.caseIdentity,
-      } as any, piDurablePrincipalAuthority),
+      }),
+      piDurablePrincipalAuthority,
+    );
+    assert.equal(settled.roleOutcome.kind, "accepted");
+    assert.equal(
+      await trySettleDoctorTerminalResult(
+        fixtureDoctorAdmitted({
+          runId: "missing",
+          bookKey,
+          projectRoot: project,
+          instruction: "",
+          instructionEmpty: true,
+          runDirectory: join(runDirectory, "nope"),
+          issueNumber: admittedSnap.issueNumber,
+          caseRunsPath: admittedSnap.caseRunsPath,
+          caseIdentity: admittedSnap.caseIdentity,
+        }),
+        piDurablePrincipalAuthority,
+      ),
       undefined,
     );
   });

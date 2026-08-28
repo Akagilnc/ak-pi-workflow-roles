@@ -383,7 +383,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
       "utf8",
     );
 
-    assert.equal(await readRoleRunState(runDirectory), undefined);
+    assert.equal(await readRoleRunState(runDirectory, piDurablePrincipalAuthority), undefined);
 
     const { io } = captureIo();
     const bare = `${runId}@${inventedRole}`;

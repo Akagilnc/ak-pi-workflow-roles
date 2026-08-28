@@ -15983,7 +15983,7 @@ async function writeRoleRunState(runDirectory, record4) {
     "utf8"
   );
 }
-async function readRoleRunState(runDirectory) {
+async function readRoleRunStateDisk(runDirectory) {
   let raw;
   try {
     raw = JSON.parse(await readFile5(join7(runDirectory, RUN_STATE_FILE), "utf8"));
@@ -16008,7 +16008,10 @@ async function readRoleRunState(runDirectory) {
   if (typeof record4.sessionDirectory !== "string") return void 0;
   if (typeof record4.admittedRequestPath !== "string") return void 0;
   const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join7(record4.sessionDirectory, "session.jsonl");
+  const principalWire = {
+    sessionDirectory: record4.sessionDirectory,
+    ...typeof record4.sessionFile === "string" ? { sessionFile: record4.sessionFile } : {}
+  };
   let resumable;
   if (record4.resumable !== void 0 && record4.resumable !== null) {
     if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
@@ -16025,12 +16028,63 @@ async function readRoleRunState(runDirectory) {
     state: record4.state,
     bookKey: record4.bookKey,
     projectRoot: record4.projectRoot,
-    sessionDirectory: record4.sessionDirectory,
-    sessionFile,
     runDirectory: runDir,
     admittedRequestPath: record4.admittedRequestPath,
+    principalWire,
     ...phase === void 0 ? {} : { phase },
     ...resumable === void 0 ? {} : { resumable }
+  };
+}
+async function writeRoleRunStateDisk(runDirectory, disk) {
+  const payload = {
+    runId: disk.runId,
+    role: disk.role,
+    state: disk.state,
+    bookKey: disk.bookKey,
+    projectRoot: disk.projectRoot,
+    runDirectory: disk.runDirectory,
+    sessionDirectory: disk.principalWire.sessionDirectory,
+    ...disk.principalWire.sessionFile === void 0 ? {} : { sessionFile: disk.principalWire.sessionFile },
+    admittedRequestPath: disk.admittedRequestPath,
+    ...disk.phase === void 0 ? {} : { phase: disk.phase },
+    ...disk.resumable === void 0 ? {} : { resumable: disk.resumable }
+  };
+  await writeFile3(
+    join7(runDirectory, RUN_STATE_FILE),
+    `${JSON.stringify(payload, null, 2)}
+`,
+    "utf8"
+  );
+}
+function materializeRoleRunRecord(disk, authority) {
+  try {
+    const coordinates = authority.decode(disk.principalWire);
+    return {
+      runId: disk.runId,
+      role: disk.role,
+      state: disk.state,
+      bookKey: disk.bookKey,
+      projectRoot: disk.projectRoot,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      runDirectory: disk.runDirectory,
+      admittedRequestPath: disk.admittedRequestPath,
+      ...disk.phase === void 0 ? {} : { phase: disk.phase },
+      ...disk.resumable === void 0 ? {} : { resumable: disk.resumable }
+    };
+  } catch {
+    return void 0;
+  }
+}
+async function readRoleRunIdentity(runDirectory) {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === void 0) return void 0;
+  return {
+    runId: disk.runId,
+    role: disk.role,
+    bookKey: disk.bookKey,
+    runDirectory: disk.runDirectory,
+    state: disk.state
   };
 }
 async function markRunAdmitted(admitted, authority) {
@@ -16058,47 +16112,47 @@ async function markRunRunning(runDirectory, effectiveModel, effectiveEngine) {
       effectiveEngine
     );
   }
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark running: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
     state: "running",
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
+    runDirectory: current.runDirectory,
     admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
     ...current.phase === void 0 ? {} : { phase: current.phase }
   });
 }
 async function markRunResumable(runDirectory, observation) {
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark resumable: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     ...current,
     state: "resumable",
     resumable: observation
   });
 }
 async function markRunTerminal(runDirectory) {
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark terminal: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
     state: "terminal",
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
+    runDirectory: current.runDirectory,
     admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
     ...current.phase === void 0 ? {} : { phase: current.phase }
   });
 }
@@ -16207,14 +16261,15 @@ async function loadResumableRunRecord(home, runId, authority) {
   if (runDirectory === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const run = await readRoleRunState(runDirectory);
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === void 0) {
+    throw new CliUsageError(`unknown role run id: ${runId}`);
+  }
+  const principal = rehydratePiDurablePrincipal(authority, disk.principalWire);
+  const run = materializeRoleRunRecord(disk, authority);
   if (run === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const principal = rehydratePiDurablePrincipal(authority, {
-    sessionDirectory: run.sessionDirectory,
-    sessionFile: run.sessionFile
-  });
   if (!await isDurablePrincipalAvailable(principal, authority)) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`
@@ -16328,6 +16383,7 @@ async function loadResumableRunRecord(home, runId, authority) {
   }
   return {
     run,
+    principal,
     ...run.resumable === void 0 ? {} : { observation: run.resumable },
     admittedFields: {
       instruction,
@@ -16363,10 +16419,7 @@ async function loadResumableJudgeRun(home, runId, authority) {
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     ...restoredTicketFields(loaded.admittedFields)
   };
@@ -16410,10 +16463,7 @@ async function loadResumableCoderRun(home, runId, authority) {
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
     ...restoredTicketFields(loaded.admittedFields)
@@ -16459,10 +16509,7 @@ async function loadResumableFixerRun(home, runId, authority) {
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
@@ -16497,10 +16544,7 @@ async function loadResumableReviewerRun(home, runId, authority) {
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
@@ -16545,10 +16589,7 @@ async function loadResumableMergerRun(home, runId, authority) {
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    principal: rehydratePiDurablePrincipal(authority, {
-      sessionDirectory: loaded.run.sessionDirectory,
-      sessionFile: loaded.run.sessionFile
-    }),
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
@@ -16563,7 +16604,7 @@ async function loadResumableMergerRun(home, runId, authority) {
 async function peekRoleRunRole(home, runId) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) return void 0;
-  const run = await readRoleRunState(runDirectory);
+  const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }
 var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
@@ -16657,7 +16698,7 @@ async function resolveNotarySourceRunLocator(options) {
       "notary --source-run must resolve to a retained run under the project machine-ledger book"
     );
   }
-  const runState = await readRoleRunState(real);
+  const runState = await readRoleRunIdentity(real);
   if (runState === void 0) {
     throw new NotarySourceRunError(
       "notary --source-run lacks retained run-state identity"
@@ -17577,6 +17618,37 @@ import {
   writeFile as writeFile4
 } from "node:fs/promises";
 import { basename as basename4, isAbsolute as isAbsolute4, join as join9, resolve as resolve5, sep as sep3 } from "node:path";
+function issueAdmissionPlacement(authority, request) {
+  const principal = authority.issue(request);
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(
+    request.home === void 0 ? void 0 : () => request.home
+  );
+  const bookKey = resolveBookKeyFromGit(request.cwd);
+  return {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  };
+}
+async function writeAdmittedRequestPersistence(admittedRequestPath, body, coordinates) {
+  const { principal: _omitPrincipal, ...rest } = body;
+  const projection = {
+    ...rest,
+    sessionDirectory: coordinates.sessionDirectory,
+    sessionFile: coordinates.sessionFile
+  };
+  await writeFile4(
+    admittedRequestPath,
+    `${JSON.stringify(projection, null, 2)}
+`,
+    "utf8"
+  );
+}
 function effectiveModelLedgerFields(model) {
   if (model === void 0) return {};
   return {
@@ -17890,11 +17962,19 @@ async function admitJudgeInvocation(options) {
   }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const principal = options.principalAuthority.issue({ cwd: projectRoot, runId, role: "judge", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "judge",
+    home: options.home
+  });
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -17924,8 +18004,10 @@ async function admitJudgeInvocation(options) {
     }))
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
   await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "judge",
@@ -17972,11 +18054,19 @@ async function admitCoderInvocation(options) {
   }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const principal = options.principalAuthority.issue({ cwd: projectRoot, runId, role: "coder", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "coder",
+    home: options.home
+  });
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -18008,8 +18098,10 @@ async function admitCoderInvocation(options) {
     }))
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
   await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "coder",
@@ -18074,11 +18166,19 @@ async function admitFixerInvocation(options) {
   }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const principal = options.principalAuthority.issue({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "fixer",
+    home: options.home
+  });
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -18125,8 +18225,10 @@ async function admitFixerInvocation(options) {
     }))
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
   await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "fixer",
@@ -18319,11 +18421,19 @@ async function admitCollectorInvocation(options) {
   }
   const manifestDigest = manifest.digest;
   const runId = (options.createRunId ?? uuidv7)();
-  const principal = options.principalAuthority.issue({ cwd: projectRoot, runId, role: "collector", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "collector",
+    home: options.home
+  });
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -18363,12 +18473,10 @@ async function admitCollectorInvocation(options) {
     }))
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
   await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "collector",
@@ -18521,11 +18629,19 @@ async function admitDoctorInvocation(options) {
   }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const principal = options.principalAuthority.issue({ cwd: projectRoot, runId, role: "doctor", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "doctor",
+    home: options.home
+  });
   let caseRunsPath;
   try {
     caseRunsPath = await resolveDoctorCaseRunsPath({
@@ -18593,12 +18709,10 @@ async function admitDoctorInvocation(options) {
     }))
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
   await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "doctor",
@@ -18695,12 +18809,19 @@ async function admitNotaryInvocation(options) {
     throw error;
   }
   const runId = options.createRunId?.() ?? uuidv7();
-  const authority = options.principalAuthority;
-  const principal = authority.issue({ cwd: projectRoot, runId, role: "notary", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "notary",
+    home: options.home
+  });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   const admitted = {
     role: "notary",
@@ -18717,12 +18838,10 @@ async function admitNotaryInvocation(options) {
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId }
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
   await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "notary",
@@ -18803,11 +18922,19 @@ async function admitReviewerInvocation(options) {
   );
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const principal = options.principalAuthority.issue({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "reviewer",
+    home: options.home
+  });
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -18839,12 +18966,10 @@ async function admitReviewerInvocation(options) {
     }))
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
   await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "reviewer",
@@ -18955,11 +19080,19 @@ async function admitMergerInvocation(options) {
     options.gitState ?? createProductionMergerGitState(projectRoot)
   );
   const runId = (options.createRunId ?? uuidv7)();
-  const principal = options.principalAuthority.issue({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "merger",
+    home: options.home
+  });
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -19026,12 +19159,10 @@ async function admitMergerInvocation(options) {
     }))
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
   await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "merger",
@@ -25777,12 +25908,19 @@ async function loadMergerMethodMaterial(packageRoot2) {
 async function admitMergerShellForActivationFailure(options) {
   const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const authority = options.principalAuthority;
-  const principal = authority.issue({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
-  const runDirectory = join20(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "merger",
+    home: options.home
+  });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   await mkdir5(runDirectory, { recursive: true });
   const emptyDerived = {
@@ -26000,7 +26138,6 @@ async function runPublicMergerResume(request, env, io) {
 var init_merger_run = __esm({
   "src/public-cli/merger-run.ts"() {
     "use strict";
-    init_activation_ledger_git();
     init_activation_ledger_topology();
     init_durable_principal();
     init_engine_detour();
