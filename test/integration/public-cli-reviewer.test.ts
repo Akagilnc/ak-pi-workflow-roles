@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -470,7 +470,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       ],
       createRunId: () => "run-reviewer-settle-001",
     });
-    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "code-review",
@@ -525,7 +525,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       }),
     ];
     await writeFile(
-      admitted.sessionFile,
+      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
@@ -567,7 +567,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     );
     assert.equal(ambient.length, 0);
 
-    const terminal = await settleReviewerTerminalResult(admitted, {
+    const terminal = await settleReviewerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: skillPath,
@@ -869,9 +869,9 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       createRunId: () => "run-cli-reviewer-resume-bad-refs",
     });
     // Durable session principal required before resume load.
-    await mkdir(admitted.sessionDirectory, { recursive: true });
-    await writeFile(join(admitted.sessionDirectory, "session.jsonl"), "", "utf8");
-    await markRunAdmitted(admitted);
+    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await writeFile(join(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
+    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(admitted.runDirectory, {
       httpStatus: 429,
       provider: "xai",

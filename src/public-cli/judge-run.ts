@@ -1,10 +1,10 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Judge Role run: admit → explicit Internal activate → settle Terminal result.
  * #107: controlled post-admission failures and human decisions settle honestly.
  * #108: typed HTTP 429 resume of the exact Pi session.
  */
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -213,7 +213,7 @@ async function presentControlledFailure(
     !hasThrown &&
     !failureInput.timedOut &&
     knownFailure === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
+      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -227,7 +227,7 @@ async function presentControlledFailure(
   // v1 resume: only *this attempt's* typed HTTP 429 with independently confirmed
   // absence of a lawful Judge result, and a durable exact Pi session principal.
   // Lawful presence is session-owned and must not depend on artifact publication.
-  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
@@ -245,6 +245,7 @@ async function presentControlledFailure(
   const terminal = await settleJudgeFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable
       ? { resume: { command: renderResumeCommand(admitted.runId) } }
       : {},
@@ -351,7 +352,7 @@ async function dispatchAdmittedJudge(input: {
 
     let lawful: TerminalResult | undefined;
     try {
-      lawful = await trySettleJudgeTerminalResult(admitted);
+      lawful = await trySettleJudgeTerminalResult(admitted, env.principalAuthority);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -378,7 +379,7 @@ async function dispatchAdmittedJudge(input: {
     // Prefer engine-detour infrastructure failure already on the session principal
     // over a later secondary provider-stop after abort (#357 T2 / collector-isomorphic).
     const infrastructureFailure = await readEngineDetourInfrastructureFailure(
-      admitted.sessionFile,
+      decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
     );
     // Production-owned typed cause channel — never inferred from stderr wording.
     const credentialFailure = postRunMissingCredentialFailure(
@@ -398,7 +399,7 @@ async function dispatchAdmittedJudge(input: {
                 ? {}
                 : { identity: infrastructureFailure.identity }),
             }),
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
@@ -454,7 +455,7 @@ export async function runPublicJudge(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   return runWithAutoResumeLoop({
     admitted,

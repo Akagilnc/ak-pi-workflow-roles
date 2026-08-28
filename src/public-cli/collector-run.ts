@@ -1,10 +1,10 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Collector Role run: admit a structured PR target → explicit Internal activate
  * → settle Terminal result (#112). One-shot; no resume path (Collector rejects
  * session resume/fork/reload). Failure settlement reuses the #107 shared owner.
  */
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -150,7 +150,7 @@ async function presentControlledFailure(
     !failureInput.timedOut &&
     failureInput.knownFailure === undefined &&
     failureInput.knownCause === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
+      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -173,7 +173,7 @@ async function presentControlledFailure(
   // Collector does not support resume/fork/reload — always terminal.
   await markRunTerminal(admitted.runDirectory).catch(() => undefined);
 
-  const terminal = await settleFailureTerminalResult(admitted, failure);
+  const terminal = await settleFailureTerminalResult(admitted, failure, authority);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -261,7 +261,7 @@ async function dispatchAdmittedCollector(input: {
 
     let lawful: TerminalResult | undefined;
     try {
-      lawful = await trySettleCollectorTerminalResult(admitted);
+      lawful = await trySettleCollectorTerminalResult(admitted, env.principalAuthority);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -288,7 +288,7 @@ async function dispatchAdmittedCollector(input: {
     // Prefer Collector infrastructure tool failure already on the session principal
     // (e.g. observe HTTP 404) over a later secondary provider-stop after abort.
     const infrastructureFailure = await readCollectorInfrastructureFailure(
-      admitted.sessionFile,
+      decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
     );
     const credentialFailure = postRunMissingCredentialFailure(
       result,
@@ -307,7 +307,7 @@ async function dispatchAdmittedCollector(input: {
                 ? {}
                 : { identity: infrastructureFailure.identity }),
             }),
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
@@ -361,7 +361,7 @@ export async function runPublicCollector(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let lease: RunWriterLease;
   try {

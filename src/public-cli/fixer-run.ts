@@ -1,11 +1,11 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Fixer Role run: admit → explicit Internal activate → settle Terminal result.
  * #110/#177: package-owned diagnosing-bugs and tdd methods (available, not forced),
  * common Invocation + structural prerequisites, default apply / explicit plan,
  * shared #106 success interface. Controlled-failure settlement reuses #107.
  */
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -242,7 +242,7 @@ async function presentControlledFailure(
     !hasThrown &&
     !failureInput.timedOut &&
     knownFailure === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
+      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -253,7 +253,7 @@ async function presentControlledFailure(
     ...(session === undefined ? {} : { session }),
   });
 
-  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
@@ -272,6 +272,7 @@ async function presentControlledFailure(
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable
       ? { resume: { command: renderResumeCommand(admitted.runId) } }
       : {},
@@ -365,7 +366,7 @@ async function dispatchAdmittedFixer(input: {
 
     let lawful: TerminalResult | undefined;
     try {
-      lawful = await trySettleFixerTerminalResult(admitted, {
+      lawful = await trySettleFixerTerminalResult(admitted, env.principalAuthority, {
         methodProvenance: methodMaterial.provenance,
         methodSkillPath: methodMaterial.skillPath,
         methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
@@ -403,7 +404,7 @@ async function dispatchAdmittedFixer(input: {
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result.knownFailure,
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
@@ -470,7 +471,7 @@ export async function runPublicFixer(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {

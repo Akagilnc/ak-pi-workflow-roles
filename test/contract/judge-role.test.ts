@@ -602,11 +602,11 @@ test("after_provider_response production handler writes typed 429 into resumable
         instructionEmpty: false,
         attachments: [],
         runDirectory,
-        sessionDirectory,
-        sessionFile: join(sessionDirectory, "session.jsonl"),
+        principal: { sessionDirectory, sessionFile: join(sessionDirectory, "session.jsonl") },
         admittedRequestPath,
       } as any,
       { cause: "provider", diagnostic: "upstream declined this request" },
+      piDurablePrincipalAuthority,
       { resume: { command: renderResumeCommand(runId) } },
     );
 

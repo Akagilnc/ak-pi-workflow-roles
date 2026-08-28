@@ -1,10 +1,10 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Notary Role run: admit source-run locator → shared one-shot dispatch
  * → settle Terminal result (#448). Zero caller prompt/attachment. Lifecycle is
  * the shared Doctor-isomorphic seam; this module keeps only Notary adapters.
  */
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -115,7 +115,7 @@ export async function runPublicNotary(
     io,
     extraArgs,
     adapters: {
-      trySettle: (admitted) => trySettleNotaryTerminalResult(admitted),
+      trySettle: (admitted) => trySettleNotaryTerminalResult(admitted, env.principalAuthority),
       // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true,
     },

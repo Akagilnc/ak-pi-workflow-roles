@@ -598,15 +598,17 @@ test(
         role: "judge",
         runId: "run-e2e-judge-001",
         runDirectory: runDir,
-        sessionDirectory: join(runDir, "session"),
-        sessionFile: join(runDir, "session", "session.jsonl"),
+        principal: {
+          sessionDirectory: join(runDir, "session"),
+          sessionFile: join(runDir, "session", "session.jsonl"),
+        },
         projectRoot: project,
         bookKey,
         instruction: "Canonical nonblank prose Judge request for navigation.",
         instructionEmpty: false,
         attachments: [],
         admittedRequestPath: join(runDir, "admitted-request.json"),
-      } as any);
+      } as any, piDurablePrincipalAuthority);
       assert.equal(terminal.roleOutcome.role, "judge");
       assert.equal(terminal.roleOutcome.kind, "accepted");
       assert.equal(terminal.roleOutcome.status, "converged");

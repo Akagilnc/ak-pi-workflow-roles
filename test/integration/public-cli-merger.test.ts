@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -296,7 +296,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       attachmentPaths: [],
       createRunId: () => "run-merger-settle-001",
     });
-    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "resolving-merge-conflicts",
@@ -353,7 +353,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
         },
       }),
     ];
-    await writeFile(admitted.sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
 
     const entries = sessionLines.map((line) => JSON.parse(line));
     const extracted = extractMergerRoleOutcome(entries);
@@ -371,7 +371,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     assert.equal(methodInvocations.length, 1);
     assert.equal(methodInvocations[0]!.name, "resolving-merge-conflicts");
 
-    const terminal = await settleMergerTerminalResult(admitted, {
+    const terminal = await settleMergerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -466,11 +466,11 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       }),
     ];
     await writeFile(
-      admitted.sessionFile,
+      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
       `${escalateLines.join("\n")}\n`,
       "utf8",
     );
-    const escalateTerminal = await settleMergerTerminalResult(admitted, {
+    const escalateTerminal = await settleMergerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,

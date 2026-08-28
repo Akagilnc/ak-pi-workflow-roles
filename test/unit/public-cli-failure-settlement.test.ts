@@ -340,8 +340,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
       instructionEmpty: false,
       attachments: [],
       runDirectory,
-      sessionDirectory,
-      sessionFile,
+      principal: { sessionDirectory, sessionFile },
       admittedRequestPath: join(runDirectory, "admitted-request.json"),
     };
     await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
@@ -349,7 +348,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
     const terminal = await settleJudgeFailureTerminalResult(admitted as any, {
       cause: "activation",
       diagnostic: "role infrastructure failed",
-    });
+    }, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.kind, "failure");
     assert.equal(terminal.navigator.disposition, "no-advice");
   });
@@ -920,8 +919,10 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
         instructionEmpty: false,
         attachments: [],
         runDirectory,
-        sessionDirectory: join(runDirectory, "session"),
-        sessionFile: join(runDirectory, "session", "session.jsonl"),
+        principal: {
+          sessionDirectory: join(runDirectory, "session"),
+          sessionFile: join(runDirectory, "session", "session.jsonl"),
+        },
         admittedRequestPath: join(runDirectory, "admitted-request.json"),
       };
       await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
@@ -929,7 +930,7 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
         cause,
         diagnostic: `diagnostic for ${cause}`,
         identity: { name: "CauseProbeError", code: cause },
-      });
+      }, piDurablePrincipalAuthority);
       assert.equal(terminal.roleOutcome.kind, "failure");
       if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
       assert.equal(terminal.roleOutcome.cause, cause);

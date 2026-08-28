@@ -20,6 +20,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import {
   AUTO_RESUME_LIMIT,
   describeErrorIdentity,
@@ -195,10 +196,12 @@ function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
  * attempt can never overwrite an earlier attempt's file.
  */
 async function retainDispatchError(
-  admitted: { sessionFile: string; runDirectory: string },
+  admitted: { runDirectory: string; principal: DurablePrincipal },
+  principalAuthority: DurablePrincipalAuthority,
   attempt: number,
   error: unknown,
 ): Promise<{ file: string; pointerError?: unknown }> {
+  const { sessionFile } = decodePiDurablePrincipal(principalAuthority, admitted.principal);
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
   const filePath = join(
     artifactsDir,
@@ -253,7 +256,7 @@ async function retainDispatchError(
   // separately by the caller.
   let pointerError: unknown;
   try {
-    const text = await readFile(admitted.sessionFile, "utf8");
+    const text = await readFile(sessionFile, "utf8");
     // Session headers are not branch entries (#419 precedent in
     // appendRunAttemptHistory excludes type === "session"); leave parentId null
     // until a non-header entry exists so the pointer stays addressable.
@@ -271,7 +274,7 @@ async function retainDispatchError(
       parentId,
       timestamp,
     })}\n`;
-    await appendFile(admitted.sessionFile, pointerLine, "utf8");
+    await appendFile(sessionFile, pointerLine, "utf8");
   } catch (error) {
     pointerError = error;
   } finally {
@@ -336,7 +339,6 @@ function dispatchExceptionFailureTerminal(input: {
 
 export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(options: {
   admitted: {
-    sessionFile: string;
     runDirectory: string;
     /** Identity for the loop-owned typed failure terminal (dispatch-exception exhaustion). */
     role: TerminalRoleName;
@@ -397,7 +399,12 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
         // Track the file as soon as it is durably written (#426 review):
         // a pointer-stage failure comes back separately (pointerError) and must
         // never orphan the retained file (#426 fix_now #5).
-        const { file, pointerError } = await retainDispatchError(options.admitted, attempt, error);
+        const { file, pointerError } = await retainDispatchError(
+          options.admitted,
+          options.principalAuthority,
+          attempt,
+          error,
+        );
         retainedErrorFiles.push(file);
         options.io.stderr(
           `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}\n`,
