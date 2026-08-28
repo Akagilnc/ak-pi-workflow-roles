@@ -1,14 +1,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { RoleTurnModelConfig } from "./host-contracts.ts";
 import { seatModelOnly, type PublicCliConfig } from "./public-cli/config.ts";
 
 export const INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json" as const;
 
-export type InstitutionalSeatSelection = {
-  readonly provider: string;
-  readonly model: string;
-  readonly thinking?: string;
-};
+/** Non-secret per-seat model selection — alias of the single host-neutral RoleTurnModelConfig. */
+export type InstitutionalSeatSelection = RoleTurnModelConfig;
 
 export type InstitutionalResolutionPage = {
   readonly version: 1;
