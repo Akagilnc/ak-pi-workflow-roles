@@ -270,9 +270,20 @@ export type OpenPiInstitutionalSessionOptions = HostInstitutionalSessionOptions 
   readonly label?: string;
 };
 
+/**
+ * Result of the Pi institutional open seam. The host-neutral handle is the
+ * public open-turn-close surface; `session` is the underlying AgentSession the
+ * adapter opened (auth resolved per explicit selection, own runtime/provider).
+ * Internal institutional consumers drive the session and close via the handle.
+ */
+export type OpenPiInstitutionalSessionResult = {
+  readonly handle: HostInstitutionalSessionHandle;
+  readonly session: Awaited<ReturnType<typeof createAgentSession>>["session"];
+};
+
 export async function openPiInstitutionalSession(
   options: OpenPiInstitutionalSessionOptions,
-): Promise<HostInstitutionalSessionHandle> {
+): Promise<OpenPiInstitutionalSessionResult> {
   const label = options.label ?? "Institutional sub-session";
   const selection = options.selection;
 
@@ -734,7 +745,7 @@ export async function openPiInstitutionalSession(
       },
     };
 
-    return handle;
+    return { handle, session };
   } catch (openError) {
     if (scratchDir !== undefined) {
       try {
