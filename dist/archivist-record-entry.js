@@ -4,9 +4,6 @@ import { dirname, isAbsolute, resolve, join, relative, sep } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
 import {
-  roleRunSessionCoordinates
-} from "./archivist-role-run-coordinates.js";
-import {
   ActivationLedgerError,
   activationBookDirectory,
   ensureRealDirectoryTree,
@@ -103,6 +100,5 @@ function createRecordSession(options) {
 }
 export {
   WORKER_SUBMISSION_GATE_KIND,
-  createRecordSession,
-  roleRunSessionCoordinates
+  createRecordSession
 };
