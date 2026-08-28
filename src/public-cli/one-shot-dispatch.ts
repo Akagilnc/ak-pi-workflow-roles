@@ -39,8 +39,11 @@ import {
   explicitInternalKnownFailureClassificationInput,
   settleFailureTerminalResult,
 } from "./settlement.ts";
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { AdmittedRoleInvocation } from "./invocation.ts";
+import {
+  type AdmittedRoleInvocation,
+} from "./invocation.ts";
 import type { TerminalResult } from "./terminal.ts";
 
 export type OneShotRunEnv = {
@@ -54,6 +57,7 @@ export type OneShotRunEnv = {
   engine?: string;
   credentials?: CredentialProviders;
   timeoutMs?: number;
+  principalAuthority: DurablePrincipalAuthority;
 };
 
 /**
@@ -77,6 +81,7 @@ async function presentControlledFailure<A extends AdmittedRoleInvocation>(
     thrown?: unknown;
     knownFailure?: ExplicitInternalKnownFailure;
   },
+  authority: DurablePrincipalAuthority,
   io: CliIo,
 ): Promise<{
   exitCode: number;
@@ -141,7 +146,12 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
       env.credentials,
     );
     if (missingCredential !== undefined) {
-      return await presentControlledFailure(admitted, missingCredential, io);
+      return await presentControlledFailure(
+        admitted,
+        missingCredential,
+        env.principalAuthority,
+        io,
+      );
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -178,6 +188,7 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
           stderr: "",
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -204,6 +215,7 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
           stderr: result.stderr,
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -249,6 +261,7 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
         stderr: result.stderr,
         ...(knownFailure === undefined ? {} : { knownFailure }),
       },
+      env.principalAuthority,
       io,
     );
   } finally {

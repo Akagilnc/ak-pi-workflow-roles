@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -19,7 +20,7 @@ import {
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
+import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
@@ -298,7 +299,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
 // --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
 
 test("engine material delivery: cursor with-notes coordinates; argv gains no engine flags", () => {
-  const judge: AdmittedJudgeInvocation = {
+  const judge = {
     role: "judge",
     runId: "run-engine-oracle",
     bookKey: "book",
@@ -310,10 +311,9 @@ test("engine material delivery: cursor with-notes coordinates; argv gains no eng
     sessionDirectory: "/runs/r/session",
     sessionFile: "/runs/r/session/session.jsonl",
     admittedRequestPath: "/runs/r/admitted-request.json",
-  };
-  const without = buildJudgeActivationExtraArgs(judge, { packageRoot });
-  const withEngine = buildJudgeActivationExtraArgs(judge, {
-    packageRoot,
+  } as any;
+  const without = buildJudgeActivationExtraArgs(judge as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+  const withEngine = buildJudgeActivationExtraArgs(judge as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     engine: "cursor",
   });
   assert.notEqual(without.at(-1), withEngine.at(-1));
@@ -327,7 +327,7 @@ test("engine material delivery: cursor with-notes coordinates; argv gains no eng
 });
 
 test("engine name-only delivery: free name without notes carries name, no path", () => {
-  const judge: AdmittedJudgeInvocation = {
+  const judge = {
     role: "judge",
     runId: "run-engine-name-only",
     bookKey: "book",
@@ -339,11 +339,10 @@ test("engine name-only delivery: free name without notes carries name, no path",
     sessionDirectory: "/runs/r/session",
     sessionFile: "/runs/r/session/session.jsonl",
     admittedRequestPath: "/runs/r/admitted-request.json",
-  };
+  } as any;
   // Use a well-formed name that has no packaged notes file.
   const freeName = "nope-engine";
-  const withEngine = buildJudgeActivationExtraArgs(judge, {
-    packageRoot,
+  const withEngine = buildJudgeActivationExtraArgs(judge as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     engine: freeName,
   });
   const prompt = withEngine.at(-1)!;
@@ -368,14 +367,13 @@ function sampleReviewer(): AdmittedReviewerInvocation {
     admittedRequestPath: "/runs/r/admitted-request.json",
     baseRevision: "abc123",
     authorityRefs: [],
-  };
+  } as any;
 }
 
 test("reviewer engine material delivery: cursor with-notes + free name-only (#378)", () => {
   const reviewer = sampleReviewer();
-  const without = buildReviewerActivationExtraArgs(reviewer, { packageRoot });
-  const withNotes = buildReviewerActivationExtraArgs(reviewer, {
-    packageRoot,
+  const without = buildReviewerActivationExtraArgs(reviewer as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+  const withNotes = buildReviewerActivationExtraArgs(reviewer as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     engine: "cursor",
   });
   assert.notEqual(without.at(-1), withNotes.at(-1));
@@ -386,8 +384,7 @@ test("reviewer engine material delivery: cursor with-notes + free name-only (#37
   assertNoEngineFlagsInArgv(withNotes);
 
   const freeName = "nope-engine";
-  const nameOnly = buildReviewerActivationExtraArgs(reviewer, {
-    packageRoot,
+  const nameOnly = buildReviewerActivationExtraArgs(reviewer as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     engine: freeName,
   });
   const nameOnlyPrompt = nameOnly.at(-1)!;
@@ -1152,7 +1149,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
       seedGitProject(baseProject);
       {
         const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-        const coords = roleRunSessionCoordinates({
+        const coords = issuePiDurablePrincipalCoordinates({
           cwd: baseProject,
           runId: sourceRunId,
           role: "judge",

@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 // #107 session provider-stop 绑定与 #307 typed HTTP 观察家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -1155,7 +1156,7 @@ async function settleDiskSessionStopToErrorJson(input: {
     admittedRequestPath: join(runDirectory, "admitted-request.json"),
   };
   await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-  const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
+  const terminal = await settleJudgeFailureTerminalResult(admitted as any, failure);
   const errorRef = terminal.artifacts.find((a) => a.kind === "error");
   assert.ok(errorRef, "settlement must publish error artifact");
   const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as Record<string, unknown>;

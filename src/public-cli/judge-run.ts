@@ -1,4 +1,5 @@
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Judge Role run: admit → explicit Internal activate → settle Terminal result.
  * #107: controlled post-admission failures and human decisions settle honestly.
@@ -19,7 +20,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
-  type AdmittedJudgeInvocation,
+  type AdmittedJudgeInvocation
 } from "./invocation.ts";
 import {
   buildSeatModelCliArgs,
@@ -33,7 +34,6 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableJudgeRun,
   markRunAdmitted,
@@ -74,7 +74,7 @@ import type {
 
 export type JudgeRunEnv = {
   home: string;
-  principalAuthority?: DurablePrincipalAuthority;
+  principalAuthority: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -99,8 +99,6 @@ export type JudgeRunEnv = {
   timeoutMs?: number;
 };
 
-
-
 /**
  * Build Internal activation extra-args for an admitted Judge run
  * (everything after `--no-extensions -e <entrypoint>`).
@@ -109,12 +107,14 @@ export type JudgeRunEnv = {
 export function buildJudgeActivationExtraArgs(
   admitted: AdmittedJudgeInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     model?: SeatModelConfig;
     engine?: string;
     packageRoot?: string;
     extraPiArgs?: readonly string[];
-  } = {},
+  },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const prompt = buildJudgeTransportPrompt(
     admitted,
     engineSessionMaterialFromOptions(options),
@@ -126,9 +126,9 @@ export function buildJudgeActivationExtraArgs(
     "--no-context-files",
     // Exact Pi session file principal (SessionManager.open), not directory-latest.
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "judge",
@@ -147,20 +147,22 @@ export function buildJudgeActivationExtraArgs(
 export function buildJudgeResumeActivationExtraArgs(
   admitted: AdmittedJudgeInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     model?: SeatModelConfig;
     extraPiArgs?: readonly string[];
     message?: string;
-  } = {},
+  },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   return [
     "--no-skills",
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "judge",
@@ -183,6 +185,7 @@ async function presentControlledFailure(
     typedHttpObservationSettled?: true;
     typedHttpObservation?: TypedProviderHttpObservation;
   },
+  authority: DurablePrincipalAuthority,
   io: CliIo,
 ): Promise<{
   exitCode: number;
@@ -226,9 +229,7 @@ async function presentControlledFailure(
   // Lawful presence is session-owned and must not depend on artifact publication.
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
-    admitted.sessionFile,
-  );
+  const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
     sessionPrincipalAvailable &&
     isV1ResumableFailure({
@@ -284,6 +285,7 @@ async function dispatchAdmittedJudge(input: {
       return await presentControlledFailure(
         admitted,
         missingCredential,
+        env.principalAuthority,
         io,
       );
     }
@@ -317,7 +319,6 @@ async function dispatchAdmittedJudge(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -332,6 +333,7 @@ async function dispatchAdmittedJudge(input: {
           stderr: "",
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -359,6 +361,7 @@ async function dispatchAdmittedJudge(input: {
           stderr: result.stderr,
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -407,6 +410,7 @@ async function dispatchAdmittedJudge(input: {
         stderr: result.stderr,
         ...controlledFailureInputFromResolution(resolution),
       },
+      env.principalAuthority,
       io,
     );
   } finally {
@@ -434,7 +438,7 @@ export async function runPublicJudge(
     const parsed = parseJudgeArgv(argv);
     admitted = await admitJudgeInvocation({
       home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -454,11 +458,13 @@ export async function runPublicJudge(
 
   return runWithAutoResumeLoop({
     admitted,
+    principalAuthority: env.principalAuthority,
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () =>
       buildJudgeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
@@ -466,6 +472,7 @@ export async function runPublicJudge(
       }),
     buildResumeArgs: () =>
       buildJudgeResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
       }),
@@ -524,6 +531,7 @@ export async function runPublicResume(
   }
 
   const extraArgs = buildJudgeResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
     ...(request.message === undefined ? {} : { message: request.message }),

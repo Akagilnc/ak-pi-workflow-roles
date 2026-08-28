@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -79,6 +80,7 @@ test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on
     seedGitProject(project);
 
     const apply = await admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "apply",
@@ -86,7 +88,7 @@ test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on
       attachmentPaths: [],
       createRunId: () => "run-coder-apply-args",
     });
-    const applyArgs = buildCoderActivationExtraArgs(apply, { packageRoot });
+    const applyArgs = buildCoderActivationExtraArgs(apply, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
     assert.equal(applyArgs.includes("--no-skills"), true);
     assert.equal(applyArgs.includes("--skill"), true);
     assert.equal(applyArgs.includes("--ak-coder-phase"), true);
@@ -99,6 +101,7 @@ test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on
     );
 
     const plan = await admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",
@@ -106,18 +109,18 @@ test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on
       attachmentPaths: [],
       createRunId: () => "run-coder-plan-args",
     });
-    const planArgs = buildCoderActivationExtraArgs(plan, { packageRoot });
+    const planArgs = buildCoderActivationExtraArgs(plan, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
     assert.equal(planArgs.includes("--no-skills"), true);
     assert.equal(planArgs.includes("--skill"), false);
     assert.equal(planArgs[planArgs.indexOf("--ak-coder-phase") + 1], "plan");
 
     // Resume args preserve phase and package skill binding without resubmitting task prose.
-    const resumeApply = buildCoderResumeActivationExtraArgs(apply, { packageRoot });
+    const resumeApply = buildCoderResumeActivationExtraArgs(apply, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
     assert.equal(resumeApply[resumeApply.indexOf("--ak-coder-phase") + 1], "apply");
     assert.equal(resumeApply.includes("--skill"), true);
     assert.equal(resumeApply.includes(RESUME_TRANSPORT_ENVELOPE), true);
     assert.equal(resumeApply.includes(apply.instruction), false);
-    const resumePlan = buildCoderResumeActivationExtraArgs(plan, { packageRoot });
+    const resumePlan = buildCoderResumeActivationExtraArgs(plan, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
     assert.equal(resumePlan[resumePlan.indexOf("--ak-coder-phase") + 1], "plan");
     assert.equal(resumePlan.includes("--skill"), false);
     assert.equal(resumePlan.includes(RESUME_TRANSPORT_ENVELOPE), true);
@@ -130,6 +133,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const admitted = await admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "apply",

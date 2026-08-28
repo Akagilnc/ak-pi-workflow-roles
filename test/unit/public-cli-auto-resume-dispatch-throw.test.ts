@@ -11,9 +11,10 @@
  * serialized thrown value, no field picking) — never by content comparison.
  */
 import assert from "node:assert/strict";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal, rehydratePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import test from "node:test";
 
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
@@ -50,7 +51,8 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     const callsRef={n:0};
     const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:"throw-loop-limit2b"},
+    principalAuthority: piDurablePrincipalAuthority,
+      admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:"throw-loop-limit2b"},
       io,
       autoResumeLimit:2,
       buildInitialArgs: ()=>["--initial"],
@@ -109,7 +111,8 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     const callsRef={n:0};
     const {io,stderr}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"fixer",runId:"throw-sink-fails"},
+    principalAuthority: piDurablePrincipalAuthority,
+      admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"fixer",runId:"throw-sink-fails"},
       io,
       autoResumeLimit:2,
       buildInitialArgs: ()=>["--initial"],

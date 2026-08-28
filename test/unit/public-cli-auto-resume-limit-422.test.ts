@@ -7,9 +7,10 @@
  * runAkRole(config set-auto-resume-limit) / runWithAutoResumeLoop(injected limit).
  */
 import assert from "node:assert/strict";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal, rehydratePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -49,7 +50,8 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
+    principalAuthority: piDurablePrincipalAuthority,
+      admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:4,
       buildInitialArgs: ()=>["--initial"],
@@ -68,7 +70,8 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
+    principalAuthority: piDurablePrincipalAuthority,
+      admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
@@ -228,7 +231,8 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
       let calls=0;const {io}=captureIo();
       await assert.rejects(
         ()=>runWithAutoResumeLoop({
-          admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
+    principalAuthority: piDurablePrincipalAuthority,
+          admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
           io,
           autoResumeLimit:bad,
           buildInitialArgs: ()=>["--initial"],
@@ -251,6 +255,7 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
     await assert.rejects(
       ()=>runPublicJudge(["--project",project,"auto"],{
         home,
+        principalAuthority: piDurablePrincipalAuthority,
         agentDir:join(home,".ak-roles","agent"),
         packageRoot,
         cwd:project,

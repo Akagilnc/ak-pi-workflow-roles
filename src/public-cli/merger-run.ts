@@ -9,7 +9,7 @@ import { join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import { ensureRealDirectoryTree, resolveActivationLedgerHome } from "../activation-ledger-topology.ts";
-import { decodePiDurablePrincipal, piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
@@ -30,7 +30,7 @@ import {
   admitMergerInvocation,
   buildMergerTransportPrompt,
   MergerEnvelopeDerivationError,
-  type AdmittedMergerInvocation,
+  type AdmittedMergerInvocation
 } from "./invocation.ts";
 import {
   buildSeatModelCliArgs,
@@ -44,7 +44,6 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableMergerRun,
   markRunAdmitted,
@@ -83,7 +82,7 @@ import type {
 
 export type MergerRunEnv = {
   home: string;
-  principalAuthority?: DurablePrincipalAuthority;
+  principalAuthority: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -100,7 +99,6 @@ export type MergerRunEnv = {
   timeoutMs?: number;
 };
 
-
 /**
  * Build Internal activation extra-args for an admitted Merger run.
  * Package resolving-merge-conflicts Skill is forced via --skill; ambient home off.
@@ -109,12 +107,14 @@ export type MergerRunEnv = {
 export function buildMergerActivationExtraArgs(
   admitted: AdmittedMergerInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
     model?: SeatModelConfig;
     engine?: string;
     extraPiArgs?: readonly string[];
   },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const prompt = buildMergerTransportPrompt(
     admitted,
     engineSessionMaterialFromOptions(options),
@@ -131,9 +131,9 @@ export function buildMergerActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "merger",
@@ -153,12 +153,14 @@ export function buildMergerActivationExtraArgs(
 export function buildMergerResumeActivationExtraArgs(
   admitted: AdmittedMergerInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
     model?: SeatModelConfig;
     extraPiArgs?: readonly string[];
     message?: string;
   },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const skillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "resolving-merge-conflicts",
@@ -171,9 +173,9 @@ export function buildMergerResumeActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "merger",
@@ -203,6 +205,7 @@ async function presentControlledFailure(
     typedHttpObservationSettled?: true;
     typedHttpObservation?: TypedProviderHttpObservation;
   },
+  authority: DurablePrincipalAuthority,
   io: CliIo,
 ): Promise<{
   exitCode: number;
@@ -250,9 +253,7 @@ async function presentControlledFailure(
 
   const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
-    admitted.sessionFile,
-  );
+  const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
     sessionPrincipalAvailable &&
     isV1ResumableFailure({
@@ -303,6 +304,7 @@ async function dispatchAdmittedMerger(input: {
       return await presentControlledFailure(
         admitted,
         missingCredential,
+        env.principalAuthority,
         io,
       );
     }
@@ -328,7 +330,6 @@ async function dispatchAdmittedMerger(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -343,6 +344,7 @@ async function dispatchAdmittedMerger(input: {
           stderr: "",
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -376,6 +378,7 @@ async function dispatchAdmittedMerger(input: {
           stderr: result.stderr,
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -408,6 +411,7 @@ async function dispatchAdmittedMerger(input: {
         stderr: result.stderr,
         ...controlledFailureInputFromResolution(resolution),
       },
+      env.principalAuthority,
       io,
     );
   } finally {
@@ -435,11 +439,11 @@ async function admitMergerShellForActivationFailure(options: {
   instruction: string;
   project?: string;
   createRunId?: () => string;
-  principalAuthority?: DurablePrincipalAuthority;
+  principalAuthority: DurablePrincipalAuthority;
 }): Promise<AdmittedMergerInvocation> {
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const authority = options.principalAuthority ?? piDurablePrincipalAuthority;
+  const authority = options.principalAuthority;
   const principal = authority.issue({ cwd: projectRoot, runId, role: "merger", home: options.home });
   const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
   const runDirectory = join(sessionDirectory, "..");
@@ -469,6 +473,8 @@ async function admitMergerShellForActivationFailure(options: {
         mergerInputPath,
         derived: emptyDerived,
         attachments: [],
+        sessionDirectory,
+        sessionFile,
       },
       null,
       2,
@@ -484,6 +490,7 @@ async function admitMergerShellForActivationFailure(options: {
     instructionEmpty: false,
     attachments: [],
     runDirectory,
+    principal,
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
@@ -525,7 +532,7 @@ export async function runPublicMerger(
   try {
     admitted = await admitMergerInvocation({
       home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -543,7 +550,7 @@ export async function runPublicMerger(
       // Place a shell admitted run so Terminal identity stays role-correct.
       const shell = await admitMergerShellForActivationFailure({
         home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
+      principalAuthority: env.principalAuthority,
         cwd: env.cwd,
         instruction: parsed.instruction,
         ...(parsed.project === undefined ? {} : { project: parsed.project }),
@@ -562,6 +569,7 @@ export async function runPublicMerger(
           knownCause: "activation",
           knownDiagnostic: error.message,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -583,17 +591,20 @@ export async function runPublicMerger(
         thrown: error,
         knownCause: "activation",
       },
+      env.principalAuthority,
       io,
     );
   }
 
   return runWithAutoResumeLoop({
     admitted,
+    principalAuthority: env.principalAuthority,
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () =>
       buildMergerActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
@@ -601,6 +612,7 @@ export async function runPublicMerger(
       }),
     buildResumeArgs: () =>
       buildMergerResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
@@ -672,11 +684,13 @@ export async function runPublicMergerResume(
         thrown: error,
         knownCause: "activation",
       },
+      env.principalAuthority,
       io,
     );
   }
 
   const extraArgs = buildMergerResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),

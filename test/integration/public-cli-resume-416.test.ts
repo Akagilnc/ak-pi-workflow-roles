@@ -4,9 +4,10 @@
  * F1: lawful 三态 (accepted/audit_escalation/no_receipt) 均不触发
  */
 import assert from "node:assert/strict";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal, rehydratePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -35,7 +36,7 @@ test("block1: terminal without accepted is now resumable", async()=>{
         await writeFile(join(sd,"session.jsonl"),JSON.stringify({type:"message",message:{role:"user",content:[{type:"text",text:"go"}]}})+"\n","utf8");
         return{code:1,stderr:"boom\n",timedOut:false,args:[...args]};}});
     assert.equal(first.exitCode,1);
-    const loaded=await loadResumableJudgeRun(home,runId);
+    const loaded=await loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
     let dispatched=false;let seenEnvelope=false;let seenSessionFile="";
     const {io:io2}=captureIo();
@@ -59,7 +60,7 @@ test("S5: terminal with accepted receipt is also resumable (owner '根本不要�
         const sf=args[args.indexOf("--session")+1]!;await writeFile(sf,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged",note:"ok"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};}});
     assert.equal(first.exitCode,0);
     assert.equal(first.terminal?.roleOutcome.kind,"accepted");
-    const loaded=await loadResumableJudgeRun(home,runId);
+    const loaded=await loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
     // Manual resume should dispatch exactly once with exact session and resume envelope, not resubmit instruction
     let calls=0;let resumeArgs:string[]|undefined;
@@ -85,7 +86,7 @@ test("S5: resumable (typed 429) state also resumable", async()=>{
         return{code:1,stderr:"fail\n",timedOut:false,args:[...args],knownFailure:{cause:"provider",identity:{name:"ProviderError",code:429},diagnostic:"HTTP 429"}};}});
     // After per-call auto retries, final terminal will have autoResumeCount 2 but still be loadable
     assert.equal(first.exitCode,1);
-    const loaded=await loadResumableJudgeRun(home,runId);
+    const loaded=await loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
     let calls=0;
     const {io:io2}=captureIo();
@@ -99,7 +100,7 @@ test("S5: resumable (typed 429) state also resumable", async()=>{
 test("block1: unknown runId still rejects", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
-    await assert.rejects(()=>loadResumableJudgeRun(home,"missing-416"),/unknown role run id/);
+    await assert.rejects(()=>loadResumableJudgeRun(home, "missing-416", piDurablePrincipalAuthority),/unknown role run id/);
     const {io}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume","missing-416"],{packageRoot,home,cwd:project,io,piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};}});
     assert.equal(res.exitCode,2);assert.equal(dispatched,false);
@@ -116,7 +117,7 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const bookKey=resolveBookKeyFromGit(project);
     const runDir=join(home,".ak-roles","books",bookKey,"runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
-    await assert.rejects(()=>loadResumableJudgeRun(home,runId),/Pi session principal is unavailable/);
+    await assert.rejects(()=>loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority),/Pi session principal is unavailable/);
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume",runId],{packageRoot,home,cwd:project,io:io2,piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};}});
     assert.equal(dispatched,false);assert.ok(stderr.join("").includes("Pi session principal is unavailable"));assert.notEqual(res.exitCode,0);
@@ -164,7 +165,8 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io,stdout}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
+    principalAuthority: piDurablePrincipalAuthority,
+      admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
@@ -184,7 +186,8 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     let calls=0;const {io,stdout}=captureIo();
     const noReceiptFacts={acceptedReceipt:false, rejectedReceipts:[], deliveryTurns:0, sessionCompletion:"completed" as const};
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
+    principalAuthority: piDurablePrincipalAuthority,
+      admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],

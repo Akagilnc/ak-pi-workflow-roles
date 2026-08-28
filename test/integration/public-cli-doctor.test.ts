@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -192,6 +193,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     const expectedPatient = await loadDoctorCase(seededRuns);
 
     const admitted = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: 40,
@@ -238,6 +240,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     );
     await mkdir(emptyRuns, { recursive: true });
     const emptyAdmitted = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: emptyIssue,
@@ -262,6 +265,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     await assert.rejects(
       () =>
         admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           issueNumber: 40,
@@ -276,6 +280,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     await assert.rejects(
       () =>
         admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           issueNumber: 40,
@@ -299,6 +304,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     await assert.rejects(
       () =>
         admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           issueNumber: 40,
@@ -325,6 +331,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
       "utf8",
     );
     const admitted = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: 40,
@@ -350,14 +357,14 @@ test("buildDoctorActivationExtraArgs pins isolation and --ak-doctor-case to admi
     await seedIssueRuns(home, bookKey, 12);
 
     const admitted = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: 12,
       instruction: "diagnose retries",
       createRunId: () => "run-doctor-args",
     });
-    const args = buildDoctorActivationExtraArgs(admitted, {
-      model: {
+    const args = buildDoctorActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, model: {
         provider: "openai-codex",
         model: "gpt-5.6-luna",
         thinking: "high",
@@ -567,10 +574,10 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       issueNumber: admittedSnap.issueNumber,
       caseRunsPath: admittedSnap.caseRunsPath,
       caseIdentity: admittedSnap.caseIdentity,
-    });
+    } as any);
     assert.equal(settled.roleOutcome.kind, "accepted");
     assert.equal(
-      await trySettleDoctorTerminalResult({
+      await trySettleDoctorTerminalResult({ 
         role: "doctor",
         runId: "missing",
         bookKey,
@@ -585,7 +592,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         issueNumber: admittedSnap.issueNumber,
         caseRunsPath: admittedSnap.caseRunsPath,
         caseIdentity: admittedSnap.caseIdentity,
-      }),
+      } as any),
       undefined,
     );
   });
@@ -601,6 +608,7 @@ test("doctor resume is rejected as one-shot", async () => {
 
     // Create a durable doctor run-state so peek can see the role.
     const admit = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: 5,

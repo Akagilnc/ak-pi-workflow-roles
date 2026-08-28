@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -184,6 +185,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     await assert.rejects(
       () =>
         admitMergerInvocationRaw({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           instruction: "   ",
@@ -194,6 +196,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     );
 
     const admitted = await admitMergerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Reconcile the conflicted merge.",
@@ -246,13 +249,14 @@ test("buildMergerActivationExtraArgs pins package merge-only method and internal
     await mkdir(project, { recursive: true });
     await materializeConflictedRepo(project);
     const admitted = await admitMergerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Resolve within scope.",
       attachmentPaths: [],
       createRunId: () => "run-merger-args-001",
     });
-    const args = buildMergerActivationExtraArgs(admitted, { packageRoot });
+    const args = buildMergerActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
     assert.equal(args.includes("--no-skills"), true);
     assert.equal(args.includes("--skill"), true);
     assert.equal(args.includes("--ak-role"), true);
@@ -271,8 +275,7 @@ test("buildMergerActivationExtraArgs pins package merge-only method and internal
       true,
     );
 
-    const resume = buildMergerResumeActivationExtraArgs(admitted, {
-      packageRoot,
+    const resume = buildMergerResumeActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     });
     assert.equal(resume.includes("--skill"), true);
     assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
@@ -286,6 +289,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     await mkdir(project, { recursive: true });
     const fixture = await materializeConflictedRepo(project);
     const admitted = await admitMergerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Complete the merge.",

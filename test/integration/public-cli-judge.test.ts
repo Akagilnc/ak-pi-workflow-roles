@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
@@ -230,6 +231,7 @@ test("admitJudgeInvocation rejects blank project override before resolve", async
     await assert.rejects(
       () =>
         admitJudgeInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: home,
           instruction: "task",
@@ -252,6 +254,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     await writeFile(source, "admitted-bytes-v1", "utf8");
 
     const admitted = await admitJudgeInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "review the attachment",
@@ -305,7 +308,7 @@ test("structurally empty request stays empty while attachments remain typed tran
     sessionDirectory: "/r/session",
     sessionFile: "/r/session/session.jsonl",
     admittedRequestPath: "/r/admitted-request.json",
-  });
+  } as any);
   assert.equal(empty, "");
 
   const withAttach = buildJudgeTransportPrompt({
@@ -328,7 +331,7 @@ test("structurally empty request stays empty while attachments remain typed tran
     sessionDirectory: "/r/session",
     sessionFile: "/r/session/session.jsonl",
     admittedRequestPath: "/r/admitted-request.json",
-  });
+  } as any);
   assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
@@ -1241,7 +1244,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       instructionEmpty: false,
       attachments: [],
       admittedRequestPath: join(runDir, "admitted-request.json"),
-    });
+    } as any);
     assert.equal(stdout.length, 1);
     assert.notEqual(stdout[0]?.trim(), "");
     // #416 autoResumeCount is call-local observation (0 for first-attempt lawful) and is part of Terminal presentation
@@ -1351,7 +1354,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
       instructionEmpty: true,
       attachments: [],
       admittedRequestPath: join(runDir, "admitted-request.json"),
-    });
+    } as any);
     // Missing attendance is not successful no-advice — require affirmative typed fact.
     assert.equal(terminal.navigator.disposition, "unavailable");
     if (terminal.navigator.disposition === "unavailable") {

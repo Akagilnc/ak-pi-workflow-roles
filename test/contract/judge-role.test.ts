@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -604,7 +605,7 @@ test("after_provider_response production handler writes typed 429 into resumable
         sessionDirectory,
         sessionFile: join(sessionDirectory, "session.jsonl"),
         admittedRequestPath,
-      },
+      } as any,
       { cause: "provider", diagnostic: "upstream declined this request" },
       { resume: { command: renderResumeCommand(runId) } },
     );

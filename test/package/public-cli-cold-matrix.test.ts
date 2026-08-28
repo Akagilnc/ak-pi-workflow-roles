@@ -38,7 +38,7 @@ import {
   withHermeticHome,
   type PiManagedInstall,
 } from "../helpers/pi-test-harness.ts";
-import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
+import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
@@ -590,7 +590,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
     // notary — machine-ledger source-run locator only; zero prompt/attachment.
     {
       const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-      const coords = roleRunSessionCoordinates({
+      const coords = issuePiDurablePrincipalCoordinates({
         cwd: project,
         runId: sourceRunId,
         role: "judge",

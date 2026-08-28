@@ -1,5 +1,10 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+} from "../host-contracts.ts";
+import {
+  rehydratePiDurablePrincipal,
+} from "../pi/durable-principal.ts";
 /**
  * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
  * States: admitted → running → resumable | terminal.
@@ -7,8 +12,8 @@ import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
-import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { chmod, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   activationBookDirectory,
@@ -335,15 +340,13 @@ export async function markRunTerminal(runDirectory: string): Promise<void> {
 }
 
 /**
- * True when the durable Pi session file principal exists as a regular file.
+ * True when the host authority reports the durable principal available.
  * Resume must reopen this exact principal; directory-latest is not identity.
  */
 export async function isDurablePrincipalAvailable(
-  sessionFile: string,
-  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
+  principal: DurablePrincipal,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
-  if (sessionFile.trim() === "") return false;
-  const principal = { sessionDirectory: dirname(sessionFile), sessionFile };
   return authority.isAvailable(principal);
 }
 
@@ -538,7 +541,7 @@ function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
 async function loadResumableRunRecord(
   home: string,
   runId: string,
-  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly observation?: TypedHttp429Observation;
@@ -555,7 +558,11 @@ async function loadResumableRunRecord(
   // #416: removed terminal/resumable gates per owner decision "根本不要有限制" (2026-08-22).
   // Only the exact Pi session principal check remains as honest failure.
   // Exact Pi session principal must be present before resume dispatches.
-  if (!(await isDurablePrincipalAvailable(run.sessionFile, authority))) {
+  const principal = rehydratePiDurablePrincipal(authority, {
+    sessionDirectory: run.sessionDirectory,
+    sessionFile: run.sessionFile,
+  });
+  if (!(await isDurablePrincipalAvailable(principal, authority))) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`,
     );
@@ -754,7 +761,7 @@ export type LoadedResumableReviewerRun = {
 export async function loadResumableJudgeRun(
   home: string,
   runId: string,
-  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableJudgeRun> {
   const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "judge") {
@@ -771,6 +778,10 @@ export async function loadResumableJudgeRun(
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
+    principal: rehydratePiDurablePrincipal(authority, {
+      sessionDirectory: loaded.run.sessionDirectory,
+      sessionFile: loaded.run.sessionFile,
+    }),
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
@@ -790,7 +801,7 @@ export async function loadResumableJudgeRun(
 export async function loadResumableCoderRun(
   home: string,
   runId: string,
-  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableCoderRun> {
   const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "coder") {
@@ -825,6 +836,10 @@ export async function loadResumableCoderRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
+    principal: rehydratePiDurablePrincipal(authority, {
+      sessionDirectory: loaded.run.sessionDirectory,
+      sessionFile: loaded.run.sessionFile,
+    }),
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
@@ -845,7 +860,7 @@ export async function loadResumableCoderRun(
 export async function loadResumableFixerRun(
   home: string,
   runId: string,
-  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableFixerRun> {
   const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "fixer") {
@@ -881,6 +896,10 @@ export async function loadResumableFixerRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
+    principal: rehydratePiDurablePrincipal(authority, {
+      sessionDirectory: loaded.run.sessionDirectory,
+      sessionFile: loaded.run.sessionFile,
+    }),
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
@@ -909,7 +928,7 @@ export async function loadResumableFixerRun(
 export async function loadResumableReviewerRun(
   home: string,
   runId: string,
-  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableReviewerRun> {
   const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "reviewer") {
@@ -932,6 +951,10 @@ export async function loadResumableReviewerRun(
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
+    principal: rehydratePiDurablePrincipal(authority, {
+      sessionDirectory: loaded.run.sessionDirectory,
+      sessionFile: loaded.run.sessionFile,
+    }),
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
@@ -959,7 +982,7 @@ export type LoadedResumableMergerRun = {
 export async function loadResumableMergerRun(
   home: string,
   runId: string,
-  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableMergerRun> {
   const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "merger") {
@@ -993,6 +1016,10 @@ export async function loadResumableMergerRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
+    principal: rehydratePiDurablePrincipal(authority, {
+      sessionDirectory: loaded.run.sessionDirectory,
+      sessionFile: loaded.run.sessionFile,
+    }),
     sessionDirectory: loaded.run.sessionDirectory,
     sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,

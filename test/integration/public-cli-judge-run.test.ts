@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #106 end-to-end: ak-role judge → existing Judge gate (real Pi + faux provider)
  * → one Terminal result with registry-rendered Navigator command.
@@ -593,7 +594,7 @@ test(
         "runs",
         "run-e2e-judge-001@judge",
       );
-      const terminal = await settleJudgeTerminalResult({
+      const terminal = await settleJudgeTerminalResult({ 
         role: "judge",
         runId: "run-e2e-judge-001",
         runDirectory: runDir,
@@ -605,7 +606,7 @@ test(
         instructionEmpty: false,
         attachments: [],
         admittedRequestPath: join(runDir, "admitted-request.json"),
-      });
+      } as any);
       assert.equal(terminal.roleOutcome.role, "judge");
       assert.equal(terminal.roleOutcome.kind, "accepted");
       assert.equal(terminal.roleOutcome.status, "converged");
