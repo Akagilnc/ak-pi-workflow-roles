@@ -106,17 +106,7 @@ const PUBLIC_ROLE_RECORDS = [
     sessionMaterials: NOTARY_SESSION_MATERIALS
   }
 ];
-function metadataProjection(record) {
-  return {
-    role: record.role,
-    phases: record.phases,
-    outputTool: record.outputTool,
-    inputFlag: record.inputFlag,
-    phaseFlag: record.phaseFlag,
-    activationStage: record.activationStage
-  };
-}
-const PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(metadataProjection);
+const PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
 function packagedRoleMetadata(role) {
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
 }
@@ -129,13 +119,6 @@ function packagedRolePhaseFlag(role) {
 function packagedRoleOutputTool(role) {
   return packagedRoleMetadata(role)?.outputTool;
 }
-function publicRoleSessionMaterials(role) {
-  const record = PUBLIC_ROLE_RECORDS.find((entry) => entry.role === role);
-  if (!record) {
-    throw new Error(`unknown public role: ${role}`);
-  }
-  return record.sessionMaterials;
-}
 export {
   NOTARY_SESSION_MATERIALS,
   PACKAGED_ROLE_REGISTRY,
@@ -143,6 +126,5 @@ export {
   packagedRoleInputFlag,
   packagedRoleMetadata,
   packagedRoleOutputTool,
-  packagedRolePhaseFlag,
-  publicRoleSessionMaterials
+  packagedRolePhaseFlag
 };
