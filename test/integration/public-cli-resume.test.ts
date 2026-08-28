@@ -1320,6 +1320,10 @@ test("initial activation and resume bind the exact host-issued durable principal
       },
     };
 
+    // Principal identity observed at the real Pi execution seam (session file path).
+    const activationPrincipalIds: string[] = [];
+    const resumePrincipalIds: string[] = [];
+
     {
       const { io } = captureIo();
       const first = await runAkRole(
@@ -1335,6 +1339,7 @@ test("initial activation and resume bind the exact host-issued durable principal
           piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             const sessionPath = args[args.indexOf("--session") + 1]!;
+            activationPrincipalIds.push(sessionPath);
             await mkdir(sessionDir, { recursive: true });
             await observeTyped429ViaProductionHandler({
               runDirectory: join(sessionDir, ".."),
@@ -1344,7 +1349,6 @@ test("initial activation and resume bind the exact host-issued durable principal
               provider: "openai-codex",
               errorMessage: "rate limited",
             });
-            // Materialize the host-issued principal so resume availability can pass.
             await writeFile(sessionPath, "\n", "utf8");
             return {
               code: 1,
@@ -1358,6 +1362,18 @@ test("initial activation and resume bind the exact host-issued durable principal
       assert.ok(first.terminal?.resume);
     }
 
+    assert.ok(activationPrincipalIds.length >= 1);
+    const boundPrincipalId = activationPrincipalIds[0]!;
+    assert.equal(
+      boundPrincipalId.endsWith("/session/host-issued-principal.jsonl"),
+      true,
+    );
+    // Every auto-resume attempt must reopen the same host-issued principal identity.
+    assert.deepEqual(
+      [...new Set(activationPrincipalIds)],
+      [boundPrincipalId],
+    );
+
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
       home,
@@ -1367,15 +1383,10 @@ test("initial activation and resume bind the exact host-issued durable principal
       "runs",
       `${runId}@judge`,
     );
-    // Contract proof is durable run-state + typed Terminal — not argv shape or dispatch counts.
     const durable = await readRoleRunState(runDirectory, principalAuthority);
     assert.ok(durable);
-    assert.equal(
-      durable.sessionFile.endsWith("/session/host-issued-principal.jsonl"),
-      true,
-    );
+    assert.equal(durable.sessionFile, boundPrincipalId);
     assert.equal(durable.state, "resumable");
-    const boundSession = durable.sessionFile;
 
     // Host-denied availability must fail honestly without a typed accepted Terminal.
     const blockingAuthority = {
@@ -1405,7 +1416,7 @@ test("initial activation and resume bind the exact host-issued durable principal
       assert.equal(blocked.terminal, undefined);
     }
 
-    // Successful resume keeps the same durable principal identity.
+    // Successful resume must reopen the same principal identity at the execution seam.
     const { io } = captureIo();
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
@@ -1415,8 +1426,10 @@ test("initial activation and resume bind the exact host-issued durable principal
       principalAuthority,
       io,
       piRunner: async (args) => {
+        const sessionPath = args[args.indexOf("--session") + 1]!;
+        resumePrincipalIds.push(sessionPath);
         await writeFile(
-          boundSession,
+          sessionPath,
           `${JSON.stringify({
             type: "message",
             message: {
@@ -1438,9 +1451,90 @@ test("initial activation and resume bind the exact host-issued durable principal
     });
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(resumePrincipalIds.length, 1);
+    assert.equal(resumePrincipalIds[0], boundPrincipalId);
     const after = await readRoleRunState(runDirectory, principalAuthority);
     assert.equal(after?.state, "terminal");
-    assert.equal(after?.sessionFile, boundSession);
+    assert.equal(after?.sessionFile, boundPrincipalId);
+  });
+});
+
+test("resume decodes uninterpreted principal wire exactly once through host authority", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-decode-once-001";
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    const sessionFile = join(sessionDirectory, "session.jsonl");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(sessionFile, "\n", "utf8");
+    const admittedRequestPath = join(runDirectory, "admitted-request.json");
+    await writeFile(
+      admittedRequestPath,
+      `${JSON.stringify({
+        role: "judge",
+        instruction: "x",
+        instructionEmpty: false,
+        attachments: [],
+      })}\n`,
+      "utf8",
+    );
+    await markRunAdmitted(
+      {
+        role: "judge",
+        runId,
+        bookKey,
+        projectRoot: project,
+        instruction: "x",
+        instructionEmpty: false,
+        attachments: [],
+        runDirectory,
+        principal: rehydratePiDurablePrincipal(piDurablePrincipalAuthority, {
+          sessionDirectory,
+          sessionFile,
+        }),
+        admittedRequestPath,
+      },
+      piDurablePrincipalAuthority,
+    );
+    // Drop sessionFile so resume must take the legacy wire path through authority.decode.
+    const legacy = JSON.parse(await readFile(join(runDirectory, "run-state.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    delete legacy.sessionFile;
+    await writeFile(join(runDirectory, "run-state.json"), `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
+
+    let wireDecodeCount = 0;
+    const countingAuthority = {
+      issue: piDurablePrincipalAuthority.issue.bind(piDurablePrincipalAuthority),
+      decode(value: unknown) {
+        wireDecodeCount += 1;
+        return piDurablePrincipalAuthority.decode(value);
+      },
+      // Availability uses Pi's own decode so it does not inflate the wire-decode counter.
+      async isAvailable(principal: Parameters<typeof piDurablePrincipalAuthority.isAvailable>[0]) {
+        return piDurablePrincipalAuthority.isAvailable(principal);
+      },
+    };
+
+    const loaded = await loadResumableJudgeRun(home, runId, countingAuthority);
+    assert.equal(loaded.run.sessionFile, sessionFile);
+    assert.equal(
+      wireDecodeCount,
+      1,
+      "uninterpreted principal wire must be decoded exactly once",
+    );
   });
 });
 

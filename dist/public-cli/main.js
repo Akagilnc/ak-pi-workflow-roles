@@ -352,8 +352,8 @@ function issuePiDurablePrincipalCoordinates(request) {
 function decodePiDurablePrincipal(authority, principal) {
   return authority.decode(principal);
 }
-function rehydratePiDurablePrincipal(authority, wire) {
-  return encode(authority.decode(wire));
+function encodePiDurablePrincipal(coordinates) {
+  return encode(coordinates);
 }
 var piDurablePrincipalAuthority;
 var init_durable_principal = __esm({
@@ -16056,21 +16056,24 @@ async function writeRoleRunStateDisk(runDirectory, disk) {
     "utf8"
   );
 }
-function materializeRoleRunRecord(disk, authority) {
+function materializeRoleRunFromDisk(disk, authority) {
   try {
     const coordinates = authority.decode(disk.principalWire);
     return {
-      runId: disk.runId,
-      role: disk.role,
-      state: disk.state,
-      bookKey: disk.bookKey,
-      projectRoot: disk.projectRoot,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      runDirectory: disk.runDirectory,
-      admittedRequestPath: disk.admittedRequestPath,
-      ...disk.phase === void 0 ? {} : { phase: disk.phase },
-      ...disk.resumable === void 0 ? {} : { resumable: disk.resumable }
+      principal: encodePiDurablePrincipal(coordinates),
+      run: {
+        runId: disk.runId,
+        role: disk.role,
+        state: disk.state,
+        bookKey: disk.bookKey,
+        projectRoot: disk.projectRoot,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
+        runDirectory: disk.runDirectory,
+        admittedRequestPath: disk.admittedRequestPath,
+        ...disk.phase === void 0 ? {} : { phase: disk.phase },
+        ...disk.resumable === void 0 ? {} : { resumable: disk.resumable }
+      }
     };
   } catch {
     return void 0;
@@ -16265,11 +16268,11 @@ async function loadResumableRunRecord(home, runId, authority) {
   if (disk === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const principal = rehydratePiDurablePrincipal(authority, disk.principalWire);
-  const run = materializeRoleRunRecord(disk, authority);
-  if (run === void 0) {
+  const materialized = materializeRoleRunFromDisk(disk, authority);
+  if (materialized === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
+  const { run, principal } = materialized;
   if (!await isDurablePrincipalAvailable(principal, authority)) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`
