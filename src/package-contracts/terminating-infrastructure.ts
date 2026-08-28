@@ -2,18 +2,14 @@
  * Package-owned shared infrastructure-failure declaration for every primary
  * packaged-role output tool (#541).
  *
- * One module owns the three things the judge mandates be shared (not
- * reimplemented per seat):
- *   1. safe recognition of the typed `infrastructureFailure` variant,
- *   2. diagnostic → Error,
- *   3. the single early host fail call each output `execute` makes before any
- *      role business validation / gate / audit / ledger / Git work.
- *
- * The accepted status sets in `terminating-tools.ts` are intentionally NOT
- * extended: an infra declaration must fail BEFORE accepted validation, never
- * become an accepted receipt, audit/gate candidate, unfinished, or no-receipt.
- * The diagnostic is carried verbatim on the thrown Error so settlement keeps
- * the original cause (kind=failure, exit 1, openable run/session pointers).
+ * One module owns what the judge mandates be shared (not reimplemented per
+ * seat): the typed `infrastructureFailure.diagnostic` declaration composed into
+ * each output tool's schema, and the single early host `failInfrastructure`
+ * call each output `execute` makes before any role business validation / gate /
+ * audit / ledger / Git work. The accepted status sets are intentionally NOT
+ * extended: an infra declaration fails BEFORE accepted validation, never
+ * becomes an accepted receipt. The diagnostic is carried verbatim on the thrown
+ * Error so settlement keeps the original cause (kind=failure, exit 1).
  */
 import { Type, type TSchema } from "typebox";
 
@@ -21,18 +17,8 @@ export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
 export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 
-/**
- * Shared typed infrastructure-failure declaration fragment (#541).
- *
- * Every primary packaged-role output tool's parameter schema explicitly
- * composes this same fragment (via `withInfrastructureFailureDeclaration`),
- * so the model-facing tool schema advertises a typed
- * `infrastructureFailure: { diagnostic: non-empty string }` declaration rather
- * than relying on untyped `additionalProperties: true` acceptance. The
- * declaration's single non-empty diagnostic field is the machine contract;
- * free prose is intentionally absent.
- */
-export const infrastructureFailureDeclarationSchema = Type.Object(
+/** Shared typed declaration fragment: `infrastructureFailure.diagnostic` = non-empty string. */
+const infrastructureFailureDeclarationSchema = Type.Object(
   {
     [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: Type.Object(
       {
@@ -54,9 +40,9 @@ export const infrastructureFailureDeclarationSchema = Type.Object(
 /**
  * Compose the shared infrastructure-failure declaration into an open output
  * tool-object schema. Returns an open object (additionalProperties: true,
- * required: []) whose properties are the base schema's plus the single shared
- * declaration property. Static typing is preserved on the base (`as S`), so
- * existing `Static<typeof ...>` derived parameter types are unchanged.
+ * required: []) with the base schema's properties plus the shared declaration.
+ * Static typing is preserved on the base (`as S`), so existing
+ * `Static<typeof ...>` derived parameter types are unchanged.
  */
 export function withInfrastructureFailureDeclaration<
   S extends TSchema & { properties?: Record<string, TSchema> },
@@ -75,13 +61,13 @@ export function withInfrastructureFailureDeclaration<
   return object as unknown as S;
 }
 
-/** Structural host seam subset shared by all eight terminating execute paths. */
-export type TerminatingInfrastructureHostActions<C> = {
+/** Structural host seam subset shared by every terminating execute path. */
+type TerminatingInfrastructureHostActions<C> = {
   failInfrastructure(error: unknown, ctx: C, toolCallId?: string): never;
 };
 
-/** Safe recognition of the typed declaration (hostile getters / non-shapes fail closed). */
-export function isInfrastructureFailureDeclaration(
+/** Safe recognition of the typed declaration; non-shapes / hostile input fail closed. */
+function isInfrastructureFailureDeclaration(
   parameters: unknown,
 ): boolean {
   if (
@@ -108,28 +94,26 @@ export function isInfrastructureFailureDeclaration(
 }
 
 /** Non-empty trimmed diagnostic from the declaration, else undefined. */
-export function infrastructureFailureDiagnostic(
+function infrastructureFailureDiagnostic(
   parameters: unknown,
 ): string | undefined {
   if (!isInfrastructureFailureDeclaration(parameters)) return undefined;
-  const record = parameters as Record<string, unknown>;
-  const declaration = record[INFRASTRUCTURE_FAILURE_DECLARATION_KEY] as Record<
-    string,
-    unknown
-  >;
+  const declaration = (parameters as Record<string, unknown>)[
+    INFRASTRUCTURE_FAILURE_DECLARATION_KEY
+  ] as Record<string, unknown>;
   const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
   return typeof diagnostic === "string" ? diagnostic.trim() : undefined;
 }
 
 /** diagnostic → Error, name stamped so the host error identity is observable. */
-export function infrastructureFailureError(diagnostic: string): Error {
+function infrastructureFailureError(diagnostic: string): Error {
   const error = new Error(diagnostic);
   error.name = "InfrastructureFailure";
   return error;
 }
 
 /**
- * One early call for every terminating output `execute`: if the parameters
+ * The one early call for every terminating output `execute`: if the parameters
  * carry the infra declaration, hand the diagnostic error to the shared host
  * `failInfrastructure` seam (which aborts the run). No-op otherwise.
  */
