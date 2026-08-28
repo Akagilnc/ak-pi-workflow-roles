@@ -58,6 +58,17 @@ hermes -z "YOUR_LABOR_PROMPT" --in /path/to/project --no-restore-cwd \
   intermediate steps on stdout (unlike `-z`) — use when a labor run needs its
   steps inspected.
 
+## Measured constraints (host, 2026-08-28)
+
+- The Nous free tier (`poolside/laguna-s-2.1:free`) rate-limits concurrent
+  labor calls on one account. Measured: with ~5 factory legs dispatching
+  simultaneously, losing legs saw sustained HTTP 429 across 9-29 detour
+  attempts while the 1-2 winners completed normally (Ming_LLM books runs
+  01a046ec-*/01a046f4-*, 14:55-15:04 window).
+- Keep at most ONE in-flight hermes labor call per account; queue the rest.
+- On 429: back off once (~60s) and retry once; if still 429, stop and record
+  the typed engine failure in the receipt — do not hammer retries.
+
 ## Smoke test (run before first labor leg of a session)
 
 ```bash
