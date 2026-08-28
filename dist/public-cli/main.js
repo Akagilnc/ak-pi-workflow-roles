@@ -15,9 +15,386 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/activation-ledger-git.ts
+import { execFileSync } from "node:child_process";
+import { basename, dirname as dirname2, isAbsolute, resolve } from "node:path";
+function envWithoutGitDiscovery(base = process.env) {
+  const env = { ...base, LC_ALL: "C" };
+  for (const key of GIT_DISCOVERY_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+function isConfirmedNonRepositoryStderr(stderr) {
+  return CONFIRMED_NON_REPOSITORY_STDERR.test(stderr);
+}
+function isGitSpawnInfrastructureError(error) {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  const code = error.code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
+}
+function gitChildExitedNonzero(error) {
+  if (error === null || typeof error !== "object" || !("status" in error)) return false;
+  const status = error.status;
+  return typeof status === "number" && status !== 0;
+}
+function resolveBookKeyFromGit(cwd) {
+  let commonDir;
+  try {
+    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: envWithoutGitDiscovery()
+    }).trim();
+  } catch (error) {
+    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
+      throw error;
+    }
+    const err = error;
+    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", {
+      cause: error,
+      confirmedNonRepository: isConfirmedNonRepositoryStderr(detail)
+    });
+  }
+  if (commonDir.length === 0) {
+    throw new Error("git rev-parse --git-common-dir returned an empty path");
+  }
+  const absoluteCommon = isAbsolute(commonDir) ? commonDir : resolve(cwd, commonDir);
+  const hostDirectory = basename(absoluteCommon) === ".git" ? dirname2(absoluteCommon) : absoluteCommon;
+  const bookKey = basename(hostDirectory);
+  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
+    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
+  }
+  return bookKey;
+}
+var GIT_DISCOVERY_ENV_KEYS, CONFIRMED_NON_REPOSITORY_STDERR, ActivationGitRepositoryRequiredError;
+var init_activation_ledger_git = __esm({
+  "src/activation-ledger-git.ts"() {
+    "use strict";
+    GIT_DISCOVERY_ENV_KEYS = [
+      "GIT_DIR",
+      "GIT_COMMON_DIR",
+      "GIT_WORK_TREE",
+      "GIT_CEILING_DIRECTORIES",
+      "GIT_DISCOVERY_ACROSS_FILESYSTEM"
+    ];
+    CONFIRMED_NON_REPOSITORY_STDERR = /^fatal:\s*not a git repository/i;
+    ActivationGitRepositoryRequiredError = class extends Error {
+      code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
+      confirmedNonRepository;
+      constructor(detail, options) {
+        super(
+          `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationGitRepositoryRequiredError";
+        this.confirmedNonRepository = options?.confirmedNonRepository ?? false;
+      }
+    };
+  }
+});
+
+// src/activation-ledger-topology.ts
+import {
+  lstatSync as lstatSync2,
+  mkdirSync as mkdirSync2,
+  realpathSync as realpathSync2,
+  statSync
+} from "node:fs";
+import { homedir } from "node:os";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, join as join2, relative, resolve as resolve2, sep } from "node:path";
+function resolveActivationLedgerHome(home = homedir) {
+  const processHome = home();
+  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute2(processHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
+    );
+  }
+  return resolve2(processHome, ".ak-roles");
+}
+function activationBookDirectory(ledgerHome, bookKey) {
+  return join2(ledgerHome, "books", bookKey);
+}
+function pathContainedIn(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute2(rel);
+}
+function physicalPathIdentity(path) {
+  const absolute = resolve2(path);
+  const missing = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync2(cursor);
+      return missing.length === 0 ? real : join2(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        return absolute;
+      }
+      const parent = dirname3(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename2(cursor));
+      cursor = parent;
+    }
+  }
+}
+function errnoCode(error) {
+  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
+}
+function errorText(error) {
+  if (!(error instanceof Error)) return String(error);
+  return error.message;
+}
+function assertPhysicalLedgerRoot(absoluteRoot) {
+  let st;
+  try {
+    st = lstatSync2(absoluteRoot);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st === void 0) {
+    try {
+      mkdirSync2(absoluteRoot, { recursive: true });
+    } catch (error) {
+      if (errnoCode(error) !== "EEXIST") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+    }
+    try {
+      st = lstatSync2(absoluteRoot);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st.isSymbolicLink()) {
+    throw new ActivationLedgerError(
+      `activation ledger home is a symbolic link: ${absoluteRoot}`
+    );
+  }
+  if (!st.isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
+  }
+}
+function ensureRealDirectoryTree(root, targetDir) {
+  if (!isAbsolute2(root)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
+  }
+  const absoluteRoot = resolve2(root);
+  const absoluteTarget = resolve2(targetDir);
+  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  assertPhysicalLedgerRoot(absoluteRoot);
+  let realRoot;
+  try {
+    realRoot = realpathSync2(absoluteRoot);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (!statSync(realRoot).isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
+  }
+  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
+  if (rel === "") return realRoot;
+  if (isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  let lexicalCursor = absoluteRoot;
+  for (const part of rel.split(sep)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
+    }
+    lexicalCursor = join2(lexicalCursor, part);
+    let st;
+    try {
+      st = lstatSync2(lexicalCursor);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+      try {
+        mkdirSync2(lexicalCursor);
+      } catch (mkdirError) {
+        if (errnoCode(mkdirError) !== "EEXIST") {
+          throw new ActivationLedgerError(
+            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
+            { cause: mkdirError }
+          );
+        }
+      }
+      try {
+        st = lstatSync2(lexicalCursor);
+      } catch (statError) {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
+          { cause: statError }
+        );
+      }
+    }
+    if (st.isSymbolicLink()) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is a symbolic link: ${lexicalCursor}`
+      );
+    }
+    if (!st.isDirectory()) {
+      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
+    }
+    let realCursor;
+    try {
+      realCursor = realpathSync2(lexicalCursor);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
+      throw new ActivationLedgerError(
+        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
+      );
+    }
+  }
+  try {
+    return realpathSync2(absoluteTarget);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+function assertLedgerFileInsideHome(ledgerPath, ledgerHome) {
+  if (!isAbsolute2(ledgerHome)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
+  }
+  const resolvedLedger = resolve2(ledgerPath);
+  try {
+    if (!lstatSync2(resolvedLedger).isSymbolicLink()) return;
+    throw new ActivationLedgerError(
+      `activation ledger file is a symbolic link: ${resolvedLedger}`
+    );
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      if (error instanceof ActivationLedgerError) throw error;
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+}
+var ActivationLedgerError;
+var init_activation_ledger_topology = __esm({
+  "src/activation-ledger-topology.ts"() {
+    "use strict";
+    ActivationLedgerError = class extends Error {
+      code = "AK_ACTIVATION_LEDGER";
+      constructor(message, options) {
+        super(
+          message,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationLedgerError";
+      }
+    };
+  }
+});
+
+// src/pi/durable-principal.ts
+import { lstat } from "node:fs/promises";
+import { join as join3 } from "node:path";
+function encode(coordinates) {
+  return coordinates;
+}
+function issuePiDurablePrincipalCoordinates(request) {
+  const ledgerHome = resolveActivationLedgerHome(
+    request.home === void 0 ? void 0 : () => request.home
+  );
+  const bookKey = resolveBookKeyFromGit(request.cwd);
+  const runDirectory = join3(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${request.runId}@${request.role}`
+  );
+  const sessionDirectory = join3(runDirectory, "session");
+  return {
+    ledgerHome,
+    bookKey,
+    runDirectory,
+    sessionDirectory,
+    sessionFile: join3(sessionDirectory, "session.jsonl")
+  };
+}
+function decodePiDurablePrincipal(authority, principal) {
+  return authority.decode(principal);
+}
+var piDurablePrincipalAuthority;
+var init_durable_principal = __esm({
+  "src/pi/durable-principal.ts"() {
+    "use strict";
+    init_activation_ledger_git();
+    init_activation_ledger_topology();
+    piDurablePrincipalAuthority = {
+      issue(request) {
+        const coordinates = issuePiDurablePrincipalCoordinates(request);
+        return encode({
+          sessionDirectory: coordinates.sessionDirectory,
+          sessionFile: coordinates.sessionFile
+        });
+      },
+      decode(value) {
+        const record4 = value;
+        if (record4 === null || typeof record4 !== "object") {
+          throw new Error("durable principal payload is missing");
+        }
+        if (typeof record4.sessionDirectory !== "string" || record4.sessionDirectory.trim() === "") {
+          throw new Error("durable principal session directory is missing");
+        }
+        return {
+          sessionDirectory: record4.sessionDirectory,
+          sessionFile: typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join3(record4.sessionDirectory, "session.jsonl")
+        };
+      },
+      async isAvailable(principal) {
+        const { sessionFile } = this.decode(principal);
+        try {
+          const stat2 = await lstat(sessionFile);
+          return stat2.isFile() && !stat2.isSymbolicLink();
+        } catch {
+          return false;
+        }
+      }
+    };
+  }
+});
+
 // src/package-resources/engine-material.ts
 import { existsSync as existsSync2, readdirSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { join as join4 } from "node:path";
 function isEngineNameSyntax(name) {
   if (typeof name !== "string") return false;
   if (name.length === 0 || name.trim() !== name) return false;
@@ -26,11 +403,11 @@ function isEngineNameSyntax(name) {
   return true;
 }
 function resolveEngineMaterialDirectory(packageRoot2) {
-  return join2(packageRoot2, ENGINE_MATERIAL_RELATIVE_ROOT);
+  return join4(packageRoot2, ENGINE_MATERIAL_RELATIVE_ROOT);
 }
 function resolveEngineMaterialPath(packageRoot2, name) {
   const legal = assertLegalEngineName(name);
-  return join2(resolveEngineMaterialDirectory(packageRoot2), `${legal}.md`);
+  return join4(resolveEngineMaterialDirectory(packageRoot2), `${legal}.md`);
 }
 function assertLegalEngineName(name) {
   if (!isEngineNameSyntax(name)) {
@@ -1918,8 +2295,8 @@ var init_codec = __esm({
       Encode(callback) {
         const type = this.type;
         const decode = IsCodec(type) ? (value) => this.decode(type["~codec"].decode(value)) : this.decode;
-        const encode = IsCodec(type) ? (value) => type["~codec"].encode(callback(value)) : callback;
-        const codec = { decode, encode };
+        const encode2 = IsCodec(type) ? (value) => type["~codec"].encode(callback(value)) : callback;
+        const codec = { decode, encode: encode2 };
         return memory_exports.Update(this.type, { "~codec": codec }, {});
       }
     };
@@ -14505,15 +14882,15 @@ var init_registry2 = __esm({
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname as dirname2, join as join3 } from "node:path";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname4, join as join5 } from "node:path";
 function isGateOfficerSeat(value) {
   return GATE_OFFICER_SEATS.includes(value);
 }
-function publicCliConfigPath(home = homedir()) {
-  return join3(home, ".ak-roles", "public-cli.json");
+function publicCliConfigPath(home = homedir2()) {
+  return join5(home, ".ak-roles", "public-cli.json");
 }
-async function loadPublicCliConfig(home = homedir()) {
+async function loadPublicCliConfig(home = homedir2()) {
   const path = publicCliConfigPath(home);
   try {
     const raw = await readFile(path, "utf8");
@@ -14525,9 +14902,9 @@ async function loadPublicCliConfig(home = homedir()) {
     throw error;
   }
 }
-async function savePublicCliConfig(config, home = homedir()) {
+async function savePublicCliConfig(config, home = homedir2()) {
   const path = publicCliConfigPath(home);
-  await mkdir(dirname2(path), { recursive: true });
+  await mkdir(dirname4(path), { recursive: true });
   const normalized = parsePublicCliConfig(config);
   await writeFile(path, `${JSON.stringify(normalized, null, 2)}
 `, "utf8");
@@ -14865,7 +15242,7 @@ function credentialProvidersFromAuthData(data) {
 }
 async function loadCredentialProviders(agentDir) {
   try {
-    const raw = await readFile(join3(agentDir, "auth.json"), "utf8");
+    const raw = await readFile(join5(agentDir, "auth.json"), "utf8");
     return credentialProvidersFromAuthData(JSON.parse(raw));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -14912,344 +15289,6 @@ var init_cli_errors = __esm({
         this.name = "CliUsageError";
       }
     };
-  }
-});
-
-// src/activation-ledger-topology.ts
-import {
-  lstatSync as lstatSync2,
-  mkdirSync as mkdirSync2,
-  realpathSync as realpathSync2,
-  statSync
-} from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname3, isAbsolute, join as join4, relative, resolve, sep } from "node:path";
-function resolveActivationLedgerHome(home = homedir2) {
-  const processHome = home();
-  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
-    throw new ActivationLedgerError(
-      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
-    );
-  }
-  return resolve(processHome, ".ak-roles");
-}
-function activationBookDirectory(ledgerHome, bookKey) {
-  return join4(ledgerHome, "books", bookKey);
-}
-function pathContainedIn(root, candidate) {
-  const rel = relative(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-function physicalPathIdentity(path) {
-  const absolute = resolve(path);
-  const missing = [];
-  let cursor = absolute;
-  while (true) {
-    try {
-      const real = realpathSync2(cursor);
-      return missing.length === 0 ? real : join4(real, ...missing);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        return absolute;
-      }
-      const parent = dirname3(cursor);
-      if (parent === cursor) return absolute;
-      missing.unshift(basename(cursor));
-      cursor = parent;
-    }
-  }
-}
-function errnoCode(error) {
-  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
-}
-function errorText(error) {
-  if (!(error instanceof Error)) return String(error);
-  return error.message;
-}
-function assertPhysicalLedgerRoot(absoluteRoot) {
-  let st;
-  try {
-    st = lstatSync2(absoluteRoot);
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st === void 0) {
-    try {
-      mkdirSync2(absoluteRoot, { recursive: true });
-    } catch (error) {
-      if (errnoCode(error) !== "EEXIST") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-    }
-    try {
-      st = lstatSync2(absoluteRoot);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st.isSymbolicLink()) {
-    throw new ActivationLedgerError(
-      `activation ledger home is a symbolic link: ${absoluteRoot}`
-    );
-  }
-  if (!st.isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
-  }
-}
-function ensureRealDirectoryTree(root, targetDir) {
-  if (!isAbsolute(root)) {
-    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
-  }
-  const absoluteRoot = resolve(root);
-  const absoluteTarget = resolve(targetDir);
-  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  assertPhysicalLedgerRoot(absoluteRoot);
-  let realRoot;
-  try {
-    realRoot = realpathSync2(absoluteRoot);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-  if (!statSync(realRoot).isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
-  }
-  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
-  if (rel === "") return realRoot;
-  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  let lexicalCursor = absoluteRoot;
-  for (const part of rel.split(sep)) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
-    }
-    lexicalCursor = join4(lexicalCursor, part);
-    let st;
-    try {
-      st = lstatSync2(lexicalCursor);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-      try {
-        mkdirSync2(lexicalCursor);
-      } catch (mkdirError) {
-        if (errnoCode(mkdirError) !== "EEXIST") {
-          throw new ActivationLedgerError(
-            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
-            { cause: mkdirError }
-          );
-        }
-      }
-      try {
-        st = lstatSync2(lexicalCursor);
-      } catch (statError) {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
-          { cause: statError }
-        );
-      }
-    }
-    if (st.isSymbolicLink()) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is a symbolic link: ${lexicalCursor}`
-      );
-    }
-    if (!st.isDirectory()) {
-      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
-    }
-    let realCursor;
-    try {
-      realCursor = realpathSync2(lexicalCursor);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
-      throw new ActivationLedgerError(
-        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
-      );
-    }
-  }
-  try {
-    return realpathSync2(absoluteTarget);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-}
-function assertLedgerFileInsideHome(ledgerPath, ledgerHome) {
-  if (!isAbsolute(ledgerHome)) {
-    throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
-  }
-  const resolvedLedger = resolve(ledgerPath);
-  try {
-    if (!lstatSync2(resolvedLedger).isSymbolicLink()) return;
-    throw new ActivationLedgerError(
-      `activation ledger file is a symbolic link: ${resolvedLedger}`
-    );
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") {
-      if (error instanceof ActivationLedgerError) throw error;
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat ledger file (${resolvedLedger}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-}
-var ActivationLedgerError;
-var init_activation_ledger_topology = __esm({
-  "src/activation-ledger-topology.ts"() {
-    "use strict";
-    ActivationLedgerError = class extends Error {
-      code = "AK_ACTIVATION_LEDGER";
-      constructor(message, options) {
-        super(
-          message,
-          options?.cause === void 0 ? void 0 : { cause: options.cause }
-        );
-        this.name = "ActivationLedgerError";
-      }
-    };
-  }
-});
-
-// src/activation-ledger-git.ts
-import { execFileSync } from "node:child_process";
-import { basename as basename2, dirname as dirname4, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
-function envWithoutGitDiscovery(base = process.env) {
-  const env = { ...base, LC_ALL: "C" };
-  for (const key of GIT_DISCOVERY_ENV_KEYS) {
-    delete env[key];
-  }
-  return env;
-}
-function isConfirmedNonRepositoryStderr(stderr) {
-  return CONFIRMED_NON_REPOSITORY_STDERR.test(stderr);
-}
-function isGitSpawnInfrastructureError(error) {
-  if (error === null || typeof error !== "object" || !("code" in error)) return false;
-  const code = error.code;
-  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
-}
-function gitChildExitedNonzero(error) {
-  if (error === null || typeof error !== "object" || !("status" in error)) return false;
-  const status = error.status;
-  return typeof status === "number" && status !== 0;
-}
-function resolveBookKeyFromGit(cwd) {
-  let commonDir;
-  try {
-    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: envWithoutGitDiscovery()
-    }).trim();
-  } catch (error) {
-    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
-      throw error;
-    }
-    const err = error;
-    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
-    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", {
-      cause: error,
-      confirmedNonRepository: isConfirmedNonRepositoryStderr(detail)
-    });
-  }
-  if (commonDir.length === 0) {
-    throw new Error("git rev-parse --git-common-dir returned an empty path");
-  }
-  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
-  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname4(absoluteCommon) : absoluteCommon;
-  const bookKey = basename2(hostDirectory);
-  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
-    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
-  }
-  return bookKey;
-}
-var GIT_DISCOVERY_ENV_KEYS, CONFIRMED_NON_REPOSITORY_STDERR, ActivationGitRepositoryRequiredError;
-var init_activation_ledger_git = __esm({
-  "src/activation-ledger-git.ts"() {
-    "use strict";
-    GIT_DISCOVERY_ENV_KEYS = [
-      "GIT_DIR",
-      "GIT_COMMON_DIR",
-      "GIT_WORK_TREE",
-      "GIT_CEILING_DIRECTORIES",
-      "GIT_DISCOVERY_ACROSS_FILESYSTEM"
-    ];
-    CONFIRMED_NON_REPOSITORY_STDERR = /^fatal:\s*not a git repository/i;
-    ActivationGitRepositoryRequiredError = class extends Error {
-      code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
-      confirmedNonRepository;
-      constructor(detail, options) {
-        super(
-          `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
-          options?.cause === void 0 ? void 0 : { cause: options.cause }
-        );
-        this.name = "ActivationGitRepositoryRequiredError";
-        this.confirmedNonRepository = options?.confirmedNonRepository ?? false;
-      }
-    };
-  }
-});
-
-// src/archivist-role-run-coordinates.ts
-import { join as join5 } from "node:path";
-function roleRunSessionCoordinates(options) {
-  const ledgerHome = resolveActivationLedgerHome(
-    options.home === void 0 ? void 0 : () => options.home
-  );
-  const bookKey = resolveBookKeyFromGit(options.cwd);
-  const runDirectory = join5(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${options.runId}@${options.role}`
-  );
-  const sessionDirectory = join5(runDirectory, "session");
-  return {
-    ledgerHome,
-    bookKey,
-    runDirectory,
-    sessionDirectory,
-    sessionFile: join5(sessionDirectory, "session.jsonl")
-  };
-}
-var init_archivist_role_run_coordinates = __esm({
-  "src/archivist-role-run-coordinates.ts"() {
-    "use strict";
-    init_activation_ledger_git();
-    init_activation_ledger_topology();
   }
 });
 
@@ -15819,8 +15858,8 @@ var init_typed_provider_http = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { chmod, lstat, open, readdir as readdir2, readFile as readFile5, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { chmod, open, readdir as readdir2, readFile as readFile5, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname6, join as join7 } from "node:path";
 function selectResumeContinuationPrompt(message) {
   return message !== void 0 ? message : RESUME_TRANSPORT_ENVELOPE;
 }
@@ -15965,14 +16004,10 @@ async function markRunTerminal(runDirectory) {
     ...current.phase === void 0 ? {} : { phase: current.phase }
   });
 }
-async function isSessionPrincipalAvailable(sessionFile) {
+async function isDurablePrincipalAvailable(sessionFile, authority = piDurablePrincipalAuthority) {
   if (sessionFile.trim() === "") return false;
-  try {
-    const st = await lstat(sessionFile);
-    return st.isFile() && !st.isSymbolicLink();
-  } catch {
-    return false;
-  }
+  const principal = { sessionDirectory: dirname6(sessionFile), sessionFile };
+  return authority.isAvailable(principal);
 }
 function describeErrorIdentity(error) {
   const candidate = error;
@@ -16071,7 +16106,7 @@ function restoredTicketFields(fields) {
     ...fields.ticketNumber === void 0 ? {} : { ticketNumber: fields.ticketNumber }
   };
 }
-async function loadResumableRunRecord(home, runId) {
+async function loadResumableRunRecord(home, runId, authority = piDurablePrincipalAuthority) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
@@ -16080,7 +16115,7 @@ async function loadResumableRunRecord(home, runId) {
   if (run === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  if (!await isSessionPrincipalAvailable(run.sessionFile)) {
+  if (!await isDurablePrincipalAvailable(run.sessionFile, authority)) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`
     );
@@ -16212,8 +16247,8 @@ async function loadResumableRunRecord(home, runId) {
     }
   };
 }
-async function loadResumableJudgeRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableJudgeRun(home, runId, authority = piDurablePrincipalAuthority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "judge") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not judge`
@@ -16239,8 +16274,8 @@ async function loadResumableJudgeRun(home, runId) {
     ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
-async function loadResumableCoderRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableCoderRun(home, runId, authority = piDurablePrincipalAuthority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "coder") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not coder`
@@ -16285,8 +16320,8 @@ async function loadResumableCoderRun(home, runId) {
     ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
-async function loadResumableFixerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableFixerRun(home, runId, authority = piDurablePrincipalAuthority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "fixer") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not fixer`
@@ -16334,8 +16369,8 @@ async function loadResumableFixerRun(home, runId) {
     ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
-async function loadResumableReviewerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableReviewerRun(home, runId, authority = piDurablePrincipalAuthority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "reviewer") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`
@@ -16369,8 +16404,8 @@ async function loadResumableReviewerRun(home, runId) {
     ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
-async function loadResumableMergerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableMergerRun(home, runId, authority = piDurablePrincipalAuthority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "merger") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not merger`
@@ -16425,6 +16460,7 @@ var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_ST
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
+    init_durable_principal();
     init_activation_ledger_topology();
     init_cli_errors();
     init_typed_provider_http();
@@ -16446,8 +16482,8 @@ var init_run_lifecycle = __esm({
 });
 
 // src/notary-source-run.ts
-import { dirname as dirname6, isAbsolute as isAbsolute3, join as join8, resolve as resolve4, basename as basename3 } from "node:path";
-import { lstat as lstat2, realpath as realpath2 } from "node:fs/promises";
+import { dirname as dirname7, isAbsolute as isAbsolute3, join as join8, resolve as resolve4, basename as basename3 } from "node:path";
+import { lstat as lstat3, realpath as realpath2 } from "node:fs/promises";
 function parseRunDirectoryName(name) {
   const match = RUN_DIR_NAME.exec(name);
   if (match === null) return void 0;
@@ -16465,7 +16501,7 @@ async function requireRunDirectory(candidate, display) {
   }
   let stat2;
   try {
-    stat2 = await lstat2(real);
+    stat2 = await lstat3(real);
   } catch (error) {
     throw new NotarySourceRunError(
       `notary --source-run is not a readable run directory: ${display}`,
@@ -16505,7 +16541,7 @@ async function resolveNotarySourceRunLocator(options) {
   const real = await requireRunDirectory(candidate, raw);
   const identity = parseRunDirectoryName(basename3(real));
   const runsRootIdentity = physicalPathIdentity(bookRunsRoot);
-  const parentIdentity = physicalPathIdentity(dirname6(real));
+  const parentIdentity = physicalPathIdentity(dirname7(real));
   if (parentIdentity !== runsRootIdentity) {
     throw new NotarySourceRunError(
       "notary --source-run must resolve to a retained run under the project machine-ledger book"
@@ -17424,7 +17460,7 @@ var init_option_definitions = __esm({
 // src/public-cli/invocation.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
-  lstat as lstat3,
+  lstat as lstat4,
   mkdir as mkdir2,
   readFile as readFile6,
   realpath as realpath3,
@@ -17690,7 +17726,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   const absolute = isAbsolute4(sourcePath) ? sourcePath : resolve5(sourcePath);
   let st;
   try {
-    st = await lstat3(absolute);
+    st = await lstat4(absolute);
   } catch (error) {
     throw new CliUsageError(
       `attachment is not a readable regular file: ${sourcePath}`,
@@ -17744,7 +17780,11 @@ async function admitJudgeInvocation(options) {
   }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "judge", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -17824,7 +17864,11 @@ async function admitCoderInvocation(options) {
   }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "coder", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -17924,7 +17968,11 @@ async function admitFixerInvocation(options) {
   }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "fixer", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -18167,7 +18215,11 @@ async function admitCollectorInvocation(options) {
   }
   const manifestDigest = manifest.digest;
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "collector", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -18367,7 +18419,11 @@ async function admitDoctorInvocation(options) {
   }
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "doctor", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   let caseRunsPath;
   try {
     caseRunsPath = await resolveDoctorCaseRunsPath({
@@ -18539,12 +18595,12 @@ async function admitNotaryInvocation(options) {
     throw error;
   }
   const runId = options.createRunId?.() ?? uuidv7();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({
-    cwd: projectRoot,
-    runId,
-    role: "notary",
-    home: options.home
-  });
+  const authority = options.principalAuthority ?? piDurablePrincipalAuthority;
+  const principal = authority.issue({ cwd: projectRoot, runId, role: "notary", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   const admitted = {
     role: "notary",
@@ -18649,7 +18705,11 @@ async function admitReviewerInvocation(options) {
   );
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -18799,7 +18859,11 @@ async function admitMergerInvocation(options) {
     options.gitState ?? createProductionMergerGitState(projectRoot)
   );
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join9(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === void 0 ? void 0 : () => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -19130,7 +19194,7 @@ var init_invocation = __esm({
     "use strict";
     init_activation_ledger_topology();
     init_activation_ledger_git();
-    init_archivist_role_run_coordinates();
+    init_durable_principal();
     init_ticket_frontmatter();
     init_doctor_evidence();
     init_collector_config();
@@ -20675,7 +20739,7 @@ var init_navigator_invocation_identity = __esm({
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
 import { appendFile, readFile as readFile10, readdir as readdir4, writeFile as writeFile5 } from "node:fs/promises";
-import { dirname as dirname7, join as join13 } from "node:path";
+import { dirname as dirname8, join as join13 } from "node:path";
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
   if (line2.startsWith("event:")) return true;
@@ -20948,7 +21012,7 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join13(dirname7(sessionFile), "evidence-children");
+  const childDirectory = join13(dirname8(sessionFile), "evidence-children");
   let names;
   try {
     names = await readdir4(childDirectory);
@@ -21007,7 +21071,7 @@ async function loadBoundAuditorVolumes(sessionFile) {
     latestParentUserIndex = i;
     break;
   }
-  const childDirectory = join13(dirname7(sessionFile), "auditor-roles");
+  const childDirectory = join13(dirname8(sessionFile), "auditor-roles");
   let names;
   try {
     names = await readdir4(childDirectory);
@@ -22974,7 +23038,7 @@ function publicationAttemptFromError(path, error) {
 }
 function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   const dirs = [];
-  for (const dir of [baseDir, runDirectory, dirname7(runDirectory)]) {
+  for (const dir of [baseDir, runDirectory, dirname8(runDirectory)]) {
     if (!dirs.includes(dir)) dirs.push(dir);
   }
   return dirs;
@@ -23295,7 +23359,7 @@ var init_settlement = __esm({
 // src/public-cli/auto-resume.ts
 import { constants as fsConstants } from "node:fs";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open2, readFile as readFile11 } from "node:fs/promises";
+import { appendFile as appendFile2, lstat as lstat6, mkdir as mkdir4, open as open2, readFile as readFile11 } from "node:fs/promises";
 import { join as join14 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
@@ -23318,20 +23382,20 @@ function runArtifactsDirectory(runDirectory) {
   return join14(runDirectory, "artifacts");
 }
 async function ensureRealArtifactsDirectory(runDirectory) {
-  const runStat = await lstat5(runDirectory);
+  const runStat = await lstat6(runDirectory);
   if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
     throw new Error("dispatch error retention: run directory is not a real directory");
   }
   const artifactsDir = runArtifactsDirectory(runDirectory);
   try {
-    const existing = await lstat5(artifactsDir);
+    const existing = await lstat6(artifactsDir);
     if (existing.isSymbolicLink() || !existing.isDirectory()) {
       throw new Error("dispatch error retention: artifacts path is not a real directory");
     }
   } catch (error) {
     if (!isMissingPathError3(error)) throw error;
     await mkdir4(artifactsDir, { recursive: true });
-    const created = await lstat5(artifactsDir);
+    const created = await lstat6(artifactsDir);
     if (created.isSymbolicLink() || !created.isDirectory()) {
       throw new Error("dispatch error retention: artifacts directory is not a real directory");
     }
@@ -23560,7 +23624,7 @@ async function runWithAutoResumeLoop(options) {
         if (terminal !== void 0) presentTerminal(terminal, options.io);
         return result2;
       }
-      if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+      if (!await isDurablePrincipalAvailable(options.admitted.sessionFile)) {
         if (terminal !== void 0) presentTerminal(terminal, options.io);
         return result2;
       }
@@ -23582,7 +23646,7 @@ async function runWithAutoResumeLoop(options) {
           terminal
         };
       }
-      if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+      if (!await isDurablePrincipalAvailable(options.admitted.sessionFile)) {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,
@@ -23707,7 +23771,7 @@ async function presentControlledFailure2(admitted, failureInput, io) {
   });
   const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile
   );
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -23765,6 +23829,7 @@ async function dispatchAdmittedCoder(input) {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+        ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -23847,6 +23912,7 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     const parsed = parseCoderArgv2(argv);
     admitted = await admitCoderInvocation({
       home: env.home,
+      ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -23918,7 +23984,7 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
 async function runPublicCoderResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableCoderRun(env.home, request.runId);
+    loaded = await loadResumableCoderRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -24087,6 +24153,7 @@ async function dispatchAdmittedCollector(input) {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+        ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -24174,6 +24241,7 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
     const parsed = parseCollectorArgv2(argv);
     admitted = await admitCollectorInvocation({
       home: env.home,
+      ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
       cwd: env.cwd,
       prNumber: parsed.prNumber,
       instruction: parsed.instruction,
@@ -24450,6 +24518,7 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     const parsed = parseDoctorArgv2(argv);
     admitted = await admitDoctorInvocation({
       home: env.home,
+      ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
       cwd: env.cwd,
       issueNumber: parsed.issueNumber,
       instruction: parsed.instruction,
@@ -24593,7 +24662,7 @@ async function presentControlledFailure5(admitted, failureInput, io) {
   });
   const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile
   );
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -24651,6 +24720,7 @@ async function dispatchAdmittedFixer(input) {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+        ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -24741,6 +24811,7 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     const parsed = parseFixerArgv2(argv);
     admitted = await admitFixerInvocation({
       home: env.home,
+      ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -24806,7 +24877,7 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
 async function runPublicFixerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableFixerRun(env.home, request.runId);
+    loaded = await loadResumableFixerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -24910,6 +24981,7 @@ async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
     const parsed = parseNotaryArgv2(argv);
     admitted = await admitNotaryInvocation({
       home: env.home,
+      ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
       cwd: env.cwd,
       sourceRun: parsed.sourceRun,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
@@ -25022,7 +25094,7 @@ async function presentControlledFailure6(admitted, failureInput, io) {
   });
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile
   );
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -25086,6 +25158,7 @@ async function dispatchAdmittedJudge(input) {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+        ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -25173,6 +25246,7 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     const parsed = parseJudgeArgv2(argv);
     admitted = await admitJudgeInvocation({
       home: env.home,
+      ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -25219,7 +25293,7 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
 async function runPublicResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableJudgeRun(env.home, request.runId);
+    loaded = await loadResumableJudgeRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -25359,7 +25433,7 @@ async function presentControlledFailure7(admitted, failureInput, io) {
   });
   const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile
   );
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -25417,6 +25491,7 @@ async function dispatchAdmittedMerger(input) {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+        ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -25507,7 +25582,12 @@ async function loadMergerMethodMaterial(packageRoot2) {
 async function admitMergerShellForActivationFailure(options) {
   const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const authority = options.principalAuthority ?? piDurablePrincipalAuthority;
+  const principal = authority.issue({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const runDirectory = join20(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   await mkdir5(runDirectory, { recursive: true });
   const emptyDerived = {
@@ -25570,6 +25650,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
   try {
     admitted = await admitMergerInvocation({
       home: env.home,
+      ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -25585,6 +25666,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     if (error instanceof MergerEnvelopeDerivationError) {
       const shell = await admitMergerShellForActivationFailure({
         home: env.home,
+        ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
         cwd: env.cwd,
         instruction: parsed.instruction,
         ...parsed.project === void 0 ? {} : { project: parsed.project },
@@ -25656,7 +25738,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
 async function runPublicMergerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableMergerRun(env.home, request.runId);
+    loaded = await loadResumableMergerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -25715,8 +25797,9 @@ async function runPublicMergerResume(request, env, io) {
 var init_merger_run = __esm({
   "src/public-cli/merger-run.ts"() {
     "use strict";
+    init_activation_ledger_git();
     init_activation_ledger_topology();
-    init_archivist_role_run_coordinates();
+    init_durable_principal();
     init_engine_detour();
     init_engine_material();
     init_method_skill();
@@ -25825,7 +25908,7 @@ async function presentControlledFailure8(admitted, failureInput, io) {
   });
   const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile
   );
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -25884,6 +25967,7 @@ async function dispatchAdmittedReviewer(input) {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+        ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -25981,6 +26065,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     const parsed = parseReviewerArgv2(argv);
     admitted = await admitReviewerInvocation({
       home: env.home,
+      ...env.principalAuthority === void 0 ? {} : { principalAuthority: env.principalAuthority },
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -26046,7 +26131,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
 async function runPublicReviewerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableReviewerRun(env.home, request.runId);
+    loaded = await loadResumableReviewerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -26155,9 +26240,9 @@ var init_analyst_book_key = __esm({
 // src/atomic-write.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
-import { dirname as dirname8, join as join22 } from "node:path";
+import { dirname as dirname9, join as join22 } from "node:path";
 async function writeFileAtomically(destination, contents) {
-  const parent = dirname8(destination);
+  const parent = dirname9(destination);
   const temporary = join22(parent, `.atomic-write-${randomUUID3()}.tmp`);
   try {
     await writeFile13(temporary, contents);
@@ -26175,7 +26260,7 @@ var init_atomic_write = __esm({
 
 // src/analyst-index.ts
 import { open as open3, readFile as readFile12, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname9, join as join23 } from "node:path";
+import { dirname as dirname10, join as join23 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve9) => {
     setTimeout(resolve9, ms);
@@ -26183,8 +26268,8 @@ function sleep(ms) {
 }
 async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   const indexPath = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname9(indexPath));
-  const lockPath = join23(dirname9(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  ensureRealDirectoryTree(ledgerHome, dirname10(indexPath));
+  const lockPath = join23(dirname10(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
@@ -26320,7 +26405,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
 }
 async function writeAnalystLibraryIndexPage(ledgerHome, page) {
   const path = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname9(path));
+  ensureRealDirectoryTree(ledgerHome, dirname10(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -26507,7 +26592,7 @@ var init_analyst_cohort = __esm({
 
 // src/run-terminal-artifacts.ts
 import { readdir as readdir5, readFile as readFile13 } from "node:fs/promises";
-import { basename as basename5, dirname as dirname10, join as join24 } from "node:path";
+import { basename as basename5, dirname as dirname11, join as join24 } from "node:path";
 function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -26614,7 +26699,7 @@ async function readRunTerminalArtifact(runDirectory) {
     if (read3 !== void 0) return read3;
   }
   const expectedRunId = runIdFromRunDirectory(runDirectory);
-  for (const path of await listUniqueErrorFallbackPaths([dirname10(runDirectory)])) {
+  for (const path of await listUniqueErrorFallbackPaths([dirname11(runDirectory)])) {
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 === void 0) continue;
     if (read3.status === "present") {
@@ -27768,7 +27853,7 @@ var init_analyst_metric_family = __esm({
 
 // src/analyst-page.ts
 import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname11, join as join26 } from "node:path";
+import { dirname as dirname12, join as join26 } from "node:path";
 function analystIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
@@ -27898,7 +27983,7 @@ async function buildAnalystIssueMetricsPage(input) {
 }
 async function writeAnalystIssueMetricsPage(ledgerHome, page) {
   const path = analystIssuePagePath(ledgerHome, analystIssuePageAddressFromPage(page));
-  ensureRealDirectoryTree(ledgerHome, dirname11(path));
+  ensureRealDirectoryTree(ledgerHome, dirname12(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -28763,7 +28848,11 @@ async function runAkRole(argv, env) {
   const io = env.io ?? defaultIo();
   const home = resolveHome(env);
   try {
-    env = { ...env, packageRoot: await realpath6(env.packageRoot) };
+    env = {
+      ...env,
+      packageRoot: await realpath6(env.packageRoot),
+      principalAuthority: env.principalAuthority ?? piDurablePrincipalAuthority
+    };
     const parsed = parseArgv(argv);
     if (parsed.engine !== void 0) {
       requireLegalEngineName(parsed.engine);
@@ -28834,6 +28923,7 @@ async function runAkRole(argv, env) {
           resumeRequest,
           {
             home,
+            principalAuthority: env.principalAuthority,
             agentDir,
             packageRoot: env.packageRoot,
             cwd,
@@ -28856,6 +28946,7 @@ async function runAkRole(argv, env) {
           resumeRequest,
           {
             home,
+            principalAuthority: env.principalAuthority,
             agentDir,
             packageRoot: env.packageRoot,
             cwd,
@@ -28878,6 +28969,7 @@ async function runAkRole(argv, env) {
           resumeRequest,
           {
             home,
+            principalAuthority: env.principalAuthority,
             agentDir,
             packageRoot: env.packageRoot,
             cwd,
@@ -28900,6 +28992,7 @@ async function runAkRole(argv, env) {
           resumeRequest,
           {
             home,
+            principalAuthority: env.principalAuthority,
             agentDir,
             packageRoot: env.packageRoot,
             cwd,
@@ -28921,6 +29014,7 @@ async function runAkRole(argv, env) {
         resumeRequest,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -28956,6 +29050,7 @@ async function runAkRole(argv, env) {
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -28993,6 +29088,7 @@ async function runAkRole(argv, env) {
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -29030,6 +29126,7 @@ async function runAkRole(argv, env) {
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -29067,6 +29164,7 @@ async function runAkRole(argv, env) {
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -29102,6 +29200,7 @@ async function runAkRole(argv, env) {
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -29139,6 +29238,7 @@ async function runAkRole(argv, env) {
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -29174,6 +29274,7 @@ async function runAkRole(argv, env) {
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -29209,6 +29310,7 @@ async function runAkRole(argv, env) {
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -29259,6 +29361,7 @@ var PUBLIC_ROLE_ARGV, PUBLIC_GLOBAL_OPTIONS, THINKING_LEVELS2;
 var init_cli = __esm({
   "src/public-cli/cli.ts"() {
     "use strict";
+    init_durable_principal();
     init_engine_material();
     init_config2();
     init_cli_errors();
@@ -29306,7 +29409,7 @@ var init_cli = __esm({
 
 // src/public-cli/main.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname12, join as join28 } from "node:path";
+import { dirname as dirname13, join as join28 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -29393,7 +29496,7 @@ function linkPackage(packageRoot2, name, targetDir) {
 }
 
 // src/public-cli/main.ts
-var here = dirname12(fileURLToPath(import.meta.url));
+var here = dirname13(fileURLToPath(import.meta.url));
 function resolvePackageRoot(binDir) {
   const canonical = join28(binDir, "..", "..");
   if (existsSync3(join28(canonical, "package.json"))) {
