@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -58,26 +58,49 @@ import {
   NAVIGATOR_POST_ROLE_GRACE_MS,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import {
-  clearPersistentSeatConfig,
-  savePublicCliConfig,
-  setPersistentSeatConfig,
-  type PublicCliConfig,
-} from "../../src/public-cli/config.ts";
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
 import {
-  configDerivedSeatPage,
-  disposeAllInstitutionalSeatTables,
-  installInstitutionalSeatTable,
   parentInheritedSeats,
-  withInstitutionalSeatTable,
+  writeInstitutionalSeatTable,
 } from "../helpers/institutional-seat-table.ts";
+import type { InstitutionalResolutionPage } from "../../src/institutional-resolution.ts";
 import { packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
 
-// Context-transformer harnesses install their seat table on the shared fixture
-// (registered for guaranteed teardown below); afterEach disposes every install
-// so AK_ROLE_RUN_DIR is restored and each unique temp run dir is removed.
-afterEach(disposeAllInstitutionalSeatTables);
+// Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
+// tool.execute seam carries no explicit runDirectory option), so this local
+// scope writes the page and manages env + temp dir per test — no global
+// install registry in the shared helper, one page writer reused everywhere.
+const activeRunDirs: string[] = [];
+function installInstitutionalRunDir(seats: InstitutionalResolutionPage["seats"]): string {
+  const runDirectory = mkdtempSync(join(tmpdir(), "ak-judge-run-"));
+  // writeInstitutionalSeatTable writes synchronously (writeFileSync); the
+  // resolved promise is fire-and-forget, so the page is on disk immediately.
+  void writeInstitutionalSeatTable(runDirectory, seats);
+  activeRunDirs.push(runDirectory);
+  process.env.AK_ROLE_RUN_DIR = runDirectory;
+  return runDirectory;
+}
+async function withInstitutionalRunDir<T>(
+  seats: InstitutionalResolutionPage["seats"],
+  run: () => Promise<T>,
+): Promise<T> {
+  const runDirectory = installInstitutionalRunDir(seats);
+  try {
+    return await run();
+  } finally {
+    const index = activeRunDirs.indexOf(runDirectory);
+    if (index !== -1) activeRunDirs.splice(index, 1);
+    if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
+    rmSync(runDirectory, { recursive: true, force: true });
+  }
+}
+afterEach(() => {
+  while (activeRunDirs.length > 0) {
+    const runDirectory = activeRunDirs.pop()!;
+    if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
+    rmSync(runDirectory, { recursive: true, force: true });
+  }
+});
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Tool = {
@@ -213,7 +236,7 @@ function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
   const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
   const model = faux.getModel();
   // Gatekeeper children read their seat from the institutional resolution page.
-  installInstitutionalSeatTable(parentInheritedSeats(model));
+  installInstitutionalRunDir(parentInheritedSeats(model));
   const responses = [
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
     fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })),
@@ -294,7 +317,7 @@ function workerCompletionGatekeeperHarness(options: {
   };
   return {
     context(id: string, toolName: string) {
-      installInstitutionalSeatTable(parentInheritedSeats(model));
+      installInstitutionalRunDir(parentInheritedSeats(model));
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(), model,
         modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
@@ -386,6 +409,8 @@ function realEntryGateModelHarness(options: {
   officer?: "inspector" | "notary";
   catalog?: ReadonlyArray<{ provider: string; id: string }>;
   authFailIds?: ReadonlySet<string>;
+  /** Already-produced resolution page seats the consumer reads (B-lane). */
+  seats?: InstitutionalResolutionPage["seats"];
 }) {
   const officer = options.officer ?? "inspector";
   const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
@@ -421,7 +446,10 @@ function realEntryGateModelHarness(options: {
     parentModel,
     seen,
     context(id: string, toolName: string) {
-      installInstitutionalSeatTable(configDerivedSeatPage(process.env.HOME ?? "", parentModel).seats);
+      // B-lane: the real gatekeeper child consumes an already-produced page
+      // (parent-inherited by default, or the explicit produced seats a case
+      // wires). Config→page derivation is A→B scope, covered separately.
+      installInstitutionalRunDir(options.seats ?? parentInheritedSeats(parentModel));
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(),
         model: parentModel,
@@ -1279,7 +1307,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
       streamSimple() { return this.stream(); },
     };
     // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
-    installInstitutionalSeatTable(parentInheritedSeats(model));
+    installInstitutionalRunDir(parentInheritedSeats(model));
     const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
       cwd: process.cwd(),
       model,
@@ -1610,20 +1638,18 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
       );
     }
 
-    // gatekeeper-only: province + officer both use gatekeeper override.
-    await savePublicCliConfig(
-      setPersistentSeatConfig({ seats: {} }, "gatekeeper", {
-        provider: "xai",
-        model: "gate-only-model",
-        thinking: "high",
-      }),
-      home,
-    );
+    // gatekeeper-only: province + officer both use the produced gatekeeper page.
+    const gatekeeperOnlySeats = {
+      gatekeeper: { provider: "xai", model: "gate-only-model", thinking: "high" },
+      inspector: { provider: "xai", model: "gate-only-model", thinking: "high" },
+      notary: { provider: "xai", model: "gate-only-model", thinking: "high" },
+    };
     for (const officer of ["inspector", "notary"] as const) {
       const tool = await startCoder();
       const tracer = realEntryGateModelHarness({
         officer,
         catalog: [{ provider: "xai", id: "gate-only-model" }],
+        seats: gatekeeperOnlySeats,
       });
       const accepted = await tool.execute(
         `gate-only-${officer}`,
@@ -1640,17 +1666,11 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
     }
 
     // Own officer overrides win; inspector/notary do not cross-wire.
-    let config: PublicCliConfig = { seats: {} };
-    config = setPersistentSeatConfig(config, "gatekeeper", {
-      provider: "xai", model: "gate-model", thinking: "high",
-    });
-    config = setPersistentSeatConfig(config, "inspector", {
-      provider: "openai-codex", model: "inspector-model", thinking: "medium",
-    });
-    config = setPersistentSeatConfig(config, "notary", {
-      provider: "openai-codex", model: "notary-model", thinking: "high",
-    });
-    await savePublicCliConfig(config, home);
+    const ownOverrideSeats = {
+      gatekeeper: { provider: "xai", model: "gate-model", thinking: "high" },
+      inspector: { provider: "openai-codex", model: "inspector-model", thinking: "medium" },
+      notary: { provider: "openai-codex", model: "notary-model", thinking: "high" },
+    };
     const catalog = [
       { provider: "xai", id: "gate-model" },
       { provider: "openai-codex", id: "inspector-model" },
@@ -1658,7 +1678,7 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
     ];
     {
       const tool = await startCoder();
-      const tracer = realEntryGateModelHarness({ officer: "inspector", catalog });
+      const tracer = realEntryGateModelHarness({ officer: "inspector", catalog, seats: ownOverrideSeats });
       assert.equal(
         (await tool.execute(
           "own-inspector",
@@ -1676,7 +1696,7 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
     }
     {
       const tool = await startCoder();
-      const tracer = realEntryGateModelHarness({ officer: "notary", catalog });
+      const tracer = realEntryGateModelHarness({ officer: "notary", catalog, seats: ownOverrideSeats });
       assert.equal(
         (await tool.execute(
           "own-notary",
@@ -1693,16 +1713,13 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
       ]);
     }
 
-    // unset restores parent inheritance (gatekeeper cleared after officers).
-    config = clearPersistentSeatConfig(config, "inspector");
-    config = clearPersistentSeatConfig(config, "notary");
-    config = clearPersistentSeatConfig(config, "gatekeeper");
-    await savePublicCliConfig(config, home);
+    // A produced page of parent-inherited seats (no explicit override) restores
+    // parent inheritance.
     {
       const tool = await startCoder();
       const tracer = realEntryGateModelHarness({
         officer: "inspector",
-        catalog, // leftover catalog must not apply without persistent seats
+        catalog, // leftover catalog must not apply without explicit produced seats
       });
       assert.equal(
         (await tool.execute(
@@ -1721,19 +1738,18 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
     }
 
     // Explicit override auth failure is loud transport failure — no parent fallback.
-    await savePublicCliConfig(
-      setPersistentSeatConfig({ seats: {} }, "gatekeeper", {
-        provider: "xai",
-        model: "auth-fail-model",
-      }),
-      home,
-    );
+    const authFailSeats = {
+      gatekeeper: { provider: "xai", model: "auth-fail-model" },
+      inspector: { provider: "xai", model: "auth-fail-model" },
+      notary: { provider: "xai", model: "auth-fail-model" },
+    };
     {
       const tool = await startCoder();
       const tracer = realEntryGateModelHarness({
         officer: "inspector",
         catalog: [{ provider: "xai", id: "auth-fail-model" }],
         authFailIds: new Set(["auth-fail-model"]),
+        seats: authFailSeats,
       });
       await assert.rejects(
         tool.execute(
@@ -1806,7 +1822,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   ) => {
     const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(tool);
-    return withInstitutionalSeatTable(parentInheritedSeats(harness.model), () =>
+    return withInstitutionalRunDir(parentInheritedSeats(harness.model), () =>
       tool.execute(
         id,
         completed,
@@ -1944,7 +1960,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     const refusalTool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(refusalTool);
     const requestsBeforeRefusal = harness.providerRequests();
-    await withInstitutionalSeatTable(parentInheritedSeats(harness.model), async () => {
+    await withInstitutionalRunDir(parentInheritedSeats(harness.model), async () => {
       assert.deepEqual((await refusalTool.execute(
         "coder-refused",
         refused,
