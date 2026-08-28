@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { AgentSession, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { engineDetourFailureDiagnostic } from "../../src/engine-detour.ts";
 import { executeReviewerChild, projectSharedChildFailure } from "../../src/reviewer-child-executor.ts";
@@ -63,6 +63,69 @@ test("aborted evidence without remote testimony projects unknown, not child", as
       },
     );
   } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("evidence-child cleanup runs handle.close even when unsubscribe throws and preserves every cause", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousBaseUrl = process.env.OPENAI_BASE_URL;
+  process.env.OPENAI_API_KEY = "sk-test";
+  process.env.OPENAI_BASE_URL = "http://127.0.0.1:1";
+  const cwd = await mkdtemp(join(tmpdir(), "ak-sp1-cleanup-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory, { recursive: true });
+  let subscribes = 0;
+  let disposes = 0;
+  const originalSubscribe = AgentSession.prototype.subscribe;
+  const originalDispose = AgentSession.prototype.dispose;
+  const unsubscribeBoom = new Error("unsubscribe failed");
+  AgentSession.prototype.subscribe = function (...args) {
+    subscribes += 1;
+    const unsubscribe = originalSubscribe.apply(this, args);
+    if (subscribes === 2) {
+      return () => {
+        unsubscribe();
+        throw unsubscribeBoom;
+      };
+    }
+    return unsubscribe;
+  };
+  AgentSession.prototype.dispose = function (...args) {
+    disposes += 1;
+    return originalDispose.apply(this, args);
+  };
+  try {
+    const faux = fauxProvider({ provider: "openai" });
+    await writeInstitutionalSeatTable(runDirectory, {
+      evidenceChild: seatSelection("openai", "gpt-4o"),
+    });
+    await assert.rejects(
+      () => executeEvidenceChild(
+        cwd,
+        "investigate",
+        evidenceChildContext(cwd, faux),
+        { runDirectory },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
+        assert.equal(disposes, 1, "handle.close must still run after unsubscribe throws");
+        const errors = (error as AggregateError).errors;
+        assert.equal(errors.length, 2);
+        assert.match(String(errors[0]), /ECONNREFUSED|fetch failed|OpenAI API error/);
+        assert.match(String(errors[1]), /unsubscribe failed/);
+        assert.ok((error as AggregateError).cause instanceof Error);
+        assert.match(String((error as AggregateError).cause), /ECONNREFUSED|fetch failed|OpenAI API error/);
+        return true;
+      },
+    );
+  } finally {
+    AgentSession.prototype.subscribe = originalSubscribe;
+    AgentSession.prototype.dispose = originalDispose;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = previousBaseUrl;
     await rm(cwd, { recursive: true, force: true });
   }
 });
