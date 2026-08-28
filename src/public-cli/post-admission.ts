@@ -6,8 +6,6 @@
  */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
-import { appendPiSessionCustomEntry } from "../pi/role-turn-host.ts";
 
 import type {
   ControlledFailureCause,
@@ -28,7 +26,6 @@ import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
   isV1ResumableFailure,
-  markRunAdmitted,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
@@ -71,7 +68,7 @@ export type PostAdmissionEnv = {
   credentials?: CredentialProviders;
   timeoutMs?: number;
   principalAuthority: DurablePrincipalAuthority;
-  sessionAppender?: SessionCustomEntryAppender;
+  sessionAppender: SessionCustomEntryAppender;
   autoResumeLimit?: number;
   createRunId?: () => string;
 };
@@ -147,7 +144,7 @@ export async function presentControlledFailure<
     knownFailure === undefined &&
     failureInput.knownCause === undefined &&
     admitted.principal !== undefined
-      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
+      ? await inspectJudgeSession(authority.decode(admitted.principal).sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -185,7 +182,7 @@ export async function presentControlledFailure<
   if (resumable && typedHttp429 !== undefined) {
     await markRunResumable(admitted.runDirectory, typedHttp429);
   } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => undefined);
+    await markRunTerminal(admitted.runDirectory);
   }
 
   const terminal = await settleFailureTerminalResult(
@@ -297,7 +294,7 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     if (settled !== undefined && shouldPresent(settled)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
+      await markRunTerminal(admitted.runDirectory);
       io.stdout(formatTerminalResult(settled));
       return {
         exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
@@ -309,7 +306,7 @@ export async function dispatchPostAdmissionTurn<
     if (adapters.trySettleSecondary !== undefined) {
       const secondary = await adapters.trySettleSecondary(admitted, env.principalAuthority);
       if (secondary !== undefined) {
-        await markRunTerminal(admitted.runDirectory).catch(() => undefined);
+        await markRunTerminal(admitted.runDirectory);
         presentSecondaryTerminal(secondary, io);
         return {
           exitCode: exitCodeForTerminalOutcome(secondary.roleOutcome),
@@ -321,7 +318,7 @@ export async function dispatchPostAdmissionTurn<
 
     const sessionFile =
       admitted.principal !== undefined
-        ? decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile
+        ? env.principalAuthority.decode(admitted.principal).sessionFile
         : "";
     const runnerKnownFailure =
       adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
@@ -356,8 +353,9 @@ export async function dispatchPostAdmissionTurn<
 }
 
 /**
- * Shared post-admission one-shot path: durable admitted mark, writer lease,
- * then turn dispatch. Role runners call this after role-specific admit.
+ * Shared post-admission one-shot path: writer lease, then turn dispatch.
+ * Initial facades own the durable admitted mark (markRunAdmitted) before
+ * entering; manual resume never re-admits.
  */
 export async function runPostAdmissionOneShot<
   A extends AdmittedRoleInvocation,
@@ -375,7 +373,6 @@ export async function runPostAdmissionOneShot<
   terminal?: T;
 }> {
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
-  await markRunAdmitted(admitted, env.principalAuthority);
 
   let lease: RunWriterLease;
   try {
@@ -403,6 +400,7 @@ export async function runPostAdmissionOneShot<
 
 /**
  * Shared post-admission resumable path with auto-resume retry loop.
+ * Initial facades own the durable admitted mark before entering.
  */
 export async function runPostAdmissionResumable<
   A extends AdmittedRoleInvocation,
@@ -421,13 +419,12 @@ export async function runPostAdmissionResumable<
   terminal?: T;
 }> {
   const { admitted, env, io, buildInitialRequest, buildResumeRequest, adapters, effectiveEngine } = input;
-  await markRunAdmitted(admitted, env.principalAuthority);
 
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
     io,
-    sessionAppender: env.sessionAppender ?? appendPiSessionCustomEntry,
+    sessionAppender: env.sessionAppender,
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
