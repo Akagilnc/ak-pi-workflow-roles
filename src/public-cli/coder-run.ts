@@ -1,10 +1,10 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Coder Role run: admit → explicit Internal activate → settle Terminal result.
  * #109: package-owned TDD method, default apply / explicit plan, shared #106 success interface.
  * Controlled-failure settlement reuses the #107 shared owner (no new failure classes).
  */
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -235,7 +235,7 @@ async function presentControlledFailure(
     !failureInput.timedOut &&
     knownFailure === undefined &&
     failureInput.knownCause === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
+      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -255,7 +255,7 @@ async function presentControlledFailure(
     ...(session === undefined ? {} : { session }),
   });
 
-  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
@@ -274,6 +274,7 @@ async function presentControlledFailure(
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable
       ? { resume: { command: renderResumeCommand(admitted.runId) } }
       : {},
@@ -367,7 +368,7 @@ async function dispatchAdmittedCoder(input: {
 
     let lawful: TerminalResult | undefined;
     try {
-      lawful = await trySettleCoderTerminalResult(admitted, {
+      lawful = await trySettleCoderTerminalResult(admitted, env.principalAuthority, {
         ...(methodProvenance === undefined
           ? {}
           : { methodProvenance }),
@@ -402,7 +403,7 @@ async function dispatchAdmittedCoder(input: {
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result.knownFailure,
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
@@ -459,7 +460,7 @@ export async function runPublicCoder(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   // #416 scope = single LLM call: call-local retry counter, no persistence.
 
   let methodProvenance: PackagedMethodSkillProvenance | undefined;

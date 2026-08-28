@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
@@ -281,7 +281,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
       admitted.runDirectory,
       join(home, ".ak-roles", "books", bookKey, "runs", "run-freeze-001@judge"),
     );
-    assert.equal(admitted.sessionDirectory, join(admitted.runDirectory, "session"));
+    assert.equal(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
     await access(admitted.admittedRequestPath);
     // Unbound admit writes no waiting.jsonl; when present it must never hold request content.
     const waitingPath = join(home, ".ak-roles", "books", bookKey, "waiting.jsonl");
@@ -1236,15 +1236,17 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       role: "judge",
       runId: "run-cli-judge-001",
       runDirectory: runDir,
-      sessionDirectory: join(runDir, "session"),
-      sessionFile: join(runDir, "session", "session.jsonl"),
+      principal: {
+        sessionDirectory: join(runDir, "session"),
+        sessionFile: join(runDir, "session", "session.jsonl"),
+      },
       projectRoot: project,
       bookKey,
       instruction: "Decide whether the attachment is sufficient.",
       instructionEmpty: false,
       attachments: [],
       admittedRequestPath: join(runDir, "admitted-request.json"),
-    } as any);
+    } as any, piDurablePrincipalAuthority);
     assert.equal(stdout.length, 1);
     assert.notEqual(stdout[0]?.trim(), "");
     // #416 autoResumeCount is call-local observation (0 for first-attempt lawful) and is part of Terminal presentation
@@ -1346,15 +1348,17 @@ test("runAkRole judge empty request does not invent semantic task content on the
       role: "judge",
       runId: "run-empty-001",
       runDirectory: runDir,
-      sessionDirectory: join(runDir, "session"),
-      sessionFile: join(runDir, "session", "session.jsonl"),
+      principal: {
+        sessionDirectory: join(runDir, "session"),
+        sessionFile: join(runDir, "session", "session.jsonl"),
+      },
       projectRoot: project,
       bookKey,
       instruction: "",
       instructionEmpty: true,
       attachments: [],
       admittedRequestPath: join(runDir, "admitted-request.json"),
-    } as any);
+    } as any, piDurablePrincipalAuthority);
     // Missing attendance is not successful no-advice — require affirmative typed fact.
     assert.equal(terminal.navigator.disposition, "unavailable");
     if (terminal.navigator.disposition === "unavailable") {

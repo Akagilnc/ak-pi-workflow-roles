@@ -1,11 +1,11 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Reviewer Role run: admit → explicit Internal
  * activate → settle Terminal result (#111).
  * Package-owned adapted code-review method is forced; users never submit
  * extra packets. Controlled-failure settlement reuses #107.
  */
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -247,7 +247,7 @@ async function presentControlledFailure(
     !hasThrown &&
     !failureInput.timedOut &&
     knownFailure === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
+      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -258,7 +258,7 @@ async function presentControlledFailure(
     ...(session === undefined ? {} : { session }),
   });
 
-  const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
@@ -276,6 +276,7 @@ async function presentControlledFailure(
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable
       ? { resume: { command: renderResumeCommand(admitted.runId) } }
       : {},
@@ -373,7 +374,7 @@ async function dispatchAdmittedReviewer(input: {
 
     let lawful: TerminalResult | undefined;
     try {
-      lawful = await trySettleReviewerTerminalResult(admitted, {
+      lawful = await trySettleReviewerTerminalResult(admitted, env.principalAuthority, {
         methodProvenance: methodMaterial.provenance,
         methodSkillPath: methodMaterial.skillPath,
         methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
@@ -407,7 +408,7 @@ async function dispatchAdmittedReviewer(input: {
     // Prefer engine-detour infrastructure failure already on the session principal
     // over a later secondary knownFailure / provider-stop after abort (#357 T2 / #378).
     const infrastructureFailure = await readEngineDetourInfrastructureFailure(
-      admitted.sessionFile,
+      decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
     );
     const credentialFailure = postRunMissingCredentialFailure(
       result,
@@ -425,7 +426,7 @@ async function dispatchAdmittedReviewer(input: {
                 ? {}
                 : { identity: infrastructureFailure.identity }),
             },
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
@@ -490,7 +491,7 @@ export async function runPublicReviewer(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {

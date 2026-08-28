@@ -51,7 +51,7 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
-      admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
+      admitted:{principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:4,
       buildInitialArgs: ()=>["--initial"],
@@ -71,7 +71,7 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
-      admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
+      admitted:{principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
@@ -232,7 +232,7 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
       await assert.rejects(
         ()=>runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
-          admitted:{sessionFile,principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
+          admitted:{principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
           io,
           autoResumeLimit:bad,
           buildInitialArgs: ()=>["--initial"],

@@ -1268,15 +1268,16 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       sessionFile,
       admittedRequestPath,
     };
-    await markRunAdmitted(admitted);
+    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(runDirectory, {
       httpStatus: 429,
       provider: "xai",
     });
 
     const withResume = await settleJudgeFailureTerminalResult(
-      { ...admitted, ...decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal) },
+      admitted,
       { cause: "provider", diagnostic: "upstream declined" },
+      piDurablePrincipalAuthority,
       {
         resume: {
           command: renderResumeCommand(runId),
@@ -1287,10 +1288,10 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     assert.equal(withResume.artifacts.length, 0);
 
     await markRunTerminal(runDirectory);
-    const without = await settleJudgeFailureTerminalResult({ ...admitted, ...decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal) }, {
+    const without = await settleJudgeFailureTerminalResult(admitted, {
       cause: "activation",
       diagnostic: "boom",
-    });
+    }, piDurablePrincipalAuthority);
     assert.equal(without.resume, undefined);
     assert.equal(without.runId, runId);
     assert.ok(without.artifacts.length > 0);
@@ -1484,10 +1485,8 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       attachments: [],
       runDirectory,
       principal: rehydratePiDurablePrincipal(piDurablePrincipalAuthority, { sessionDirectory, sessionFile }),
-      sessionDirectory,
-      sessionFile,
       admittedRequestPath,
-    });
+    }, piDurablePrincipalAuthority);
     await markRunResumable(runDirectory, {
       httpStatus: 429,
       provider: "xai",

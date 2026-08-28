@@ -1,9 +1,9 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 /**
  * Public Merger Role run: derive active-merge envelope → force package
  * merge-only method → explicit Internal activate → settle Terminal result (#114).
  * Controlled-failure settlement reuses the #107 shared owner.
  */
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -231,7 +231,7 @@ async function presentControlledFailure(
     !failureInput.timedOut &&
     knownFailure === undefined &&
     failureInput.knownCause === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
+      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -251,7 +251,7 @@ async function presentControlledFailure(
     ...(session === undefined ? {} : { session }),
   });
 
-  const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
@@ -269,6 +269,7 @@ async function presentControlledFailure(
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable
       ? { resume: { command: renderResumeCommand(admitted.runId) } }
       : {},
@@ -361,7 +362,7 @@ async function dispatchAdmittedMerger(input: {
 
     let lawful: TerminalResult | undefined;
     try {
-      lawful = await trySettleMergerTerminalResult(admitted, {
+      lawful = await trySettleMergerTerminalResult(admitted, env.principalAuthority, {
         methodProvenance: methodMaterial.provenance,
         methodSkillPath: methodMaterial.skillPath,
         methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
@@ -399,7 +400,7 @@ async function dispatchAdmittedMerger(input: {
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result.knownFailure,
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
@@ -491,8 +492,6 @@ async function admitMergerShellForActivationFailure(options: {
     attachments: [],
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     mergerInputPath,
     derived: emptyDerived,
@@ -558,7 +557,7 @@ export async function runPublicMerger(
           ? {}
           : { createRunId: env.createRunId }),
       });
-      await markRunAdmitted(shell);
+      await markRunAdmitted(shell, env.principalAuthority);
       return await presentControlledFailure(
         shell,
         {
@@ -576,7 +575,7 @@ export async function runPublicMerger(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {

@@ -6,6 +6,7 @@
  */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 
 import { applyEngineChildEnv } from "../engine-detour.ts";
 import {
@@ -93,7 +94,7 @@ async function presentControlledFailure<A extends AdmittedRoleInvocation>(
     !hasThrown &&
     !failureInput.timedOut &&
     failureInput.knownFailure === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
+      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -107,7 +108,7 @@ async function presentControlledFailure<A extends AdmittedRoleInvocation>(
   // One-shot roles do not support resume — always terminal.
   await markRunTerminal(admitted.runDirectory).catch(() => undefined);
 
-  const terminal = await settleFailureTerminalResult(admitted, failure);
+  const terminal = await settleFailureTerminalResult(admitted, failure, authority);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -249,7 +250,7 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
     );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result.knownFailure,
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
@@ -286,7 +287,7 @@ export async function runAdmittedOneShotRole<A extends AdmittedRoleInvocation>(i
   terminal?: TerminalResult;
 }> {
   const { admitted, env, io, extraArgs, adapters, effectiveEngine } = input;
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let lease: RunWriterLease;
   try {

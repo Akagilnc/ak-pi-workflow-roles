@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -209,8 +209,8 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
       join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-001@doctor"),
     );
     assert.equal(
-      admitted.sessionFile,
-      join(admitted.sessionDirectory, "session.jsonl"),
+      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
+      join(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, "session.jsonl"),
     );
 
     // Case path is the #78 issue runs locator — not a copied case packet.
@@ -376,10 +376,10 @@ test("buildDoctorActivationExtraArgs pins isolation and --ak-doctor-case to admi
     assert.equal(args.includes("--no-themes"), true);
     assert.equal(args.includes("--no-context-files"), true);
     assert.equal(args.includes("--skill"), false);
-    assert.equal(args[args.indexOf("--session") + 1], admitted.sessionFile);
+    assert.equal(args[args.indexOf("--session") + 1], decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile);
     assert.equal(
       args[args.indexOf("--session-dir") + 1],
-      admitted.sessionDirectory,
+      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory,
     );
     assert.equal(args[args.indexOf("--ak-role") + 1], "doctor");
     assert.equal(
@@ -568,13 +568,15 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       instructionEmpty: false,
       attachments: [],
       runDirectory,
-      sessionDirectory: join(runDirectory, "session"),
-      sessionFile: join(runDirectory, "session", "session.jsonl"),
+      principal: {
+        sessionDirectory: join(runDirectory, "session"),
+        sessionFile: join(runDirectory, "session", "session.jsonl"),
+      },
       admittedRequestPath: join(runDirectory, "admitted-request.json"),
       issueNumber: admittedSnap.issueNumber,
       caseRunsPath: admittedSnap.caseRunsPath,
       caseIdentity: admittedSnap.caseIdentity,
-    } as any);
+    } as any, piDurablePrincipalAuthority);
     assert.equal(settled.roleOutcome.kind, "accepted");
     assert.equal(
       await trySettleDoctorTerminalResult({ 
@@ -586,13 +588,15 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         instructionEmpty: true,
         attachments: [],
         runDirectory: join(runDirectory, "nope"),
-        sessionDirectory: join(runDirectory, "nope", "session"),
-        sessionFile: join(runDirectory, "nope", "session", "session.jsonl"),
+        principal: {
+          sessionDirectory: join(runDirectory, "nope", "session"),
+          sessionFile: join(runDirectory, "nope", "session", "session.jsonl"),
+        },
         admittedRequestPath: join(runDirectory, "nope", "admitted-request.json"),
         issueNumber: admittedSnap.issueNumber,
         caseRunsPath: admittedSnap.caseRunsPath,
         caseIdentity: admittedSnap.caseIdentity,
-      } as any),
+      } as any, piDurablePrincipalAuthority),
       undefined,
     );
   });
@@ -622,8 +626,8 @@ test("doctor resume is rejected as one-shot", async () => {
         state: "resumable",
         bookKey: admit.bookKey,
         projectRoot: admit.projectRoot,
-        sessionDirectory: admit.sessionDirectory,
-        sessionFile: admit.sessionFile,
+        sessionDirectory: decodePiDurablePrincipal(piDurablePrincipalAuthority, admit.principal).sessionDirectory,
+        sessionFile: decodePiDurablePrincipal(piDurablePrincipalAuthority, admit.principal).sessionFile,
         runDirectory: admit.runDirectory,
         admittedRequestPath: admit.admittedRequestPath,
       })}\n`,

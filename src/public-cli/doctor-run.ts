@@ -1,10 +1,10 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Doctor Role run: admit Issue → retained case via #78 → shared one-shot
  * dispatch → settle Terminal result (#113). Lifecycle is the shared
  * Doctor-isomorphic seam; this module keeps only Doctor adapters.
  */
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -125,7 +125,7 @@ export async function runPublicDoctor(
     io,
     extraArgs,
     adapters: {
-      trySettle: (admitted) => trySettleDoctorTerminalResult(admitted),
+      trySettle: (admitted) => trySettleDoctorTerminalResult(admitted, env.principalAuthority),
       shouldPresentSettled: (terminal) =>
         isLawfulTypedTerminalOutcome(terminal.roleOutcome),
     },

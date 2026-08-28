@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 // #420 整改：自 test/unit/public-cli-fixer.test.ts 按性质移出（起真 Pi loader 子进程，
 // 不属开发内环快档）。契约不变：Fixer 生产激活参数（initial/resume × apply）携带双可选
 // 方法 Skill 到达真实 Pi loader。
@@ -23,8 +23,8 @@ test("Fixer production activation args reach the real Pi loader for both optiona
   await withActivationHome({ prefix: "ak-fixer-method-trace-" }, async ({ home, agentDir }) => {
     const applyAdmitted = await admitFixerInvocation({ principalAuthority: piDurablePrincipalAuthority, home, cwd: home, phase: "apply", instruction: "Apply the approved repair.", attachmentPaths: [], createRunId: () => "run-fixer-method-trace-apply" });
     const rows = [
-      { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot }), sessionFile: applyAdmitted.sessionFile },
-      { name: "resume-apply", args: buildFixerResumeActivationExtraArgs(applyAdmitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot }), sessionFile: applyAdmitted.sessionFile },
+      { name: "initial-apply", args: buildFixerActivationExtraArgs(applyAdmitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot }), sessionFile: decodePiDurablePrincipal(piDurablePrincipalAuthority, applyAdmitted.principal).sessionFile },
+      { name: "resume-apply", args: buildFixerResumeActivationExtraArgs(applyAdmitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot }), sessionFile: decodePiDurablePrincipal(piDurablePrincipalAuthority, applyAdmitted.principal).sessionFile },
     ];
     for (const row of rows) {
       const result = await runExplicitInternalActivation({

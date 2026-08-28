@@ -3,6 +3,7 @@ import type {
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
 import {
+  decodePiDurablePrincipal,
   rehydratePiDurablePrincipal,
 } from "../pi/durable-principal.ts";
 /**
@@ -249,15 +250,20 @@ export async function readRoleRunState(
 
 export async function markRunAdmitted(
   admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<void> {
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(
+    authority,
+    admitted.principal,
+  );
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
     role: admitted.role,
     state: "admitted",
     bookKey: admitted.bookKey,
     projectRoot: admitted.projectRoot,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
+    sessionDirectory,
+    sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     ...(
       admitted.role === "coder" || admitted.role === "fixer"
@@ -782,8 +788,6 @@ export async function loadResumableJudgeRun(
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile,
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     ...restoredTicketFields(loaded.admittedFields),
   };
@@ -840,8 +844,6 @@ export async function loadResumableCoderRun(
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile,
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
     ...restoredTicketFields(loaded.admittedFields),
@@ -900,8 +902,6 @@ export async function loadResumableFixerRun(
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile,
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...(loaded.admittedFields.prerequisitesPath === undefined
@@ -955,8 +955,6 @@ export async function loadResumableReviewerRun(
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile,
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
@@ -1020,8 +1018,6 @@ export async function loadResumableMergerRun(
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile,
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,

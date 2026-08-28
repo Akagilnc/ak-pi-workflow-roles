@@ -95,12 +95,8 @@ export type AdmittedRoleInvocationBase = {
   readonly instructionEmpty: boolean;
   readonly attachments: readonly FrozenAttachment[];
   readonly runDirectory: string;
-  /** Host-issued opaque durable principal. */
+  /** Host-issued opaque durable principal (coordinates only via authority.decode). */
   readonly principal: DurablePrincipal;
-  /** Coordinate projection of principal (from adapter decode at admit/load). */
-  readonly sessionDirectory: string;
-  /** Exact Pi session file principal (bound at admission; reopened on resume). */
-  readonly sessionFile: string;
   readonly admittedRequestPath: string;
   /**
    * Optional opaque invocation correlation restored from a prior admitted page
@@ -204,10 +200,14 @@ export type AdmittedRoleInvocation =
   | AdmittedReviewerInvocation
   | AdmittedMergerInvocation;
 
+/** Persistence projection only — not carried on Admitted (opaque principal owns identity). */
 type RoleInvocationLedgerSource = Pick<
   AdmittedRoleInvocationBase,
-  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile" | "correlationId" | "ticketNumber"
->;
+  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "correlationId" | "ticketNumber"
+> & {
+  readonly sessionDirectory: string;
+  readonly sessionFile: string;
+};
 
 /**
  * Effective provider/model selection recorded on the invocation identity page.
@@ -812,8 +812,6 @@ export async function admitJudgeInvocation(
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -827,7 +825,7 @@ export async function admitJudgeInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "judge",
@@ -839,8 +837,6 @@ export async function admitJudgeInvocation(
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     ...ticketFields,
   };
@@ -958,8 +954,6 @@ export async function admitCoderInvocation(
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -974,7 +968,7 @@ export async function admitCoderInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "coder",
@@ -987,8 +981,6 @@ export async function admitCoderInvocation(
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     taskPath,
     ...ticketFields,
@@ -1114,8 +1106,6 @@ export async function admitFixerInvocation(
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -1135,7 +1125,7 @@ export async function admitFixerInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "fixer",
@@ -1148,8 +1138,6 @@ export async function admitFixerInvocation(
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     packetPath,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
@@ -1411,8 +1399,6 @@ export async function admitCollectorInvocation(
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -1435,7 +1421,7 @@ export async function admitCollectorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "collector",
@@ -1447,8 +1433,6 @@ export async function admitCollectorInvocation(
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     prNumber,
     repository,
@@ -1736,8 +1720,6 @@ export async function admitDoctorInvocation(
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -1758,7 +1740,7 @@ export async function admitDoctorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "doctor",
@@ -1770,8 +1752,6 @@ export async function admitDoctorInvocation(
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     issueNumber: options.issueNumber,
     caseRunsPath,
@@ -1901,8 +1881,6 @@ export async function admitNotaryInvocation(options: {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     instruction: "",
     instructionEmpty: true,
     attachments: [] as const,
@@ -1918,7 +1896,7 @@ export async function admitNotaryInvocation(options: {
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "notary",
@@ -1930,8 +1908,6 @@ export async function admitNotaryInvocation(options: {
     attachments: [],
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     sourceRunPath: sourceRun.runDirectory,
     sourceRun,
@@ -2071,8 +2047,6 @@ export async function admitReviewerInvocation(
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -2092,7 +2066,7 @@ export async function admitReviewerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "reviewer",
@@ -2104,8 +2078,6 @@ export async function admitReviewerInvocation(
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     baseRevision: options.baseRevision,
     authorityRefs,
@@ -2329,8 +2301,6 @@ export async function admitMergerInvocation(
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -2356,7 +2326,7 @@ export async function admitMergerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "merger",
@@ -2368,8 +2338,6 @@ export async function admitMergerInvocation(
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,

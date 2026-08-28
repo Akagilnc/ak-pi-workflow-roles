@@ -93,6 +93,12 @@ import {
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+  DurablePrincipalCoordinates,
+} from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -105,6 +111,14 @@ import {
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
+
+/** Settlement path reads go through the host decode accessor only. */
+function coordinatesFromAdmitted(
+  authority: DurablePrincipalAuthority,
+  admitted: { readonly principal: DurablePrincipal },
+): DurablePrincipalCoordinates {
+  return decodePiDurablePrincipal(authority, admitted.principal);
+}
 import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
@@ -1815,10 +1829,10 @@ type AttemptHistorySource = {
  * the history entry backing the overwrite did not land (fail closed).
  */
 export async function appendRunAttemptHistory(
-  admitted: AttemptHistorySource,
+  source: AttemptHistorySource,
   outcome: AttemptHistoryOutcome,
 ): Promise<void> {
-  const entries = await readBoundSessionEntries(admitted.sessionFile);
+  const entries = await readBoundSessionEntries(source.sessionFile);
   let parentId: string | null = null;
   let priorEntries = 0;
   for (const entry of entries) {
@@ -1837,8 +1851,8 @@ export async function appendRunAttemptHistory(
     customType: ATTEMPT_HISTORY_ENTRY_TYPE,
     data: {
       sequence: priorEntries + 1,
-      role: admitted.role,
-      runId: admitted.runId,
+      role: source.role,
+      runId: source.runId,
       recordedAt: timestamp,
       outcome,
     },
@@ -1846,7 +1860,7 @@ export async function appendRunAttemptHistory(
     parentId,
     timestamp,
   })}\n`;
-  await appendFile(admitted.sessionFile, line, "utf8");
+  await appendFile(source.sessionFile, line, "utf8");
 }
 
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
@@ -2157,10 +2171,10 @@ export function extractNavigatorFact(
  * so the controlled-failure Terminal itself still settles.
  */
 async function extractNavigatorFactFromAdmittedSession(
-  admitted: AdmittedRoleInvocation,
+  sessionFile: string,
 ): Promise<TerminalNavigatorFact> {
   try {
-    const entries = await readBoundSessionEntries(admitted.sessionFile);
+    const entries = await readBoundSessionEntries(sessionFile);
     return extractNavigatorFact(entries);
   } catch (error) {
     if (isMissingPathError(error)) {
@@ -2181,11 +2195,11 @@ async function extractNavigatorFactFromAdmittedSession(
 export async function publishJudgeArtifacts(
   admitted: AdmittedJudgeInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
   // #419: history first — report/evidence stay last-write-wins views only
   // because every attempt's complete result has already been appended.
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2207,8 +2221,8 @@ export async function publishJudgeArtifacts(
     `${JSON.stringify(
       {
         runId: admitted.runId,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -2235,13 +2249,13 @@ export async function publishJudgeArtifacts(
 export async function publishCoderArtifacts(
   admitted: AdmittedCoderInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
     readonly coderOutput?: CoderOutput;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2269,8 +2283,8 @@ export async function publishCoderArtifacts(
         runId: admitted.runId,
         role: "coder",
         phase: admitted.phase,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         taskPath: admitted.taskPath,
         attachments: admitted.attachments.map((a) => ({
@@ -2335,10 +2349,10 @@ export function extractCoderRoleOutcome(
  * Malformed JSONL / other read failures throw with knownCause=session.
  */
 async function readLawfulSettlementEntries(
-  admitted: AdmittedRoleInvocation,
+  sessionFile: string,
 ): Promise<SessionEntry[] | undefined> {
   try {
-    return await readBoundSessionEntries(admitted.sessionFile);
+    return await readBoundSessionEntries(sessionFile);
   } catch (error) {
     // Missing path is absence of a lawful outcome; callers classify via session inspect.
     if (isMissingPathError(error)) return undefined;
@@ -2357,8 +2371,10 @@ async function readLawfulSettlementEntries(
  */
 export async function readLawfulJudgeRoleOutcome(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<LawfulJudgeRoleOutcome | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const { sessionFile } = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === undefined) return undefined;
   return extractJudgeRoleOutcome(entries);
 }
@@ -2370,9 +2386,10 @@ export async function readLawfulJudgeRoleOutcome(
  */
 export async function hasLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
   try {
-    const outcome = await readLawfulJudgeRoleOutcome(admitted);
+    const outcome = await readLawfulJudgeRoleOutcome(admitted, authority);
     return outcome !== undefined && isLawfulTypedTerminalOutcome(outcome);
   } catch {
     return false;
@@ -2392,8 +2409,10 @@ export async function hasLawfulJudgeTerminalResult(
  */
 async function settleLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile);
   if (entries === undefined) return undefined;
   const roleOutcome = extractJudgeRoleOutcome(entries);
   if (roleOutcome === undefined) {
@@ -2404,7 +2423,7 @@ async function settleLawfulJudgeTerminalResult(
   const artifacts = await publishJudgeArtifacts(
     admitted,
     roleOutcome,
-    admitted.sessionDirectory,
+    coordinates,
   );
   return withOptionalGateProjection(
     {
@@ -2413,7 +2432,7 @@ async function settleLawfulJudgeTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    coordinates.sessionDirectory,
   );
 }
 
@@ -2424,8 +2443,9 @@ async function settleLawfulJudgeTerminalResult(
  */
 export async function settleJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulJudgeTerminalResult(admitted);
+  const settled = await settleLawfulJudgeTerminalResult(admitted, authority);
   if (settled === undefined) {
     throw new Error(
       "Judge Role run completed without a lawful typed terminal result",
@@ -2441,17 +2461,20 @@ export async function settleJudgeTerminalResult(
  */
 export async function trySettleJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulJudgeTerminalResult(admitted);
+  return settleLawfulJudgeTerminalResult(admitted, authority);
 }
 
 async function settleLawfulCoderTerminalResult(
   admitted: AdmittedCoderInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile);
   if (entries === undefined) return undefined;
   const extracted = extractCoderRoleOutcome(entries);
   if (extracted === undefined) return undefined;
@@ -2459,7 +2482,7 @@ async function settleLawfulCoderTerminalResult(
   const artifacts = await publishCoderArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     {
       coderOutput: extracted.output,
       ...(options.methodProvenance === undefined
@@ -2474,18 +2497,19 @@ async function settleLawfulCoderTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    coordinates.sessionDirectory,
   );
 }
 
 /** Settle a lawful Coder Terminal from the admitted session (shared #106 success interface). */
 export async function settleCoderTerminalResult(
   admitted: AdmittedCoderInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCoderTerminalResult(admitted, options);
+  const settled = await settleLawfulCoderTerminalResult(admitted, authority, options);
   if (settled === undefined) {
     throw new Error(
       "Coder Role run completed without a lawful typed terminal result",
@@ -2546,14 +2570,14 @@ export function extractFixerMethodInvocations(
 export async function publishFixerArtifacts(
   admitted: AdmittedFixerInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
     readonly fixerOutput?: FixerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2581,8 +2605,8 @@ export async function publishFixerArtifacts(
         runId: admitted.runId,
         role: "fixer",
         phase: admitted.phase,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         packetPath: admitted.packetPath,
         ...(admitted.prerequisitesPath === undefined
@@ -2652,13 +2676,16 @@ export function extractFixerRoleOutcome(
 
 async function settleLawfulFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === undefined) return undefined;
   const extracted = extractFixerRoleOutcome(entries);
   if (extracted === undefined) return undefined;
@@ -2672,7 +2699,7 @@ async function settleLawfulFixerTerminalResult(
   const artifacts = await publishFixerArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     {
       ...(extracted.output === undefined ? {} : { fixerOutput: extracted.output }),
       methodProvenance: options.methodProvenance,
@@ -2686,20 +2713,21 @@ async function settleLawfulFixerTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Fixer Terminal from the admitted session (shared #106 success interface). */
 export async function settleFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulFixerTerminalResult(admitted, options);
+  const settled = await settleLawfulFixerTerminalResult(admitted, authority, options);
   if (settled === undefined) {
     throw new Error(
       "Fixer Role run completed without a lawful typed terminal result",
@@ -2711,12 +2739,12 @@ export async function settleFixerTerminalResult(
 export async function publishCollectorArtifacts(
   admitted: AdmittedCollectorInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly collectorReceipt?: CollectorReceipt;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2745,8 +2773,8 @@ export async function publishCollectorArtifacts(
         prNumber: admitted.prNumber,
         repository: admitted.repository.canonical,
         manifestDigest: admitted.manifestDigest,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -2804,8 +2832,11 @@ export function extractCollectorRoleOutcome(
 
 async function settleLawfulCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === undefined) return undefined;
   const extracted = extractCollectorRoleOutcome(entries);
   if (extracted === undefined) {
@@ -2837,7 +2868,7 @@ async function settleLawfulCollectorTerminalResult(
   const artifacts = await publishCollectorArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     { collectorReceipt: extracted.receipt },
   );
   return withOptionalGateProjection(
@@ -2847,15 +2878,16 @@ async function settleLawfulCollectorTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Collector Terminal from the admitted session. */
 export async function settleCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCollectorTerminalResult(admitted);
+  const settled = await settleLawfulCollectorTerminalResult(admitted, authority);
   if (settled === undefined) {
     throw new Error(
       "Collector Role run completed without a lawful typed terminal result",
@@ -2867,19 +2899,20 @@ export async function settleCollectorTerminalResult(
 /** Try to settle a lawful Collector Terminal; undefined only for genuine absence. */
 export async function trySettleCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCollectorTerminalResult(admitted);
+  return settleLawfulCollectorTerminalResult(admitted, authority);
 }
 
 export async function publishDoctorArtifacts(
   admitted: AdmittedDoctorInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly doctorOutput?: DoctorOutput;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2908,8 +2941,8 @@ export async function publishDoctorArtifacts(
         issueNumber: admitted.issueNumber,
         caseRunsPath: admitted.caseRunsPath,
         caseIdentity: admitted.caseIdentity,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -2992,8 +3025,11 @@ export function extractDoctorRoleOutcome(
 
 async function settleLawfulDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === undefined) return undefined;
   const extracted = extractDoctorRoleOutcome(entries);
   if (extracted === undefined) return undefined;
@@ -3023,7 +3059,7 @@ async function settleLawfulDoctorTerminalResult(
   const artifacts = await publishDoctorArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     extracted.output === undefined ? {} : { doctorOutput: extracted.output },
   );
   return withOptionalGateProjection(
@@ -3033,15 +3069,16 @@ async function settleLawfulDoctorTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Doctor Terminal from the admitted session. */
 export async function settleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulDoctorTerminalResult(admitted);
+  const settled = await settleLawfulDoctorTerminalResult(admitted, authority);
   if (settled === undefined) {
     throw new Error(
       "Doctor Role run completed without a lawful typed terminal result",
@@ -3053,8 +3090,9 @@ export async function settleDoctorTerminalResult(
 /** Try to settle a lawful Doctor Terminal; undefined only for genuine absence. */
 export async function trySettleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulDoctorTerminalResult(admitted);
+  return settleLawfulDoctorTerminalResult(admitted, authority);
 }
 
 /** Lawful Notary accepted outcome (pass/bounce). */
@@ -3094,8 +3132,11 @@ export function extractNotaryRoleOutcome(
 
 async function settleLawfulNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === undefined) return undefined;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === undefined) {
@@ -3116,7 +3157,7 @@ async function settleLawfulNotaryTerminalResult(
           cause: "output",
           diagnostic: residual.diagnostic,
           details: { candidate: residual.candidate, acceptedReceipt: false },
-        });
+        }, authority);
       }
       if (
         acceptedNonUsable === undefined &&
@@ -3136,7 +3177,7 @@ async function settleLawfulNotaryTerminalResult(
         cause: "output",
         diagnostic: "符宝郎回执无显式 pass/bounce",
         details: { candidate: acceptedNonUsable, acceptedReceipt: false },
-      });
+      }, authority);
     }
     return undefined;
   }
@@ -3148,15 +3189,16 @@ async function settleLawfulNotaryTerminalResult(
       artifacts: [],
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Notary Terminal from the admitted session. */
 export async function settleNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulNotaryTerminalResult(admitted);
+  const settled = await settleLawfulNotaryTerminalResult(admitted, authority);
   if (settled === undefined) {
     throw new Error(
       "Notary Role run completed without a lawful typed terminal result",
@@ -3168,25 +3210,30 @@ export async function settleNotaryTerminalResult(
 /** Try to settle a lawful Notary Terminal; undefined only for genuine absence. */
 export async function trySettleNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulNotaryTerminalResult(admitted);
+  return settleLawfulNotaryTerminalResult(admitted, authority);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */
 export async function trySettleCoderTerminalResult(
   admitted: AdmittedCoderInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCoderTerminalResult(admitted, options);
+  return settleLawfulCoderTerminalResult(admitted, authority, options);
 }
 
 export async function hasLawfulCoderTerminalResult(
   admitted: AdmittedCoderInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
+    const entries = await readLawfulSettlementEntries(sessionFile);
     if (entries === undefined) return false;
     const extracted = extractCoderRoleOutcome(entries);
     return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
@@ -3198,20 +3245,24 @@ export async function hasLawfulCoderTerminalResult(
 /** Try to settle a lawful Fixer Terminal; undefined only for genuine absence. */
 export async function trySettleFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulFixerTerminalResult(admitted, options);
+  return settleLawfulFixerTerminalResult(admitted, authority, options);
 }
 
 export async function hasLawfulFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
+    const entries = await readLawfulSettlementEntries(sessionFile);
     if (entries === undefined) return false;
     const extracted = extractFixerRoleOutcome(entries);
     return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
@@ -3254,14 +3305,14 @@ export function extractReviewerMethodInvocations(
 export async function publishReviewerArtifacts(
   admitted: AdmittedReviewerInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
     readonly reviewerReceipt?: RuntimeReviewerReceiptV2;
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -3287,8 +3338,8 @@ export async function publishReviewerArtifacts(
       {
         runId: admitted.runId,
         role: "reviewer",
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
         authorityRefs: [...admitted.authorityRefs],
@@ -3361,13 +3412,16 @@ export function extractReviewerRoleOutcome(
 
 async function settleLawfulReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === undefined) return undefined;
   const extracted = extractReviewerRoleOutcome(entries);
   if (extracted === undefined) return undefined;
@@ -3381,7 +3435,7 @@ async function settleLawfulReviewerTerminalResult(
   const artifacts = await publishReviewerArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     {
       ...(extracted.receipt === undefined ? {} : { reviewerReceipt: extracted.receipt }),
       methodProvenance: options.methodProvenance,
@@ -3395,20 +3449,21 @@ async function settleLawfulReviewerTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Reviewer Terminal from the admitted session (shared #106 success interface). */
 export async function settleReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulReviewerTerminalResult(admitted, options);
+  const settled = await settleLawfulReviewerTerminalResult(admitted, authority, options);
   if (settled === undefined) {
     throw new Error(
       "Reviewer Role run completed without a lawful typed terminal result",
@@ -3420,20 +3475,24 @@ export async function settleReviewerTerminalResult(
 /** Try to settle a lawful Reviewer Terminal; undefined only for genuine absence. */
 export async function trySettleReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulReviewerTerminalResult(admitted, options);
+  return settleLawfulReviewerTerminalResult(admitted, authority, options);
 }
 
 export async function hasLawfulReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
+    const entries = await readLawfulSettlementEntries(sessionFile);
     if (entries === undefined) return false;
     const extracted = extractReviewerRoleOutcome(entries);
     return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
@@ -3493,14 +3552,14 @@ export function extractMergerMethodInvocations(
 export async function publishMergerArtifacts(
   admitted: AdmittedMergerInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
     readonly mergerOutput?: MergerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -3526,8 +3585,8 @@ export async function publishMergerArtifacts(
       {
         runId: admitted.runId,
         role: "merger",
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         mergerInputPath: admitted.mergerInputPath,
         derived: admitted.derived,
@@ -3589,13 +3648,16 @@ export function extractMergerRoleOutcome(
 
 async function settleLawfulMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === undefined) return undefined;
   const extracted = extractMergerRoleOutcome(entries);
   if (extracted === undefined) {
@@ -3650,7 +3712,7 @@ async function settleLawfulMergerTerminalResult(
   const artifacts = await publishMergerArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     {
       mergerOutput: extracted.output,
       methodProvenance: options.methodProvenance,
@@ -3664,20 +3726,21 @@ async function settleLawfulMergerTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Merger Terminal from the admitted session (shared #106 success interface). */
 export async function settleMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulMergerTerminalResult(admitted, options);
+  const settled = await settleLawfulMergerTerminalResult(admitted, authority, options);
   if (settled === undefined) {
     throw new Error(
       "Merger Role run completed without a lawful typed terminal result",
@@ -3689,20 +3752,24 @@ export async function settleMergerTerminalResult(
 /** Try to settle a lawful Merger Terminal; undefined only for genuine absence. */
 export async function trySettleMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulMergerTerminalResult(admitted, options);
+  return settleLawfulMergerTerminalResult(admitted, authority, options);
 }
 
 export async function hasLawfulMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
+    const entries = await readLawfulSettlementEntries(sessionFile);
     if (entries === undefined) return false;
     const extracted = extractMergerRoleOutcome(entries);
     return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
@@ -3832,7 +3899,9 @@ async function writeFailureJsonRetainingCause(
 export async function publishFailureArtifacts(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalArtifactRef[]> {
+  const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
     admitted.runDirectory,
   );
@@ -3843,13 +3912,13 @@ export async function publishFailureArtifacts(
   // strand the original controlled failure outside settlement — it rides
   // publicationIssues instead of aborting durability.
   try {
-    await appendRunAttemptHistory(admitted, {
+    await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile }, {
       kind: "failure",
       role: admitted.role,
       ...failure,
     });
   } catch (error) {
-    priorIssues.push(publicationAttemptFromError(admitted.sessionFile, error));
+    priorIssues.push(publicationAttemptFromError(sessionFile, error));
   }
 
   // Prefer conventional names; unique fallback dirs keep colliding fixed paths
@@ -3901,8 +3970,8 @@ export async function publishFailureArtifacts(
 
   const evidencePayload: Record<string, unknown> = {
     runId: admitted.runId,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
+    sessionDirectory: sessionDirectory,
+    sessionFile: sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     attachments: admitted.attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -3995,13 +4064,16 @@ function redactNavigatorFactForPublicTerminal(
 export async function settleFailureTerminalResult(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
+  authority: DurablePrincipalAuthority,
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   // #288 is lawful only when the lifecycle owner persisted an exhausted,
   // current-attempt fact. Transcript reconstruction must not turn arbitrary output
   // failures (or bytes retained from a prior resume attempt) into exit zero.
   if (failure.cause === "output") {
-    const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => undefined);
+    const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
     if (entries !== undefined) {
       let attemptStart = 0;
       for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -4019,11 +4091,11 @@ export async function settleFailureTerminalResult(
             return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
-                navigator: await extractNavigatorFactFromAdmittedSession(admitted),
+                navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
                 artifacts: [],
                 runId: admitted.runId,
               },
-              admitted.sessionDirectory,
+              sessionDirectory,
             );
           }
         } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
@@ -4031,9 +4103,9 @@ export async function settleFailureTerminalResult(
     }
   }
   // Exact-session attendance only — never infer no-advice from caller omission.
-  const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
+  const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
-  const artifacts = await publishFailureArtifacts(admitted, failure);
+  const artifacts = await publishFailureArtifacts(admitted, failure, authority);
   const decisiveFacts: Record<string, unknown> = {
     cause: failure.cause,
     diagnostic: failure.diagnostic,
@@ -4072,7 +4144,7 @@ export async function settleFailureTerminalResult(
         artifacts: [],
         resume: options.resume,
       },
-      admitted.sessionDirectory,
+      sessionDirectory,
     );
   }
   const roleOutcome: TerminalRoleOutcome = {
@@ -4090,7 +4162,7 @@ export async function settleFailureTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
@@ -4098,9 +4170,10 @@ export async function settleFailureTerminalResult(
 export async function settleJudgeFailureTerminalResult(
   admitted: AdmittedJudgeInvocation,
   failure: ControlledFailure,
+  authority: DurablePrincipalAuthority,
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
-  return settleFailureTerminalResult(admitted, failure, options);
+  return settleFailureTerminalResult(admitted, failure, authority, options);
 }
 
 /**

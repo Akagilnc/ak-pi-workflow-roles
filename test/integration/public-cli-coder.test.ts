@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -141,7 +141,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       attachmentPaths: [],
       createRunId: () => "run-coder-settle-001",
     });
-    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
     const receipt = {
       status: "completed" as const,
@@ -176,7 +176,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       }),
     ];
     await writeFile(
-      admitted.sessionFile,
+      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
@@ -188,7 +188,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     assert.equal(extracted?.outcome.kind, "accepted");
     assert.equal(extracted?.outcome.status, "completed");
 
-    const terminal = await settleCoderTerminalResult(admitted, {
+    const terminal = await settleCoderTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
     });
     assert.equal(terminal.roleOutcome.role, "coder");

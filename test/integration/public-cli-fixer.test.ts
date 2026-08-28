@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -196,7 +196,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       attachmentPaths: [],
       createRunId: () => "run-fixer-settle-001",
     });
-    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "diagnosing-bugs",
@@ -255,7 +255,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
         },
       }),
     ];
-    await writeFile(admitted.sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
 
     const entries = sessionLines.map((line) => JSON.parse(line));
     const extracted = extractFixerRoleOutcome(entries);
@@ -267,7 +267,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     assert.equal(invocations.length, 1);
     assert.equal(invocations[0]!.name, "diagnosing-bugs");
 
-    const terminal = await settleFixerTerminalResult(admitted, {
+    const terminal = await settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -314,9 +314,9 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       attachmentPaths: [],
       createRunId: () => "run-fixer-settle-002",
     });
-    await mkdir(noDiag.sessionDirectory, { recursive: true });
+    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, noDiag.principal).sessionDirectory, { recursive: true });
     await writeFile(
-      noDiag.sessionFile,
+      decodePiDurablePrincipal(piDurablePrincipalAuthority, noDiag.principal).sessionFile,
       `${JSON.stringify({
         type: "message",
         message: {
@@ -329,7 +329,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       })}\n`,
       "utf8",
     );
-    const terminalNoDiag = await settleFixerTerminalResult(noDiag, {
+    const terminalNoDiag = await settleFixerTerminalResult(noDiag, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -617,13 +617,13 @@ async function settleFixerSession(
   admitted: Awaited<ReturnType<typeof admitFixerInvocation>>,
   details: unknown,
 ) {
-  await mkdir(admitted.sessionDirectory, { recursive: true });
-  await writeFile(admitted.sessionFile, fixerSessionLine(details), "utf8");
+  await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+  await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
   const material = await loadPackagedMethodSkillMaterial(
     packageRoot,
     "diagnosing-bugs",
   );
-  return settleFixerTerminalResult(admitted, {
+  return settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
     methodProvenance: material.provenance,
     methodSkillPath: material.skillPath,
     methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
