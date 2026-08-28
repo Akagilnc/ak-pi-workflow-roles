@@ -1,26 +1,19 @@
 /**
  * #526 standards-1 residual proof: engine field stays effective across the
- * initial / auto-resume / explicit-resume typed request for the resumable seats.
+ * initial / auto-resume / explicit-resume typed request for all five resumable seats.
  *
- * Drives the real public entry (`runAkRole`) with the existing minimal
- * host-neutral host (`createMinimalHost`) so the proof exercises the production
- * composition root, not a hand-built builder.
+ * Drives the real public entry (`runAkRole`) with the minimal host-neutral host
+ * (`createMinimalHost`) so the proof exercises the production composition root.
  *
  * - Initial: asserted for all five resumable seats (judge/coder/fixer/reviewer/merger).
- * - Auto: the single-call auto-resume loop re-projects the request via
- *   `buildResumePayload`; a faux typed-429 on the first dispatch forces exactly
- *   one retry, so `request.engine` is observed on BOTH the initial and the
- *   auto-resume payloads (proven on the canonical coder seat whose loop body is
- *   identical for the other four).
- * - Explicit: `ak-role resume <runId>` re-projects engine onto the resumed typed
- *   request (proven on the coder seat).
+ * - Auto: asserted across all five resumable seats (initial + auto-resume payloads).
+ * - Explicit: asserted across all five resumable seats (`ak-role resume <runId>`).
  *
  * No argv flag assertions — only typed `request.engine`.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -31,7 +24,13 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { CODER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
+import {
+  CODER_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
+  JUDGE_OUTPUT_TOOL_NAME,
+  MERGER_OUTPUT_TOOL_NAME,
+  REVIEWER_OUTPUT_TOOL_NAME,
+} from "../../src/role-runtime.ts";
 
 const ENGINE = "kimi";
 
@@ -50,6 +49,53 @@ async function seedPrincipalSession(request: { principal: unknown }): Promise<st
   await mkdirDir(sessionDirectory, { recursive: true });
   await writeFile(sessionFile, "", "utf8");
   return sessionFile;
+}
+
+function seedTerminalSession(seat: Seat, sessionFile: string, runId?: string): Promise<void> {
+  const toolName =
+    seat === "judge"
+      ? JUDGE_OUTPUT_TOOL_NAME
+      : seat === "coder"
+        ? CODER_OUTPUT_TOOL_NAME
+        : seat === "fixer"
+          ? FIXER_OUTPUT_TOOL_NAME
+          : seat === "reviewer"
+            ? REVIEWER_OUTPUT_TOOL_NAME
+            : MERGER_OUTPUT_TOOL_NAME;
+  const details =
+    seat === "judge"
+      ? { judgeStatus: "converged" }
+      : seat === "reviewer"
+        ? { status: "pass", findings: [] }
+        : seat === "merger"
+          ? { status: "escalate", attemptId: runId ?? "run-merger", diagnosis: "need escalate", report: "merger proof" }
+          : { status: "completed", report: "engine proof" };
+  const entries = [];
+  if (seat === "merger") {
+    const skillPath = join(packageRoot, "resources/methods/resolving-merge-conflicts/SKILL.md");
+    entries.push({
+      type: "message",
+      message: {
+        role: "user",
+        content: `<skill name="resolving-merge-conflicts" location="${skillPath}">\nmerge instructions\n</skill>\n\nComplete the merge.`,
+      },
+    });
+  }
+  entries.push({
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolCallId: "r1",
+      toolName,
+      isError: false,
+      details,
+    },
+  });
+  return writeFile(
+    sessionFile,
+    entries.map((e) => JSON.stringify(e)).join("\n") + "\n",
+    "utf8",
+  ).catch(() => undefined);
 }
 
 function baseArgs(seat: Seat, project: string): string[] {
@@ -119,7 +165,7 @@ test("engine stays effective on the initial typed request for all resumable seat
   });
 });
 
-test("engine stays effective across the auto-resume loop (initial + auto payloads) for coder", async () => {
+test("engine stays effective across the auto-resume loop (initial + auto payloads) for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-auto-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -130,131 +176,114 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       await runAkRole(["config", "set-auto-resume-limit", "2"], { packageRoot, home, io });
     }
 
-    const captured: Array<string | undefined> = [];
-    let first = true;
-    const { io } = captureIo();
-    await runAkRole(["coder", "--project", project, "engine auto proof", "--engine", ENGINE], {
-      packageRoot,
-      home,
-      cwd: project,
-      io,
-      credentials: { "openai-codex": true, xai: true },
-      createRunId: () => "run-engine-auto-coder",
-      principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: createMinimalHost(async (request) => {
-        captured.push(request.engine);
-        if (first) {
-          first = false;
-          // Resumability gates (loop + resume load) require the principal session
-          // file to exist; seed it through the authoritative coordinates.
-          await seedPrincipalSession(request);
-          // Faux typed-429: mark the run resumable so the loop retries once.
-          await observeTyped429ViaProductionHandler({
-            runDirectory: request.runDirectory,
-            provider: "xai",
-          });
-          return { code: 1, stderr: "quota", timedOut: false };
-        }
-        // Second (auto-resume) dispatch: lawful accepted terminal.
-        const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-        await writeFile(
-          sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolCallId: "r1",
-              toolName: CODER_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: { status: "completed", report: "auto-resume engine proof" },
-            },
-          })}\n`,
-          "utf8",
-        ).catch(() => undefined);
-        return { code: 0, stderr: "", timedOut: false };
-      }),
-    });
+    const seats: Seat[] = ["judge", "coder", "fixer", "reviewer", "merger"];
+    for (const seat of seats) {
+      if (seat === "merger") await seedMergeProject(project);
+      const captured: Array<string | undefined> = [];
+      let first = true;
+      const { io } = captureIo();
+      await runAkRole([...baseArgs(seat, project), "engine auto proof", "--engine", ENGINE], {
+        packageRoot,
+        home,
+        cwd: project,
+        io,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => `run-engine-auto-${seat}`,
+        principalAuthority: piDurablePrincipalAuthority,
+        roleTurnHost: createMinimalHost(async (request) => {
+          captured.push(request.engine);
+          if (first) {
+            first = false;
+            // Resumability gates (loop + resume load) require the principal session
+            // file to exist; seed it through the authoritative coordinates.
+            await seedPrincipalSession(request);
+            // Faux typed-429: mark the run resumable so the loop retries once.
+            await observeTyped429ViaProductionHandler({
+              runDirectory: request.runDirectory,
+              provider: "xai",
+            });
+            return { code: 1, stderr: "quota", timedOut: false };
+          }
+          // Second (auto-resume) dispatch: lawful accepted terminal.
+          const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+          await seedTerminalSession(seat, sessionFile, `run-engine-auto-${seat}`);
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      });
 
-    assert.ok(captured.length >= 2, "auto-resume must re-dispatch at least once");
-    assert.equal(captured[0], ENGINE, "initial request must carry engine");
-    assert.equal(captured[1], ENGINE, "auto-resume request must carry engine");
-    assert.ok(
-      captured.every((e) => e === ENGINE),
-      "every auto-resume typed request keeps effective engine",
-    );
+      assert.ok(captured.length >= 2, `${seat}: auto-resume must re-dispatch at least once`);
+      assert.equal(captured[0], ENGINE, `${seat}: initial request must carry engine`);
+      assert.equal(captured[1], ENGINE, `${seat}: auto-resume request must carry engine`);
+      assert.ok(
+        captured.every((e) => e === ENGINE),
+        `${seat}: every auto-resume typed request keeps effective engine`,
+      );
+    }
   });
 });
 
-test("explicit ak-role resume re-projects engine onto the resumed typed request (coder)", async () => {
+test("explicit ak-role resume re-projects engine onto the resumed typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-resume-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const runId = "run-engine-resume-coder";
 
-    // Create an admitted, resumable coder run (faux typed-429).
-    {
-      const { io } = captureIo();
-      await runAkRole(["coder", "--project", project, "resume engine proof"], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: createMinimalHost(async (request) => {
-          await seedPrincipalSession(request);
-          await observeTyped429ViaProductionHandler({
-            runDirectory: request.runDirectory,
-            provider: "xai",
-          });
-          return { code: 1, stderr: "quota", timedOut: false };
-        }),
-      });
-    }
+    const seats: Seat[] = ["judge", "coder", "fixer", "reviewer", "merger"];
+    for (const seat of seats) {
+      if (seat === "merger") await seedMergeProject(project);
+      const runId = `run-engine-resume-${seat}`;
 
-    // Explicit resume takes engine from the config seat (engine axis is role
-    // commands only on argv); #453 requires a persistent model before engine.
-    {
-      const { io, stderr } = captureIo();
-      await runAkRole(["config", "set", "coder", "xai/grok-4.5:high"], { packageRoot, home, io });
-      assert.equal(stderr.join(""), "");
-      await runAkRole(["config", "set-engine", "coder", ENGINE], { packageRoot, home, io });
-      assert.equal(stderr.join(""), "");
+      // Create an admitted, resumable run (faux typed-429).
+      {
+        const { io } = captureIo();
+        await runAkRole(baseArgs(seat, project), {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          roleTurnHost: createMinimalHost(async (request) => {
+            await seedPrincipalSession(request);
+            await observeTyped429ViaProductionHandler({
+              runDirectory: request.runDirectory,
+              provider: "xai",
+            });
+            return { code: 1, stderr: "quota", timedOut: false };
+          }),
+        });
+      }
+
+      // Explicit resume takes engine from the config seat (engine axis is role
+      // commands only on argv); #453 requires a persistent model before engine.
+      {
+        const { io, stderr } = captureIo();
+        await runAkRole(["config", "set", seat, "xai/grok-4.5:high"], { packageRoot, home, io });
+        assert.equal(stderr.join(""), "");
+        await runAkRole(["config", "set-engine", seat, ENGINE], { packageRoot, home, io });
+        assert.equal(stderr.join(""), "");
+      }
+      // Explicit resume must carry the engine onto the resumed typed request.
+      let resumedEngine: string | undefined;
+      {
+        const { io, stdout, stderr } = captureIo();
+        const resumed = await runAkRole(["resume", runId], {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io,
+          principalAuthority: piDurablePrincipalAuthority,
+          roleTurnHost: createMinimalHost(async (request) => {
+            resumedEngine = request.engine;
+            const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+            await seedTerminalSession(seat, sessionFile, runId);
+            return { code: 0, stderr: "", timedOut: false };
+          }),
+        });
+        assert.equal(resumed.exitCode, 0, stdout.join("") + "\n[stderr] " + stderr.join(""));
+      }
+      assert.equal(resumedEngine, ENGINE, `${seat}: explicit resume must re-project engine`);
     }
-    // Explicit resume must carry the engine onto the resumed typed request.
-    let resumedEngine: string | undefined;
-    {
-      const { io, stdout, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        io,
-        principalAuthority: piDurablePrincipalAuthority,
-        roleTurnHost: createMinimalHost(async (request) => {
-          resumedEngine = request.engine;
-          const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-          await writeFile(
-            sessionFile,
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolCallId: "r1",
-                toolName: CODER_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: { status: "completed", report: "resume engine proof" },
-              },
-            })}\n`,
-            "utf8",
-          ).catch(() => undefined);
-          return { code: 0, stderr: "", timedOut: false };
-        }),
-      });
-      assert.equal(resumed.exitCode, 0, stdout.join("") + "\n[stderr] " + stderr.join(""));
-    }
-    assert.equal(resumedEngine, ENGINE, "explicit resume must re-project engine");
   });
 });
