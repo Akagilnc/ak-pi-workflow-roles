@@ -29,7 +29,7 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
     if (state.targetObjectId !== input.targetObjectId || state.sourceObjectId !== input.sourceObjectId || !same(state.unmergedPaths, input.expectedConflictPaths) || state.unmergedPaths.length === 0 || !isFullGitObjectId(state.automaticMergeTreeId) || state.automaticMergeTreeId.length !== input.targetObjectId.length) throw new Error("Merger activation rejected repository parent, merge, automatic-result, or complete conflict-set drift");
     activation = { soul, input, automaticMergeTreeId: state.automaticMergeTreeId }; accepted = false;
     if (!registered) { registered = true;
-      pi.registerTool({ name: MERGER_OUTPUT_TOOL_NAME, label: "合并输出", description: "提交合并结果；输出分支为 completed 与 escalate；基础设施及 Git 失败经共享 host seam 承接。", promptSnippet: "提交合并结果", parameters: mergerOutputSchema,
+      pi.registerTool({ name: MERGER_OUTPUT_TOOL_NAME, label: "合并输出", description: "提交合并结果；输出分支为 completed 与 escalate", promptSnippet: "提交合并结果", parameters: mergerOutputSchema,
         async execute(id, params, _signal, _update, ctx) {
           if (!activation) throw new Error("校书郎未激活");
           if (accepted) throw new Error("合并回执已受理");
