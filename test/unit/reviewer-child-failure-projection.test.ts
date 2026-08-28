@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 
 import { engineDetourFailureDiagnostic } from "../../src/engine-detour.ts";
 import { executeReviewerChild, projectSharedChildFailure } from "../../src/reviewer-child-executor.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 test("shared child classifications project without relabeling unrelated errors", () => {
   for (const classification of ["provider", "child", "unknown"] as const) {
@@ -38,11 +39,21 @@ function evidenceChildContext(cwd: string, faux: ReturnType<typeof fauxProvider>
 
 test("aborted evidence without remote testimony projects unknown, not child", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ak-sp1-aborted-"));
+  const runDirectory = join(cwd, "run");
+  await mkdir(runDirectory, { recursive: true });
   try {
     const faux = fauxProvider({ provider: "sp1-aborted-unknown" });
     faux.setResponses([fauxAssistantMessage("stream cut", { stopReason: "aborted", errorMessage: "stream cut" })]);
+    await writeInstitutionalSeatTable(runDirectory, {
+      evidenceChild: seatSelection("sp1-aborted-unknown", "sp1-aborted-unknown"),
+    });
     await assert.rejects(
-      () => executeReviewerChild(cwd, { axis: "standards", prompt: "investigate" }, evidenceChildContext(cwd, faux)),
+      () => executeReviewerChild(
+        cwd,
+        { axis: "standards", prompt: "investigate" },
+        evidenceChildContext(cwd, faux),
+        { runDirectory },
+      ),
       (error: unknown) => {
         const classified = error as Error & { evidenceChildFailure?: string; reviewerFailure?: string };
         assert.equal(classified.evidenceChildFailure, "unknown");

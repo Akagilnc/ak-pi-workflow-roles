@@ -279,6 +279,14 @@ export type OpenPiInstitutionalSessionOptions = HostInstitutionalSessionOptions 
 export type OpenPiInstitutionalSessionResult = {
   readonly handle: HostInstitutionalSessionHandle;
   readonly session: Awaited<ReturnType<typeof createAgentSession>>["session"];
+  /**
+   * Primary provider-stream failure held at the adapter boundary when a
+   * provider stream errors after idle-only retries are exhausted. Consumers
+   * that need to distinguish a step machine "error" response from a real
+   * transport failure read this to preserve primary-cause fidelity
+   * (ADR 0018 / 失败诚实宪法). Undefined while the session stays healthy.
+   */
+  readonly streamFailure: unknown;
 };
 
 export async function openPiInstitutionalSession(
@@ -380,6 +388,8 @@ export async function openPiInstitutionalSession(
 
     const abortReason = (signal: AbortSignal): unknown =>
       signal.reason ?? new Error(`${label} provider stream aborted`);
+
+    let streamFailureValue: unknown;
 
     async function waitForStream<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
       if (signal.aborted) throw abortReason(signal);
@@ -504,6 +514,11 @@ export async function openPiInstitutionalSession(
             ) {
               continue;
             }
+            // Hold the primary provider failure at the adapter boundary (ADR
+            // 0018 / 失败诚实宪法). Consumers that surface transport failures
+            // read this so the real cause is never masked by a projected
+            // step-machine "error" response.
+            streamFailureValue = failure;
             const projected = projectStructuredRemote(failure);
             const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
             const response = {
@@ -745,7 +760,16 @@ export async function openPiInstitutionalSession(
       },
     };
 
-    return { handle, session };
+    return {
+      handle,
+      session,
+      // Read lazily: the provider stream runs during session.prompt, so the
+      // primary failure is only known after that turn completes. A getter keeps
+      // this reflecting the latest value instead of freezing it at open time.
+      get streamFailure() {
+        return streamFailureValue;
+      },
+    };
   } catch (openError) {
     if (scratchDir !== undefined) {
       try {
