@@ -14012,6 +14012,44 @@ var init_open_tool_schema = __esm({
   }
 });
 
+// src/package-contracts/terminating-infrastructure.ts
+function withInfrastructureFailureDeclaration(schema) {
+  const baseProperties = schema.properties;
+  const properties = {
+    ...baseProperties ?? {},
+    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: infrastructureFailureDeclarationSchema.properties[INFRASTRUCTURE_FAILURE_DECLARATION_KEY]
+  };
+  const object = typebox_exports.Object(properties, { additionalProperties: true });
+  object.required = [];
+  return object;
+}
+var INFRASTRUCTURE_FAILURE_DECLARATION_KEY, INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY, infrastructureFailureDeclarationSchema;
+var init_terminating_infrastructure = __esm({
+  "src/package-contracts/terminating-infrastructure.ts"() {
+    "use strict";
+    init_build();
+    INFRASTRUCTURE_FAILURE_DECLARATION_KEY = "infrastructureFailure";
+    INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic";
+    infrastructureFailureDeclarationSchema = typebox_exports.Object(
+      {
+        [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: typebox_exports.Object(
+          {
+            [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: typebox_exports.String({
+              minLength: 1,
+              description: "\u975E\u7A7A\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u8BCA\u65AD\uFF1B\u6A21\u578B\u4ECE detour body \u8BC6\u522B engine failure \u540E\u636E\u6B64\u58F0\u660E\uFF0Cexecute \u7ECF\u5171\u4EAB host seam \u8F6C failInfrastructure\u3002"
+            })
+          },
+          {
+            additionalProperties: true,
+            description: "\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u58F0\u660E\uFF1B\u4EC5\u5F53\u6A21\u578B\u8BC6\u522B\u5230 engine \u5931\u8D25\u65F6\u643A\u5E26\uFF0C\u5426\u5219\u7701\u7565\u3002"
+          }
+        )
+      },
+      { additionalProperties: true }
+    );
+  }
+});
+
 // src/package-contracts/fixer-output.ts
 function validateFixerOutput(value, _phase) {
   return value;
@@ -14023,6 +14061,7 @@ var init_fixer_output = __esm({
     init_build();
     init_fixer_packet();
     init_open_tool_schema();
+    init_terminating_infrastructure();
     FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
     nonblankTransportString = typebox_exports.String({ minLength: 1 });
     authorityBlockerSchema = typebox_exports.Object({ cause: typebox_exports.Literal("authority_violation"), evidence: nonblankTransportString });
@@ -14057,7 +14096,9 @@ var init_fixer_output = __esm({
       typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u62D2\u7EDD\u7ED3\u7B97" }) }),
       typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "partially_completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u5B8C\u6210\u6216\u62D2\u7EDD\u7ED3\u7B97" }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
     ]);
-    fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
+    fixerOutputSchema = withInfrastructureFailureDeclaration(
+      openToolObjectFromUnion(fixerOutputVariants)
+    );
   }
 });
 
@@ -14116,6 +14157,7 @@ var init_doctor_contracts = __esm({
     init_build();
     init_canonical_json();
     init_open_tool_schema();
+    init_terminating_infrastructure();
     DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
     DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
     nonblank = typebox_exports.String({ minLength: 1, pattern: "\\S" });
@@ -14166,7 +14208,9 @@ var init_doctor_contracts = __esm({
         missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "\u5982\u5B9E\u8BC1\u8BCD\u6240\u9700\u800C\u5C1A\u7F3A\u7684\u8BC1\u636E" })
       }, { additionalProperties: false, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" })
     ]);
-    doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
+    doctorSubmissionSchema = withInfrastructureFailureDeclaration(
+      openToolObjectFromUnion(doctorSubmissionVariants)
+    );
     doctorOutputSchema = typebox_exports.Union([
       typebox_exports.Object({ status: typebox_exports.Literal("completed"), case: caseIdentity, findings: typebox_exports.Array(finding), cost }, { additionalProperties: false }),
       doctorSubmissionVariants.anyOf[1]
@@ -14272,6 +14316,7 @@ var init_merger_contracts = __esm({
     init_exact_utf8();
     init_sha256();
     init_open_tool_schema();
+    init_terminating_infrastructure();
     oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
     materialSchema = typebox_exports.Object({ bytesBase64: typebox_exports.String(), sha256: typebox_exports.String() }, { additionalProperties: false });
     checkSchema = typebox_exports.Object({ name: typebox_exports.String({ minLength: 1 }), argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
@@ -14289,7 +14334,9 @@ var init_merger_contracts = __esm({
       typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: typebox_exports.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "\u5DF2\u6838\u9A8C\u7684\u5B8C\u6210\u5408\u5E76 commit object ID" }) }, { additionalProperties: false }),
       typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: typebox_exports.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), diagnosis: typebox_exports.String({ minLength: 1, description: "\u5408\u5E76\u5B8C\u6210\u9700\u5347\u7EA7\u7684\u539F\u56E0" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }, { additionalProperties: false })
     ]);
-    mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
+    mergerOutputSchema = withInfrastructureFailureDeclaration(
+      openToolObjectFromUnion(mergerOutputVariants)
+    );
     MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
     record = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
     blank = (v) => typeof v !== "string" || v.trim().length === 0;
@@ -14351,17 +14398,20 @@ var init_notary_contracts = __esm({
     "use strict";
     init_build();
     init_open_tool_schema();
+    init_terminating_infrastructure();
     NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
     NOTARY_FIXED_KICKOFF = "\u7B26\u5B9D\u90CE\u6848\u5377\u5DF2\u53D7\u7406\uFF1B\u6765\u6E90 run \u5B9A\u4F4D\u89C1\u4F1A\u8BDD\u6750\u6599\u3002";
-    notaryOutputSchema = openToolObject(
-      typebox_exports.Object({
-        status: typebox_exports.Unknown({
-          description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
-        }),
-        findings: typebox_exports.Unknown({
-          description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58"
+    notaryOutputSchema = withInfrastructureFailureDeclaration(
+      openToolObject(
+        typebox_exports.Object({
+          status: typebox_exports.Unknown({
+            description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
+          }),
+          findings: typebox_exports.Unknown({
+            description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58"
+          })
         })
-      })
+      )
     );
   }
 });
@@ -20488,6 +20538,7 @@ var init_collector_tool_schemas = __esm({
     "use strict";
     init_build();
     init_collector_evidence();
+    init_terminating_infrastructure();
     collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
     collectorRequestArgsSchema = typebox_exports.Object({
       requestId: typebox_exports.String({ minLength: 1, description: "\u914D\u7F6E\u8BF7\u6C42\u8EAB\u4EFD" }),
@@ -20496,7 +20547,9 @@ var init_collector_tool_schemas = __esm({
     collectorWaitArgsSchema = typebox_exports.Object({
       durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "\u7B49\u5F85\u6BEB\u79D2\uFF1B\u5355\u6B21\u4E0A\u9650\u4E94\u5206\u949F\u4E14\u4E0D\u8D85\u5269\u4F59\u8D44\u683C" })
     }, { additionalProperties: false });
-    collectorOutputArgsSchema = typebox_exports.Object({}, { additionalProperties: true });
+    collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
+      typebox_exports.Object({}, { additionalProperties: true })
+    );
     collectorOutputArgsSchema.required = [];
   }
 });
