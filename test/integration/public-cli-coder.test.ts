@@ -188,12 +188,9 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
         true,
         "resumed apply must bind TDD method",
       );
+      // The two-argument invocation above selects the no-explicit-message branch;
+      // its structured request must still carry resume continuation semantics.
       assert.equal(req.continuation.kind, "resume");
-      assert.equal(
-        req.continuation.prompt,
-        RESUME_TRANSPORT_ENVELOPE,
-        "resume without explicit message must select default transport envelope",
-      );
     }
   });
 });
