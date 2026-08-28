@@ -316,14 +316,7 @@ function addUsage(total: Usage, next: Usage): void {
 
 // ── evidence child (reviewer legs) ────────────────────────────────────────
 
-/** Injectable institutional session opener used by evidence-child consumers.
- * Defaults to the real pi adapter; exposed so a behavior-level regression can
- * drive the cleanup contract at this consumer seam without reaching into the
- * private runChildCleanup helper (#518 S3). */
-export type InstitutionalSessionOpener = (
-  options: OpenPiInstitutionalSessionOptions,
-) => Promise<OpenPiInstitutionalSessionResult>;
-
+/** Evidence child execution options. */
 export type EvidenceChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   /** Parent directory for credential/config scratch. Defaults to os.tmpdir(). */
@@ -336,8 +329,6 @@ export type EvidenceChildExecuteOptions = Readonly<{
    * Required only when AK_ROLE_ENGINE is set and packaged notes should attach.
    */
   packageRoot?: string;
-  /** Injectable session opener for behavior-level regression (#518 S3). */
-  open?: InstitutionalSessionOpener;
 }>;
 
 export async function executeEvidenceChild(
@@ -360,8 +351,7 @@ export async function executeEvidenceChild(
         : { parentDirectory: options.credentialScratchParent }),
     },
     async (childConfigDir) => {
-      const openInstitutional: InstitutionalSessionOpener =
-        options.open ?? (await import("./pi/in-process-session.ts")).openPiInstitutionalSession;
+      const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
       const { createRecordSession } = await import("./archivist-record-entry.ts");
       // #378: when labor engine is configured, legs get the same detour tool + material
       // dual-path as the parent seat (ADR 0069 detour-rejoins-main-road).
@@ -391,9 +381,9 @@ export async function executeEvidenceChild(
             });
       // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
       // Single open seam owner: pi/in-process-session.ts.
-      let opened: Awaited<ReturnType<InstitutionalSessionOpener>>;
+      let opened: Awaited<ReturnType<typeof openPiInstitutionalSession>>;
       try {
-        opened = await openInstitutional({
+        opened = await openPiInstitutionalSession({
           cwd: workspace,
           agentDir: childConfigDir,
           selection,
