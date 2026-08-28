@@ -18,7 +18,12 @@ requires `--verbose` — without it the CLI exits immediately with
 Include `--verbose` in stream-json argv. Measured with separate fd redirects
 (`1>` / `2>`): NDJSON event rows land on stdout (including intermediate
 `system` / `assistant` activity and a final `type:"result"` row); stderr is
-empty on the success path:
+empty on the success path — except when stdin is an open stream supplying no
+data (e.g. a shell test without redirection): then a benign
+`Warning: no stdin data received in 3s, proceeding without it` lands on stderr
+after a 3-second wait (host-verified 2026-08-28); redirect `< /dev/null` in
+shell tests. The packaged detour tool spawns engines with stdin ignored
+(`/dev/null`), which avoids this path:
 
 ```bash
 claude -p --verbose --output-format=stream-json "YOUR_LABOR_PROMPT"
