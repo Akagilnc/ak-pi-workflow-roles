@@ -36,5 +36,15 @@ Use `--output-format=stream-json` (choices measured on this host: `text`, `json`
 works; take the labor body from the final `result` event's `result` field,
 not from intermediate stream rows.
 
+## Headless permissions
+
+`--dangerously-skip-permissions` is required in headless labor: the CLI's
+permission prompts cannot be answered without a TTY and are auto-denied. In
+particular, reading any path outside the project root — such as frozen
+attachments under `~/.ak-roles/books/<book>/runs/<run>/attachments/` — is
+refused without the flag ("The read was not permitted — I don't have access to
+that file outside the current worktree") and succeeds with it (host-verified
+2026-08-28, both directions).
+
 Prefer `claude --help` on the host over any remembered flag set. Do not wrap this
 engine behind `ak-role` flags.
