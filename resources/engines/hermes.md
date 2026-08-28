@@ -65,9 +65,8 @@ hermes -z "YOUR_LABOR_PROMPT" --in /path/to/project --no-restore-cwd \
   simultaneously, losing legs saw sustained HTTP 429 across 9-29 detour
   attempts while the 1-2 winners completed normally (Ming_LLM books runs
   01a046ec-*/01a046f4-*, 14:55-15:04 window).
-- Keep at most ONE in-flight hermes labor call per account; queue the rest.
-- On 429: back off once (~60s) and retry once; if still 429, stop and record
-  the typed engine failure in the receipt — do not hammer retries.
+  No concurrency ceiling has been measured beyond this observation; policy on
+  concurrency and retries is the dispatcher's call, not this note's.
 
 ## Smoke test (run before first labor leg of a session)
 
