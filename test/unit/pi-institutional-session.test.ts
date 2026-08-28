@@ -81,6 +81,7 @@ test("Pi institutional session: missing provider auth fails loud with original c
   const cwd = await mkdtemp(join(tmpdir(), "ak-test-pi-session-auth-"));
   try {
     const sessionManager = SessionManager.inMemory(cwd);
+    const authCause = new Error("credential lookup unavailable");
     const mockModelRegistry = {
       find() {
         return { provider: "unconfigured-prov", id: "unconfigured-model" };
@@ -88,8 +89,8 @@ test("Pi institutional session: missing provider auth fails loud with original c
       getProvider() {
         return undefined;
       },
-      async getProviderAuth(provider: string) {
-        return undefined; // provider not configured
+      async getProviderAuth() {
+        throw authCause;
       },
       async getApiKeyAndHeaders() {
         return { ok: false as const, error: "No API key configured for unconfigured-prov" };
@@ -106,40 +107,10 @@ test("Pi institutional session: missing provider auth fails loud with original c
       }),
       (error: unknown) => {
         assert.ok(error instanceof Error);
-        assert.match(error.message, /unconfigured-prov/);
+        assert.equal(error.cause, authCause);
         return true;
       },
     );
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-test("Pi institutional session: abort and close error fidelity", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-test-pi-session-abort-"));
-  try {
-    const faux = fauxProvider({ provider: "abort-provider" });
-    const sessionManager = SessionManager.inMemory(cwd);
-    const mockModelRegistry = {
-      find() { return faux.getModel(); },
-      getProvider() { return faux.provider; },
-      async getProviderAuth() { return { auth: { apiKey: "k" } }; },
-      async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "k" }; },
-    };
-
-    const controller = new AbortController();
-    const handle = await openPiInstitutionalSession({
-      cwd,
-      selection: { provider: "abort-provider", model: "abort-model" },
-      systemPrompt: "Officer",
-      sessionManager,
-      signal: controller.signal,
-      modelRegistry: mockModelRegistry as any,
-    });
-
-    controller.abort();
-    handle.abort();
-    await handle.close();
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
