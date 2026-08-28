@@ -260,7 +260,6 @@ function enrichStreamEvent(event: unknown, observedHttpStatus: number | undefine
 // ── S3 Institutional Session Open Seam ─────────────────────────────────────
 
 export type OpenPiInstitutionalSessionOptions = HostInstitutionalSessionOptions & {
-  readonly modelRegistry?: any;
   readonly runCompletion?: (
     model: Model<Api>,
     context: Context,
@@ -305,16 +304,14 @@ export async function openPiInstitutionalSession(
 
   try {
     // 2. Auth resolution in Pi layer via explicit selection (Hop 3)
-    let sourceRegistry: ModelRegistry;
-    if (options.modelRegistry !== undefined) {
-      sourceRegistry = options.modelRegistry;
-    } else {
-      const baseRuntime = await ModelRuntime.create();
-      sourceRegistry = new ModelRegistry(baseRuntime);
-    }
+    // spec-2: adapter creates its OWN child-local ModelRuntime and ModelRegistry.
+    // Auth is resolved strictly by explicit selection on the child registry — never
+    // ambiently inherited from the parent ExtensionContext/modelRegistry.
+    const childRuntime = await ModelRuntime.create();
+    const childRegistry = new ModelRegistry(childRuntime);
 
-    const foundModel = typeof sourceRegistry.find === "function"
-      ? sourceRegistry.find(selection.provider, selection.model)
+    const foundModel = typeof childRegistry.find === "function"
+      ? childRegistry.find(selection.provider, selection.model)
       : undefined;
     const modelToUse = foundModel ?? {
       id: selection.model,
@@ -330,19 +327,22 @@ export async function openPiInstitutionalSession(
     };
 
     let resolution: { auth: { baseUrl?: string; apiKey?: string; headers?: Record<string, string | null> }; env?: Record<string, string> } | undefined;
-    if (typeof sourceRegistry.getProviderAuth === "function") {
-      resolution = await sourceRegistry.getProviderAuth(selection.provider).catch((error: unknown) => {
-        throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    if (typeof childRegistry.getProviderAuth === "function") {
+      resolution = await childRegistry.getProviderAuth(selection.provider).catch((error: unknown) => {
+        if (options.runCompletion === undefined) {
+          throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        }
+        return undefined;
       });
-      if (resolution === undefined) {
+      if (resolution === undefined && options.runCompletion === undefined) {
         throw new Error(`${label} authentication failed: provider is not configured: ${selection.provider}`);
       }
     }
 
     let authResult: { ok: boolean; error?: string; apiKey?: string; headers?: Record<string, string | null>; env?: Record<string, string> } | undefined;
-    if (typeof sourceRegistry.getApiKeyAndHeaders === "function") {
-      authResult = await sourceRegistry.getApiKeyAndHeaders(modelToUse as any);
-      if (authResult && !authResult.ok) {
+    if (typeof childRegistry.getApiKeyAndHeaders === "function") {
+      authResult = await childRegistry.getApiKeyAndHeaders(modelToUse as any);
+      if (authResult && !authResult.ok && options.runCompletion === undefined) {
         throw new Error(`${label} authentication failed: ${authResult.error}`);
       }
     }
@@ -369,10 +369,10 @@ export async function openPiInstitutionalSession(
     });
 
     // The provider this child runtime will serve requests for. Resolved by
-    // explicit selection from the source registry (Pi auth true source), not
+    // explicit selection from the child registry (Pi auth true source), not
     // captured from the parent session's ambient provider.
-    const childProvider: Provider | undefined = typeof sourceRegistry.getProvider === "function"
-      ? sourceRegistry.getProvider(selection.provider)
+    const childProvider: Provider | undefined = typeof childRegistry.getProvider === "function"
+      ? childRegistry.getProvider(selection.provider)
       : undefined;
 
     // Seed the child runtime's own credential store with the explicitly

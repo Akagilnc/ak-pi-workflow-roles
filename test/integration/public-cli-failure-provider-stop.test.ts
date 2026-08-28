@@ -67,13 +67,9 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
           tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
           systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
           runDirectory: join(project, "run"),
+          runCompletion: async () => fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" }),
           context: {
             cwd: project, model: faux.getModel(), thinkingLevel: "off",
-            modelRegistry: {
-              getProvider() { return faux.provider; },
-              async getProviderAuth() { return { auth: { apiKey: "k" } }; },
-              async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "k" }; },
-            },
             sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data }); return "entry"; } },
           } as unknown as ExtensionContext,
         }));

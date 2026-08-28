@@ -407,7 +407,6 @@ export async function executeEvidenceChild(
             ...(context.sessionManager === undefined ? {} : { parent: context.sessionManager }),
           }),
           ...(signal === undefined ? {} : { signal }),
-          modelRegistry: context.modelRegistry,
           label: "Evidence child",
         });
       } catch (error) {
@@ -582,7 +581,6 @@ export async function executeAuditorChild(
       ...(options.runCompletion === undefined
         ? {}
         : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
-      modelRegistry: options.context.modelRegistry,
       label: options.roleLabel,
     });
     const { handle, session } = opened;
