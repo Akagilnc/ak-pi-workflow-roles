@@ -4,15 +4,18 @@ export function fauxGatekeeper(
   calls: Array<{ tool?: string; args?: object | undefined; text?: string }>,
   seen: string[],
 ) {
-  return async (_model: any, context: any) => {
-    seen.push(context.systemPrompt);
+  return async (context: any) => {
+    if (context?.systemPrompt) seen.push(context.systemPrompt);
     const next = calls.shift();
     if (!next) throw new Error("unexpected child turn");
     if (next.text !== undefined) return fauxAssistantMessage(next.text);
-    // Missing args: emit a toolCall with arguments: undefined (Pi pre-execute reject path).
+    // Missing args: emit a toolCall with empty arguments. The real provider
+    // stream cannot serialize `undefined` arguments (it would crash), and the
+    // OpenAI round-trip collapses it to `{}` anyway; the gatekeeper maps an
+    // empty-object decision to the typed missing-args fact.
     if (next.args === undefined) {
       return fauxAssistantMessage(
-        { type: "toolCall", id: `call-${seen.length}`, name: next.tool!, arguments: undefined as never },
+        { type: "toolCall", id: `call-${seen.length}`, name: next.tool!, arguments: {} },
         { stopReason: "toolUse" },
       );
     }

@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import {
   copyFile,
   cp,
@@ -27,6 +28,7 @@ import {
 import {
   type CredentialStore,
   type FauxProviderHandle,
+  fauxProvider,
   InMemoryCredentialStore,
   type Model,
   type Provider,
@@ -1026,10 +1028,171 @@ export interface InProcessPiFixture {
   sessionManager: SessionManager;
 }
 
+export async function createMockProviderServer(
+  faux: ReturnType<typeof fauxProvider>,
+): Promise<{ server: Server; baseUrl: string; close: () => Promise<void> }> {
+  const server = createServer(async (req, res) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+      const tools = (body.tools ?? []).map((tool: any) => ({
+        name: tool.function?.name ?? tool.name,
+        description: tool.function?.description ?? tool.description,
+        parameters: tool.function?.parameters ?? tool.parameters,
+      }));
+      const systemMessage = (body.messages ?? []).find((m: any) => m.role === "system");
+      const systemPrompt = body.system ?? (typeof systemMessage?.content === "string" ? systemMessage.content : undefined);
+      const messages = (body.messages ?? [])
+        .map((m: any) => {
+          if (m.role === "system") return undefined;
+          if (m.role === "tool") {
+            return {
+              role: "toolResult",
+              toolCallId: m.tool_call_id,
+              toolName: m.name ?? "",
+              content: typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content ?? [],
+              isError: false,
+            };
+          }
+          if (m.role === "assistant") {
+            const content: any[] = [];
+            if (typeof m.content === "string" && m.content.length > 0) {
+              content.push({ type: "text", text: m.content });
+            }
+            if (Array.isArray(m.tool_calls)) {
+              for (const tc of m.tool_calls) {
+                let parsedArgs = tc.function?.arguments;
+                if (typeof parsedArgs === "string") {
+                  try { parsedArgs = JSON.parse(parsedArgs); } catch {}
+                }
+                content.push({
+                  type: "toolCall",
+                  id: tc.id,
+                  name: tc.function?.name ?? tc.name,
+                  arguments: parsedArgs ?? {},
+                });
+              }
+            }
+            return {
+              role: "assistant",
+              content,
+              api: "faux",
+              provider: "faux",
+              model: faux.getModel().id,
+              usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+              stopReason: m.tool_calls?.length ? "toolUse" : "stop",
+              timestamp: Date.now(),
+            };
+          }
+          return {
+            role: m.role ?? "user",
+            content: typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content ?? [],
+            timestamp: Date.now(),
+          };
+        })
+        .filter(Boolean);
+
+      const stream = faux.provider.stream(faux.getModel(), {
+        messages: messages as any,
+        ...(tools.length > 0 ? { tools } : {}),
+        ...(systemPrompt ? { systemPrompt } : {}),
+      });
+      const message = await stream.result();
+      if (message.stopReason === "error" || message.stopReason === "aborted") {
+        // Surface provider failures as an HTTP error so the real adapter's
+        // stream path records a transport failure (streamFailure) instead of a
+        // flattened normal completion — preserving typed transport_failure
+        // classification through the OpenAI-completions round-trip.
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: message.errorMessage ?? message.stopReason } }));
+        return;
+      }
+      const toolCalls = message.content
+        .filter((p: { type: string }) => p.type === "toolCall")
+        .map((p: { type: string; id?: string; name?: string; arguments?: unknown }, index: number) => ({
+          index,
+          id: p.id,
+          type: "function",
+          function: {
+            name: p.name,
+            arguments: typeof p.arguments === "string" ? p.arguments : JSON.stringify(p.arguments ?? {}),
+          },
+        }));
+      const text = message.content
+        .filter((p: { type: string }) => p.type === "text")
+        .map((p: { type: string; text?: string }) => p.text)
+        .join("");
+
+      const payload = {
+        id: `chatcmpl-${Date.now()}`,
+        object: "chat.completion.chunk",
+        created: 1,
+        model: faux.getModel().id,
+        choices: [{
+          index: 0,
+          delta: {
+            role: "assistant",
+            ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+            ...(text.length > 0 ? { content: text } : {}),
+          },
+          finish_reason: null,
+        }],
+      };
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      res.write(`data: ${JSON.stringify({ ...payload, choices: [{ index: 0, delta: {}, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" }] })}\n\n`);
+      res.end("data: [DONE]\n\n");
+    } catch (error) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error) } }));
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address !== null ? address.port : 0;
+  const baseUrl = `http://127.0.0.1:${port}/v1`;
+  return {
+    server,
+    baseUrl,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    },
+  };
+}
+
 export async function withInProcessPi<T>(
   options: InProcessPiOptions,
   scenario: (fixture: InProcessPiFixture) => Promise<T>,
 ): Promise<T> {
+  let mockServer: { baseUrl: string; close: () => Promise<void> } | undefined;
+  if (options.faux !== undefined) {
+    mockServer = await createMockProviderServer(options.faux);
+    const modelsPath = resolve(options.agentDir, "models.json");
+    if (!existsSync(modelsPath)) {
+      await writeFile(modelsPath, JSON.stringify({
+        providers: {
+          [options.faux.provider.id]: {
+            baseUrl: mockServer.baseUrl,
+            api: "openai-completions",
+            apiKey: "offline",
+            models: [{
+              id: options.faux.getModel().id,
+              name: options.faux.getModel().id,
+              api: "openai-completions",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 128000,
+              maxTokens: 16384,
+            }],
+          },
+        },
+      }, null, 2), "utf8");
+    }
+  }
+
   const model = options.model ?? options.faux.getModel();
   const provider = options.provider ?? {
     ...options.faux.provider,
@@ -1120,6 +1283,12 @@ export async function withInProcessPi<T>(
     // The host adapter exposes Pi's deferred header/rebind capabilities, so activation
     // materializes the real principal without a synthetic assistant message.
     sessionManager = SessionManager.create(options.cwd, parentSessionDir);
+    const runDirectory = dirname(parentSessionDir);
+    await mkdir(runDirectory, { recursive: true });
+    await mkdir(parentSessionDir, { recursive: true });
+    const { writeInstitutionalSeatTable, parentInheritedSeats } = await import("./institutional-seat-table.ts");
+    await writeInstitutionalSeatTable(runDirectory, parentInheritedSeats(model));
+    await writeInstitutionalSeatTable(parentSessionDir, parentInheritedSeats(model));
   }
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,
@@ -1159,8 +1328,61 @@ export async function withInProcessPi<T>(
         });
       }
     } finally {
-      session.dispose();
+      try {
+        session.dispose();
+      } finally {
+        if (mockServer !== undefined) {
+          await mockServer.close();
+        }
+      }
     }
+  }
+}
+
+/**
+ * Seed the child institutional sub-session's provider from a faux provider over
+ * the real OpenAI-completions HTTP path. `openPiInstitutionalSession` builds its
+ * own child ModelRuntime that reads `<PI_CODING_AGENT_DIR>/models.json`, so tests
+ * that drive `executeAuditorChild`/`runGatekeeper`/`runComplianceAudit` directly
+ * (without `withInProcessPi`) must register the faux provider there. Starts a
+ * mock SSE server backed by `faux`, writes the model registration, runs `run`,
+ * then tears both down.
+ */
+export async function withInstitutionalProviderFixture<T>(
+  faux: ReturnType<typeof fauxProvider>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const mock = await createMockProviderServer(faux);
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const tempAgentDir = await mkdtemp(join(tmpdir(), "ak-institutional-agent-"));
+  process.env.PI_CODING_AGENT_DIR = tempAgentDir;
+  try {
+    const modelsPath = resolve(tempAgentDir, "models.json");
+    await writeFile(modelsPath, JSON.stringify({
+      providers: {
+        [faux.provider.id]: {
+          baseUrl: mock.baseUrl,
+          api: "openai-completions",
+          apiKey: "test",
+          models: [{
+            id: faux.getModel().id,
+            name: faux.getModel().id,
+            api: "openai-completions",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 16384,
+          }],
+        },
+      },
+    }, null, 2), "utf8");
+    return await run();
+  } finally {
+    await mock.close();
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(tempAgentDir, { recursive: true, force: true });
   }
 }
 
