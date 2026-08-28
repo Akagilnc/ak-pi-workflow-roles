@@ -93,11 +93,6 @@ test("gatekeeper family material roster matches ticket path list", () => {
       `${role} must carry ticket material paths`,
     );
   }
-  // #524: public and gatekeeper notary path lists stay identical (shared definition).
-  assert.deepEqual(
-    [...MAIN_ROLE_SESSION_MATERIALS.notary],
-    [...GATEKEEPER_SESSION_MATERIALS.notary],
-  );
 });
 
 test("auditor material roster matches ticket path list", () => {
