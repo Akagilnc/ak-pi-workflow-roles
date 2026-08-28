@@ -1,10 +1,9 @@
 /**
- * Public Notary Role run: admit source-run locator → shared one-shot dispatch
- * → settle Terminal result (#448). Zero caller prompt/attachment. Lifecycle is
- * the shared Doctor-isomorphic seam; this module keeps only Notary adapters.
+ * Public Notary Role run: admit source-run locator → shared post-admission coordinator
+ * → settle Terminal result (#448 / #517). Zero caller prompt/attachment. Lifecycle is
+ * the shared post-admission seam; this module keeps only Notary adapters.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -14,28 +13,24 @@ import {
   type ParseNotaryArgvResult
 } from "./invocation.ts";
 import {
-  type SeatModelConfig,
-} from "./config.ts";
-import {
-  runAdmittedOneShotRole,
-  type OneShotRunEnv,
-} from "./one-shot-dispatch.ts";
+  runPostAdmissionOneShot,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
 import {
   presentStructuralRejection,
   trySettleNotaryTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult } from "./terminal.ts";
-
-export type NotaryRunEnv = OneShotRunEnv & {
-  principalAuthority: DurablePrincipalAuthority;
-  createRunId?: () => string;
-};
-
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
+
+export type NotaryRunEnv = PostAdmissionEnv & {
+  principalAuthority: DurablePrincipalAuthority;
+  createRunId?: () => string;
+};
 
 /** Project admitted invocation onto the host-neutral turn request. */
 export function buildNotaryTurnRequest(
@@ -98,13 +93,13 @@ export async function runPublicNotary(
     },
   });
 
-  return await runAdmittedOneShotRole({
+  return await runPostAdmissionOneShot({
     admitted,
     env,
     io,
     request: turnRequest,
     adapters: {
-      trySettle: (admitted) => trySettleNotaryTerminalResult(admitted, env.principalAuthority),
+      trySettle: (admitted, authority) => trySettleNotaryTerminalResult(admitted, authority),
       // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true,
     },
