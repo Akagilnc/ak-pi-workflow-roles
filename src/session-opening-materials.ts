@@ -71,7 +71,12 @@ export function loadMainRoleSessionMaterials(
 
 /** Gatekeeper province + Inspector/Notary officer sessions. */
 export const GATEKEEPER_SESSION_MATERIALS = {
-  gatekeeper: ["CLAUDE.md", "souls/gatekeeper.md", "souls/gate-output-guide.md"],
+  gatekeeper: [
+    "CLAUDE.md",
+    "souls/gatekeeper.md",
+    "souls/quality-law.md",
+    "souls/gate-output-guide.md",
+  ],
   inspector: [
     "CLAUDE.md",
     "souls/inspector.md",
