@@ -138,6 +138,62 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       assert.equal(req.activation.role, "coder");
       assert.equal(req.activation.phase, "plan");
       assert.equal(req.methods.length, 0, "plan must omit method bindings");
+      assert.equal(req.continuation.kind, "initial");
+    }
+
+    // Resume phase: default envelope (no explicit message) preserves apply bindings and selects typed resume continuation.
+    {
+      // First seed an admitted apply run with accessible session principal coordinates
+      await runAkRole(
+        ["coder", "--project", project, "Apply the approved plan."],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-coder-resume-typed",
+          io: captureIo().io,
+          credentials: { "openai-codex": true, xai: true },
+          roleTurnHost: createMinimalHost(async (request) => {
+            const { sessionDirectory, sessionFile } =
+              piDurablePrincipalAuthority.decode(request.principal);
+            await mkdir(sessionDirectory, { recursive: true });
+            await writeFile(sessionFile, "", "utf8");
+            return { code: 1, stderr: "stop", timedOut: false };
+          }),
+        },
+      );
+
+      captured.current = undefined;
+      const result = await runAkRole(
+        ["resume", "run-coder-resume-typed"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          io: captureIo().io,
+          credentials: { "openai-codex": true, xai: true },
+          principalAuthority: piDurablePrincipalAuthority,
+          roleTurnHost: createMinimalHost((request) => {
+            captured.current = request;
+            return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 1);
+      const req = captured.current!;
+      assert.equal(req.activation.role, "coder");
+      assert.equal(req.activation.phase, "apply");
+      assert.equal(
+        req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
+        true,
+        "resumed apply must bind TDD method",
+      );
+      assert.equal(req.continuation.kind, "resume");
+      assert.equal(
+        req.continuation.prompt,
+        RESUME_TRANSPORT_ENVELOPE,
+        "resume without explicit message must select default transport envelope",
+      );
     }
   });
 });
