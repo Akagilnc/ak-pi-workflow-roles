@@ -240,6 +240,81 @@ function resolveRoleTurnHost(
   });
 }
 
+type RoleEnvironmentOptions = {
+  role: "judge" | "coder" | "fixer" | "reviewer" | "merger" | "collector" | "doctor" | "notary";
+  home: string;
+  agentDir: string;
+  cwd: string;
+  credentials?: CredentialProviders;
+  seat: EffectiveSeat;
+  config?: PublicCliConfig;
+};
+
+function createRoleEnvironment(
+  env: CliEnv,
+  options: RoleEnvironmentOptions,
+) {
+  const role = options.role;
+  const extraPiArgs =
+    role === "coder"
+      ? env.coderExtraPiArgs
+      : role === "fixer"
+        ? env.fixerExtraPiArgs
+        : role === "reviewer"
+          ? env.reviewerExtraPiArgs
+          : role === "merger"
+            ? env.mergerExtraPiArgs
+            : role === "judge"
+              ? env.judgeExtraPiArgs
+              : role === "collector"
+                ? env.collectorExtraPiArgs
+                : role === "doctor"
+                  ? env.doctorExtraPiArgs
+                  : role === "notary"
+                    ? env.notaryExtraPiArgs
+                    : undefined;
+  const timeoutMs =
+    role === "coder"
+      ? env.coderTimeoutMs
+      : role === "fixer"
+        ? env.fixerTimeoutMs
+        : role === "reviewer"
+          ? env.reviewerTimeoutMs
+          : role === "merger"
+            ? env.mergerTimeoutMs
+            : role === "judge"
+              ? env.judgeTimeoutMs
+              : role === "collector"
+                ? env.collectorTimeoutMs
+                : role === "doctor"
+                  ? env.doctorTimeoutMs
+                  : role === "notary"
+                    ? env.notaryTimeoutMs
+                    : undefined;
+
+  return {
+    home: options.home,
+    principalAuthority: env.principalAuthority!,
+    agentDir: options.agentDir,
+    sessionAppender: appendPiSessionCustomEntry,
+    packageRoot: env.packageRoot,
+    roleTurnHost: resolveRoleTurnHost(env, {
+      principalAuthority: env.principalAuthority!,
+      ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    }),
+    cwd: options.cwd,
+    ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
+    ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+    ...(options.seat.selection === undefined ? {} : { model: options.seat.selection }),
+    ...projectSeatEngine(options.seat),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+    ...(options.config?.autoResumeLimit === undefined
+      ? {}
+      : { autoResumeLimit: options.config.autoResumeLimit }),
+  };
+}
 
 export type CliResult = {
   exitCode: number;
@@ -890,28 +965,7 @@ export async function runAkRole(
       if (resumeRole === "coder") {
         const result = await runPublicCoderResume(
           resumeRequest,
-          {
-            home,
-            principalAuthority: env.principalAuthority!,
-            agentDir,
-            sessionAppender: appendPiSessionCustomEntry,
-            packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.coderExtraPiArgs === undefined ? {} : { extraPiArgs: env.coderExtraPiArgs }),
-              ...(env.coderTimeoutMs === undefined ? {} : { timeoutMs: env.coderTimeoutMs }),
-            }),
-            cwd,
-            credentials,
-            ...(env.correlationId === undefined
-              ? {}
-              : { correlationId: env.correlationId }),
-            ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...projectSeatEngine(seat),
-            ...(env.coderTimeoutMs === undefined
-              ? {}
-              : { timeoutMs: env.coderTimeoutMs }),
-          },
+          createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
           io,
         );
         return {
@@ -922,28 +976,7 @@ export async function runAkRole(
       if (resumeRole === "fixer") {
         const result = await runPublicFixerResume(
           resumeRequest,
-          {
-            home,
-            principalAuthority: env.principalAuthority!,
-            agentDir,
-            sessionAppender: appendPiSessionCustomEntry,
-            packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.fixerExtraPiArgs === undefined ? {} : { extraPiArgs: env.fixerExtraPiArgs }),
-              ...(env.fixerTimeoutMs === undefined ? {} : { timeoutMs: env.fixerTimeoutMs }),
-            }),
-            cwd,
-            credentials,
-            ...(env.correlationId === undefined
-              ? {}
-              : { correlationId: env.correlationId }),
-            ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...projectSeatEngine(seat),
-            ...(env.fixerTimeoutMs === undefined
-              ? {}
-              : { timeoutMs: env.fixerTimeoutMs }),
-          },
+          createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
           io,
         );
         return {
@@ -954,28 +987,7 @@ export async function runAkRole(
       if (resumeRole === "reviewer") {
         const result = await runPublicReviewerResume(
           resumeRequest,
-          {
-            home,
-            principalAuthority: env.principalAuthority!,
-            agentDir,
-            sessionAppender: appendPiSessionCustomEntry,
-            packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.reviewerExtraPiArgs === undefined ? {} : { extraPiArgs: env.reviewerExtraPiArgs }),
-              ...(env.reviewerTimeoutMs === undefined ? {} : { timeoutMs: env.reviewerTimeoutMs }),
-            }),
-            cwd,
-            credentials,
-            ...(env.correlationId === undefined
-              ? {}
-              : { correlationId: env.correlationId }),
-            ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...projectSeatEngine(seat),
-            ...(env.reviewerTimeoutMs === undefined
-              ? {}
-              : { timeoutMs: env.reviewerTimeoutMs }),
-          },
+          createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
           io,
         );
         return {
@@ -986,28 +998,7 @@ export async function runAkRole(
       if (resumeRole === "merger") {
         const result = await runPublicMergerResume(
           resumeRequest,
-          {
-            home,
-            principalAuthority: env.principalAuthority!,
-            agentDir,
-            sessionAppender: appendPiSessionCustomEntry,
-            packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.mergerExtraPiArgs === undefined ? {} : { extraPiArgs: env.mergerExtraPiArgs }),
-              ...(env.mergerTimeoutMs === undefined ? {} : { timeoutMs: env.mergerTimeoutMs }),
-            }),
-            cwd,
-            credentials,
-            ...(env.correlationId === undefined
-              ? {}
-              : { correlationId: env.correlationId }),
-            ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...projectSeatEngine(seat),
-            ...(env.mergerTimeoutMs === undefined
-              ? {}
-              : { timeoutMs: env.mergerTimeoutMs }),
-          },
+          createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
           io,
         );
         return {
@@ -1017,28 +1008,7 @@ export async function runAkRole(
       }
       const result = await runPublicResume(
         resumeRequest,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.judgeExtraPiArgs === undefined ? {} : { extraPiArgs: env.judgeExtraPiArgs }),
-              ...(env.judgeTimeoutMs === undefined ? {} : { timeoutMs: env.judgeTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.judgeTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.judgeTimeoutMs }),
-        },
+        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io,
       );
       return {
@@ -1066,33 +1036,7 @@ export async function runAkRole(
       );
       const result = await runPublicJudge(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.judgeExtraPiArgs === undefined ? {} : { extraPiArgs: env.judgeExtraPiArgs }),
-              ...(env.judgeTimeoutMs === undefined ? {} : { timeoutMs: env.judgeTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.judgeTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.judgeTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.judge.parse,
       );
@@ -1117,33 +1061,7 @@ export async function runAkRole(
       );
       const result = await runPublicCoder(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.coderExtraPiArgs === undefined ? {} : { extraPiArgs: env.coderExtraPiArgs }),
-              ...(env.coderTimeoutMs === undefined ? {} : { timeoutMs: env.coderTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.coderTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.coderTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.coder.parse,
       );
@@ -1168,33 +1086,7 @@ export async function runAkRole(
       );
       const result = await runPublicFixer(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.fixerExtraPiArgs === undefined ? {} : { extraPiArgs: env.fixerExtraPiArgs }),
-              ...(env.fixerTimeoutMs === undefined ? {} : { timeoutMs: env.fixerTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.fixerTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.fixerTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.fixer.parse,
       );
@@ -1219,28 +1111,7 @@ export async function runAkRole(
       );
       const result = await runPublicCollector(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.collectorExtraPiArgs === undefined ? {} : { extraPiArgs: env.collectorExtraPiArgs }),
-              ...(env.collectorTimeoutMs === undefined ? {} : { timeoutMs: env.collectorTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.collectorTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.collectorTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-        },
+        createRoleEnvironment(env, { role: "collector", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.collector.parse,
       );
@@ -1265,33 +1136,7 @@ export async function runAkRole(
       );
       const result = await runPublicReviewer(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.reviewerExtraPiArgs === undefined ? {} : { extraPiArgs: env.reviewerExtraPiArgs }),
-              ...(env.reviewerTimeoutMs === undefined ? {} : { timeoutMs: env.reviewerTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.reviewerTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.reviewerTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.reviewer.parse,
       );
@@ -1316,28 +1161,7 @@ export async function runAkRole(
       );
       const result = await runPublicDoctor(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.doctorExtraPiArgs === undefined ? {} : { extraPiArgs: env.doctorExtraPiArgs }),
-              ...(env.doctorTimeoutMs === undefined ? {} : { timeoutMs: env.doctorTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.doctorTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.doctorTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-        },
+        createRoleEnvironment(env, { role: "doctor", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.doctor.parse,
       );
@@ -1362,28 +1186,7 @@ export async function runAkRole(
       );
       const result = await runPublicNotary(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.notaryExtraPiArgs === undefined ? {} : { extraPiArgs: env.notaryExtraPiArgs }),
-              ...(env.notaryTimeoutMs === undefined ? {} : { timeoutMs: env.notaryTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.notaryTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.notaryTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-        },
+        createRoleEnvironment(env, { role: "notary", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.notary.parse,
       );
@@ -1408,33 +1211,7 @@ export async function runAkRole(
       );
       const result = await runPublicMerger(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority!,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority!,
-              ...(env.mergerExtraPiArgs === undefined ? {} : { extraPiArgs: env.mergerExtraPiArgs }),
-              ...(env.mergerTimeoutMs === undefined ? {} : { timeoutMs: env.mergerTimeoutMs }),
-            }),
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.mergerTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.mergerTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.merger.parse,
       );
