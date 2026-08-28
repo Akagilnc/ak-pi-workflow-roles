@@ -609,6 +609,82 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
   });
 });
 
+test("terminal persistence write failure through public entry propagates loudly with no fake terminal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const bookKey = resolveBookKeyFromGit(project);
+    await seedIssueRuns(home, bookKey, 41);
+    const runId = "run-doctor-terminal-write-fail";
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@doctor`,
+    );
+    const captured = captureIo();
+    const result = await runAkRole(
+      ["doctor", "--issue", "41", "--project", project, "inspect"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: false },
+        createRunId: () => runId,
+        io: captured.io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+          const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
+          const patient = await loadDoctorCase(casePath);
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await mkdir(join(sessionFile, ".."), { recursive: true });
+          await writeFile(
+            sessionFile,
+            `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolName: DOCTOR_OUTPUT_TOOL_NAME,
+                isError: false,
+                details: sampleCompletedDoctorOutput(patient.identity),
+              },
+            })}\n`,
+            "utf8",
+          );
+          // Real run-state seam: the facade admitted the run and the
+          // coordinator already marked it running; now occupy run-state.json
+          // with a directory so markRunTerminal's terminal write fails (EISDIR).
+          // No production hook, no direct markRunTerminal call, no new fixture.
+          await rm(join(runDirectory, "run-state.json"));
+          await mkdir(join(runDirectory, "run-state.json"));
+          return {
+            code: 0,
+            timedOut: false,
+            stderr: "",
+            args: [...args],
+          };
+        },
+          }),
+      },
+    );
+
+    // The original terminal-persistence error must propagate loudly and no
+    // fake terminal may be presented on stdout. If someone re-adds
+    // `.catch(() => undefined)` around the settled-path markRunTerminal, the
+    // failure would be swallowed and a terminal presented — this assertion
+    // then fails, so the restoration is killed.
+    assert.equal(result.exitCode, 1, `expected loud failure, got stdout=${JSON.stringify(captured.stdout)} stderr=${JSON.stringify(captured.stderr)}`);
+    assert.equal(result.terminal, undefined, "no terminal may be returned when run-state write fails");
+    assert.equal(captured.stdout.join(""), "", "stdout must not present a fake terminal");
+    assert.match(captured.stderr.join(""), /cannot mark terminal/);
+  });
+});
+
 test("doctor resume is rejected as one-shot", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
