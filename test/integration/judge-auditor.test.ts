@@ -12,6 +12,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 const usage = {
   input: 10,
@@ -65,51 +66,16 @@ function seedSubjects(sessionManager: SessionManager): void {
   });
 }
 
-function auditContext(
-  resolution:
-    | {
-        auth: {
-          apiKey?: string;
-          headers?: Record<string, string>;
-          baseUrl?: string;
-        };
-        env?: Record<string, string>;
-      }
-    | undefined = {
-    auth: { apiKey: "secret", headers: {} },
-    env: {},
-  },
-  authError?: Error,
-) {
+function auditContext(runDirectory?: string): ExtensionContext {
   const model = { provider: "test", id: "auditor" };
   const sessionManager = SessionManager.inMemory();
+  if (runDirectory !== undefined) {
+    (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
+  }
   seedSubjects(sessionManager);
   return {
     model,
     sessionManager,
-    modelRegistry: {
-      async getProviderAuth(received: unknown) {
-        assert.equal(received, model.provider);
-        if (authError) throw authError;
-        return resolution;
-      },
-      async getApiKeyAndHeaders(received: unknown) {
-        assert.equal(received, model);
-        if (resolution === undefined) {
-          return { ok: false as const, error: "provider is not configured" };
-        }
-        return {
-          ok: true as const,
-          ...(resolution.auth.apiKey === undefined
-            ? {}
-            : { apiKey: resolution.auth.apiKey }),
-          ...(resolution.auth.headers === undefined
-            ? {}
-            : { headers: resolution.auth.headers }),
-          ...(resolution.env === undefined ? {} : { env: resolution.env }),
-        };
-      },
-    },
   } as unknown as ExtensionContext;
 }
 
@@ -117,21 +83,18 @@ test("Pi judge auditor preserves authentication failures", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-judge-auth-"));
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
-  const previous = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = runDirectory;
   try {
-    const context = auditContext(undefined, new Error("login expired"));
-    const auditor = createPiJudgeAuditor(async () =>
-      auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null }),
-    );
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("test", "auditor"),
+    });
+    const context = auditContext(runDirectory);
+    const auditor = createPiJudgeAuditor();
 
     await assert.rejects(
       auditor({ context }),
-      /authentication failed: login expired/,
+      /authentication failed: provider is not configured: test/,
     );
   } finally {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
     await rm(root, { recursive: true, force: true });
   }
 });

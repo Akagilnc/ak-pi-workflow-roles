@@ -73,6 +73,11 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
+import { loadPublicCliConfig } from "./config.ts";
+import {
+  resolveInstitutionalSeatSelections,
+  writeInstitutionalResolutionPage,
+} from "../institutional-resolution.ts";
 
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
@@ -319,6 +324,9 @@ async function writeRoleInvocationLedger(
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
+  const config = await loadPublicCliConfig();
+  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
+  await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
 
 /**
@@ -357,6 +365,9 @@ export async function recordEffectiveInvocationModel(
     `${JSON.stringify(next, null, 2)}\n`,
     "utf8",
   );
+  const config = await loadPublicCliConfig();
+  const institutionalPage = resolveInstitutionalSeatSelections(config, model);
+  await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 
 /** Merge observed launch-time fields into the single existing invocation.json identity page. */
