@@ -15,7 +15,12 @@ export function projectSharedChildFailure(error) {
 /** Reviewer policy adapter over the shared evidence-child lifecycle seam. */
 export async function executeReviewerChild(workspace, leg, context, options = {}) {
     try {
-        return await executeEvidenceChild(workspace, leg.prompt, context, options);
+        return await executeEvidenceChild(workspace, leg.prompt, context, {
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(options.credentialScratchParent === undefined ? {} : { credentialScratchParent: options.credentialScratchParent }),
+            ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
+            ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+        });
     }
     catch (error) {
         throw projectSharedChildFailure(error);

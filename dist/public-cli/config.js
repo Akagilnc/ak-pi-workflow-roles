@@ -24,10 +24,10 @@ const THINKING_LEVELS = new Set([
     "xhigh",
     "max",
 ]);
-export function publicCliConfigPath(home = homedir()) {
+export function publicCliConfigPath(home = process.env.HOME ?? homedir()) {
     return join(home, ".ak-roles", "public-cli.json");
 }
-export async function loadPublicCliConfig(home = homedir()) {
+export async function loadPublicCliConfig(home = process.env.HOME ?? homedir()) {
     const path = publicCliConfigPath(home);
     try {
         const raw = await readFile(path, "utf8");
@@ -42,7 +42,7 @@ export async function loadPublicCliConfig(home = homedir()) {
         throw error;
     }
 }
-export async function savePublicCliConfig(config, home = homedir()) {
+export async function savePublicCliConfig(config, home = process.env.HOME ?? homedir()) {
     const path = publicCliConfigPath(home);
     await mkdir(dirname(path), { recursive: true });
     const normalized = parsePublicCliConfig(config);
