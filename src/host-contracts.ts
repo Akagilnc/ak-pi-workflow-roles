@@ -287,6 +287,7 @@ export type HostInstitutionalSessionEvent =
   | {
       readonly type: "message_end";
       readonly role: "assistant" | "user" | string;
+      readonly message?: unknown;
       readonly usage?: HostSessionUsage;
     }
   | {

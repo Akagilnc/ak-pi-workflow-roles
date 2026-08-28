@@ -271,7 +271,7 @@ export {
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
 export { executeAuditorChild } from "./evidence-child-executor.ts";
-export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
+export type { AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,

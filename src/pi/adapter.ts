@@ -54,7 +54,7 @@ export function toPiContext(context: HostContext): ExtensionContext {
   return piContext;
 }
 
-/** Keep the S3 Gatekeeper executor on its native Pi context until S3 owns that migration. */
+/** Gatekeeper receives HostContext directly (#518 §1③) without recovering raw ExtensionContext via WeakMap. */
 function requirePiGatekeeperPass(options: {
   context: HostContext;
   subject: GatekeeperSubject;
@@ -63,12 +63,12 @@ function requirePiGatekeeperPass(options: {
   toolCallId: string;
 }): Promise<void> {
   return requireGatekeeperPass({
-    context: toPiContext(options.context),
+    context: options.context,
     subject: options.subject,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     hostActions: {
-      failInfrastructure(error, context, toolCallId) {
-        options.hostActions.failInfrastructure(error, projectPiContext(context), toolCallId);
+      failInfrastructure(error, _context, toolCallId) {
+        options.hostActions.failInfrastructure(error, options.context, toolCallId);
       },
       bindGatekeeperNonPass: options.hostActions.bindGatekeeperNonPass,
     },

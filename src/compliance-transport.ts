@@ -3,13 +3,11 @@ import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-codin
 import { Type } from "typebox";
 import {
   executeAuditorChild,
-  type AuditorCompletion,
 } from "./evidence-child-executor.ts";
 import { createAuditorDossierTool } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
-export type ComplianceCompletion = AuditorCompletion;
 export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
 export type ComplianceAuditObservation =
   | { kind: "non-object-arguments"; type: ComplianceArgumentRootType }
@@ -129,7 +127,6 @@ export type RunComplianceAuditOptions = {
   serializedInput?: string;
   roleLabel: string;
   invalidDecisionLabel: string;
-  runCompletion?: ComplianceCompletion;
   context: ExtensionContext;
   /** Exact machine-owned run binding; never sourced from AK_ROLE_RUN_DIR. */
   runDirectory?: string | undefined;
@@ -147,7 +144,6 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     context: options.context,
     retainResponse: (response) => retainComplianceResponse(options.context, response),
     ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
-    ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (receipt.noReceiptLifecycle !== undefined) {
