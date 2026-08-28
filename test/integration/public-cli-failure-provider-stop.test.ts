@@ -25,6 +25,7 @@ import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NAVIGA
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
   withTempHome,
@@ -43,6 +44,11 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
     const project = join(home, `proj-${role}`);
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const runDirectory = join(project, "run");
+    await mkdir(runDirectory, { recursive: true });
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("openai-codex", "faux-1"),
+    });
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(argv[role](project), {
       packageRoot, home, cwd: project, io,
@@ -60,12 +66,13 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
         await assert.rejects(runComplianceAudit({
           tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
           systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
+          runDirectory: join(project, "run"),
           context: {
             cwd: project, model: faux.getModel(), thinkingLevel: "off",
             modelRegistry: {
               getProvider() { return faux.provider; },
-              async getProviderAuth() { return { auth: { apiKey: "test" } }; },
-              async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
+              async getProviderAuth() { return { auth: { apiKey: "k" } }; },
+              async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "k" }; },
             },
             sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data }); return "entry"; } },
           } as unknown as ExtensionContext,
@@ -821,6 +828,9 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
     const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
     const sessionDirectory = join(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("xai", "faux-1"),
+    });
     // Real SessionManager principal — production retain writes the target session JSON.
     const sessionManager = SessionManager.create(project, sessionDirectory);
     const sessionFile = sessionManager.getSessionFile();
@@ -894,6 +904,9 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
     const sessionDirectory = join(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("openai-codex", "faux-1"),
+    });
     // Real SessionManager principal — production ak_compliance_response retain owns the bytes.
     const sessionManager = SessionManager.create(project, sessionDirectory);
     const sessionFile = sessionManager.getSessionFile();
