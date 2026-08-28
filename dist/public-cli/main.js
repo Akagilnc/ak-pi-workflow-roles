@@ -15547,6 +15547,7 @@ function createDefaultPiSpawnRunner(options) {
       let timer;
       let settled = false;
       let hasSpawned = false;
+      let executionError;
       const armTimeoutAfterChildReady = () => {
         if (spawnOptions.timeoutMs === void 0) return;
         timer = setTimeout(() => {
@@ -15567,11 +15568,13 @@ function createDefaultPiSpawnRunner(options) {
         stderr += chunk;
       });
       child.on("error", (error) => {
-        if (settled === false && !hasSpawned) {
-          if (timer !== void 0) clearTimeout(timer);
-          settled = true;
-          reject(error);
+        if (settled || hasSpawned) {
+          executionError = error;
+          return;
         }
+        if (timer !== void 0) clearTimeout(timer);
+        settled = true;
+        reject(error);
       });
       child.on("close", (code) => {
         if (timer !== void 0) clearTimeout(timer);
@@ -15579,6 +15582,10 @@ function createDefaultPiSpawnRunner(options) {
           () => {
             if (settled) return;
             settled = true;
+            if (executionError !== void 0) {
+              reject(executionError);
+              return;
+            }
             resolveResult({
               code,
               stderr,

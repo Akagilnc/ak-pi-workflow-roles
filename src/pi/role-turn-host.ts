@@ -296,6 +296,7 @@ export function createDefaultPiSpawnRunner(options: {
       // fall back to rejecting on `error` if `close` never fires (e.g. spawn
       // never succeeded so no `close` event will arrive).
       let hasSpawned = false;
+      let executionError: Error | undefined;
       const armTimeoutAfterChildReady = (): void => {
         if (spawnOptions.timeoutMs === undefined) return;
         timer = setTimeout(() => {
@@ -320,14 +321,16 @@ export function createDefaultPiSpawnRunner(options: {
         stderr += chunk;
       });
       child.on("error", (error) => {
-        // If the child never spawned, `close` will not fire — reject is the
-        // only way to avoid hanging. Once `spawn` has fired, `close` always
-        // follows and owns settlement (spec-B: child close once).
-        if (settled === false && !hasSpawned) {
-          if (timer !== undefined) clearTimeout(timer);
-          settled = true;
-          reject(error);
+        // A pre-spawn error has no child lifecycle to close. After spawn,
+        // retain the execution error and let the mandatory close event own
+        // cleanup and the single settlement.
+        if (settled || hasSpawned) {
+          executionError = error;
+          return;
         }
+        if (timer !== undefined) clearTimeout(timer);
+        settled = true;
+        reject(error);
       });
       child.on("close", (code) => {
         if (timer !== undefined) clearTimeout(timer);
@@ -335,6 +338,10 @@ export function createDefaultPiSpawnRunner(options: {
           () => {
             if (settled) return;
             settled = true;
+            if (executionError !== undefined) {
+              reject(executionError);
+              return;
+            }
             resolveResult({
               code,
               stderr,
