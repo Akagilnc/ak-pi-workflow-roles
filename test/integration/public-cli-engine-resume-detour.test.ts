@@ -95,7 +95,7 @@ function seedTerminalSession(seat: Seat, sessionFile: string, runId?: string): P
     sessionFile,
     entries.map((e) => JSON.stringify(e)).join("\n") + "\n",
     "utf8",
-  ).catch(() => undefined);
+  );
 }
 
 function baseArgs(seat: Seat, project: string): string[] {
