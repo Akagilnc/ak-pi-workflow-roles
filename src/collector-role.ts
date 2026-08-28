@@ -32,7 +32,6 @@ import {
 } from "./collector-receipt.ts";
 import {
   failOnInfrastructureFailureDeclaration,
-  withInfrastructureFailureDeclaration,
 } from "./package-contracts/terminating-infrastructure.ts";
 import {
   collectorObserveArgsSchema,
@@ -386,7 +385,7 @@ export function createCollectorRoleRuntime(
       label: "通进司输出",
       description: "观察完成后提交；回执由 runtime 组装。",
       promptSnippet: "提交通进司回执",
-      parameters: withInfrastructureFailureDeclaration(outputSchema),
+      parameters: outputSchema,
       async execute(toolCallId, params: OutputParams, _signal, _onUpdate, ctx) {
         if (activation === undefined) {
           throw new Error("通进司未激活");

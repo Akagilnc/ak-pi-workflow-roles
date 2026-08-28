@@ -19,7 +19,6 @@ import {
 } from "./notary-contracts.ts";
 import {
   failOnInfrastructureFailureDeclaration,
-  withInfrastructureFailureDeclaration,
 } from "./package-contracts/terminating-infrastructure.ts";
 
 export {
@@ -91,7 +90,7 @@ export function createNotaryRoleRuntime(
           label: "符宝郎输出",
           description: "提交引文保真与票面对齐的 typed pass/bounce 决议。",
           promptSnippet: "提交符宝郎决议",
-          parameters: withInfrastructureFailureDeclaration(notaryOutputSchema),
+          parameters: notaryOutputSchema,
           async execute(
             toolCallId,
             parameters,

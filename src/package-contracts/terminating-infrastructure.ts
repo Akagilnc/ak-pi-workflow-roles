@@ -21,27 +21,6 @@ export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
 export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 
-/**
- * Schema reuse for every terminating output tool: merge the shared declaration
- * fragment into an existing open tool-object schema so the model may declare an
- * infrastructure failure. All output transport schemas are already open
- * (additionalProperties: true) and required-free; this only surfaces the typed
- * declaration on each seat's parameters without a per-seat schema copy.
- */
-export function withInfrastructureFailureDeclaration(schema: unknown): unknown {
-  const source = schema as { properties?: Record<string, unknown> };
-  const object = Type.Object(
-    {
-      ...(source.properties ?? {}),
-      [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]:
-        infrastructureFailureDeclarationSchema,
-    },
-    { additionalProperties: true },
-  );
-  (object as unknown as { required: unknown[] }).required = [];
-  return object;
-}
-
 /** Shared schema fragment reused by every terminating output tool's parameters. */
 export const infrastructureFailureDeclarationSchema = Type.Object(
   {
