@@ -16,7 +16,8 @@ export type AuditorDossierLocation = {
 /** Resolve the exact run binding already carried by the parent record session. */
 export function auditorRunDirectory(context: ExtensionContext): string | undefined {
   const sessionFile = context.sessionManager?.getSessionFile?.();
-  return sessionFile === undefined ? undefined : resolve(dirname(dirname(sessionFile)));
+  if (sessionFile !== undefined) return resolve(dirname(dirname(sessionFile)));
+  return undefined;
 }
 
 /** The one shared, run-bound dossier locator exposed to every auditor seat. */

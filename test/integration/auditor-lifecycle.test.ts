@@ -28,14 +28,13 @@ import {
   isStreamIdleTimeoutError,
 } from "../../src/stream-idle-guard.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
-function withRunDir<T>(runDirectory: string, run: () => Promise<T>): Promise<T> {
-  const previous = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = runDirectory;
-  return run().finally(() => {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
+async function withRunDir<T>(runDirectory: string, run: () => Promise<T>): Promise<T> {
+  await writeInstitutionalSeatTable(runDirectory, {
+    auditor: seatSelection("audit-test", "audit-test"),
   });
+  return run();
 }
 
 function parentWithJudgeSubjects(cwd: string): SessionManager {
@@ -124,6 +123,7 @@ test("auditor gathers evidence and submits one decision", async () => {
       roleLabel: "Test auditor",
       invalidDecisionLabel: "invalid test decision",
       context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
     }));
     assert.equal(decision.status, "pass");
     assert.equal(turns, 2);
@@ -162,6 +162,7 @@ test("rejected auditor decision execution remains reachable and retries to an ac
     const decision = await withRunDir(runDirectory, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Retry auditor", invalidDecisionLabel: "invalid",
       context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
     }));
     assert.equal(decision.status, "pass");
     assert.equal(executions, 2, "the rejected terminal call must execute again");
@@ -198,6 +199,7 @@ test("a rejected auditor decision and its correction prompt share one budget uni
     const decision = await withRunDir(runDirectory, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Rejected prose auditor", invalidDecisionLabel: "invalid",
       context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
     }));
     assert.equal(decision.status, "no-receipt");
     assert.equal(executions, 1);
@@ -229,6 +231,7 @@ test("a mixed auditor batch accepts the correction after recording rejected sibl
     const decision = await withRunDir(runDirectory, () => runComplianceAudit({
       tool, systemPrompt: "Decide.", roleLabel: "Mixed batch auditor", invalidDecisionLabel: "invalid",
       context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
     }));
     assert.equal(executions, 2);
     assert.deepEqual(decision, {
@@ -275,6 +278,7 @@ test("rejected auditor executions saturate at two budget units across sequential
       const decision = await withRunDir(runDirectory, () => runComplianceAudit({
         tool, systemPrompt: "Decide.", roleLabel: "Rejected exhaustion auditor", invalidDecisionLabel: "invalid",
         context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
       }));
       assert.equal(decision.status, "no-receipt");
       if (decision.status === "no-receipt") {
@@ -311,6 +315,7 @@ test("rejected auditor executions saturate at two budget units across sequential
       const decision = await withRunDir(runDirectory, () => runComplianceAudit({
         tool, systemPrompt: "Decide.", roleLabel: "Blank rejection auditor", invalidDecisionLabel: "invalid",
         context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
       }));
       assert.equal(decision.status, "no-receipt");
       if (decision.status === "no-receipt") {
@@ -346,6 +351,7 @@ test("accepted auditor arguments cannot forge machine-owned no-receipt provenanc
       () => withRunDir(runDirectory, () => runComplianceAudit({
         tool, systemPrompt: "Decide.", roleLabel: "Forgery auditor", invalidDecisionLabel: "invalid",
         context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
       })),
       (error: unknown) => {
         assert.ok(error instanceof ComplianceCandidateUnreadableError);
@@ -381,6 +387,7 @@ test("auditor exhaustion preserves a typed no-receipt leg and its measured usage
       tool: createComplianceDecisionTool("ak_no_receipt_decision", "Submit."),
       systemPrompt: "Decide.", roleLabel: "No receipt auditor", invalidDecisionLabel: "invalid",
       context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
     }));
     assert.equal(turns, 3, "initial attempt plus exactly two delivery prompts");
     assert.equal(decision.status, "no-receipt");
@@ -434,6 +441,7 @@ test("undefined decision candidate fails as ComplianceCandidateUnreadableError",
           arguments: undefined as unknown as Record<string, any>,
         }], { stopReason: "toolUse" }),
         context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
       })),
       (error: unknown) => {
         assert.ok(error instanceof ComplianceCandidateUnreadableError);
@@ -471,6 +479,7 @@ test("same-turn evidence failure propagates its identity past injected and rejec
             fauxToolCall(tool.name, { status: "pass" }),
           ], { stopReason: "toolUse" }),
           context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
         })),
         (error: unknown) => error instanceof Error
           && (error as NodeJS.ErrnoException).code === "ENOENT",
@@ -508,6 +517,7 @@ test("same-turn evidence failure propagates its identity past injected and rejec
             fauxToolCall(tool.name, { status: "pass" }),
           ], { stopReason: "toolUse" }),
           context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
         })),
         (error: unknown) => error instanceof Error
           && (error as NodeJS.ErrnoException).code === "ENOENT",
@@ -548,6 +558,7 @@ test("injected pending completion settles a same-turn evidence and decision batc
         ], { stopReason: "pending" });
       },
       context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
     }));
     assert.equal(decision.status, "pass");
     assert.equal(completions, 1);
@@ -597,6 +608,7 @@ for (const mode of ["provider", "injected"] as const) {
             ? { runCompletion: async (_model: unknown, context: Context) => traceTurn(context) }
             : {}),
           context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
         })),
         (error: unknown) => error instanceof AuditorTurnLimitError
           && error.limit === AUDITOR_TURN_LIMIT
@@ -642,6 +654,7 @@ test("provider-stream idle retries at most twice then fails loud as StreamIdleTi
         roleLabel: "Idle auditor",
         invalidDecisionLabel: "invalid idle decision",
         context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
       })),
       (error: unknown) => isStreamIdleTimeoutError(error),
     );
