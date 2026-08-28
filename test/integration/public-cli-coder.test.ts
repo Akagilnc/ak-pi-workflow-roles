@@ -1,9 +1,8 @@
-import {
-  buildCoderActivationExtraArgs,
-  buildCoderResumeActivationExtraArgs
-} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
+import { engineSessionMaterialFromOptions } from "../../src/package-resources/engine-material.ts";
+import { buildCoderTurnRequest } from "../../src/public-cli/coder-run.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -28,9 +27,13 @@ import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/met
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 
-import { admitCoderInvocation } from "../../src/public-cli/invocation.ts";
+import {
+  admitCoderInvocation,
+  buildCoderTransportPrompt,
+} from "../../src/public-cli/invocation.ts";
 import {
   RESUME_TRANSPORT_ENVELOPE,
+  selectResumeContinuationPrompt,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractCoderRoleOutcome,
@@ -38,6 +41,36 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+
+function turnHome(admitted: { projectRoot?: string }) {
+  return { home: admitted.projectRoot ?? "/tmp", agentDir: "/tmp/agent" };
+}
+
+function coderActivationArgs(
+  admitted: Parameters<typeof buildCoderTurnRequest>[0],
+  kind: "initial" | "resume",
+): string[] {
+  return buildPiTurnExtraArgs(
+    buildCoderTurnRequest(admitted, {
+      packageRoot,
+      ...turnHome(admitted),
+      continuation:
+        kind === "initial"
+          ? {
+              kind: "initial",
+              prompt: buildCoderTransportPrompt(
+                admitted,
+                engineSessionMaterialFromOptions({ packageRoot }),
+              ),
+            }
+          : {
+              kind: "resume",
+              prompt: selectResumeContinuationPrompt(),
+            },
+    }),
+    piDurablePrincipalAuthority,
+  );
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-coder-"));
@@ -75,7 +108,7 @@ function seedGitProject(root: string): void {
 
 
 
-test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on plan", async () => {
+test("buildCoderTurnRequest pins package TDD on apply and omits skill on plan", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -90,7 +123,7 @@ test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on
       attachmentPaths: [],
       createRunId: () => "run-coder-apply-args",
     });
-    const applyArgs = buildCoderActivationExtraArgs(apply, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+    const applyArgs = coderActivationArgs(apply, "initial");
     assert.equal(applyArgs.includes("--no-skills"), true);
     assert.equal(applyArgs.includes("--skill"), true);
     assert.equal(applyArgs.includes("--ak-coder-phase"), true);
@@ -111,18 +144,18 @@ test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on
       attachmentPaths: [],
       createRunId: () => "run-coder-plan-args",
     });
-    const planArgs = buildCoderActivationExtraArgs(plan, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+    const planArgs = coderActivationArgs(plan, "initial");
     assert.equal(planArgs.includes("--no-skills"), true);
     assert.equal(planArgs.includes("--skill"), false);
     assert.equal(planArgs[planArgs.indexOf("--ak-coder-phase") + 1], "plan");
 
     // Resume args preserve phase and package skill binding without resubmitting task prose.
-    const resumeApply = buildCoderResumeActivationExtraArgs(apply, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+    const resumeApply = coderActivationArgs(apply, "resume");
     assert.equal(resumeApply[resumeApply.indexOf("--ak-coder-phase") + 1], "apply");
     assert.equal(resumeApply.includes("--skill"), true);
     assert.equal(resumeApply.includes(RESUME_TRANSPORT_ENVELOPE), true);
     assert.equal(resumeApply.includes(apply.instruction), false);
-    const resumePlan = buildCoderResumeActivationExtraArgs(plan, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+    const resumePlan = coderActivationArgs(plan, "resume");
     assert.equal(resumePlan[resumePlan.indexOf("--ak-coder-phase") + 1], "plan");
     assert.equal(resumePlan.includes("--skill"), false);
     assert.equal(resumePlan.includes(RESUME_TRANSPORT_ENVELOPE), true);

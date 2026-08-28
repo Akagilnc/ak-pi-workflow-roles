@@ -1,4 +1,3 @@
-import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Public Merger Role run: derive active-merge envelope → force package
  * merge-only method → host turn execute → settle Terminal result (#114).
@@ -89,10 +88,7 @@ export type MergerRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  roleTurnHost?: RoleTurnHost;
-  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
-  piRunner?: LegacyPiRunner;
-  extraPiArgs?: readonly string[];
+  roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material + env signal). */
   engine?: string;
@@ -273,7 +269,7 @@ async function dispatchAdmittedMerger(input: {
 
     let result: RoleTurnResult;
     try {
-      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
+      result = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -321,7 +317,13 @@ async function dispatchAdmittedMerger(input: {
         io,
       );
     }
-    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    // Residual malformed output is a typed incomplete Terminal, not a missing
+    // lawful outcome — do not wash it into the generic failure channel.
+    if (
+      lawful !== undefined &&
+      (isLawfulTypedTerminalOutcome(lawful.roleOutcome) ||
+        lawful.roleOutcome.kind === "incomplete")
+    ) {
       await markRunTerminal(admitted.runDirectory).catch(() => undefined);
       io.stdout(formatTerminalResult(lawful));
       return {

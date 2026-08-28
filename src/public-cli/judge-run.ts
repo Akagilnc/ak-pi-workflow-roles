@@ -1,4 +1,3 @@
-import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Public Judge Role run: admit → explicit Internal activate → settle Terminal result.
  * #107: controlled post-admission failures and human decisions settle honestly.
@@ -79,10 +78,7 @@ export type JudgeRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  roleTurnHost?: RoleTurnHost;
-  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
-  piRunner?: LegacyPiRunner;
-  extraPiArgs?: readonly string[];
+  roleTurnHost: RoleTurnHost;
   /** Effective judge seat model (persistent/startup/invocation). */
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material only). */
@@ -96,7 +92,6 @@ export type JudgeRunEnv = {
   createRunId?: () => string;
   /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
   autoResumeLimit?: number;
-  /** Extra Pi args inserted before the prompt (tests: faux provider extension). */
   /** Override default role-run timeout. */
   timeoutMs?: number;
 };
@@ -261,7 +256,7 @@ async function dispatchAdmittedJudge(input: {
 
     let result: RoleTurnResult;
     try {
-      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
+      result = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,

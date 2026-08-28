@@ -1,4 +1,3 @@
-import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Public Reviewer Role run: admit → host turn execute → settle Terminal result (#111).
  * Package-owned adapted code-review method is forced; users never submit
@@ -86,10 +85,7 @@ export type ReviewerRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  roleTurnHost?: RoleTurnHost;
-  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
-  piRunner?: LegacyPiRunner;
-  extraPiArgs?: readonly string[];
+  roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material + env signal). */
   engine?: string;
@@ -256,7 +252,7 @@ async function dispatchAdmittedReviewer(input: {
 
     let result: RoleTurnResult;
     try {
-      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
+      result = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,

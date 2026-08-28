@@ -181,19 +181,6 @@ export type CliEnv = {
    * adapter once per dispatch from packageRoot + seat extraPiArgs/timeout.
    */
   roleTurnHost?: RoleTurnHost;
-  /**
-   * Test-only legacy injection. Composition root converts once to roleTurnHost
-   * via the shared helper — not a second production seam (#526).
-   */
-  piRunner?: (
-    args: readonly string[],
-    options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number },
-  ) => Promise<{
-    code: number | null;
-    stderr: string;
-    timedOut: boolean;
-    knownFailure?: import("../host-contracts.ts").RoleTurnKnownFailure;
-  }>;
   /** Optional caller correlation id (#78 host channel). */
   correlationId?: string;
   /** Extra Pi args for Judge runs (tests: faux provider). */
@@ -241,19 +228,6 @@ function resolveRoleTurnHost(
   },
 ): RoleTurnHost {
   if (env.roleTurnHost !== undefined) return env.roleTurnHost;
-  // Test legacy piRunner → single RoleTurnHost (shared adapter argv + spawn inject).
-  if (env.piRunner !== undefined) {
-    return createPiRoleTurnHost({
-      packageRoot: env.packageRoot,
-      principalAuthority: options.principalAuthority,
-      ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-      spawnRunner: env.piRunner,
-      recordLaunchedPiIdentity,
-      recordLaunchedRolePackageIdentity,
-      observeLaunchedRolePackageIdentity,
-    });
-  }
   return createPiRoleTurnHost({
     packageRoot: env.packageRoot,
     principalAuthority: options.principalAuthority,

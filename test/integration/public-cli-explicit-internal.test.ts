@@ -16,12 +16,14 @@ import {
 } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
+
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-explicit-internal-"));
   try {
+    seedGitRepository(home);
     return await scenario(home);
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -29,7 +31,26 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
 }
 
 async function writeExecutableStub(path: string, source: string): Promise<void> {
-  await writeVersionAwarePiShim(path, source);
+  await writeVersionAwarePiShim(
+    path,
+    source.replace(/^#!\/usr\/bin\/env node/, `#!${process.execPath}`),
+  );
+}
+
+/** Isolation masks AK_ROLE_RUN_DIR; overlay it when identity capture is under test. */
+function spawnEnv(options: {
+  env: NodeJS.ProcessEnv;
+  home: string;
+  agentDir: string;
+  runDirectory?: string;
+}): NodeJS.ProcessEnv {
+  const env = isolatedTestProcessEnv({
+    env: options.env,
+    home: options.home,
+    agentDir: options.agentDir,
+  });
+  if (options.runDirectory !== undefined) env.AK_ROLE_RUN_DIR = options.runDirectory;
+  return env;
 }
 
 async function waitForFile(
@@ -103,7 +124,7 @@ test("default runner preserves unexpected executable filesystem failures", async
     await assert.rejects(
       runner([], {
         cwd: home,
-        env: isolatedTestProcessEnv({ env: { PATH: home, PI_BINARY: loop }, home, agentDir: join(home, ".pi", "agent") }),
+        env: spawnEnv({ env: { PATH: home, PI_BINARY: loop }, home, agentDir: join(home, ".pi", "agent") }),
       }),
       (error: NodeJS.ErrnoException) => error.code === "ELOOP" && !error.message.includes("Pi executable not found"),
     );
@@ -130,14 +151,14 @@ test("default runner resolves PI_BINARY and PATH with the child cwd semantics", 
       const { runner, lastIdentity } = spawnRunnerWithIdentityCapture();
       const result = await runner([], {
         cwd: childCwd,
-        env: isolatedTestProcessEnv({
+        env: spawnEnv({
           env: {
             PATH: scenario.path,
             PI_BINARY: scenario.command,
-            AK_ROLE_RUN_DIR: runDirectory,
           },
           home,
           agentDir: join(home, ".pi", "agent"),
+          runDirectory,
         }),
       });
       assert.equal(result.code, 0, scenario.name);
@@ -149,10 +170,11 @@ test("default runner resolves PI_BINARY and PATH with the child cwd semantics", 
       const { runner, lastIdentity } = spawnRunnerWithIdentityCapture();
       const result = await runner(["-c", "true"], {
         cwd: childCwd,
-        env: isolatedTestProcessEnv({
-          env: { PI_BINARY: "bash", AK_ROLE_RUN_DIR: runDirectory },
+        env: spawnEnv({
+          env: { PI_BINARY: "bash" },
           home,
           agentDir: join(home, ".pi", "agent"),
+          runDirectory,
         }),
       });
       assert.equal(result.code, 0, "missing PATH uses Node's platform default");
@@ -190,7 +212,7 @@ process.on("SIGTERM", () => {
     const { runner } = spawnRunnerWithIdentityCapture();
     const resultPromise = runner(["--help"], {
       cwd: home,
-      env: isolatedTestProcessEnv({ env: { ...process.env, PI_BINARY: stub }, home, agentDir: join(home, ".pi", "agent") }),
+      env: spawnEnv({ env: { ...process.env, PI_BINARY: stub }, home, agentDir: join(home, ".pi", "agent") }),
     });
     await waitForFile(ready, resultPromise);
     await writeFile(release, "release", "utf8");
@@ -393,7 +415,7 @@ process.exit(0);
     const { runner } = spawnRunnerWithIdentityCapture();
     const result = await runner(["x"], {
       cwd: home,
-      env: isolatedTestProcessEnv({
+      env: spawnEnv({
         env: { ...process.env, AK_ROLE_RUN_DIR: parentRun, PI_BINARY: stub },
         home,
         agentDir: join(home, ".pi", "agent"),
@@ -416,7 +438,7 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
       const { runner } = spawnRunnerWithIdentityCapture();
       const result = await runner([], {
         cwd: home,
-        env: isolatedTestProcessEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
+        env: spawnEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
       });
       assert.equal(result.timedOut, false);
       assert.equal(result.code, 0);
@@ -428,7 +450,7 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
       await assert.rejects(
         runner([], {
           cwd: home,
-          env: isolatedTestProcessEnv({
+          env: spawnEnv({
             env: { PI_BINARY: join(home, "missing-binary") },
             home,
             agentDir: join(home, "a"),
@@ -454,7 +476,7 @@ setInterval(() => {}, 1000);
       const { runner } = spawnRunnerWithIdentityCapture();
       const resultPromise = runner([], {
         cwd: home,
-        env: isolatedTestProcessEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
+        env: spawnEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
         timeoutMs: 500,
       });
       await waitForFile(ready, resultPromise);
