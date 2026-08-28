@@ -5,7 +5,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
@@ -43,6 +43,14 @@ export function resolveSitianVolumeCategory(kind: string): string {
   return kind;
 }
 
+function safeBookKey(cwd: string): string {
+  try {
+    return resolveBookKeyFromGit(cwd);
+  } catch {
+    return basename(resolve(cwd)) || "default";
+  }
+}
+
 /** Compute the destination directory and record file from ledger topology (ADR 0065). */
 export function resolveSitianRecordPath(input: SitianRecordInput): {
   readonly sessionDir: string;
@@ -51,29 +59,29 @@ export function resolveSitianRecordPath(input: SitianRecordInput): {
 } {
   const cwd = input.cwd ?? process.cwd();
   const ledgerHome = resolveActivationLedgerHome();
-  const bookKey = resolveBookKeyFromGit(cwd);
-  const bookDir = activationBookDirectory(ledgerHome, bookKey);
   const category = resolveSitianVolumeCategory(input.kind);
 
   let sessionDir: string;
 
-  if (input.subject !== undefined) {
-    let subjectStr: string;
-    if (typeof input.subject === "string") {
-      subjectStr = input.subject;
-    } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
-      subjectStr = input.subject.runId;
-    } else {
-      subjectStr = JSON.stringify(input.subject);
-    }
-    const digest = createHash("sha256").update(subjectStr).digest("hex").slice(0, 32);
-    sessionDir = join(bookDir, category, digest);
-  } else if (input.sessionParent !== undefined && input.sessionParent.length > 0) {
-    sessionDir = physicallyContainedIn(ledgerHome, input.sessionParent)
-      ? join(dirname(input.sessionParent), category)
-      : join(bookDir, category);
+  if (input.sessionParent !== undefined && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
+    sessionDir = join(dirname(input.sessionParent), category);
   } else {
-    sessionDir = join(bookDir, category);
+    const bookKey = safeBookKey(cwd);
+    const bookDir = activationBookDirectory(ledgerHome, bookKey);
+    if (input.subject !== undefined) {
+      let subjectStr: string;
+      if (typeof input.subject === "string") {
+        subjectStr = input.subject;
+      } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
+        subjectStr = input.subject.runId;
+      } else {
+        subjectStr = JSON.stringify(input.subject);
+      }
+      const digest = createHash("sha256").update(subjectStr).digest("hex").slice(0, 32);
+      sessionDir = join(bookDir, category, digest);
+    } else {
+      sessionDir = join(bookDir, category);
+    }
   }
 
   const recordFile = join(sessionDir, "records.jsonl");

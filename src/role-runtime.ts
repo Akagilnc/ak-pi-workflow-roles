@@ -8,6 +8,7 @@ import {
 import { recordReviewerDispatchRejectionSync } from "./public-cli/reviewer-dispatch-rejection.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "./pi/adapter.ts";
 import { Value } from "typebox/value";
+import { sitianReport } from "./sitian-facade.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import {
@@ -817,7 +818,7 @@ export function createRoleRuntimeExtension(
     // already decided no queued continuation will run, so a triggerTurn there is
     // too late for print/json sessions. `agent_end` is the last production seam
     // whose queued next turn is consumed before settlement.
-    roleHost.on("agent_end", (event) => {
+    roleHost.on("agent_end", (event, ctx) => {
       const lastMessage = event.messages.at(-1);
       if (lastMessage?.role === "assistant"
         && (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")) {
@@ -831,6 +832,16 @@ export function createRoleRuntimeExtension(
         // Keep the package-owned continuation off the public input lifecycle:
         // one-shot roles must not mistake this delivery request for later caller input.
         pi.appendEntry("ak-receipt-delivery-request");
+        try {
+          sitianReport({
+            level: "event",
+            kind: "receipt-delivery",
+            cwd: ctx.cwd,
+            sessionParent: ctx.sessionManager.getSessionFile(),
+            payload: { type: "ak-receipt-delivery-request" },
+            source: "role-runtime",
+          });
+        } catch {}
         pi.sendMessage({
           customType: "ak-receipt-delivery-prompt",
           content: RECEIPT_DELIVERY_PROMPT,
@@ -840,10 +851,18 @@ export function createRoleRuntimeExtension(
         const runPointer = process.env.AK_ROLE_RUN_DIR;
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
-          pi.appendEntry(
-            NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-            receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` }),
-          );
+          const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
+          pi.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "no-receipt-lifecycle",
+              cwd: ctx.cwd,
+              sessionParent: ctx.sessionManager.getSessionFile(),
+              payload: facts,
+              source: "role-runtime",
+            });
+          } catch {}
         }
       }
     });
@@ -1193,12 +1212,23 @@ export function createRoleRuntimeExtension(
           });
           const invocationId = lifecyclePrincipal.invocationId;
           if (!lifecyclePrincipal.resume) {
-            pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, {
+            const data = {
               invocationId,
               role: entry.role,
               phase: invocationPhase,
               subjectKey: work.subjectKey,
-            });
+            };
+            pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
+            try {
+              sitianReport({
+                level: "event",
+                kind: "attendance",
+                cwd: ctx.cwd,
+                sessionParent: ctx.sessionManager.getSessionFile(),
+                payload: { type: NAVIGATOR_INVOCATION_ENTRY, ...data },
+                source: "role-runtime",
+              });
+            } catch {}
           }
           navigatorAttendance = await dependencies.createNavigatorAttendance({
             context: ctx,

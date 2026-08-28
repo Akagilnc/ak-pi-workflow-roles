@@ -11,6 +11,7 @@ import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
+import { sitianReport } from "../sitian-facade.ts";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
@@ -1847,22 +1848,35 @@ export async function appendRunAttemptHistory(
     }
   }
   const timestamp = new Date().toISOString();
-  // Shape mirrors pi SessionManager.appendCustomEntry.
+  const attemptData = {
+    sequence: priorEntries + 1,
+    role: source.role,
+    runId: source.runId,
+    recordedAt: timestamp,
+    outcome,
+  };
   const line = `${JSON.stringify({
     type: "custom",
     customType: ATTEMPT_HISTORY_ENTRY_TYPE,
-    data: {
-      sequence: priorEntries + 1,
-      role: source.role,
-      runId: source.runId,
-      recordedAt: timestamp,
-      outcome,
-    },
+    data: attemptData,
     id: randomUUID(),
     parentId,
     timestamp,
   })}\n`;
   await appendFile(source.sessionFile, line, "utf8");
+  try {
+    sitianReport({
+      level: "event",
+      kind: "attempt-history",
+      subject: { runId: source.runId },
+      sessionParent: source.sessionFile,
+      payload: {
+        type: ATTEMPT_HISTORY_ENTRY_TYPE,
+        ...attemptData,
+      },
+      source: "settlement",
+    });
+  } catch {}
 }
 
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
