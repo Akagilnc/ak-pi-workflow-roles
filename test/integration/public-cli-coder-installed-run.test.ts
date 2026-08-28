@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
 import {
   installPackedArtifactIntoPiNpm,
   packageRoot,
@@ -150,7 +151,12 @@ test(
         await mkdir(piAgentDir, { recursive: true });
         await writeFile(
           resolve(piAgentDir, "navigator-model.json"),
-          JSON.stringify({ model: "ak-coder-offline/faux-1" }) + "\n",
+          JSON.stringify({ model: "openai-codex/faux-1" }) + "\n",
+          "utf8",
+        );
+        await writeFile(
+          resolve(piAgentDir, "auth.json"),
+          JSON.stringify({ "openai-codex": { type: "oauth", access: "test" } }) + "\n",
           "utf8",
         );
         const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
@@ -207,7 +213,7 @@ test(
           [
             "coder",
             "--model",
-            "ak-coder-offline/faux-1",
+            "openai-codex/faux-1",
             "--thinking",
             "off",
             "--project",
@@ -253,6 +259,13 @@ test(
         assert.equal(firstState.resumable?.httpStatus, 429, "resumable state must record HTTP 429");
         const runId = firstState.runId;
         const frozenSessionFile = firstState.sessionFile;
+
+        // Mutate source material between processes to prove frozen snapshot is not reread (#526 §3.A.3)
+        await writeFile(
+          installedRoutebook,
+          "MUTATED_BETWEEN_PROCESSES_DO_NOT_REREAD\n",
+          "utf8",
+        );
 
         // Process 2: ak-role resume <same runId> completes lawfully
         const secondResult = await runAkRoleBin(
@@ -346,9 +359,41 @@ test(
               role?: string;
               toolName?: string;
               isError?: boolean;
+              content?: Array<{ type?: string; text?: string }> | string;
               details?: { status?: string };
             };
           });
+
+        // Continuation proof: second process records typed continuation (default envelope) (#526 §3.A.3)
+        const userMessages = sessionLines
+          .filter((entry) => entry.type === "message" && entry.message?.role === "user")
+          .map((entry) => {
+            const content = entry.message?.content;
+            if (typeof content === "string") return content;
+            if (Array.isArray(content)) {
+              return content
+                .filter((part): part is { type: "text"; text: string } => part.type === "text")
+                .map((part) => part.text)
+                .join("\n");
+            }
+            return "";
+          });
+        assert.equal(
+          userMessages.length,
+          2,
+          "resumed run must record exactly two user turns (initial instruction + resume continuation)",
+        );
+        assert.equal(
+          userMessages[0]?.endsWith(instruction),
+          true,
+          "first user turn must carry initial instruction",
+        );
+        assert.equal(
+          userMessages[1]?.endsWith(RESUME_TRANSPORT_ENVELOPE),
+          true,
+          "second user turn must carry default continuation transport envelope",
+        );
+
         const coderReceipt = [...sessionLines].reverse().find(
           (entry) =>
             entry.type === "message" &&
