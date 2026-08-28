@@ -14747,7 +14747,17 @@ var init_notary_contracts = __esm({
 });
 
 // src/packaged-role-registry.ts
-var PACKAGED_ROLE_REGISTRY;
+function metadataProjection(record4) {
+  return {
+    role: record4.role,
+    phases: record4.phases,
+    outputTool: record4.outputTool,
+    inputFlag: record4.inputFlag,
+    phaseFlag: record4.phaseFlag,
+    activationStage: record4.activationStage
+  };
+}
+var NOTARY_SESSION_MATERIALS, PUBLIC_ROLE_RECORDS, PACKAGED_ROLE_REGISTRY;
 var init_packaged_role_registry = __esm({
   "src/packaged-role-registry.ts"() {
     "use strict";
@@ -14758,17 +14768,108 @@ var init_packaged_role_registry = __esm({
     init_doctor_contracts();
     init_merger_contracts();
     init_notary_contracts();
-    PACKAGED_ROLE_REGISTRY = [
-      { role: "judge", phases: [null], outputTool: JUDGE_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-      { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
-      { role: "coder", phases: ["plan", "apply"], outputTool: CODER_OUTPUT_TOOL_NAME, inputFlag: "ak-coder-task", phaseFlag: "ak-coder-phase", activationStage: "load-and-install" },
-      { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-      // ak-collector-repo is GitHub owner/repo identity, not a local material path (#438).
-      { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-      { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
-      { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" },
-      { role: "notary", phases: [null], outputTool: NOTARY_OUTPUT_TOOL_NAME, inputFlag: "ak-notary-source-run", phaseFlag: void 0, activationStage: "load-and-install" }
+    NOTARY_SESSION_MATERIALS = [
+      "CLAUDE.md",
+      "souls/notary.md",
+      "souls/gate-output-guide.md"
     ];
+    PUBLIC_ROLE_RECORDS = [
+      {
+        role: "judge",
+        phases: [null],
+        outputTool: JUDGE_OUTPUT_TOOL_NAME,
+        inputFlag: void 0,
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: [
+          "CLAUDE.md",
+          "souls/judge.md",
+          "souls/audit-law.md",
+          "souls/quality-law.md",
+          "souls/judge-output-guide.md"
+        ]
+      },
+      {
+        role: "fixer",
+        phases: ["plan", "apply"],
+        outputTool: FIXER_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-fix-packet",
+        phaseFlag: "ak-fixer-phase",
+        activationStage: "load-and-install",
+        sessionMaterials: [
+          "CLAUDE.md",
+          "souls/fixer.md",
+          "souls/quality-law.md",
+          "souls/fixer-output-guide.md"
+        ]
+      },
+      {
+        role: "coder",
+        phases: ["plan", "apply"],
+        outputTool: CODER_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-coder-task",
+        phaseFlag: "ak-coder-phase",
+        activationStage: "load-and-install",
+        sessionMaterials: [
+          "CLAUDE.md",
+          "souls/coder.md",
+          "souls/quality-law.md",
+          "souls/coder-output-guide.md"
+        ]
+      },
+      {
+        role: "reviewer",
+        phases: [null],
+        outputTool: REVIEWER_OUTPUT_TOOL_NAME,
+        inputFlag: void 0,
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: [
+          "CLAUDE.md",
+          "souls/reviewer.md",
+          "souls/audit-law.md",
+          "souls/quality-law.md"
+        ]
+      },
+      // ak-collector-repo is GitHub owner/repo identity, not a local material path (#438).
+      {
+        role: "collector",
+        phases: [null],
+        outputTool: COLLECTOR_OUTPUT_TOOL,
+        inputFlag: void 0,
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: ["CLAUDE.md", "souls/collector.md"]
+      },
+      {
+        role: "doctor",
+        phases: [null],
+        outputTool: DOCTOR_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-doctor-case",
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: ["CLAUDE.md", "souls/doctor.md"]
+      },
+      {
+        role: "merger",
+        phases: [null],
+        outputTool: MERGER_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-merger-input",
+        phaseFlag: void 0,
+        activationStage: "prepare-git-and-install",
+        sessionMaterials: ["CLAUDE.md", "souls/merger.md"]
+      },
+      {
+        role: "notary",
+        phases: [null],
+        outputTool: NOTARY_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-notary-source-run",
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: NOTARY_SESSION_MATERIALS
+      }
+    ];
+    PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(metadataProjection);
   }
 });
 
@@ -20337,11 +20438,20 @@ var init_analyst_gate_cycles_read = __esm({
 });
 
 // src/session-opening-materials.ts
-var packageRootUrl;
+var packageRootUrl, NAVIGATOR_SESSION_MATERIALS, PUBLIC_MAIN_ROLE_SESSION_MATERIALS, MAIN_ROLE_SESSION_MATERIALS;
 var init_session_opening_materials = __esm({
   "src/session-opening-materials.ts"() {
     "use strict";
+    init_packaged_role_registry();
     packageRootUrl = new URL("..", import.meta.url);
+    NAVIGATOR_SESSION_MATERIALS = ["CLAUDE.md", "souls/navigator.md"];
+    PUBLIC_MAIN_ROLE_SESSION_MATERIALS = Object.fromEntries(
+      PUBLIC_ROLE_RECORDS.map((record4) => [record4.role, record4.sessionMaterials])
+    );
+    MAIN_ROLE_SESSION_MATERIALS = {
+      ...PUBLIC_MAIN_ROLE_SESSION_MATERIALS,
+      navigator: NAVIGATOR_SESSION_MATERIALS
+    };
   }
 });
 
