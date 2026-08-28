@@ -7,7 +7,11 @@ import type {
   DurablePrincipalCoordinates,
   NewDurablePrincipalRequest,
 } from "../host-contracts.ts";
-import { roleRunSessionCoordinates } from "../archivist-role-run-coordinates.ts";
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../activation-ledger-topology.ts";
 
 type PiDurablePrincipal = DurablePrincipal & {
   readonly sessionDirectory: string;
@@ -18,10 +22,36 @@ function encode(coordinates: DurablePrincipalCoordinates): PiDurablePrincipal {
   return coordinates as PiDurablePrincipal;
 }
 
+export function issuePiDurablePrincipalCoordinates(
+  request: NewDurablePrincipalRequest,
+): DurablePrincipalCoordinates & {
+  readonly ledgerHome: string;
+  readonly bookKey: string;
+  readonly runDirectory: string;
+} {
+  const ledgerHome = resolveActivationLedgerHome(
+    request.home === undefined ? undefined : () => request.home!,
+  );
+  const bookKey = resolveBookKeyFromGit(request.cwd);
+  const runDirectory = join(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${request.runId}@${request.role}`,
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  return {
+    ledgerHome,
+    bookKey,
+    runDirectory,
+    sessionDirectory,
+    sessionFile: join(sessionDirectory, "session.jsonl"),
+  };
+}
+
 /** Pi's durable-principal codec and availability authority. */
 export const piDurablePrincipalAuthority: DurablePrincipalAuthority = {
   issue(request: NewDurablePrincipalRequest): DurablePrincipal {
-    const coordinates = roleRunSessionCoordinates(request);
+    const coordinates = issuePiDurablePrincipalCoordinates(request);
     return encode({
       sessionDirectory: coordinates.sessionDirectory,
       sessionFile: coordinates.sessionFile,
