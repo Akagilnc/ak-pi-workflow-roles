@@ -215,7 +215,9 @@ function toolCallContext(
   const sessionManager = SessionManager.inMemory();
   if (activeRunDirs.length > 0) {
     const runDir = activeRunDirs[activeRunDirs.length - 1];
-    (sessionManager as any).getSessionFile = () => join(runDir, "session", "session.jsonl");
+    if (runDir !== undefined) {
+      (sessionManager as any).getSessionFile = () => join(runDir, "session", "session.jsonl");
+    }
   }
   const message: AssistantMessage = {
     role: "assistant",
