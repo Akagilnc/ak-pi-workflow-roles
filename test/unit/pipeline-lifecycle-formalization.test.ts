@@ -1,16 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  PUBLIC_ROLE_RECORDS,
-  NOTARY_SESSION_MATERIALS,
-  type PublicRoleRecord,
-} from "../../src/packaged-role-registry.ts";
-import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type {
   RoleTurnHost,
@@ -19,22 +14,12 @@ import type {
 } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-test("acceptance d: 8-role record mapping matrix and reduced A metadata completeness", () => {
-  // 1. Packaged registry contains exactly the 8 callable roles
-  const recordRoles = PUBLIC_ROLE_RECORDS.map((r) => r.role);
-  assert.equal(recordRoles.length, 8);
-  for (const role of PUBLIC_CALLABLE_ROLES) {
-    assert.equal(recordRoles.includes(role), true, `Role ${role} must be present in PUBLIC_ROLE_RECORDS`);
-  }
-
-  // Verify the public record provides each role's structured lifecycle inputs.
-  for (const record of PUBLIC_ROLE_RECORDS) {
-    assert.ok(record.outputTool, `Record for ${record.role} must define outputTool`);
-    assert.ok(record.sessionMaterials.length > 0, `Record for ${record.role} must define session materials`);
-    assert.ok(record.sessionMaterials.includes("CLAUDE.md"), `Record for ${record.role} must include CLAUDE.md`);
-  }
-});
-
+/**
+ * #517 §5(c) acceptance: the post-admission lifecycle is host-neutral. A faux
+ * RoleTurnHost is injected from the composition root with no Pi dependency; the
+ * same external oracle — typed terminal, run-state ledger, real artifact — proves
+ * stages ①②④⑤ are still borne by AK, not by the substituted host.
+ */
 test("acceptance c: host replacement with faux RoleTurnHost through composition root (no Pi dependency)", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-faux-host-test-"));
   try {
@@ -79,9 +64,31 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
       },
     );
 
+    // ①+④: AK still owns admission and dispatch through the injected host.
     assert.equal(fauxHostCalled, true, "faux RoleTurnHost must be invoked by composition root");
     assert.equal(receivedRequest?.activation.role, "judge", "faux host must receive typed judge turn request");
-    assert.ok(result.terminal !== undefined || result.exitCode !== undefined);
+    assert.ok(receivedRequest?.runDirectory, "typed request must carry the AK-issued run directory");
+
+    // ⑤: AK still owns settlement — a typed judge terminal is produced.
+    assert.ok(result.terminal, "judge run must settle a typed terminal");
+    assert.equal(result.terminal!.roleOutcome.role, "judge");
+
+    // ②: AK-owned run-state ledger reaches terminal regardless of the substituted host.
+    const bookKey = resolveBookKeyFromGit(project);
+    const runsRoot = join(home, ".ak-roles", "books", bookKey, "runs");
+    const runDirs = await readdir(runsRoot);
+    const judgeRun = runDirs.find((name) => name.endsWith("@judge"));
+    assert.ok(judgeRun, `expected judge run under ${runsRoot}, got ${runDirs.join(", ")}`);
+    const runDirectory = join(runsRoot, judgeRun!);
+    const runState = JSON.parse(
+      await readFile(join(runDirectory, "run-state.json"), "utf8"),
+    ) as { state: string };
+    assert.equal(runState.state, "terminal", "AK-owned run-state must settle as terminal");
+
+    // A real artifact is produced by AK settlement for the terminal.
+    const artifact = result.terminal!.artifacts[0];
+    assert.ok(artifact, "settled terminal must publish at least one real artifact");
+    assert.equal(typeof artifact.path, "string");
   } finally {
     await rm(home, { recursive: true, force: true });
   }

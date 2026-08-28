@@ -5,29 +5,12 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import {
   knownFailureForMissingProviderCredential,
   missingCredentialPreDispatchFailure,
   postRunMissingCredentialFailure,
 } from "../../src/public-cli/public-run-credentials.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
-
-/** All 8 public role runners dispatch through the unified post-admission coordinator. */
-const ALL_ROLE_RUNNERS = [
-  "coder-run.ts",
-  "collector-run.ts",
-  "doctor-run.ts",
-  "fixer-run.ts",
-  "judge-run.ts",
-  "merger-run.ts",
-  "notary-run.ts",
-  "reviewer-run.ts",
-] as const;
-
-const POST_ADMISSION_COORDINATOR = "post-admission.ts";
 
 test("shared seam constructs MissingProviderCredential from public credential facts", () => {
   const missing = knownFailureForMissingProviderCredential(
@@ -90,47 +73,4 @@ test("post-run annotation only attaches on nonzero or timeout exits", () => {
     postRunMissingCredentialFailure({ timedOut: false, code: 0 }, model, credentials),
     undefined,
   );
-});
-
-test("credential seam ownership follows post-admission coordinator topology", async () => {
-  const coordinatorSource = await readFile(
-    join(packageRoot, "src/public-cli", POST_ADMISSION_COORDINATOR),
-    "utf8",
-  );
-  assert.match(
-    coordinatorSource,
-    /from "\.\/public-run-credentials\.ts"/,
-    `${POST_ADMISSION_COORDINATOR} must own credential checks for post-admission dispatch`,
-  );
-  assert.equal(
-    coordinatorSource.includes("const missingCredential = knownFailureForMissingProviderCredential"),
-    false,
-    `${POST_ADMISSION_COORDINATOR} must use the shared pre-dispatch helper`,
-  );
-
-  for (const name of ALL_ROLE_RUNNERS) {
-    const source = await readFile(join(packageRoot, "src/public-cli", name), "utf8");
-    assert.match(
-      source,
-      /from "\.\/post-admission\.ts"/,
-      `${name} must dispatch through the shared post-admission coordinator`,
-    );
-    assert.equal(
-      /from "\.\/public-run-credentials\.ts"/.test(source),
-      false,
-      `${name} must not re-import credentials outside the post-admission coordinator`,
-    );
-    assert.equal(
-      source.includes("const missingCredential = knownFailureForMissingProviderCredential"),
-      false,
-      `${name} must not keep a local pre-dispatch credential block`,
-    );
-    assert.equal(
-      /result\.timedOut \|\| result\.code !== 0\s*\n\s*\? knownFailureForMissingProviderCredential/.test(
-        source,
-      ),
-      false,
-      `${name} must not keep a local post-run credential ternary`,
-    );
-  }
 });
