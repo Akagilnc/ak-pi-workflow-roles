@@ -349,7 +349,7 @@ test(
               details?: { status?: string };
             };
           });
-        const coderReceipt = sessionLines.findLast(
+        const coderReceipt = [...sessionLines].reverse().find(
           (entry) =>
             entry.type === "message" &&
             entry.message?.role === "toolResult" &&
