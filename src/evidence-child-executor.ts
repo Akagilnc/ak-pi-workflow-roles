@@ -37,6 +37,10 @@ import {
   type GateOfficerSeat,
 } from "./public-cli/config.ts";
 import { readInstitutionalSeatSelection } from "./institutional-resolution.ts";
+import type {
+  OpenPiInstitutionalSessionOptions,
+  OpenPiInstitutionalSessionResult,
+} from "./pi/in-process-session.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import {
@@ -312,6 +316,14 @@ function addUsage(total: Usage, next: Usage): void {
 
 // ── evidence child (reviewer legs) ────────────────────────────────────────
 
+/** Injectable institutional session opener used by evidence-child consumers.
+ * Defaults to the real pi adapter; exposed so a behavior-level regression can
+ * drive the cleanup contract at this consumer seam without reaching into the
+ * private runChildCleanup helper (#518 S3). */
+export type InstitutionalSessionOpener = (
+  options: OpenPiInstitutionalSessionOptions,
+) => Promise<OpenPiInstitutionalSessionResult>;
+
 export type EvidenceChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   /** Parent directory for credential/config scratch. Defaults to os.tmpdir(). */
@@ -324,6 +336,8 @@ export type EvidenceChildExecuteOptions = Readonly<{
    * Required only when AK_ROLE_ENGINE is set and packaged notes should attach.
    */
   packageRoot?: string;
+  /** Injectable session opener for behavior-level regression (#518 S3). */
+  open?: InstitutionalSessionOpener;
 }>;
 
 export async function executeEvidenceChild(
@@ -346,7 +360,8 @@ export async function executeEvidenceChild(
         : { parentDirectory: options.credentialScratchParent }),
     },
     async (childConfigDir) => {
-      const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+      const openInstitutional: InstitutionalSessionOpener =
+        options.open ?? (await import("./pi/in-process-session.ts")).openPiInstitutionalSession;
       const { createRecordSession } = await import("./archivist-record-entry.ts");
       // #378: when labor engine is configured, legs get the same detour tool + material
       // dual-path as the parent seat (ADR 0069 detour-rejoins-main-road).
@@ -376,9 +391,9 @@ export async function executeEvidenceChild(
             });
       // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
       // Single open seam owner: pi/in-process-session.ts.
-      let opened: Awaited<ReturnType<typeof openPiInstitutionalSession>>;
+      let opened: Awaited<ReturnType<InstitutionalSessionOpener>>;
       try {
-        opened = await openPiInstitutionalSession({
+        opened = await openInstitutional({
           cwd: workspace,
           agentDir: childConfigDir,
           selection,
