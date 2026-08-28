@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+
 import {
   NOTARY_OUTPUT_TOOL_NAME,
   projectLawfulNotaryOutput,
@@ -72,4 +74,58 @@ test("Notary runtime registers output tool and binds source-run locator without 
   assert.equal(prompted.systemPrompt.includes(JSON.stringify({ sourceRun: locator })), true);
   assert.equal(prompted.systemPrompt.includes("judge_draft"), false);
   assert.equal(prompted.systemPrompt.includes('"material"'), false);
+});
+
+test("Notary output routes an infrastructure-failure declaration to the host before any projection", async () => {
+  const flags = new Map<string, string>();
+  const tools = new Map<string, { name: string; execute: Function; parameters?: unknown }>();
+  let hostCalls = 0;
+  const locator = {
+    runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+    runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
+    role: "judge",
+  };
+  const pi = {
+    registerFlag(name: string) { flags.set(name, ""); },
+    getFlag(name: string) { return flags.get(name); },
+    registerTool(tool: { name: string; execute: Function; parameters?: unknown }) { tools.set(tool.name, tool); },
+    on() {},
+    getAllTools() { return [{ name: NOTARY_OUTPUT_TOOL_NAME }, { name: "bash" }]; },
+  };
+  const runtime = createNotaryRoleRuntime(
+    pi as never,
+    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => locator },
+    {
+      failInfrastructure(error: unknown, _ctx: unknown, id?: string) {
+        hostCalls += 1;
+        assert.equal(id, "infra");
+        throw error instanceof Error ? error : new Error(String(error));
+      },
+    },
+  );
+  flags.set("ak-notary-source-run", locator.runDirectory);
+  await runtime.activate();
+  const tool = tools.get(NOTARY_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  const sessionManager = SessionManager.inMemory();
+  sessionManager.appendMessage({
+    role: "assistant",
+    content: [{ type: "toolCall", id: "infra", name: NOTARY_OUTPUT_TOOL_NAME, arguments: {} }],
+    api: "openai-responses",
+    provider: "test",
+    model: "test",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: "toolUse",
+    timestamp: 0,
+  });
+  const parameters = { infrastructureFailure: { diagnostic: "notary engine 541" } };
+  await assert.rejects(
+    tool.execute("infra", parameters, undefined, undefined, { sessionManager }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "notary engine 541");
+      return true;
+    },
+  );
+  assert.equal(hostCalls, 1, "the notary infra declaration reaches the host exactly once");
 });
