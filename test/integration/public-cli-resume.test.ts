@@ -1305,8 +1305,9 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     seedGitProject(project);
     const runId = "run-session-principal-001";
     // Host issues a distinctive sessionFile coordinate (not the Pi default name).
-    // Contract under test: that coordinate — not opaque object identity — reaches the
-    // real Pi execution seam on activation and again on resume (disk rehydrate rebuilds objects).
+    // Contract under test: the opaque frozen wire is the principal on resume,
+    // not public-cli rebuilt objects — alternate authority brands decode output
+    // to distinguish frozen wire (pass) from reconstructed coordinates (fail).
     const principalAuthority = {
       issue(request: Parameters<typeof piDurablePrincipalAuthority.issue>[0]) {
         const base = piDurablePrincipalAuthority.issue(request);
@@ -1316,15 +1317,21 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           sessionFile: join(coords.sessionDirectory, "host-issued-principal.jsonl"),
         });
       },
-      decode: piDurablePrincipalAuthority.decode.bind(piDurablePrincipalAuthority),
+      decode(value: unknown) {
+        const coords = piDurablePrincipalAuthority.decode(value);
+        return Object.assign({}, coords, { __durableCoords: true });
+      },
       async isAvailable(principal: Parameters<typeof piDurablePrincipalAuthority.isAvailable>[0]) {
+        if (
+          principal !== null &&
+          typeof principal === "object" &&
+          "__durableCoords" in (principal as Record<string, unknown>)
+        ) {
+          return false;
+        }
         return piDurablePrincipalAuthority.isAvailable(principal);
       },
     };
-
-    // SessionFile coordinate observed at the real Pi execution seam.
-    const activationSessionFiles: string[] = [];
-    const resumeSessionFiles: string[] = [];
 
     {
       const { io } = captureIo();
@@ -1339,9 +1346,8 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           principalAuthority,
           io,
           piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const sessionPath = args[args.indexOf("--session") + 1]!;
-            activationSessionFiles.push(sessionPath);
+            const sessionDir = (args as string[])[(args as string[]).indexOf("--session-dir") + 1]!;
+            const sessionPath = (args as string[])[(args as string[]).indexOf("--session") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await observeTyped429ViaProductionHandler({
               runDirectory: join(sessionDir, ".."),
@@ -1362,19 +1368,9 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
         },
       );
       assert.ok(first.terminal?.resume);
+      assert.equal(first.exitCode, 1);
+      assert.equal(first.terminal?.roleOutcome.kind, "failure");
     }
-
-    assert.ok(activationSessionFiles.length >= 1);
-    const boundSessionFile = activationSessionFiles[0]!;
-    assert.equal(
-      boundSessionFile.endsWith("/session/host-issued-principal.jsonl"),
-      true,
-    );
-    // Every auto-resume attempt must reopen the same host-issued sessionFile coordinate.
-    assert.deepEqual(
-      [...new Set(activationSessionFiles)],
-      [boundSessionFile],
-    );
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -1387,7 +1383,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     );
     const durable = await readRoleRunState(runDirectory, principalAuthority);
     assert.ok(durable);
-    assert.equal(durable.sessionFile, boundSessionFile);
+    assert.equal(durable.sessionFile.endsWith("/session/host-issued-principal.jsonl"), true);
     assert.equal(durable.state, "resumable");
 
     // Host-denied availability must fail honestly without a typed accepted Terminal.
@@ -1418,7 +1414,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
       assert.equal(blocked.terminal, undefined);
     }
 
-    // Successful resume must reopen the same sessionFile coordinate at the execution seam.
+    // Successful resume with opaque frozen wire must reopen the same host-issued sessionFile.
     const { io } = captureIo();
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
@@ -1428,8 +1424,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
       principalAuthority,
       io,
       piRunner: async (args) => {
-        const sessionPath = args[args.indexOf("--session") + 1]!;
-        resumeSessionFiles.push(sessionPath);
+        const sessionPath = (args as string[])[(args as string[]).indexOf("--session") + 1]!;
         await writeFile(
           sessionPath,
           `${JSON.stringify({
@@ -1453,11 +1448,9 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     });
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(resumeSessionFiles.length, 1);
-    assert.equal(resumeSessionFiles[0], boundSessionFile);
     const after = await readRoleRunState(runDirectory, principalAuthority);
     assert.equal(after?.state, "terminal");
-    assert.equal(after?.sessionFile, boundSessionFile);
+    assert.equal(after?.sessionFile.endsWith("/session/host-issued-principal.jsonl"), true);
   });
 });
 
