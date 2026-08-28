@@ -1,6 +1,6 @@
 /**
  * #357 T2 — scripted session LLM for engine detour acceptance.
- * Mock only at LLM I/O: calls package detour tool once when registered,
+ * Mock only at LLM I/O: calls package detour tool twice in one activation when registered,
  * then existing typed Judge submission. Zero production hooks.
  */
 import {
