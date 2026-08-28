@@ -352,9 +352,6 @@ function issuePiDurablePrincipalCoordinates(request) {
 function decodePiDurablePrincipal(authority, principal) {
   return authority.decode(principal);
 }
-function encodePiDurablePrincipal(coordinates) {
-  return encode(coordinates);
-}
 var piDurablePrincipalAuthority;
 var init_durable_principal = __esm({
   "src/pi/durable-principal.ts"() {
@@ -16060,7 +16057,7 @@ function materializeRoleRunFromDisk(disk, authority) {
   try {
     const coordinates = authority.decode(disk.principalWire);
     return {
-      principal: encodePiDurablePrincipal(coordinates),
+      principal: disk.principalWire,
       run: {
         runId: disk.runId,
         role: disk.role,

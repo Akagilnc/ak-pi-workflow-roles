@@ -2,10 +2,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
-import {
-  decodePiDurablePrincipal,
-  encodePiDurablePrincipal,
-} from "../pi/durable-principal.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
  * States: admitted → running → resumable | terminal.
@@ -297,7 +294,7 @@ async function writeRoleRunStateDisk(
   );
 }
 
-/** One authority.decode of the uninterpreted wire → record + opaque principal. */
+/** One authority.decode of the uninterpreted wire → record + opaque principal (frozen wire itself). */
 function materializeRoleRunFromDisk(
   disk: RoleRunStateDisk,
   authority: DurablePrincipalAuthority,
@@ -305,7 +302,7 @@ function materializeRoleRunFromDisk(
   try {
     const coordinates = authority.decode(disk.principalWire);
     return {
-      principal: encodePiDurablePrincipal(coordinates),
+      principal: disk.principalWire as unknown as DurablePrincipal,
       run: {
         runId: disk.runId,
         role: disk.role,
