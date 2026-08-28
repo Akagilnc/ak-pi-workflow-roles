@@ -41,11 +41,6 @@ export type EngineDetourHostActions = {
   ): never;
 };
 
-export type EngineDetourToolRegistration = {
-  /** True when the tool definition was installed on this ExtensionAPI. */
-  readonly registered: boolean;
-};
-
 /** Caller/upper-layer cancellation must propagate unchanged. */
 function isCallerCancellation(
   error: unknown,
@@ -125,6 +120,7 @@ export function createEngineDetourToolDefinition(input: {
         details: {
           tool: ENGINE_DETOUR_TOOL_NAME,
           code: result.code,
+          stderr: result.stderr,
         },
       };
     },
@@ -138,10 +134,10 @@ export function createEngineDetourToolDefinition(input: {
 export function registerEngineDetourTool(
   pi: ExtensionAPI,
   hostActions: EngineDetourHostActions,
-): EngineDetourToolRegistration {
+): boolean {
   const engineName = engineNameFromEnv();
   if (engineName === undefined) {
-    return { registered: false };
+    return false;
   }
 
   const definition = createEngineDetourToolDefinition({
@@ -152,5 +148,5 @@ export function registerEngineDetourTool(
   });
   pi.registerTool(definition);
 
-  return { registered: true };
+  return true;
 }
