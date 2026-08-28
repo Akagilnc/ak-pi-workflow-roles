@@ -1,10 +1,9 @@
 /**
- * Public Doctor Role run: admit Issue → retained case via #78 → shared one-shot
- * dispatch → settle Terminal result (#113). Lifecycle is the shared
- * Doctor-isomorphic seam; this module keeps only Doctor adapters.
+ * Public Doctor Role run: admit Issue → retained case via #78 → shared post-admission
+ * coordinator → settle Terminal result (#113 / #517). Lifecycle is the shared
+ * post-admission seam; this module keeps only Doctor adapters.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -14,12 +13,9 @@ import {
   type ParseDoctorArgvResult
 } from "./invocation.ts";
 import {
-  type SeatModelConfig,
-} from "./config.ts";
-import {
-  runAdmittedOneShotRole,
-  type OneShotRunEnv,
-} from "./one-shot-dispatch.ts";
+  runPostAdmissionOneShot,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
 import {
   presentStructuralRejection,
   trySettleDoctorTerminalResult,
@@ -29,16 +25,15 @@ import {
   isLawfulTypedTerminalOutcome,
   type TerminalResult,
 } from "./terminal.ts";
-
-export type DoctorRunEnv = OneShotRunEnv & {
-  principalAuthority: DurablePrincipalAuthority;
-  createRunId?: () => string;
-};
-
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
+
+export type DoctorRunEnv = PostAdmissionEnv & {
+  principalAuthority: DurablePrincipalAuthority;
+  createRunId?: () => string;
+};
 
 /** Project admitted invocation onto the host-neutral turn request. */
 export function buildDoctorTurnRequest(
@@ -103,13 +98,13 @@ export async function runPublicDoctor(
     },
   });
 
-  return await runAdmittedOneShotRole({
+  return await runPostAdmissionOneShot({
     admitted,
     env,
     io,
     request: turnRequest,
     adapters: {
-      trySettle: (admitted) => trySettleDoctorTerminalResult(admitted, env.principalAuthority),
+      trySettle: (admitted, authority) => trySettleDoctorTerminalResult(admitted, authority),
       shouldPresentSettled: (terminal) =>
         isLawfulTypedTerminalOutcome(terminal.roleOutcome),
     },
