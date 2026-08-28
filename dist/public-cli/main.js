@@ -15129,16 +15129,6 @@ function formatModelSpec(selection) {
   const base = `${selection.provider}/${selection.model}`;
   return selection.thinking === void 0 ? base : `${base}:${selection.thinking}`;
 }
-function buildSeatModelCliArgs(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
-  ];
-}
 function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
@@ -15383,6 +15373,297 @@ var init_cli_errors = __esm({
   }
 });
 
+// src/engine-detour.ts
+function applyEngineChildEnv(childEnv, engine) {
+  delete childEnv[AK_ROLE_ENGINE_ENV];
+  if (engine !== void 0 && engine.trim() !== "") {
+    childEnv[AK_ROLE_ENGINE_ENV] = engine.trim();
+  } else {
+    childEnv[AK_ROLE_ENGINE_ENV] = void 0;
+  }
+}
+var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
+var init_engine_detour = __esm({
+  "src/engine-detour.ts"() {
+    "use strict";
+    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
+    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
+  }
+});
+
+// src/pi/role-turn-host.ts
+import { execFile, spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, realpath } from "node:fs/promises";
+import { delimiter as delimiter2, isAbsolute as isAbsolute3, join as join6, resolve as resolve3 } from "node:path";
+import { platform } from "node:process";
+import { promisify } from "node:util";
+import { randomUUID } from "node:crypto";
+import { appendFile, readFile as readFile2 } from "node:fs/promises";
+function resolveInternalRoleEntrypoint(packageRoot2) {
+  return join6(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE2);
+}
+function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
+  return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
+}
+function buildSeatModelCliArgs(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
+  ];
+}
+function buildActivationFlagArgs(activation) {
+  switch (activation.role) {
+    case "judge":
+      return ["--ak-role", "judge"];
+    case "coder":
+      return [
+        "--ak-role",
+        "coder",
+        "--ak-coder-phase",
+        activation.phase,
+        "--ak-coder-task",
+        activation.taskPath
+      ];
+    case "fixer":
+      return [
+        "--ak-role",
+        "fixer",
+        "--ak-fixer-phase",
+        activation.phase,
+        "--ak-fix-packet",
+        activation.packetPath,
+        ...activation.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", activation.prerequisitesPath]
+      ];
+    case "reviewer":
+      return [
+        "--ak-role",
+        "reviewer",
+        "--ak-review-base",
+        activation.baseRevision,
+        ...activation.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...activation.authorityRefs])],
+        ...activation.ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(activation.ticketNumber)]
+      ];
+    case "merger":
+      return ["--ak-role", "merger", "--ak-merger-input", activation.inputPath];
+    case "collector":
+      return [
+        "--ak-role",
+        "collector",
+        "--ak-collector-repo",
+        activation.repo,
+        "--ak-collector-pr",
+        activation.pr,
+        ...activation.requestManifestPath === void 0 ? [] : ["--ak-collector-request-manifest", activation.requestManifestPath]
+      ];
+    case "doctor":
+      return ["--ak-role", "doctor", "--ak-doctor-case", activation.casePath];
+    case "notary":
+      return ["--ak-role", "notary", "--ak-notary-source-run", activation.sourceRun];
+    default: {
+      const _exhaustive = activation;
+      return _exhaustive;
+    }
+  }
+}
+function buildMethodArgs(methods) {
+  const skillArgs = [];
+  for (const method of methods) {
+    if (method.kind === "skill") {
+      skillArgs.push("--skill", method.path);
+    }
+  }
+  return skillArgs;
+}
+function buildPiTurnExtraArgs(request, authority, extraPiArgs = []) {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(
+    authority,
+    request.principal
+  );
+  const prompt = request.continuation.kind === "initial" || request.continuation.kind === "resume" ? request.continuation.prompt : (() => {
+    const _exhaustive = request.continuation;
+    return _exhaustive;
+  })();
+  return [
+    "--no-skills",
+    ...buildMethodArgs(request.methods),
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    sessionFile,
+    "--session-dir",
+    sessionDirectory,
+    ...extraPiArgs,
+    ...buildActivationFlagArgs(request.activation),
+    "--mode",
+    "json",
+    ...buildSeatModelCliArgs(request.model),
+    prompt
+  ];
+}
+async function resolveSelectedPi(command, cwd, env) {
+  const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
+  const candidates = isAbsolute3(command) || command.includes("/") ? [resolve3(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve3(cwd, dir, command));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+    } catch (error) {
+      const code = error.code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
+      throw error;
+    }
+    return await realpath(candidate);
+  }
+  throw new Error(`Pi executable not found: ${command}`);
+}
+async function selectedPiIdentity(command, cwd, env) {
+  const executable = await resolveSelectedPi(command, cwd, env);
+  const { stdout } = await execFileAsync(executable, ["--version"], {
+    cwd,
+    env,
+    encoding: "utf8"
+  });
+  const version = stdout.trim();
+  if (version === "") throw new Error(`Pi executable returned an empty version: ${executable}`);
+  return { executable, version };
+}
+function createDefaultPiSpawnRunner(options) {
+  return async (args, spawnOptions) => {
+    const command = spawnOptions.env.PI_BINARY ?? "pi";
+    const piIdentity = await selectedPiIdentity(command, spawnOptions.cwd, spawnOptions.env);
+    return await new Promise((resolveResult, reject) => {
+      const child = spawn(piIdentity.executable, [...args], {
+        cwd: spawnOptions.cwd,
+        env: spawnOptions.env,
+        stdio: ["ignore", "ignore", "pipe"]
+      });
+      let stderr = "";
+      let timedOut = false;
+      let timer;
+      let settled = false;
+      let hasSpawned = false;
+      const armTimeoutAfterChildReady = () => {
+        if (spawnOptions.timeoutMs === void 0) return;
+        timer = setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+        }, spawnOptions.timeoutMs);
+      };
+      let identityRecorded = Promise.resolve();
+      child.once("spawn", () => {
+        hasSpawned = true;
+        armTimeoutAfterChildReady();
+        const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
+        if (typeof runDirectory === "string" && runDirectory !== "" && options.recordLaunchedPiIdentity !== void 0) {
+          identityRecorded = options.recordLaunchedPiIdentity(runDirectory, piIdentity);
+        }
+      });
+      child.stderr.setEncoding("utf8").on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("error", (error) => {
+        if (settled === false && !hasSpawned) {
+          if (timer !== void 0) clearTimeout(timer);
+          settled = true;
+          reject(error);
+        }
+      });
+      child.on("close", (code) => {
+        if (timer !== void 0) clearTimeout(timer);
+        void identityRecorded.then(
+          () => {
+            if (settled) return;
+            settled = true;
+            resolveResult({
+              code,
+              stderr,
+              timedOut
+            });
+          },
+          (error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          }
+        );
+      });
+    });
+  };
+}
+function createPiRoleTurnHost(config) {
+  const spawnRunner = config.spawnRunner ?? createDefaultPiSpawnRunner({
+    ...config.recordLaunchedPiIdentity === void 0 ? {} : { recordLaunchedPiIdentity: config.recordLaunchedPiIdentity }
+  });
+  return {
+    async executeTurn(request) {
+      const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
+      const extraArgs = buildPiTurnExtraArgs(
+        request,
+        config.principalAuthority,
+        config.extraPiArgs ?? []
+      );
+      const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
+      const env = {
+        ...process.env,
+        HOME: request.home,
+        PI_CODING_AGENT_DIR: request.agentDir,
+        AK_ROLE_RUN_DIR: request.runDirectory
+      };
+      applyEngineChildEnv(env, request.engine);
+      if (request.correlationId !== void 0 && request.correlationId.trim() !== "") {
+        env.AK_CORRELATION_ID = request.correlationId;
+      }
+      if (config.recordLaunchedRolePackageIdentity !== void 0 && config.observeLaunchedRolePackageIdentity !== void 0) {
+        await config.recordLaunchedRolePackageIdentity(
+          request.runDirectory,
+          await config.observeLaunchedRolePackageIdentity(config.packageRoot, roleEntry)
+        );
+      }
+      const timeoutMs = request.timeoutMs ?? config.timeoutMs;
+      return await spawnRunner(args, {
+        cwd: request.cwd,
+        env,
+        ...timeoutMs === void 0 ? {} : { timeoutMs }
+      });
+    }
+  };
+}
+async function appendPiSessionCustomEntry(authority, principal, customType, data) {
+  const { sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const text = await readFile2(sessionFile, "utf8");
+  let parentId = null;
+  for (const line2 of text.trim().split("\n").filter(Boolean)) {
+    const entry = JSON.parse(line2);
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+  }
+  const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+  const pointerLine = `${JSON.stringify({
+    type: "custom",
+    customType,
+    data,
+    id: randomUUID(),
+    parentId,
+    timestamp: timestamp2
+  })}
+`;
+  await appendFile(sessionFile, pointerLine, "utf8");
+}
+var INTERNAL_ROLE_ENTRYPOINT_RELATIVE2, execFileAsync;
+var init_role_turn_host = __esm({
+  "src/pi/role-turn-host.ts"() {
+    "use strict";
+    init_engine_detour();
+    init_durable_principal();
+    INTERNAL_ROLE_ENTRYPOINT_RELATIVE2 = "extensions/role-runtime.ts";
+    execFileAsync = promisify(execFile);
+  }
+});
+
 // src/ticket-frontmatter.ts
 function parseTicketNumberFrontmatter(bytes) {
   let text;
@@ -15576,8 +15857,8 @@ var init_terminating_tools = __esm({
 });
 
 // src/doctor-evidence.ts
-import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
-import { dirname as dirname5, relative as relative2, resolve as resolve3, sep as sep2 } from "node:path";
+import { readdir, readFile as readFile3, realpath as realpath2, stat } from "node:fs/promises";
+import { dirname as dirname5, relative as relative2, resolve as resolve4, sep as sep2 } from "node:path";
 function record2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -15585,7 +15866,7 @@ async function discoverCaseFiles(root) {
   const found = [];
   async function walk(dir, depth) {
     for (const item of await readdir(dir, { withFileTypes: true })) {
-      const path = resolve3(dir, item.name);
+      const path = resolve4(dir, item.name);
       if (item.isDirectory()) await walk(path, depth + 1);
       else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
     }
@@ -15610,7 +15891,7 @@ async function stableRunsIdentity(root) {
   let cursor = root;
   while (true) {
     try {
-      const git2 = await stat(resolve3(cursor, ".git"));
+      const git2 = await stat(resolve4(cursor, ".git"));
       if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep2).join("/");
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
@@ -15687,14 +15968,14 @@ function deriveSession(content, id) {
   return { session, turns, calls, tokens, statuses, commits };
 }
 async function loadDoctorCase(runsPath) {
-  const root = await realpath(runsPath);
+  const root = await realpath2(runsPath);
   const match = root.split(sep2).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
   if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/issues/<n>/runs directory");
   const evidence = [], sessions = [], statuses = [], commits = [];
   const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
   for (const path of await discoverCaseFiles(root)) {
     const id = relative2(root, path).split(sep2).join("/");
-    const bytes = await readFile2(path);
+    const bytes = await readFile3(path);
     const content = bytes.toString("utf8");
     const kind = id.endsWith(".jsonl") ? "session" : "stderr";
     evidence.push({ id, kind, byteLength: bytes.byteLength, contentLength: content.length, sha256: sha256Hex(bytes), content });
@@ -15724,7 +16005,7 @@ var init_doctor_evidence = __esm({
 
 // src/collector-config.ts
 import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile3 } from "node:fs/promises";
+import { readFile as readFile4 } from "node:fs/promises";
 function fail3(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
@@ -15767,7 +16048,7 @@ function emptyCollectorManifest() {
 async function loadCollectorManifest(path) {
   let bytes;
   try {
-    bytes = await readFile3(path);
+    bytes = await readFile4(path);
   } catch (error) {
     fail3(`Collector request manifest is unreadable at ${path}`, error);
   }
@@ -15802,10 +16083,10 @@ var init_collector_config = __esm({
 });
 
 // src/merger-git-state.ts
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile as execFile2 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
 async function git(cwd, args) {
-  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
+  const { stdout } = await execFileAsync2("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
   return new Uint8Array(stdout);
 }
 function line(bytes, label) {
@@ -15866,13 +16147,13 @@ function createProductionMergerGitState(repositoryRoot = process.cwd()) {
     }
   };
 }
-var execFileAsync;
+var execFileAsync2;
 var init_merger_git_state = __esm({
   "src/merger-git-state.ts"() {
     "use strict";
     init_exact_utf8();
     init_git_object_id();
-    execFileAsync = promisify(execFile);
+    execFileAsync2 = promisify2(execFile2);
   }
 });
 
@@ -15902,10 +16183,10 @@ var init_uuidv7 = __esm({
 });
 
 // src/typed-provider-http.ts
-import { readFile as readFile4, unlink, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { readFile as readFile5, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join7 } from "node:path";
 function typedProviderHttpPath(runDirectory) {
-  return join6(runDirectory, TYPED_HTTP_FILE);
+  return join7(runDirectory, TYPED_HTTP_FILE);
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
@@ -15920,7 +16201,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readLatestTypedProviderHttpObservation(runDirectory) {
   let text;
   try {
-    text = await readFile4(typedProviderHttpPath(runDirectory), "utf8");
+    text = await readFile5(typedProviderHttpPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -15949,8 +16230,8 @@ var init_typed_provider_http = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { chmod, open, readdir as readdir2, readFile as readFile5, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { chmod, open, readdir as readdir2, readFile as readFile6, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join8 } from "node:path";
 function selectResumeContinuationPrompt(message) {
   return message !== void 0 ? message : RESUME_TRANSPORT_ENVELOPE;
 }
@@ -15974,7 +16255,7 @@ function renderResumeCommand(runId) {
 async function writeRoleRunState(runDirectory, record4) {
   const payload = { ...record4, runDirectory };
   await writeFile3(
-    join7(runDirectory, RUN_STATE_FILE),
+    join8(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -15983,7 +16264,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunStateDisk(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile5(join7(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile6(join8(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -16047,7 +16328,7 @@ async function writeRoleRunStateDisk(runDirectory, disk) {
     ...disk.resumable === void 0 ? {} : { resumable: disk.resumable }
   };
   await writeFile3(
-    join7(runDirectory, RUN_STATE_FILE),
+    join8(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -16170,12 +16451,12 @@ async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
   const reportCleanupFailure = (error) => {
     try {
       onCleanupFailure?.(
-        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join7(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join8(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
       );
     } catch {
     }
   };
-  const lockPath = join7(runDirectory, WRITER_LOCK_FILE);
+  const lockPath = join8(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
     try {
@@ -16219,7 +16500,7 @@ async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
   const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join7(ledgerHome, "books");
+  const booksRoot = join8(ledgerHome, "books");
   let bookKeys;
   try {
     bookKeys = await readdir2(booksRoot);
@@ -16227,7 +16508,7 @@ async function findRunDirectoryById(home, runId) {
     return void 0;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join7(activationBookDirectory(ledgerHome, bookKey), "runs");
+    const runsDir = join8(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
       entries = await readdir2(runsDir);
@@ -16236,7 +16517,7 @@ async function findRunDirectoryById(home, runId) {
     }
     for (const entry of entries) {
       if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join7(runsDir, entry);
+        return join8(runsDir, entry);
       }
     }
   }
@@ -16291,7 +16572,7 @@ async function loadResumableRunRecord(home, runId, authority) {
   let ticketNumber;
   try {
     const raw = JSON.parse(
-      await readFile5(run.admittedRequestPath, "utf8")
+      await readFile6(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record4 = raw;
@@ -16363,7 +16644,7 @@ async function loadResumableRunRecord(home, runId, authority) {
   if (correlationId === void 0 || ticketNumber === void 0) {
     try {
       const invocationRaw = JSON.parse(
-        await readFile5(join7(run.runDirectory, "invocation.json"), "utf8")
+        await readFile6(join8(run.runDirectory, "invocation.json"), "utf8")
       );
       if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
         const fromInvocation = parsePersistedTicketIdentity(
@@ -16633,8 +16914,8 @@ var init_run_lifecycle = __esm({
 });
 
 // src/notary-source-run.ts
-import { dirname as dirname6, isAbsolute as isAbsolute3, join as join8, resolve as resolve4, basename as basename3 } from "node:path";
-import { lstat as lstat2, realpath as realpath2 } from "node:fs/promises";
+import { dirname as dirname6, isAbsolute as isAbsolute4, join as join9, resolve as resolve5, basename as basename3 } from "node:path";
+import { lstat as lstat2, realpath as realpath3 } from "node:fs/promises";
 function parseRunDirectoryName(name) {
   const match = RUN_DIR_NAME.exec(name);
   if (match === null) return void 0;
@@ -16643,7 +16924,7 @@ function parseRunDirectoryName(name) {
 async function requireRunDirectory(candidate, display) {
   let real;
   try {
-    real = await realpath2(candidate);
+    real = await realpath3(candidate);
   } catch (error) {
     throw new NotarySourceRunError(
       `notary --source-run is not a readable run directory: ${display}`,
@@ -16681,13 +16962,13 @@ async function resolveNotarySourceRunLocator(options) {
     options.home === void 0 ? void 0 : () => options.home
   );
   const bookKey = resolveBookKeyFromGit(options.projectRoot);
-  const bookRunsRoot = join8(activationBookDirectory(ledgerHome, bookKey), "runs");
+  const bookRunsRoot = join9(activationBookDirectory(ledgerHome, bookKey), "runs");
   let candidate;
   const bare = parseRunDirectoryName(raw);
   if (bare !== void 0 && !raw.includes("/") && !raw.includes("\\")) {
-    candidate = join8(bookRunsRoot, `${bare.runId}@${bare.role}`);
+    candidate = join9(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
-    candidate = isAbsolute3(raw) ? raw : resolve4(options.projectRoot, raw);
+    candidate = isAbsolute4(raw) ? raw : resolve5(options.projectRoot, raw);
   }
   const real = await requireRunDirectory(candidate, raw);
   const identity = parseRunDirectoryName(basename3(real));
@@ -17613,15 +17894,15 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat as lstat3,
   mkdir as mkdir2,
-  readFile as readFile6,
-  realpath as realpath3,
+  readFile as readFile7,
+  realpath as realpath4,
   writeFile as writeFile4
 } from "node:fs/promises";
-import { basename as basename4, isAbsolute as isAbsolute4, join as join9, resolve as resolve5, sep as sep3 } from "node:path";
+import { basename as basename4, isAbsolute as isAbsolute5, join as join10, resolve as resolve6, sep as sep3 } from "node:path";
 function issueAdmissionPlacement(authority, request) {
   const principal = authority.issue(request);
   const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
-  const runDirectory = join9(sessionDirectory, "..");
+  const runDirectory = join10(sessionDirectory, "..");
   const ledgerHome = resolveActivationLedgerHome(
     request.home === void 0 ? void 0 : () => request.home
   );
@@ -17671,15 +17952,15 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
     ...effectiveModelLedgerFields(effectiveModel)
   };
   await writeFile4(
-    join9(source.runDirectory, "invocation.json"),
+    join10(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
 `,
     "utf8"
   );
 }
 async function recordEffectiveInvocationModel(runDirectory, model, engine) {
-  const ledgerPath = join9(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile6(ledgerPath, "utf8"));
+  const ledgerPath = join10(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile7(ledgerPath, "utf8"));
   const next = { ...current };
   if (model !== void 0) {
     next.provider = model.provider;
@@ -17701,8 +17982,8 @@ async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   );
 }
 async function mergeInvocationIdentityPage(runDirectory, fields) {
-  const ledgerPath = join9(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile6(ledgerPath, "utf8"));
+  const ledgerPath = join10(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile7(ledgerPath, "utf8"));
   await writeFile4(
     ledgerPath,
     `${JSON.stringify({
@@ -17722,7 +18003,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
-    await readFile6(join9(rolePackageRoot, "package.json"), "utf8")
+    await readFile7(join10(rolePackageRoot, "package.json"), "utf8")
   );
   if (typeof raw.version !== "string" || raw.version.trim() === "") {
     throw new Error(
@@ -17905,7 +18186,7 @@ function parseFixerArgv(args) {
   };
 }
 async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
-  const absolute = isAbsolute4(sourcePath) ? sourcePath : resolve5(sourcePath);
+  const absolute = isAbsolute5(sourcePath) ? sourcePath : resolve6(sourcePath);
   let st;
   try {
     st = await lstat3(absolute);
@@ -17920,9 +18201,9 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile6(absolute);
+  const bytes = await readFile7(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename4(absolute)}`;
-  const frozenPath = join9(destinationDir, name);
+  const frozenPath = join10(destinationDir, name);
   await writeFile4(frozenPath, bytes);
   return {
     attachment: {
@@ -17960,7 +18241,7 @@ async function admitJudgeInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -17975,7 +18256,7 @@ async function admitJudgeInvocation(options) {
     role: "judge",
     home: options.home
   });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const attachmentsDirectory = join10(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18003,7 +18284,7 @@ async function admitJudgeInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join10(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18035,7 +18316,7 @@ function buildJudgeTransportPrompt(admitted, engineMaterial) {
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 async function ensureRunArtifactsDir(runDirectory) {
-  const dir = join9(runDirectory, "artifacts");
+  const dir = join10(runDirectory, "artifacts");
   await mkdir2(dir, { recursive: true });
   return dir;
 }
@@ -18052,7 +18333,7 @@ async function admitCoderInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("coder phase must be plan or apply");
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -18067,7 +18348,7 @@ async function admitCoderInvocation(options) {
     role: "coder",
     home: options.home
   });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const attachmentsDirectory = join10(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18075,7 +18356,7 @@ async function admitCoderInvocation(options) {
     attachmentsDirectory
   );
   const ticketFields = ticketAdmissionFields(ticketNumber);
-  const taskPath = join9(runDirectory, "task.md");
+  const taskPath = join10(runDirectory, "task.md");
   await writeFile4(taskPath, instruction, "utf8");
   const admitted = {
     role: "coder",
@@ -18097,7 +18378,7 @@ async function admitCoderInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join10(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18146,9 +18427,9 @@ async function admitFixerInvocation(options) {
   let prerequisites = Object.freeze([]);
   let prerequisitesSource;
   if (options.prerequisitesPath !== void 0) {
-    const absolutePrereq = isAbsolute4(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
+    const absolutePrereq = isAbsolute5(options.prerequisitesPath) ? options.prerequisitesPath : resolve6(options.prerequisitesPath);
     try {
-      prerequisitesSource = await readFile6(absolutePrereq, "utf8");
+      prerequisitesSource = await readFile7(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -18164,7 +18445,7 @@ async function admitFixerInvocation(options) {
       throw error;
     }
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -18179,7 +18460,7 @@ async function admitFixerInvocation(options) {
     role: "fixer",
     home: options.home
   });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const attachmentsDirectory = join10(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18189,7 +18470,7 @@ async function admitFixerInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let prerequisitesPath;
   if (prerequisitesSource !== void 0) {
-    prerequisitesPath = join9(runDirectory, "prerequisites.json");
+    prerequisitesPath = join10(runDirectory, "prerequisites.json");
     await writeFile4(
       prerequisitesPath,
       `${JSON.stringify(prerequisites, null, 2)}
@@ -18197,7 +18478,7 @@ async function admitFixerInvocation(options) {
       "utf8"
     );
   }
-  const packetPath = join9(runDirectory, "fix-packet.md");
+  const packetPath = join10(runDirectory, "fix-packet.md");
   await writeFile4(packetPath, instruction, "utf8");
   const admitted = {
     role: "fixer",
@@ -18224,7 +18505,7 @@ async function admitFixerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join10(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18397,7 +18678,7 @@ async function admitCollectorInvocation(options) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(detail, { cause: error });
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   let repository;
   if (options.repo !== void 0) {
     try {
@@ -18434,7 +18715,7 @@ async function admitCollectorInvocation(options) {
     role: "collector",
     home: options.home
   });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const attachmentsDirectory = join10(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18444,7 +18725,7 @@ async function admitCollectorInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let requestManifestPath;
   if (manifestCanonicalJson !== void 0) {
-    requestManifestPath = join9(runDirectory, "request-manifest.json");
+    requestManifestPath = join10(runDirectory, "request-manifest.json");
     await writeFile4(requestManifestPath, manifestCanonicalJson, "utf8");
   }
   const instruction = options.instruction ?? "";
@@ -18472,7 +18753,7 @@ async function admitCollectorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join10(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18570,7 +18851,7 @@ function parseDoctorArgv(args) {
 }
 async function resolveDoctorCaseRunsPath(options) {
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const defaultRuns = join9(
+  const defaultRuns = join10(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
     String(options.issueNumber),
@@ -18583,12 +18864,12 @@ async function resolveDoctorCaseRunsPath(options) {
   if (raw === "") {
     throw new CliUsageError("doctor --runs requires a path");
   }
-  if (isAbsolute4(raw)) {
+  if (isAbsolute5(raw)) {
     throw new CliUsageError(
       "doctor --runs must be a project-relative path"
     );
   }
-  const resolved = resolve5(options.projectRoot, raw);
+  const resolved = resolve6(options.projectRoot, raw);
   if (resolved !== options.projectRoot && !pathContainedIn(options.projectRoot, resolved)) {
     throw new CliUsageError(
       "doctor --runs escapes the project root"
@@ -18596,7 +18877,7 @@ async function resolveDoctorCaseRunsPath(options) {
   }
   let real;
   try {
-    real = await realpath3(resolved);
+    real = await realpath4(resolved);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(
@@ -18627,7 +18908,7 @@ async function admitDoctorInvocation(options) {
       `doctor --issue must be a positive integer, got ${options.issueNumber}`
     );
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -18668,7 +18949,7 @@ async function admitDoctorInvocation(options) {
       );
     }
     caseIdentity2 = patient.identity;
-    caseRunsPath = await realpath3(caseRunsPath);
+    caseRunsPath = await realpath4(caseRunsPath);
   } catch (error) {
     if (error instanceof CliUsageError) throw error;
     const detail = error instanceof Error ? error.message : String(error);
@@ -18677,7 +18958,7 @@ async function admitDoctorInvocation(options) {
       { cause: error }
     );
   }
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const attachmentsDirectory = join10(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18708,7 +18989,7 @@ async function admitDoctorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join10(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18794,7 +19075,7 @@ async function admitNotaryInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   let sourceRun;
   try {
     sourceRun = await resolveNotarySourceRunLocator({
@@ -18837,7 +19118,7 @@ async function admitNotaryInvocation(options) {
     sourceRun,
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId }
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join10(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18920,7 +19201,7 @@ async function admitReviewerInvocation(options) {
   const authorityRefs = Object.freeze(
     (options.authorityRefs ?? []).map((ref) => requireAuthorityRef(ref))
   );
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -18935,7 +19216,7 @@ async function admitReviewerInvocation(options) {
     role: "reviewer",
     home: options.home
   });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const attachmentsDirectory = join10(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18965,7 +19246,7 @@ async function admitReviewerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join10(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -19074,7 +19355,7 @@ async function admitMergerInvocation(options) {
   if (instruction.trim() === "") {
     throw new CliUsageError("merger requires a nonblank task instruction");
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve6(options.project ?? options.cwd);
   const derived = await deriveMergerEnvelopeFromActiveMerge(
     projectRoot,
     options.gitState ?? createProductionMergerGitState(projectRoot)
@@ -19093,7 +19374,7 @@ async function admitMergerInvocation(options) {
     role: "merger",
     home: options.home
   });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const attachmentsDirectory = join10(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -19125,7 +19406,7 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const mergerInputPath = join9(runDirectory, "merger-input.json");
+  const mergerInputPath = join10(runDirectory, "merger-input.json");
   await writeFile4(
     mergerInputPath,
     `${JSON.stringify(mergerInput, null, 2)}
@@ -19158,7 +19439,7 @@ async function admitMergerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join10(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -19445,334 +19726,6 @@ var init_invocation = __esm({
     DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
     DOCTOR_CASE_RUNS_PATH_PATTERN = /\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/;
     ANALYST_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
-  }
-});
-
-// src/reviewer-git-snapshot.ts
-var init_reviewer_git_snapshot = __esm({
-  "src/reviewer-git-snapshot.ts"() {
-    "use strict";
-  }
-});
-
-// src/reviewer-preflight-error.ts
-var init_reviewer_preflight_error = __esm({
-  "src/reviewer-preflight-error.ts"() {
-    "use strict";
-  }
-});
-
-// src/reviewer-pinned-git.ts
-import { execFile as execFile2 } from "node:child_process";
-import { promisify as promisify2 } from "node:util";
-var execFileAsync2;
-var init_reviewer_pinned_git = __esm({
-  "src/reviewer-pinned-git.ts"() {
-    "use strict";
-    init_reviewer_git_snapshot();
-    init_sha256();
-    init_reviewer_preflight_error();
-    execFileAsync2 = promisify2(execFile2);
-  }
-});
-
-// src/reviewer-prompt-identity.ts
-var init_reviewer_prompt_identity = __esm({
-  "src/reviewer-prompt-identity.ts"() {
-    "use strict";
-  }
-});
-
-// src/reviewer-scope-prompt.ts
-var init_reviewer_scope_prompt = __esm({
-  "src/reviewer-scope-prompt.ts"() {
-    "use strict";
-  }
-});
-
-// src/reviewer-construction.ts
-var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER;
-var init_reviewer_construction = __esm({
-  "src/reviewer-construction.ts"() {
-    "use strict";
-    init_sha256();
-    init_reviewer_scope_prompt();
-    REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
-      recipeId: "reviewer-common-bundle",
-      version: 1,
-      runtimeVersion: "1",
-      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts")
-    });
-    REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
-      adapterId: "reviewer-axis-output",
-      version: 1
-    });
-  }
-});
-
-// src/reviewer-dispatch.ts
-var REVIEWER_PREFLIGHT_VIOLATIONS;
-var init_reviewer_dispatch = __esm({
-  "src/reviewer-dispatch.ts"() {
-    "use strict";
-    init_reviewer_git_snapshot();
-    init_reviewer_pinned_git();
-    init_reviewer_pinned_git();
-    init_reviewer_prompt_identity();
-    init_sha256();
-    init_reviewer_construction();
-    init_reviewer_construction();
-    init_reviewer_preflight_error();
-    init_sha256();
-    init_reviewer_prompt_identity();
-    REVIEWER_PREFLIGHT_VIOLATIONS = ["base-invalid", "range-invalid", "prompt-identity-invalid", "target-drift"];
-  }
-});
-
-// src/upstream-error-testimony.ts
-function isNonSuccessHttpStatus(status) {
-  return typeof status === "number" && (status < 200 || status >= 300);
-}
-function hasUpstreamErrorTestimony(input) {
-  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
-  return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
-}
-function projectConfirmedRemotePayload(input) {
-  return {
-    ...input.body === void 0 ? {} : { body: input.body },
-    ...input.code === void 0 ? {} : { code: input.code },
-    ...input.errno === void 0 ? {} : { errno: input.errno }
-  };
-}
-var init_upstream_error_testimony = __esm({
-  "src/upstream-error-testimony.ts"() {
-    "use strict";
-  }
-});
-
-// src/public-cli/explicit-internal.ts
-import { execFile as execFile3, spawn } from "node:child_process";
-import { constants, writeFileSync } from "node:fs";
-import { access, readFile as readFile7, realpath as realpath4, unlink as unlink3 } from "node:fs/promises";
-import { delimiter as delimiter2, isAbsolute as isAbsolute5, join as join10, resolve as resolve6 } from "node:path";
-import { platform } from "node:process";
-import { promisify as promisify3 } from "node:util";
-function isReviewerPreflightViolation(value) {
-  return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
-}
-function reviewerDispatchRejectionPath(runDirectory) {
-  return join10(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
-}
-async function clearReviewerDispatchRejection(runDirectory) {
-  try {
-    await unlink3(reviewerDispatchRejectionPath(runDirectory));
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
-}
-async function readReviewerDispatchRejection(runDirectory) {
-  let raw;
-  try {
-    raw = await readFile7(reviewerDispatchRejectionPath(runDirectory), "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return void 0;
-    }
-    throw error;
-  }
-  const parsed = JSON.parse(raw);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    const error = new Error("Reviewer dispatch rejection page must be a JSON object");
-    error.name = "ReviewerDispatchRejectionContractError";
-    throw error;
-  }
-  const record4 = parsed;
-  if (typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
-    const error = new Error("Reviewer dispatch rejection page has unusable required fields");
-    error.name = "ReviewerDispatchRejectionContractError";
-    throw error;
-  }
-  return {
-    cause: "activation",
-    diagnostic: record4.diagnostic,
-    identity: { name: "ReviewerDispatchRejectionError" },
-    details: { violations: Object.freeze([...record4.violations]) }
-  };
-}
-function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join10(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
-}
-function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
-  return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
-}
-function nonEmptyString(value) {
-  return typeof value === "string" && value.trim() !== "" ? value : void 0;
-}
-function sessionStopDetails(input) {
-  const details = {};
-  const errorMessage = nonEmptyString(input.errorMessage);
-  if (errorMessage !== void 0) details.errorMessage = errorMessage;
-  const api = nonEmptyString(input.api);
-  if (api !== void 0) details.api = api;
-  const rawStopReason = nonEmptyString(input.rawStopReason);
-  if (rawStopReason !== void 0) details.rawStopReason = rawStopReason;
-  const testimony = hasUpstreamErrorTestimony(input);
-  if (testimony) {
-    const provider = nonEmptyString(input.provider);
-    if (provider !== void 0) details.provider = provider;
-    const model = nonEmptyString(input.model);
-    if (model !== void 0) details.model = model;
-  }
-  if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
-  if (input.diagnostics !== void 0) details.diagnostics = input.diagnostics;
-  if (testimony) Object.assign(details, projectConfirmedRemotePayload(input));
-  return details;
-}
-function knownFailureFromProviderStop(input) {
-  if (input.stopReason !== "error" && input.stopReason !== "aborted") return void 0;
-  const diagnostic = nonEmptyString(input.errorMessage);
-  const details = sessionStopDetails(input);
-  return {
-    cause: hasUpstreamErrorTestimony(input) ? "provider" : "unrecognized",
-    ...diagnostic === void 0 ? {} : { diagnostic },
-    ...Object.keys(details).length === 0 ? {} : { details }
-  };
-}
-async function resolveSelectedPi(command, cwd, env) {
-  const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
-  const candidates = isAbsolute5(command) || command.includes("/") ? [resolve6(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve6(cwd, dir, command));
-  for (const candidate of candidates) {
-    try {
-      await access(candidate, constants.X_OK);
-    } catch (error) {
-      const code = error.code;
-      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
-      throw error;
-    }
-    return await realpath4(candidate);
-  }
-  throw new Error(`Pi executable not found: ${command}`);
-}
-async function selectedPiIdentity(command, cwd, env) {
-  const executable = await resolveSelectedPi(command, cwd, env);
-  const { stdout } = await execFileAsync3(executable, ["--version"], {
-    cwd,
-    env,
-    encoding: "utf8"
-  });
-  const version = stdout.trim();
-  if (version === "") throw new Error(`Pi executable returned an empty version: ${executable}`);
-  return { executable, version };
-}
-async function runExplicitInternalActivation(options) {
-  const roleEntry = await realpath4(
-    resolveInternalRoleEntrypoint(options.packageRoot)
-  );
-  const args = buildExplicitInternalActivationArgs(
-    roleEntry,
-    options.extraArgs ?? []
-  );
-  const runner = options.runner ?? defaultExplicitInternalPiRunner;
-  const env = {
-    ...process.env,
-    ...options.env,
-    HOME: options.home,
-    PI_CODING_AGENT_DIR: options.agentDir
-  };
-  const runDirectory = env.AK_ROLE_RUN_DIR;
-  if (typeof runDirectory === "string" && runDirectory !== "") {
-    await recordLaunchedRolePackageIdentity(
-      runDirectory,
-      await observeLaunchedRolePackageIdentity(options.packageRoot, roleEntry)
-    );
-  }
-  return await runner(args, {
-    cwd: options.cwd,
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
-    env
-  });
-}
-var REVIEWER_DISPATCH_REJECTION_FILE, execFileAsync3, defaultExplicitInternalPiRunner;
-var init_explicit_internal = __esm({
-  "src/public-cli/explicit-internal.ts"() {
-    "use strict";
-    init_invocation();
-    init_registry2();
-    init_reviewer_dispatch();
-    init_upstream_error_testimony();
-    init_upstream_error_testimony();
-    REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
-    execFileAsync3 = promisify3(execFile3);
-    defaultExplicitInternalPiRunner = async (args, options) => {
-      const command = options.env.PI_BINARY ?? "pi";
-      const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
-      return await new Promise((resolveResult, reject) => {
-        const child = spawn(piIdentity.executable, [...args], {
-          cwd: options.cwd,
-          env: options.env,
-          stdio: ["ignore", "ignore", "pipe"]
-        });
-        let stderr = "";
-        let timedOut = false;
-        let timer;
-        const armTimeoutAfterChildReady = () => {
-          if (options.timeoutMs === void 0) return;
-          timer = setTimeout(() => {
-            timedOut = true;
-            child.kill("SIGTERM");
-          }, options.timeoutMs);
-        };
-        let identityRecorded = Promise.resolve();
-        child.once("spawn", () => {
-          armTimeoutAfterChildReady();
-          const runDirectory = options.env.AK_ROLE_RUN_DIR;
-          if (typeof runDirectory === "string" && runDirectory !== "") {
-            identityRecorded = recordLaunchedPiIdentity(runDirectory, piIdentity);
-          }
-        });
-        child.stderr.setEncoding("utf8").on("data", (chunk) => {
-          stderr += chunk;
-        });
-        child.on("error", (error) => {
-          if (timer !== void 0) clearTimeout(timer);
-          reject(error);
-        });
-        child.on("close", (code) => {
-          if (timer !== void 0) clearTimeout(timer);
-          void identityRecorded.then(
-            () => resolveResult({
-              code,
-              stderr,
-              timedOut,
-              args: [...args],
-              piIdentity
-            }),
-            reject
-          );
-        });
-      });
-    };
-  }
-});
-
-// src/engine-detour.ts
-function applyEngineChildEnv(childEnv, engine) {
-  delete childEnv[AK_ROLE_ENGINE_ENV];
-  if (engine !== void 0 && engine.trim() !== "") {
-    childEnv[AK_ROLE_ENGINE_ENV] = engine.trim();
-  } else {
-    childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-  }
-}
-var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
-var init_engine_detour = __esm({
-  "src/engine-detour.ts"() {
-    "use strict";
-    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
-    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
   }
 });
 
@@ -20646,6 +20599,27 @@ var init_stream_idle_guard = __esm({
   }
 });
 
+// src/upstream-error-testimony.ts
+function isNonSuccessHttpStatus(status) {
+  return typeof status === "number" && (status < 200 || status >= 300);
+}
+function hasUpstreamErrorTestimony(input) {
+  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
+  return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
+}
+function projectConfirmedRemotePayload(input) {
+  return {
+    ...input.body === void 0 ? {} : { body: input.body },
+    ...input.code === void 0 ? {} : { code: input.code },
+    ...input.errno === void 0 ? {} : { errno: input.errno }
+  };
+}
+var init_upstream_error_testimony = __esm({
+  "src/upstream-error-testimony.ts"() {
+    "use strict";
+  }
+});
+
 // src/evidence-child-executor.ts
 var init_evidence_child_executor = __esm({
   "src/evidence-child-executor.ts"() {
@@ -20758,6 +20732,186 @@ var init_judge_auditor = __esm({
       JUDGE_AUDIT_TOOL_NAME,
       "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5927\u7406\u5BFA\u5BA1\u5211\uFF09\u3002"
     );
+  }
+});
+
+// src/pi/known-failure.ts
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "" ? value : void 0;
+}
+function sessionStopDetails(input) {
+  const details = {};
+  const errorMessage = nonEmptyString(input.errorMessage);
+  if (errorMessage !== void 0) details.errorMessage = errorMessage;
+  const api = nonEmptyString(input.api);
+  if (api !== void 0) details.api = api;
+  const rawStopReason = nonEmptyString(input.rawStopReason);
+  if (rawStopReason !== void 0) details.rawStopReason = rawStopReason;
+  const testimony = hasUpstreamErrorTestimony(input);
+  if (testimony) {
+    const provider = nonEmptyString(input.provider);
+    if (provider !== void 0) details.provider = provider;
+    const model = nonEmptyString(input.model);
+    if (model !== void 0) details.model = model;
+  }
+  if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
+  if (input.diagnostics !== void 0) details.diagnostics = input.diagnostics;
+  if (testimony) Object.assign(details, projectConfirmedRemotePayload(input));
+  return details;
+}
+function knownFailureFromProviderStop(input) {
+  if (input.stopReason !== "error" && input.stopReason !== "aborted") return void 0;
+  const diagnostic = nonEmptyString(input.errorMessage);
+  const details = sessionStopDetails(input);
+  return {
+    cause: hasUpstreamErrorTestimony(input) ? "provider" : "unrecognized",
+    ...diagnostic === void 0 ? {} : { diagnostic },
+    ...Object.keys(details).length === 0 ? {} : { details }
+  };
+}
+var init_known_failure = __esm({
+  "src/pi/known-failure.ts"() {
+    "use strict";
+    init_upstream_error_testimony();
+    init_upstream_error_testimony();
+  }
+});
+
+// src/reviewer-git-snapshot.ts
+var init_reviewer_git_snapshot = __esm({
+  "src/reviewer-git-snapshot.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-preflight-error.ts
+var init_reviewer_preflight_error = __esm({
+  "src/reviewer-preflight-error.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-pinned-git.ts
+import { execFile as execFile3 } from "node:child_process";
+import { promisify as promisify3 } from "node:util";
+var execFileAsync3;
+var init_reviewer_pinned_git = __esm({
+  "src/reviewer-pinned-git.ts"() {
+    "use strict";
+    init_reviewer_git_snapshot();
+    init_sha256();
+    init_reviewer_preflight_error();
+    execFileAsync3 = promisify3(execFile3);
+  }
+});
+
+// src/reviewer-prompt-identity.ts
+var init_reviewer_prompt_identity = __esm({
+  "src/reviewer-prompt-identity.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-scope-prompt.ts
+var init_reviewer_scope_prompt = __esm({
+  "src/reviewer-scope-prompt.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-construction.ts
+var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER;
+var init_reviewer_construction = __esm({
+  "src/reviewer-construction.ts"() {
+    "use strict";
+    init_sha256();
+    init_reviewer_scope_prompt();
+    REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
+      recipeId: "reviewer-common-bundle",
+      version: 1,
+      runtimeVersion: "1",
+      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts")
+    });
+    REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
+      adapterId: "reviewer-axis-output",
+      version: 1
+    });
+  }
+});
+
+// src/reviewer-dispatch.ts
+var REVIEWER_PREFLIGHT_VIOLATIONS;
+var init_reviewer_dispatch = __esm({
+  "src/reviewer-dispatch.ts"() {
+    "use strict";
+    init_reviewer_git_snapshot();
+    init_reviewer_pinned_git();
+    init_reviewer_pinned_git();
+    init_reviewer_prompt_identity();
+    init_sha256();
+    init_reviewer_construction();
+    init_reviewer_construction();
+    init_reviewer_preflight_error();
+    init_sha256();
+    init_reviewer_prompt_identity();
+    REVIEWER_PREFLIGHT_VIOLATIONS = ["base-invalid", "range-invalid", "prompt-identity-invalid", "target-drift"];
+  }
+});
+
+// src/public-cli/reviewer-dispatch-rejection.ts
+import { readFile as readFile10, unlink as unlink3 } from "node:fs/promises";
+import { join as join13 } from "node:path";
+function isReviewerPreflightViolation(value) {
+  return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
+}
+function reviewerDispatchRejectionPath(runDirectory) {
+  return join13(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+}
+async function clearReviewerDispatchRejection(runDirectory) {
+  try {
+    await unlink3(reviewerDispatchRejectionPath(runDirectory));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+async function readReviewerDispatchRejection(runDirectory) {
+  let raw;
+  try {
+    raw = await readFile10(reviewerDispatchRejectionPath(runDirectory), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return void 0;
+    }
+    throw error;
+  }
+  const parsed = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    const error = new Error("Reviewer dispatch rejection page must be a JSON object");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
+  }
+  const record4 = parsed;
+  if (typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
+    const error = new Error("Reviewer dispatch rejection page has unusable required fields");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
+  }
+  return {
+    cause: "activation",
+    diagnostic: record4.diagnostic,
+    identity: { name: "ReviewerDispatchRejectionError" },
+    details: { violations: Object.freeze([...record4.violations]) }
+  };
+}
+var REVIEWER_DISPATCH_REJECTION_FILE;
+var init_reviewer_dispatch_rejection = __esm({
+  "src/public-cli/reviewer-dispatch-rejection.ts"() {
+    "use strict";
+    init_reviewer_dispatch();
+    REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
   }
 });
 
@@ -20969,9 +21123,9 @@ var init_navigator_invocation_identity = __esm({
 });
 
 // src/public-cli/settlement.ts
-import { randomUUID } from "node:crypto";
-import { appendFile, readFile as readFile10, readdir as readdir4, writeFile as writeFile5 } from "node:fs/promises";
-import { dirname as dirname7, join as join13 } from "node:path";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { appendFile as appendFile2, readFile as readFile11, readdir as readdir4, writeFile as writeFile5 } from "node:fs/promises";
+import { dirname as dirname7, join as join14 } from "node:path";
 function coordinatesFromAdmitted(authority, admitted) {
   return decodePiDurablePrincipal(authority, admitted.principal);
 }
@@ -21034,7 +21188,7 @@ function presentControlledFailure(failure, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile10(sessionFile, "utf8");
+    await readFile11(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -21176,7 +21330,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile10(sessionFile, "utf8");
+  const text = await readFile11(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -21247,7 +21401,7 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join13(dirname7(sessionFile), "evidence-children");
+  const childDirectory = join14(dirname7(sessionFile), "evidence-children");
   let names;
   try {
     names = await readdir4(childDirectory);
@@ -21258,7 +21412,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join13(childDirectory, file));
+      entries = await readBoundSessionEntries(join14(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
@@ -21306,7 +21460,7 @@ async function loadBoundAuditorVolumes(sessionFile) {
     latestParentUserIndex = i;
     break;
   }
-  const childDirectory = join13(dirname7(sessionFile), "auditor-roles");
+  const childDirectory = join14(dirname7(sessionFile), "auditor-roles");
   let names;
   try {
     names = await readdir4(childDirectory);
@@ -21318,7 +21472,7 @@ async function loadBoundAuditorVolumes(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join13(childDirectory, file));
+      entries = await readBoundSessionEntries(join14(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
@@ -22016,12 +22170,12 @@ async function appendRunAttemptHistory(source, outcome) {
       recordedAt: timestamp2,
       outcome
     },
-    id: randomUUID(),
+    id: randomUUID2(),
     parentId,
     timestamp: timestamp2
   })}
 `;
-  await appendFile(source.sessionFile, line2, "utf8");
+  await appendFile2(source.sessionFile, line2, "utf8");
 }
 function extractJudgeRoleOutcome(entries) {
   if (!isReceiptSettlementBindingClear(entries)) return void 0;
@@ -22148,7 +22302,7 @@ function projectTerminalGateFact(rounds) {
 }
 async function extractGateFactFromSessionDirectory(sessionDirectory) {
   const rounds = await readAnalystGateCyclesFromAuditorRoles(
-    join13(sessionDirectory, "auditor-roles")
+    join14(sessionDirectory, "auditor-roles")
   );
   return projectTerminalGateFact(rounds);
 }
@@ -22244,8 +22398,8 @@ async function extractNavigatorFactFromAdmittedSession(sessionFile) {
 async function publishJudgeArtifacts(admitted, roleOutcome, coordinates) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
+  const reportPath = join14(artifactsDir, "report.json");
+  const evidencePath = join14(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -22289,8 +22443,8 @@ async function publishJudgeArtifacts(admitted, roleOutcome, coordinates) {
 async function publishCoderArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
+  const reportPath = join14(artifactsDir, "report.json");
+  const evidencePath = join14(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -22468,8 +22622,8 @@ function extractFixerMethodInvocations(entries, options) {
 async function publishFixerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
+  const reportPath = join14(artifactsDir, "report.json");
+  const evidencePath = join14(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -22585,8 +22739,8 @@ async function settleLawfulFixerTerminalResult(admitted, authority, options) {
 async function publishCollectorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
+  const reportPath = join14(artifactsDir, "report.json");
+  const evidencePath = join14(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -22710,8 +22864,8 @@ async function trySettleCollectorTerminalResult(admitted, authority) {
 async function publishDoctorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
+  const reportPath = join14(artifactsDir, "report.json");
+  const evidencePath = join14(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -22966,8 +23120,8 @@ function extractReviewerMethodInvocations(entries, options) {
 async function publishReviewerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
+  const reportPath = join14(artifactsDir, "report.json");
+  const evidencePath = join14(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -23126,8 +23280,8 @@ function extractMergerMethodInvocations(entries, options) {
 async function publishMergerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
+  const reportPath = join14(artifactsDir, "report.json");
+  const evidencePath = join14(artifactsDir, "evidence.json");
   await writeFile5(
     reportPath,
     `${JSON.stringify(
@@ -23302,7 +23456,7 @@ function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join13(runDirectory, "artifacts");
+  const artifactsDir = join14(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -23318,7 +23472,7 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join13(dir, `${stem}.${randomUUID()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join14(dir, `${stem}.${randomUUID2()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
@@ -23363,26 +23517,26 @@ async function publishFailureArtifacts(admitted, failure, authority) {
   } catch (error) {
     priorIssues.push(publicationAttemptFromError(sessionFile, error));
   }
-  const underArtifacts = baseDir === join13(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join14(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join13(baseDir, "error.json"),
-    join13(baseDir, "error.settlement.json"),
-    join13(admitted.runDirectory, "error.settlement.json")
+    join14(baseDir, "error.json"),
+    join14(baseDir, "error.settlement.json"),
+    join14(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join13(baseDir, "error.settlement.json"),
-    join13(baseDir, "error.json")
+    join14(baseDir, "error.settlement.json"),
+    join14(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join13(baseDir, "evidence.json"),
-    join13(baseDir, "evidence.settlement.json"),
-    join13(admitted.runDirectory, "evidence.settlement.json")
+    join14(baseDir, "evidence.json"),
+    join14(baseDir, "evidence.settlement.json"),
+    join14(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join13(baseDir, "evidence.settlement.json"),
-    join13(baseDir, "evidence.json")
+    join14(baseDir, "evidence.settlement.json"),
+    join14(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -23579,7 +23733,8 @@ var init_settlement = __esm({
     init_auditor_soul();
     init_doctor_auditor();
     init_judge_auditor();
-    init_explicit_internal();
+    init_known_failure();
+    init_reviewer_dispatch_rejection();
     init_run_lifecycle();
     init_compliance_transport();
     init_collector_ledger();
@@ -23620,9 +23775,9 @@ var init_settlement = __esm({
 
 // src/public-cli/auto-resume.ts
 import { constants as fsConstants } from "node:fs";
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open2, readFile as readFile11 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { randomUUID as randomUUID3 } from "node:crypto";
+import { lstat as lstat5, mkdir as mkdir4, open as open2 } from "node:fs/promises";
+import { join as join15 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
     presentFailureTerminal(terminal, io);
@@ -23641,7 +23796,7 @@ async function finalizeExceptionRunBestEffort(runDirectory, io) {
   }
 }
 function runArtifactsDirectory(runDirectory) {
-  return join14(runDirectory, "artifacts");
+  return join15(runDirectory, "artifacts");
 }
 async function ensureRealArtifactsDirectory(runDirectory) {
   const runStat = await lstat5(runDirectory);
@@ -23722,12 +23877,11 @@ function jsonSafeReplacer() {
     return value;
   };
 }
-async function retainDispatchError(admitted, principalAuthority, attempt, error) {
-  const { sessionFile } = decodePiDurablePrincipal(principalAuthority, admitted.principal);
+async function retainDispatchError(admitted, principalAuthority, sessionAppender, attempt, error) {
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-  const filePath = join14(
+  const filePath = join15(
     artifactsDir,
-    `dispatch-error-attempt-${attempt}-${randomUUID2()}.json`
+    `dispatch-error-attempt-${attempt}-${randomUUID3()}.json`
   );
   const payload = `${JSON.stringify(
     {
@@ -23760,23 +23914,13 @@ async function retainDispatchError(admitted, principalAuthority, attempt, error)
   }
   let pointerError;
   try {
-    const text = await readFile11(sessionFile, "utf8");
-    let parentId = null;
-    for (const line2 of text.trim().split("\n").filter(Boolean)) {
-      const entry = JSON.parse(line2);
-      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
-    }
     const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
-    const pointerLine = `${JSON.stringify({
-      type: "custom",
-      customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
-      data: { version: 1, attempt, file: filePath, recordedAt: timestamp2 },
-      id: randomUUID2(),
-      parentId,
-      timestamp: timestamp2
-    })}
-`;
-    await appendFile2(sessionFile, pointerLine, "utf8");
+    await sessionAppender(
+      principalAuthority,
+      admitted.principal,
+      DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
+      { version: 1, attempt, file: filePath, recordedAt: timestamp2 }
+    );
   } catch (error2) {
     pointerError = error2;
   } finally {
@@ -23824,7 +23968,7 @@ async function runWithAutoResumeLoop(options) {
   parseAutoResumeLimit(limit);
   let autoResumeAttempts = 0;
   let isFirst = true;
-  let currentExtraArgs = options.buildInitialArgs();
+  let currentPayload = options.buildInitialPayload();
   let dispatchOrdinal = 0;
   let lastThrownError;
   let everyAttemptThrew = true;
@@ -23845,7 +23989,7 @@ async function runWithAutoResumeLoop(options) {
     }
     let result2;
     try {
-      result2 = await options.dispatch(currentExtraArgs, lease, isFirst, dummyIo);
+      result2 = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
     } catch (error) {
       lastThrownError = error;
       const attempt = dispatchOrdinal;
@@ -23853,6 +23997,7 @@ async function runWithAutoResumeLoop(options) {
         const { file, pointerError } = await retainDispatchError(
           options.admitted,
           options.principalAuthority,
+          options.sessionAppender,
           attempt,
           error
         );
@@ -23933,7 +24078,7 @@ async function runWithAutoResumeLoop(options) {
       }
     }
     autoResumeAttempts++;
-    currentExtraArgs = options.buildResumeArgs();
+    currentPayload = options.buildResumePayload();
     isFirst = false;
   }
 }
@@ -23941,7 +24086,6 @@ var dummyIo, DISPATCH_ERROR_RETENTION_ENTRY_TYPE;
 var init_auto_resume = __esm({
   "src/public-cli/auto-resume.ts"() {
     "use strict";
-    init_durable_principal();
     init_run_lifecycle();
     init_config2();
     init_terminal();
@@ -23955,68 +24099,29 @@ var init_auto_resume = __esm({
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join15 } from "node:path";
-function buildCoderActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const prompt = buildCoderTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  const skillArgs = admitted.phase === "apply" ? [
-    "--skill",
-    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
-  ] : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
+import { join as join16 } from "node:path";
+function coderMethods(phase, packageRoot2) {
+  return phase === "apply" ? [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "tdd") }] : [];
 }
-function buildCoderResumeActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const skillArgs = admitted.phase === "apply" ? [
-    "--skill",
-    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
-  ] : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
+function buildCoderTurnRequest(admitted, options) {
+  return {
+    principal: admitted.principal,
+    activation: {
+      role: "coder",
+      phase: admitted.phase,
+      taskPath: admitted.taskPath
+    },
+    methods: coderMethods(admitted.phase, options.packageRoot),
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
 }
 async function presentControlledFailure2(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -24066,7 +24171,7 @@ async function presentControlledFailure2(admitted, failureInput, authority, io) 
   };
 }
 async function dispatchAdmittedCoder(input) {
-  const { admitted, env, io, extraArgs, lease, methodProvenance, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, methodProvenance, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -24082,29 +24187,9 @@ async function dispatchAdmittedCoder(input) {
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
     let result2;
     try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
+      result2 = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure2(
         admitted,
@@ -24120,7 +24205,7 @@ async function dispatchAdmittedCoder(input) {
     }
     try {
       await writeFile6(
-        join15(admitted.runDirectory, "stderr.log"),
+        join16(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24229,29 +24314,48 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     admitted,
     principalAuthority: env.principalAuthority,
     io,
+    sessionAppender: env.sessionAppender,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildCoderActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildInitialPayload: () => buildCoderTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "initial",
+        prompt: buildCoderTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
     }),
-    buildResumeArgs: () => buildCoderResumeActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildResumePayload: () => buildCoderTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedCoder({
+    dispatch: (request, lease, isFirst, attemptIo) => dispatchAdmittedCoder({
       admitted,
       env: {
         ...env,
         ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
       },
       io: attemptIo,
-      extraArgs,
+      request,
       lease,
       ...methodProvenance === void 0 ? {} : { methodProvenance },
       ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
@@ -24304,12 +24408,17 @@ async function runPublicCoderResume(request, env, io) {
       );
     }
   }
-  const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
-    principalAuthority: env.principalAuthority,
+  const turnRequest = buildCoderTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
   const result2 = await dispatchAdmittedCoder({
     admitted,
@@ -24318,7 +24427,7 @@ async function runPublicCoderResume(request, env, io) {
       ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     ...methodProvenance === void 0 ? {} : { methodProvenance }
   });
@@ -24331,10 +24440,8 @@ var init_coder_run = __esm({
   "src/public-cli/coder-run.ts"() {
     "use strict";
     init_durable_principal();
-    init_engine_detour();
     init_engine_material();
     init_method_skill();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
     init_config2();
@@ -24347,35 +24454,27 @@ var init_coder_run = __esm({
 
 // src/public-cli/collector-run.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join16 } from "node:path";
-function buildCollectorActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const prompt = buildCollectorTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "collector",
-    "--ak-collector-repo",
-    admitted.repository.display,
-    "--ak-collector-pr",
-    String(admitted.prNumber),
-    ...admitted.requestManifestPath === void 0 ? [] : ["--ak-collector-request-manifest", admitted.requestManifestPath],
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
+import { join as join17 } from "node:path";
+function buildCollectorTurnRequest(admitted, options) {
+  return {
+    principal: admitted.principal,
+    activation: {
+      role: "collector",
+      repo: admitted.repository.display,
+      pr: String(admitted.prNumber),
+      ...admitted.requestManifestPath === void 0 ? {} : { requestManifestPath: admitted.requestManifestPath }
+    },
+    methods: [],
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
 }
 async function presentControlledFailure3(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -24401,7 +24500,7 @@ async function presentControlledFailure3(admitted, failureInput, authority, io) 
   };
 }
 async function dispatchAdmittedCollector(input) {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -24417,29 +24516,9 @@ async function dispatchAdmittedCollector(input) {
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
     let result2;
     try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
+      result2 = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure3(
         admitted,
@@ -24455,7 +24534,7 @@ async function dispatchAdmittedCollector(input) {
     }
     try {
       await writeFile7(
-        join16(admitted.runDirectory, "stderr.log"),
+        join17(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24554,21 +24633,24 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
     }
     throw error;
   }
-  const extraArgs = buildCollectorActivationExtraArgs(admitted, {
-    principalAuthority: env.principalAuthority,
+  const turnRequest = buildCollectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "initial",
+      prompt: buildCollectorTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...env.engine === void 0 ? {} : { engine: env.engine }, packageRoot: env.packageRoot }))
+    }
   });
   return await dispatchAdmittedCollector({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
+    env,
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
@@ -24577,9 +24659,7 @@ var init_collector_run = __esm({
   "src/public-cli/collector-run.ts"() {
     "use strict";
     init_durable_principal();
-    init_engine_detour();
     init_engine_material();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
     init_config2();
@@ -24591,7 +24671,7 @@ var init_collector_run = __esm({
 
 // src/public-cli/one-shot-dispatch.ts
 import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 async function presentControlledFailure4(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile) : void 0;
@@ -24620,7 +24700,7 @@ function presentSecondaryTerminal(terminal, io) {
   }
 }
 async function dispatchAdmittedOneShotRole(input) {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine, adapters } = input;
+  const { admitted, env, io, request, lease, effectiveEngine, adapters } = input;
   const shouldPresent = adapters.shouldPresentSettled ?? ((_terminal) => true);
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
@@ -24637,28 +24717,9 @@ async function dispatchAdmittedOneShotRole(input) {
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
-    }
     let result2;
     try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
+      result2 = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure4(
         admitted,
@@ -24674,7 +24735,7 @@ async function dispatchAdmittedOneShotRole(input) {
     }
     try {
       await writeFile8(
-        join17(admitted.runDirectory, "stderr.log"),
+        join18(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -24744,7 +24805,7 @@ async function dispatchAdmittedOneShotRole(input) {
   }
 }
 async function runAdmittedOneShotRole(input) {
-  const { admitted, env, io, extraArgs, adapters, effectiveEngine } = input;
+  const { admitted, env, io, request, adapters, effectiveEngine } = input;
   await markRunAdmitted(admitted, env.principalAuthority);
   let lease;
   try {
@@ -24763,7 +24824,7 @@ async function runAdmittedOneShotRole(input) {
     admitted,
     env,
     io,
-    extraArgs,
+    request,
     lease,
     adapters,
     ...effectiveEngine === void 0 ? {} : { effectiveEngine }
@@ -24773,8 +24834,6 @@ var init_one_shot_dispatch = __esm({
   "src/public-cli/one-shot-dispatch.ts"() {
     "use strict";
     init_durable_principal();
-    init_engine_detour();
-    init_explicit_internal();
     init_public_run_credentials();
     init_run_lifecycle();
     init_settlement();
@@ -24783,31 +24842,21 @@ var init_one_shot_dispatch = __esm({
 });
 
 // src/public-cli/doctor-run.ts
-function buildDoctorActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const prompt = buildDoctorTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "doctor",
-    "--ak-doctor-case",
-    admitted.caseRunsPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
+function buildDoctorTurnRequest(admitted, options) {
+  return {
+    principal: admitted.principal,
+    activation: { role: "doctor", casePath: admitted.caseRunsPath },
+    methods: [],
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
 }
 async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
   let admitted;
@@ -24832,18 +24881,24 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     }
     throw error;
   }
-  const extraArgs = buildDoctorActivationExtraArgs(admitted, {
-    principalAuthority: env.principalAuthority,
+  const turnRequest = buildDoctorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...env.correlationId === void 0 || env.correlationId.trim() === "" ? {} : { correlationId: env.correlationId },
+    continuation: {
+      kind: "initial",
+      prompt: buildDoctorTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...env.engine === void 0 ? {} : { engine: env.engine }, packageRoot: env.packageRoot }))
+    }
   });
   return await runAdmittedOneShotRole({
     admitted,
     env,
     io,
-    extraArgs,
+    request: turnRequest,
     adapters: {
       trySettle: (admitted2) => trySettleDoctorTerminalResult(admitted2, env.principalAuthority),
       shouldPresentSettled: (terminal) => isLawfulTypedTerminalOutcome(terminal.roleOutcome)
@@ -24867,80 +24922,33 @@ var init_doctor_run = __esm({
 
 // src/public-cli/fixer-run.ts
 import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join18 } from "node:path";
-function buildFixerActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const prompt = buildFixerTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs"
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
+import { join as join19 } from "node:path";
+function fixerMethods(packageRoot2) {
   return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
+    { kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "diagnosing-bugs") },
+    { kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "tdd") }
   ];
 }
-function buildFixerResumeActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs"
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
-  return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
+function buildFixerTurnRequest(admitted, options) {
+  return {
+    principal: admitted.principal,
+    activation: {
+      role: "fixer",
+      phase: admitted.phase,
+      packetPath: admitted.packetPath,
+      ...admitted.prerequisitesPath === void 0 ? {} : { prerequisitesPath: admitted.prerequisitesPath }
+    },
+    methods: fixerMethods(options.packageRoot),
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
 }
 async function presentControlledFailure5(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -24987,7 +24995,7 @@ async function presentControlledFailure5(admitted, failureInput, authority, io) 
   };
 }
 async function dispatchAdmittedFixer(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -25003,29 +25011,9 @@ async function dispatchAdmittedFixer(input) {
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
     let result2;
     try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
+      result2 = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure5(
         admitted,
@@ -25041,7 +25029,7 @@ async function dispatchAdmittedFixer(input) {
     }
     try {
       await writeFile9(
-        join18(admitted.runDirectory, "stderr.log"),
+        join19(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25152,29 +25140,48 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     admitted,
     principalAuthority: env.principalAuthority,
     io,
+    sessionAppender: env.sessionAppender,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildFixerActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildInitialPayload: () => buildFixerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "initial",
+        prompt: buildFixerTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
     }),
-    buildResumeArgs: () => buildFixerResumeActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildResumePayload: () => buildFixerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedFixer({
+    dispatch: (request, lease, isFirst, attemptIo) => dispatchAdmittedFixer({
       admitted,
       env: {
         ...env,
         ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
       },
       io: attemptIo,
-      extraArgs,
+      request,
       lease,
       methodMaterial,
       ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
@@ -25220,12 +25227,17 @@ async function runPublicFixerResume(request, env, io) {
       io
     );
   }
-  const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
-    principalAuthority: env.principalAuthority,
+  const turnRequest = buildFixerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
   const result2 = await dispatchAdmittedFixer({
     admitted,
@@ -25234,7 +25246,7 @@ async function runPublicFixerResume(request, env, io) {
       ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     methodMaterial
   });
@@ -25245,10 +25257,8 @@ var init_fixer_run = __esm({
   "src/public-cli/fixer-run.ts"() {
     "use strict";
     init_durable_principal();
-    init_engine_detour();
     init_engine_material();
     init_method_skill();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
     init_config2();
@@ -25260,31 +25270,21 @@ var init_fixer_run = __esm({
 });
 
 // src/public-cli/notary-run.ts
-function buildNotaryActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const prompt = buildNotaryTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "notary",
-    "--ak-notary-source-run",
-    admitted.sourceRunPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
+function buildNotaryTurnRequest(admitted, options) {
+  return {
+    principal: admitted.principal,
+    activation: { role: "notary", sourceRun: admitted.sourceRunPath },
+    methods: [],
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
 }
 async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
   let admitted;
@@ -25307,18 +25307,24 @@ async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
     }
     throw error;
   }
-  const extraArgs = buildNotaryActivationExtraArgs(admitted, {
-    principalAuthority: env.principalAuthority,
+  const turnRequest = buildNotaryTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...env.correlationId === void 0 || env.correlationId.trim() === "" ? {} : { correlationId: env.correlationId },
+    continuation: {
+      kind: "initial",
+      prompt: buildNotaryTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...env.engine === void 0 ? {} : { engine: env.engine }, packageRoot: env.packageRoot }))
+    }
   });
   return await runAdmittedOneShotRole({
     admitted,
     env,
     io,
-    extraArgs,
+    request: turnRequest,
     adapters: {
       trySettle: (admitted2) => trySettleNotaryTerminalResult(admitted2, env.principalAuthority),
       // Accepted receipts and failure terminals both present via shared path.
@@ -25342,51 +25348,22 @@ var init_notary_run = __esm({
 
 // src/public-cli/judge-run.ts
 import { writeFile as writeFile10 } from "node:fs/promises";
-import { join as join19 } from "node:path";
-function buildJudgeActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const prompt = buildJudgeTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    // Exact Pi session file principal (SessionManager.open), not directory-latest.
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "judge",
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
-}
-function buildJudgeResumeActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "judge",
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
+import { join as join20 } from "node:path";
+function buildJudgeTurnRequest(admitted, options) {
+  return {
+    principal: admitted.principal,
+    activation: { role: "judge" },
+    methods: [],
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
 }
 async function presentControlledFailure6(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -25433,7 +25410,7 @@ async function presentControlledFailure6(admitted, failureInput, authority, io) 
   };
 }
 async function dispatchAdmittedJudge(input) {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -25453,31 +25430,9 @@ async function dispatchAdmittedJudge(input) {
       effectiveEngine
     );
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      // Public-run marker so Navigator work context prefers admitted instruction
-      // and role-runtime can record typed provider HTTP observations.
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
     let result2;
     try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
+      result2 = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure6(
         admitted,
@@ -25493,7 +25448,7 @@ async function dispatchAdmittedJudge(input) {
     }
     try {
       await writeFile10(
-        join19(admitted.runDirectory, "stderr.log"),
+        join20(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25583,28 +25538,43 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     admitted,
     principalAuthority: env.principalAuthority,
     io,
+    sessionAppender: env.sessionAppender,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildJudgeActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildInitialPayload: () => buildJudgeTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "initial",
+        prompt: buildJudgeTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...env.engine === void 0 ? {} : { engine: env.engine }, packageRoot: env.packageRoot }))
+      }
     }),
-    buildResumeArgs: () => buildJudgeResumeActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildResumePayload: () => buildJudgeTurnRequest(admitted, {
+      packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedJudge({
+    dispatch: (request, lease, isFirst, attemptIo) => dispatchAdmittedJudge({
       admitted,
       env: {
         ...env,
         ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
       },
       io: attemptIo,
-      extraArgs,
+      request,
       lease,
       ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
     })
@@ -25632,11 +25602,17 @@ async function runPublicResume(request, env, io) {
     }
     throw error;
   }
-  const extraArgs = buildJudgeResumeActivationExtraArgs(admitted, {
-    principalAuthority: env.principalAuthority,
+  const turnRequest = buildJudgeTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
   const result2 = await dispatchAdmittedJudge({
     admitted,
@@ -25645,7 +25621,7 @@ async function runPublicResume(request, env, io) {
       ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease
   });
   if (result2.terminal !== void 0) {
@@ -25657,9 +25633,7 @@ var init_judge_run = __esm({
   "src/public-cli/judge-run.ts"() {
     "use strict";
     init_durable_principal();
-    init_engine_detour();
     init_engine_material();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
     init_config2();
@@ -25672,66 +25646,33 @@ var init_judge_run = __esm({
 
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir5, writeFile as writeFile11 } from "node:fs/promises";
-import { join as join20, resolve as resolve7 } from "node:path";
-function buildMergerActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const prompt = buildMergerTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "resolving-merge-conflicts"
-  );
+import { join as join21, resolve as resolve7 } from "node:path";
+function mergerMethods(packageRoot2) {
   return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "merger",
-    "--ak-merger-input",
-    admitted.mergerInputPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
+    {
+      kind: "skill",
+      path: resolvePackagedMethodSkillPath(packageRoot2, "resolving-merge-conflicts")
+    }
   ];
 }
-function buildMergerResumeActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "resolving-merge-conflicts"
-  );
-  return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "merger",
-    "--ak-merger-input",
-    admitted.mergerInputPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
+function buildMergerTurnRequest(admitted, options) {
+  return {
+    principal: admitted.principal,
+    activation: {
+      role: "merger",
+      inputPath: admitted.mergerInputPath
+    },
+    methods: mergerMethods(options.packageRoot),
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
 }
 async function presentControlledFailure7(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -25781,7 +25722,7 @@ async function presentControlledFailure7(admitted, failureInput, authority, io) 
   };
 }
 async function dispatchAdmittedMerger(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -25797,29 +25738,9 @@ async function dispatchAdmittedMerger(input) {
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
     let result2;
     try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
+      result2 = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure7(
         admitted,
@@ -25835,7 +25756,7 @@ async function dispatchAdmittedMerger(input) {
     }
     try {
       await writeFile11(
-        join20(admitted.runDirectory, "stderr.log"),
+        join21(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25864,7 +25785,7 @@ async function dispatchAdmittedMerger(input) {
         io
       );
     }
-    if (lawful !== void 0) {
+    if (lawful !== void 0 && (isLawfulTypedTerminalOutcome(lawful.roleOutcome) || lawful.roleOutcome.kind === "incomplete")) {
       await markRunTerminal(admitted.runDirectory).catch(() => void 0);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -25930,8 +25851,8 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join20(runDirectory, "admitted-request.json");
-  const mergerInputPath = join20(runDirectory, "merger-input.json");
+  const admittedRequestPath = join21(runDirectory, "admitted-request.json");
+  const mergerInputPath = join21(runDirectory, "merger-input.json");
   await writeFile11(
     admittedRequestPath,
     `${JSON.stringify(
@@ -25967,6 +25888,17 @@ async function admitMergerShellForActivationFailure(options) {
     admittedRequestPath,
     mergerInputPath,
     derived: emptyDerived
+  };
+}
+function mergerTurnOptions(admitted, env) {
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId }
   };
 }
 async function runPublicMerger(argv, env, io, parseMergerArgv2) {
@@ -26045,29 +25977,42 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     admitted,
     principalAuthority: env.principalAuthority,
     io,
+    sessionAppender: env.sessionAppender,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildMergerActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
-      packageRoot: env.packageRoot,
-      ...env.model === void 0 ? {} : { model: env.model },
-      ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    buildInitialPayload: () => buildMergerTurnRequest(admitted, {
+      ...mergerTurnOptions(admitted, env),
+      continuation: {
+        kind: "initial",
+        prompt: buildMergerTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
     }),
-    buildResumeArgs: () => buildMergerResumeActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildResumePayload: () => buildMergerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedMerger({
+    dispatch: (request, lease, isFirst, attemptIo) => dispatchAdmittedMerger({
       admitted,
       env: {
         ...env,
         ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
       },
       io: attemptIo,
-      extraArgs,
+      request,
       lease,
       methodMaterial,
       ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
@@ -26114,12 +26059,17 @@ async function runPublicMergerResume(request, env, io) {
       io
     );
   }
-  const extraArgs = buildMergerResumeActivationExtraArgs(admitted, {
-    principalAuthority: env.principalAuthority,
+  const turnRequest = buildMergerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
   const result2 = await dispatchAdmittedMerger({
     admitted,
@@ -26128,7 +26078,7 @@ async function runPublicMergerResume(request, env, io) {
       ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     methodMaterial
   });
@@ -26140,11 +26090,9 @@ var init_merger_run = __esm({
     "use strict";
     init_activation_ledger_topology();
     init_durable_principal();
-    init_engine_detour();
     init_engine_material();
     init_method_skill();
     init_uuidv7();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
     init_config2();
@@ -26157,77 +26105,30 @@ var init_merger_run = __esm({
 
 // src/public-cli/reviewer-run.ts
 import { writeFile as writeFile12 } from "node:fs/promises";
-import { join as join21 } from "node:path";
-function buildReviewerTicketNumberArgs(ticketNumber) {
-  return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
+import { join as join22 } from "node:path";
+function reviewerMethods(packageRoot2) {
+  return [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "code-review") }];
 }
-function buildReviewerActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const prompt = buildReviewerTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "code-review"
-  );
-  const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
-  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
-  return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "reviewer",
-    "--ak-review-base",
-    admitted.baseRevision,
-    ...authorityRefArgs,
-    ...ticketNumberArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
-}
-function buildReviewerResumeActivationExtraArgs(admitted, options) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal);
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "code-review"
-  );
-  const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
-  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
-  return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "reviewer",
-    "--ak-review-base",
-    admitted.baseRevision,
-    ...authorityRefArgs,
-    ...ticketNumberArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
+function buildReviewerTurnRequest(admitted, options) {
+  return {
+    principal: admitted.principal,
+    activation: {
+      role: "reviewer",
+      baseRevision: admitted.baseRevision,
+      authorityRefs: admitted.authorityRefs,
+      ...admitted.ticketNumber === void 0 ? {} : { ticketNumber: admitted.ticketNumber }
+    },
+    methods: reviewerMethods(options.packageRoot),
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
 }
 async function presentControlledFailure8(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -26274,7 +26175,7 @@ async function presentControlledFailure8(admitted, failureInput, authority, io) 
   };
 }
 async function dispatchAdmittedReviewer(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -26291,29 +26192,9 @@ async function dispatchAdmittedReviewer(input) {
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     await clearReviewerDispatchRejection(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
     let result2;
     try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
+      result2 = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure8(
         admitted,
@@ -26329,7 +26210,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     try {
       await writeFile12(
-        join21(admitted.runDirectory, "stderr.log"),
+        join22(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -26447,29 +26328,48 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     admitted,
     principalAuthority: env.principalAuthority,
     io,
+    sessionAppender: env.sessionAppender,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildReviewerActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildInitialPayload: () => buildReviewerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "initial",
+        prompt: buildReviewerTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
     }),
-    buildResumeArgs: () => buildReviewerResumeActivationExtraArgs(admitted, {
-      principalAuthority: env.principalAuthority,
+    buildResumePayload: () => buildReviewerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedReviewer({
+    dispatch: (request, lease, isFirst, attemptIo) => dispatchAdmittedReviewer({
       admitted,
       env: {
         ...env,
         ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
       },
       io: attemptIo,
-      extraArgs,
+      request,
       lease,
       methodMaterial,
       ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
@@ -26515,12 +26415,17 @@ async function runPublicReviewerResume(request, env, io) {
       io
     );
   }
-  const extraArgs = buildReviewerResumeActivationExtraArgs(admitted, {
-    principalAuthority: env.principalAuthority,
+  const turnRequest = buildReviewerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
   const result2 = await dispatchAdmittedReviewer({
     admitted,
@@ -26529,7 +26434,7 @@ async function runPublicReviewerResume(request, env, io) {
       ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     methodMaterial
   });
@@ -26540,16 +26445,15 @@ var init_reviewer_run = __esm({
   "src/public-cli/reviewer-run.ts"() {
     "use strict";
     init_durable_principal();
-    init_engine_detour();
     init_engine_material();
     init_method_skill();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
     init_config2();
     init_public_run_credentials();
     init_run_lifecycle();
     init_auto_resume();
+    init_reviewer_dispatch_rejection();
     init_settlement();
   }
 });
@@ -26589,12 +26493,12 @@ var init_analyst_book_key = __esm({
 });
 
 // src/atomic-write.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
-import { dirname as dirname8, join as join22 } from "node:path";
+import { dirname as dirname8, join as join23 } from "node:path";
 async function writeFileAtomically(destination, contents) {
   const parent = dirname8(destination);
-  const temporary = join22(parent, `.atomic-write-${randomUUID3()}.tmp`);
+  const temporary = join23(parent, `.atomic-write-${randomUUID4()}.tmp`);
   try {
     await writeFile13(temporary, contents);
     await rename(temporary, destination);
@@ -26611,7 +26515,7 @@ var init_atomic_write = __esm({
 
 // src/analyst-index.ts
 import { open as open3, readFile as readFile12, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname9, join as join23 } from "node:path";
+import { dirname as dirname9, join as join24 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve9) => {
     setTimeout(resolve9, ms);
@@ -26620,7 +26524,7 @@ function sleep(ms) {
 async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   const indexPath = analystLibraryIndexPath(ledgerHome);
   ensureRealDirectoryTree(ledgerHome, dirname9(indexPath));
-  const lockPath = join23(dirname9(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  const lockPath = join24(dirname9(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
@@ -26647,7 +26551,7 @@ async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   }
 }
 function analystLibraryIndexPath(ledgerHome) {
-  return join23(ledgerHome, "analyst", "library-index.json");
+  return join24(ledgerHome, "analyst", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -26943,7 +26847,7 @@ var init_analyst_cohort = __esm({
 
 // src/run-terminal-artifacts.ts
 import { readdir as readdir5, readFile as readFile13 } from "node:fs/promises";
-import { basename as basename5, dirname as dirname10, join as join24 } from "node:path";
+import { basename as basename5, dirname as dirname10, join as join25 } from "node:path";
 function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -27018,7 +26922,7 @@ async function listUniqueErrorFallbackPaths(directories) {
     }
     for (const name of names.sort((a, b) => a.localeCompare(b))) {
       if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join24(dir, name));
+      found.push(join25(dir, name));
     }
   }
   return found;
@@ -27034,14 +26938,14 @@ function presentUniqueFallbackBoundToRun(body, expectedRunId) {
   return typeof body.runId === "string" && body.runId === expectedRunId;
 }
 async function readRunTerminalArtifact(runDirectory) {
-  const artifactsDir = join24(runDirectory, "artifacts");
+  const artifactsDir = join25(runDirectory, "artifacts");
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join24(artifactsDir, file);
+    const path = join25(artifactsDir, file);
     const read3 = await readTerminalArtifactAtPath(path, file);
     if (read3 !== void 0) return read3;
   }
   for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join24(runDirectory, relative3);
+    const path = join25(runDirectory, relative3);
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 !== void 0) return read3;
   }
@@ -27079,7 +26983,7 @@ var init_run_terminal_artifacts = __esm({
 
 // src/analyst-ledger.ts
 import { readdir as readdir6, readFile as readFile14 } from "node:fs/promises";
-import { join as join25 } from "node:path";
+import { join as join26 } from "node:path";
 function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -27092,7 +26996,7 @@ function isRecord10(value) {
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile14(join25(runDirectory, "run-state.json"), "utf8")
+      await readFile14(join26(runDirectory, "run-state.json"), "utf8")
     );
     if (!isRecord10(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
@@ -27124,7 +27028,7 @@ async function listLedgerBookNames(booksRoot) {
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile14(join25(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile14(join26(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
     if (isMissingPathError5(error)) return void 0;
     throw error;
@@ -27156,7 +27060,7 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile14(join25(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile14(join26(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
     if (isRecord10(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
@@ -27164,7 +27068,7 @@ async function resolveSessionFile(runDirectory) {
   } catch (error) {
     if (!isMissingPathError5(error)) throw error;
   }
-  return join25(runDirectory, "session", "session.jsonl");
+  return join26(runDirectory, "session", "session.jsonl");
 }
 async function classifyScopedRun(input) {
   const missingSources = [];
@@ -27275,7 +27179,7 @@ async function classifyScopedRun(input) {
   let gateCycles;
   try {
     gateCycles = await readAnalystGateCyclesFromAuditorRoles(
-      join25(input.runDirectory, "session", "auditor-roles")
+      join26(input.runDirectory, "session", "auditor-roles")
     );
   } catch (error) {
     return {
@@ -27307,7 +27211,7 @@ async function classifyScopedRun(input) {
 async function scanAnalystIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
-  const booksRoot = join25(ledgerHome, "books");
+  const booksRoot = join26(ledgerHome, "books");
   let wholeBook = false;
   let scopeRootIdentity;
   let bookNames;
@@ -27339,7 +27243,7 @@ async function scanAnalystIssueRuns(input) {
   const unreadable = [];
   const scopeConflicts = [];
   for (const book of bookNames) {
-    const runsDir = join25(booksRoot, book, "runs");
+    const runsDir = join26(booksRoot, book, "runs");
     let runNames;
     try {
       const entries = await readdir6(runsDir, { withFileTypes: true });
@@ -27351,7 +27255,7 @@ async function scanAnalystIssueRuns(input) {
     for (const runName of runNames) {
       const parsed = parseRunDirectoryName2(runName);
       if (parsed === void 0) continue;
-      const runDirectory = join25(runsDir, runName);
+      const runDirectory = join26(runsDir, runName);
       let scopeFields;
       try {
         scopeFields = await readInvocationScopeFields(runDirectory);
@@ -28204,7 +28108,7 @@ var init_analyst_metric_family = __esm({
 
 // src/analyst-page.ts
 import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname11, join as join26 } from "node:path";
+import { dirname as dirname11, join as join27 } from "node:path";
 function analystIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
@@ -28215,7 +28119,7 @@ function analystIssuePageKey(address) {
   return createHash4("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
 function analystIssuePagePath(ledgerHome, address) {
-  return join26(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
+  return join27(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
 }
 function analystIssuePageAddressFromPage(page) {
   return {
@@ -28746,7 +28650,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath6 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { join as join27 } from "node:path";
+import { join as join28 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
   const taken = options.takeDashed(tokens);
@@ -28778,6 +28682,18 @@ function takePublicGlobalFlag(argv, index, options) {
   }
   return void 0;
 }
+function resolveRoleTurnHost(env, options) {
+  if (env.roleTurnHost !== void 0) return env.roleTurnHost;
+  return createPiRoleTurnHost({
+    packageRoot: env.packageRoot,
+    principalAuthority: options.principalAuthority,
+    ...options.extraPiArgs === void 0 ? {} : { extraPiArgs: options.extraPiArgs },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
+    recordLaunchedPiIdentity,
+    recordLaunchedRolePackageIdentity,
+    observeLaunchedRolePackageIdentity
+  });
+}
 function defaultIo() {
   return {
     stdout: (text) => {
@@ -28792,7 +28708,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join27(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join28(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -29276,13 +29192,18 @@ async function runAkRole(argv, env) {
             home,
             principalAuthority: env.principalAuthority,
             agentDir,
+            sessionAppender: appendPiSessionCustomEntry,
             packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority,
+              ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
+              ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
+            }),
             cwd,
             credentials,
             ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
             ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
+            ...projectSeatEngine(seat),
             ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
           },
           io
@@ -29299,13 +29220,18 @@ async function runAkRole(argv, env) {
             home,
             principalAuthority: env.principalAuthority,
             agentDir,
+            sessionAppender: appendPiSessionCustomEntry,
             packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority,
+              ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
+              ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
+            }),
             cwd,
             credentials,
             ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
             ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
+            ...projectSeatEngine(seat),
             ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
           },
           io
@@ -29322,13 +29248,18 @@ async function runAkRole(argv, env) {
             home,
             principalAuthority: env.principalAuthority,
             agentDir,
+            sessionAppender: appendPiSessionCustomEntry,
             packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority,
+              ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
+              ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
+            }),
             cwd,
             credentials,
             ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
             ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
+            ...projectSeatEngine(seat),
             ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
           },
           io
@@ -29345,13 +29276,18 @@ async function runAkRole(argv, env) {
             home,
             principalAuthority: env.principalAuthority,
             agentDir,
+            sessionAppender: appendPiSessionCustomEntry,
             packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority,
+              ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
+              ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs }
+            }),
             cwd,
             credentials,
             ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
             ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
+            ...projectSeatEngine(seat),
             ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs }
           },
           io
@@ -29367,13 +29303,18 @@ async function runAkRole(argv, env) {
           home,
           principalAuthority: env.principalAuthority,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
+            ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
+          ...projectSeatEngine(seat),
           ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs }
         },
         io
@@ -29403,14 +29344,18 @@ async function runAkRole(argv, env) {
           home,
           principalAuthority: env.principalAuthority,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
+            ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
           ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
           // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
@@ -29441,14 +29386,18 @@ async function runAkRole(argv, env) {
           home,
           principalAuthority: env.principalAuthority,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
+            ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
           ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
           // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
@@ -29479,14 +29428,18 @@ async function runAkRole(argv, env) {
           home,
           principalAuthority: env.principalAuthority,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
+            ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
           ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
           // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
@@ -29518,13 +29471,16 @@ async function runAkRole(argv, env) {
           principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.collectorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.collectorExtraPiArgs },
+            ...env.collectorTimeoutMs === void 0 ? {} : { timeoutMs: env.collectorTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.collectorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.collectorExtraPiArgs },
           ...env.collectorTimeoutMs === void 0 ? {} : { timeoutMs: env.collectorTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
@@ -29553,14 +29509,18 @@ async function runAkRole(argv, env) {
           home,
           principalAuthority: env.principalAuthority,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
+            ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
           ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
           // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
@@ -29592,13 +29552,16 @@ async function runAkRole(argv, env) {
           principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.doctorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.doctorExtraPiArgs },
+            ...env.doctorTimeoutMs === void 0 ? {} : { timeoutMs: env.doctorTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.doctorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.doctorExtraPiArgs },
           ...env.doctorTimeoutMs === void 0 ? {} : { timeoutMs: env.doctorTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
@@ -29628,13 +29591,16 @@ async function runAkRole(argv, env) {
           principalAuthority: env.principalAuthority,
           agentDir,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.notaryExtraPiArgs === void 0 ? {} : { extraPiArgs: env.notaryExtraPiArgs },
+            ...env.notaryTimeoutMs === void 0 ? {} : { timeoutMs: env.notaryTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.notaryExtraPiArgs === void 0 ? {} : { extraPiArgs: env.notaryExtraPiArgs },
           ...env.notaryTimeoutMs === void 0 ? {} : { timeoutMs: env.notaryTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
@@ -29663,14 +29629,18 @@ async function runAkRole(argv, env) {
           home,
           principalAuthority: env.principalAuthority,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
+          roleTurnHost: resolveRoleTurnHost(env, {
+            principalAuthority: env.principalAuthority,
+            ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
+            ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs }
+          }),
           cwd,
           credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
           ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
           // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
@@ -29716,7 +29686,7 @@ var init_cli = __esm({
     init_engine_material();
     init_config2();
     init_cli_errors();
-    init_explicit_internal();
+    init_role_turn_host();
     init_invocation();
     init_option_definitions();
     init_coder_run();
@@ -29731,7 +29701,7 @@ var init_cli = __esm({
     init_run_lifecycle();
     init_registry2();
     init_settlement();
-    init_explicit_internal();
+    init_role_turn_host();
     init_cli_errors();
     PUBLIC_ROLE_ARGV = {
       judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
@@ -29760,7 +29730,7 @@ var init_cli = __esm({
 
 // src/public-cli/main.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname12, join as join28 } from "node:path";
+import { dirname as dirname12, join as join29 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -29849,8 +29819,8 @@ function linkPackage(packageRoot2, name, targetDir) {
 // src/public-cli/main.ts
 var here = dirname12(fileURLToPath(import.meta.url));
 function resolvePackageRoot(binDir) {
-  const canonical = join28(binDir, "..", "..");
-  if (existsSync3(join28(canonical, "package.json"))) {
+  const canonical = join29(binDir, "..", "..");
+  if (existsSync3(join29(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;
