@@ -490,6 +490,15 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(report.receipt.case.issueNumber, 40);
     assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
+    // ② AK-owned run-state ledger reaches terminal for the one-shot real entry.
+    const runState = JSON.parse(
+      await readFile(
+        join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-settle@doctor", "run-state.json"),
+        "utf8",
+      ),
+    ) as { state: string };
+    assert.equal(runState.state, "terminal", "doctor one-shot run must settle run-state terminal");
+
     // Refused path reuses the same Terminal settlement owner.
     const refusedIo = captureIo();
     const refused = await runAkRole(
