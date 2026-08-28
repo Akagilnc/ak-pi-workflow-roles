@@ -267,11 +267,16 @@ async function selectedPiIdentity(
  * Default child runner: canonically select `pi` on PATH (or PI_BINARY) and launch
  * that exact file. Close settles exactly once for natural return / error / SIGTERM.
  */
+type SpawnedPiChild = ReturnType<typeof spawn> & {
+  stderr: NonNullable<ReturnType<typeof spawn>["stderr"]>;
+};
+
 export function createDefaultPiSpawnRunner(options: {
   recordLaunchedPiIdentity?: (
     runDirectory: string,
     identity: LaunchedPiIdentity,
   ) => Promise<void>;
+  spawnProcess?: typeof spawn;
 }): PiSpawnRunner {
   return async (args, spawnOptions) => {
     const command = spawnOptions.env.PI_BINARY ?? "pi";
@@ -279,7 +284,7 @@ export function createDefaultPiSpawnRunner(options: {
     return await new Promise((resolveResult, reject) => {
       // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
       // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
-      const child = spawn(piIdentity.executable, [...args], {
+      const child: SpawnedPiChild = (options.spawnProcess ?? spawn)(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         stdio: ["ignore", "ignore", "pipe"],
