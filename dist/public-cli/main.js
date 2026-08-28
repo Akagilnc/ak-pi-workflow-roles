@@ -24414,6 +24414,7 @@ async function runPublicCoderResume(request, env, io) {
     home: env.home,
     agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
@@ -25234,6 +25235,7 @@ async function runPublicFixerResume(request, env, io) {
     home: env.home,
     agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
@@ -25609,6 +25611,7 @@ async function runPublicResume(request, env, io) {
     home: env.home,
     agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
@@ -26067,6 +26070,7 @@ async function runPublicMergerResume(request, env, io) {
     home: env.home,
     agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
@@ -26424,6 +26428,7 @@ async function runPublicReviewerResume(request, env, io) {
     home: env.home,
     agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
