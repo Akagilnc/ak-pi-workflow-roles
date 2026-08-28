@@ -128,6 +128,42 @@ export async function withInProcessScratch<T>(
   }
 }
 
+/**
+ * Run every child cleanup, aggregating failures so one throwing cleanup never
+ * skips the rest (e.g. handle.close must still run when unsubscribe throws).
+ * If a primary failure is supplied and cleanup also failed, the two are combined
+ * into an AggregateError; otherwise only the failing branch is surfaced.
+ */
+async function runChildCleanup(
+  cleanups: ReadonlyArray<() => void | Promise<void>>,
+  primaryFailure: unknown,
+  label: string,
+): Promise<void> {
+  let cleanupFailure: unknown;
+  for (const cleanup of cleanups) {
+    try {
+      await cleanup();
+    } catch (failure) {
+      cleanupFailure = cleanupFailure === undefined
+        ? failure
+        : new AggregateError([cleanupFailure, failure], `${label} cleanup failed`, {
+          cause: cleanupFailure,
+        });
+    }
+  }
+  if (cleanupFailure === undefined) return;
+  if (primaryFailure !== undefined) {
+    throw new AggregateError(
+      [primaryFailure, cleanupFailure],
+      `${label} execution and cleanup failed`,
+      { cause: primaryFailure },
+    );
+  }
+  throw new AggregateError([cleanupFailure], `${label} cleanup failed`, {
+    cause: cleanupFailure,
+  });
+}
+
 type EvidenceChildFailureClassification = "provider" | "child" | "unknown";
 type ClassifiedReviewerError = Error & Readonly<{
   evidenceChildFailure: EvidenceChildFailureClassification;
@@ -420,30 +456,7 @@ export async function executeEvidenceChild(
         throw primaryFailure;
       } finally {
         signal?.removeEventListener("abort", abortChild);
-        let cleanupFailure: unknown;
-        for (const cleanup of [() => unsubscribe(), () => handle.close()]) {
-          try {
-            await cleanup();
-          } catch (failure) {
-            cleanupFailure = cleanupFailure === undefined
-              ? failure
-              : new AggregateError([cleanupFailure, failure], "Reviewer child cleanup failed", {
-                cause: cleanupFailure,
-              });
-          }
-        }
-        if (cleanupFailure !== undefined) {
-          if (primaryFailure !== undefined) {
-            throw new AggregateError(
-              [primaryFailure, cleanupFailure],
-              "Reviewer child execution and cleanup failed",
-              { cause: primaryFailure },
-            );
-          }
-          throw new AggregateError([cleanupFailure], "Reviewer child cleanup failed", {
-            cause: cleanupFailure,
-          });
-        }
+        await runChildCleanup([() => unsubscribe(), () => handle.close()], primaryFailure, "Reviewer child");
       }
     },
   );
@@ -655,6 +668,7 @@ export async function executeAuditorChild(
     if (options.signal?.aborted) abort();
     else options.signal?.addEventListener("abort", abort, { once: true });
 
+    let auditorFailure: unknown;
     try {
       try {
         const promptAllowingRejectedDecision = async (prompt: string) => {
@@ -849,10 +863,12 @@ export async function executeAuditorChild(
         response: { ...response, usage: sessionUsage },
         ...(noReceiptLifecycle === undefined ? {} : { noReceiptLifecycle }),
       };
+    } catch (error) {
+      auditorFailure = error;
+      throw error;
     } finally {
       options.signal?.removeEventListener("abort", abort);
-      unsubscribe();
-      await handle.close();
+      await runChildCleanup([() => unsubscribe(), () => handle.close()], auditorFailure, options.roleLabel);
     }
   });
 }
