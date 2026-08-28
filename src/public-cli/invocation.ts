@@ -324,13 +324,9 @@ async function writeRoleInvocationLedger(
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
-  try {
-    const config = await loadPublicCliConfig();
-    const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
-    await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
-  } catch {
-    // Non-fatal if config is unreadable
-  }
+  const config = await loadPublicCliConfig();
+  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
+  await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
 
 /**
@@ -369,13 +365,9 @@ export async function recordEffectiveInvocationModel(
     `${JSON.stringify(next, null, 2)}\n`,
     "utf8",
   );
-  try {
-    const config = await loadPublicCliConfig();
-    const institutionalPage = resolveInstitutionalSeatSelections(config, model);
-    await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
-  } catch {
-    // Non-fatal if config is unreadable
-  }
+  const config = await loadPublicCliConfig();
+  const institutionalPage = resolveInstitutionalSeatSelections(config, model);
+  await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 
 /** Merge observed launch-time fields into the single existing invocation.json identity page. */

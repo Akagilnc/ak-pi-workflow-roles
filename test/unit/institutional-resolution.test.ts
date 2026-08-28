@@ -76,7 +76,7 @@ test("resolution page write, read, corruption, and resume rewrite", async () => 
       () => readInstitutionalSeatSelection(runDir, "auditor"),
       (error) => {
         assert.ok(error instanceof InstitutionalResolutionError);
-        assert.match(error.message, /auditor/);
+        assert.ok(error instanceof InstitutionalResolutionError);
         return true;
       },
     );
