@@ -97,12 +97,12 @@ const THINKING_LEVELS = new Set<PublicThinkingLevel>([
   "max",
 ]);
 
-export function publicCliConfigPath(home: string = homedir()): string {
+export function publicCliConfigPath(home: string = process.env.HOME ?? homedir()): string {
   return join(home, ".ak-roles", "public-cli.json");
 }
 
 export async function loadPublicCliConfig(
-  home: string = homedir(),
+  home: string = process.env.HOME ?? homedir(),
 ): Promise<PublicCliConfig> {
   const path = publicCliConfigPath(home);
   try {
@@ -122,7 +122,7 @@ export async function loadPublicCliConfig(
 
 export async function savePublicCliConfig(
   config: PublicCliConfig,
-  home: string = homedir(),
+  home: string = process.env.HOME ?? homedir(),
 ): Promise<void> {
   const path = publicCliConfigPath(home);
   await mkdir(dirname(path), { recursive: true });

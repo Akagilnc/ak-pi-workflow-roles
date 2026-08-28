@@ -400,13 +400,11 @@ export async function markRunRunning(
   effectiveModel?: InvocationEffectiveModel,
   effectiveEngine?: string,
 ): Promise<void> {
-  if (effectiveModel !== undefined || effectiveEngine !== undefined) {
-    await recordEffectiveInvocationModel(
-      runDirectory,
-      effectiveModel,
-      effectiveEngine,
-    );
-  }
+  await recordEffectiveInvocationModel(
+    runDirectory,
+    effectiveModel,
+    effectiveEngine,
+  );
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark running: run state missing");

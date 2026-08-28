@@ -292,6 +292,21 @@ function effectiveModelLedgerFields(
   };
 }
 
+function homeFromRunDirectory(runDirectory: string): string | undefined {
+  const marker = `${sep}.ak-roles${sep}`;
+  const idx = runDirectory.indexOf(marker);
+  if (idx !== -1) {
+    return runDirectory.slice(0, idx);
+  }
+  const altMarker = ".ak-roles";
+  const altIdx = runDirectory.indexOf(altMarker);
+  if (altIdx !== -1) {
+    const candidate = runDirectory.slice(0, altIdx);
+    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  return undefined;
+}
+
 /**
  * Persist one `invocation.json` identity page for the public run.
  * Admission is the sole source for every field; this is the only identity
@@ -321,7 +336,8 @@ async function writeRoleInvocationLedger(
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
-  const config = await loadPublicCliConfig();
+  const home = homeFromRunDirectory(source.runDirectory);
+  const config = await loadPublicCliConfig(home);
   const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
   await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
@@ -370,7 +386,8 @@ export async function recordEffectiveInvocationModel(
           ...(typeof next.thinking === "string" ? { thinking: next.thinking } : {}),
         }
       : undefined;
-  const config = await loadPublicCliConfig();
+  const home = homeFromRunDirectory(runDirectory);
+  const config = await loadPublicCliConfig(home);
   const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
   await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
