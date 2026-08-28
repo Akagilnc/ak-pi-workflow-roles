@@ -24341,6 +24341,7 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
       home: env.home,
       agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
       ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
@@ -25167,6 +25168,7 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
       home: env.home,
       agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
       ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
@@ -25998,6 +26000,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
       home: env.home,
       agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
       ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
@@ -26355,6 +26358,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
       home: env.home,
       agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
+      ...env.engine === void 0 ? {} : { engine: env.engine },
       ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
