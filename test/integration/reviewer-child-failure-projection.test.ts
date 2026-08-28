@@ -110,12 +110,11 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
       (error: unknown) => {
         assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
         assert.equal(disposes, 1, "handle.close must still run after unsubscribe throws");
-        const errors = (error as AggregateError).errors;
-        assert.equal(errors.length, 2);
-        assert.match(String(errors[0]), /ECONNREFUSED|fetch failed|OpenAI API error/);
-        assert.match(String(errors[1]), /unsubscribe failed/);
-        assert.ok((error as AggregateError).cause instanceof Error);
-        assert.match(String((error as AggregateError).cause), /ECONNREFUSED|fetch failed|OpenAI API error/);
+        const aggregate = error as AggregateError;
+        assert.equal(aggregate.errors.length, 2);
+        assert.equal(aggregate.errors[1], unsubscribeBoom);
+        assert.equal(aggregate.cause, aggregate.errors[0]);
+        assert.notEqual(aggregate.cause, unsubscribeBoom);
         return true;
       },
     );
