@@ -16,7 +16,9 @@ import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
-import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readReviewerDispatchRejection } from "./explicit-internal.ts";
+import type { RoleTurnKnownFailure } from "../host-contracts.ts";
+import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
+import { readReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   RESUME_TRANSPORT_ENVELOPE,
   isV1ResumableProvider,
@@ -459,7 +461,7 @@ export function classifyPostAdmissionFailure(input: {
 
 /** One projection owner for the four audited public runners. */
 export function explicitInternalKnownFailureClassificationInput(
-  failure: ExplicitInternalKnownFailure | undefined,
+  failure: RoleTurnKnownFailure | undefined,
 ) {
   if (failure === undefined) return {};
   return {
@@ -700,7 +702,7 @@ export async function readSessionProviderStop(
  */
 export async function readBoundEvidenceChildKnownFailure(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<RoleTurnKnownFailure | undefined> {
   const childDirectory = join(dirname(sessionFile), "evidence-children");
   let names: string[];
   try {
@@ -810,7 +812,7 @@ async function loadBoundAuditorVolumes(
 
 function complianceFailureFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
-): ExplicitInternalKnownFailure | undefined {
+): RoleTurnKnownFailure | undefined {
   for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
@@ -837,7 +839,7 @@ function complianceFailureFromAuditorVolumes(
 
 function providerStopFallbackFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
-): ExplicitInternalKnownFailure | undefined {
+): RoleTurnKnownFailure | undefined {
   for (const { entries } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
@@ -856,7 +858,7 @@ function providerStopFallbackFromAuditorVolumes(
 /** Recover a provider stop from the auditor child bound to the current parent attempt. */
 export async function readBoundAuditorKnownFailure(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<RoleTurnKnownFailure | undefined> {
   const volumes = await loadBoundAuditorVolumes(sessionFile);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes)
@@ -866,7 +868,7 @@ export async function readBoundAuditorKnownFailure(
 /** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
 async function readBoundAuditorComplianceFailure(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<RoleTurnKnownFailure | undefined> {
   const volumes = await loadBoundAuditorVolumes(sessionFile);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes);
@@ -875,7 +877,7 @@ async function readBoundAuditorComplianceFailure(
 /** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
 async function readBoundAuditorProviderStopFallback(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<RoleTurnKnownFailure | undefined> {
   const volumes = await loadBoundAuditorVolumes(sessionFile);
   if (volumes === undefined) return undefined;
   return providerStopFallbackFromAuditorVolumes(volumes);
@@ -883,7 +885,7 @@ async function readBoundAuditorProviderStopFallback(
 
 function typedFailedTerminatingToolKnownFailure(
   entries: readonly SessionEntry[],
-): ExplicitInternalKnownFailure | undefined {
+): RoleTurnKnownFailure | undefined {
   let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     if (entries[i]?.type === "message" && entries[i]?.message?.role === "user") {
@@ -922,7 +924,7 @@ function typedFailedTerminatingToolKnownFailure(
  * never re-read the sidecar in presentControlledFailure.
  */
 export type AuditedRunnerFailureResolution = {
-  readonly knownFailure?: ExplicitInternalKnownFailure;
+  readonly knownFailure?: RoleTurnKnownFailure;
   /** Successful sidecar read (not absence). */
   readonly typedHttpObservation?: TypedProviderHttpObservation;
   /**
@@ -934,7 +936,7 @@ export type AuditedRunnerFailureResolution = {
 };
 
 function resolutionOf(
-  knownFailure: ExplicitInternalKnownFailure | undefined,
+  knownFailure: RoleTurnKnownFailure | undefined,
   typedHttp: {
     readonly settled: boolean;
     readonly observation?: TypedProviderHttpObservation;
@@ -949,9 +951,9 @@ function resolutionOf(
 
 /** Sole evidence-priority owner for public runners with Soul auditors. */
 export async function resolveAuditedRunnerFailureResolution(input: {
-  runner: ExplicitInternalKnownFailure | undefined;
+  runner: RoleTurnKnownFailure | undefined;
   sessionFile: string;
-  credential: ExplicitInternalKnownFailure | undefined;
+  credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
 }): Promise<AuditedRunnerFailureResolution> {
@@ -1077,12 +1079,12 @@ export async function resolveAuditedRunnerFailureResolution(input: {
 
 /** Sole evidence-priority owner for public runners with Soul auditors. */
 export async function resolveAuditedRunnerKnownFailure(input: {
-  runner: ExplicitInternalKnownFailure | undefined;
+  runner: RoleTurnKnownFailure | undefined;
   sessionFile: string;
-  credential: ExplicitInternalKnownFailure | undefined;
+  credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
-}): Promise<ExplicitInternalKnownFailure | undefined> {
+}): Promise<RoleTurnKnownFailure | undefined> {
   return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;
 }
 
@@ -1098,7 +1100,7 @@ export async function resolveControlledFailureResumeObservation(input: {
   readonly typedHttpObservation?: TypedProviderHttpObservation;
 }): Promise<{
   readonly typedHttp429?: TypedHttp429Observation;
-  readonly observationReadFailure?: ExplicitInternalKnownFailure;
+  readonly observationReadFailure?: RoleTurnKnownFailure;
 }> {
   if (input.typedHttpObservationSettled === true) {
     const observation = input.typedHttpObservation;
@@ -1132,7 +1134,7 @@ export async function resolveControlledFailureResumeObservation(input: {
 export function controlledFailureInputFromResolution(
   resolution: AuditedRunnerFailureResolution,
 ): {
-  knownFailure?: ExplicitInternalKnownFailure;
+  knownFailure?: RoleTurnKnownFailure;
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
 } {

@@ -1,3 +1,4 @@
+import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Public Collector Role run: admit a structured PR target → explicit Internal activate
  * → settle Terminal result (#112). One-shot; no resume path (Collector rejects
@@ -8,14 +9,14 @@ import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
+import type {
+  MethodBinding,
+  RoleTurnHost,
+  RoleTurnKnownFailure,
+  RoleTurnRequest,
+  RoleTurnResult,
+} from "../host-contracts.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCollectorInvocation,
@@ -24,7 +25,6 @@ import {
   type ParseCollectorArgvResult
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -67,59 +67,53 @@ export type CollectorRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
+  roleTurnHost?: RoleTurnHost;
+  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
+  piRunner?: LegacyPiRunner;
+  extraPiArgs?: readonly string[];
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material + env signal). */
   engine?: string;
   credentials?: CredentialProviders;
   createRunId?: () => string;
-  extraPiArgs?: readonly string[];
   timeoutMs?: number;
 };
 
-/**
- * Build Internal activation extra-args for an admitted Collector run.
- * Always --no-skills (Collector forbids every Skill). Session under #78 book.
- */
-export function buildCollectorActivationExtraArgs(
+/** Project admitted invocation onto the host-neutral turn request. */
+export function buildCollectorTurnRequest(
   admitted: AdmittedCollectorInvocation,
   options: {
-    principalAuthority: DurablePrincipalAuthority;
+    packageRoot: string;
+    home: string;
+    agentDir: string;
     model?: SeatModelConfig;
     engine?: string;
-    packageRoot?: string;
-    extraPiArgs?: readonly string[];
+    timeoutMs?: number;
+    correlationId?: string;
+    continuation: RoleTurnRequest["continuation"];
   },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const prompt = buildCollectorTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "collector",
-    "--ak-collector-repo",
-    admitted.repository.display,
-    "--ak-collector-pr",
-    String(admitted.prNumber),
-    ...(admitted.requestManifestPath === undefined
-      ? []
-      : ["--ak-collector-request-manifest", admitted.requestManifestPath]),
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
+): RoleTurnRequest {
+  return {
+    principal: admitted.principal!,
+    activation: {
+      role: "collector" as const,
+      repo: admitted.repository.display,
+      pr: String(admitted.prNumber),
+      ...(admitted.requestManifestPath === undefined ? {} : { requestManifestPath: admitted.requestManifestPath }),
+    },
+    methods: [],
+    continuation: options.continuation,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.engine === undefined ? {} : { engine: options.engine }),
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...(options.correlationId === undefined || options.correlationId.trim() === ""
+      ? {}
+      : { correlationId: options.correlationId }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  };
 }
 
 async function presentControlledFailure(
@@ -129,7 +123,7 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
+    knownFailure?: RoleTurnKnownFailure;
     knownCause?: ControlledFailureCause;
     knownIdentity?: {
       readonly name?: string;
@@ -186,7 +180,7 @@ async function dispatchAdmittedCollector(input: {
   admitted: AdmittedCollectorInvocation;
   env: CollectorRunEnv;
   io: CliIo;
-  extraArgs: string[];
+  request: RoleTurnRequest;
   lease: RunWriterLease;
   effectiveEngine?: string;
 }): Promise<{
@@ -194,7 +188,7 @@ async function dispatchAdmittedCollector(input: {
   admitted: AdmittedCollectorInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -211,30 +205,9 @@ async function dispatchAdmittedCollector(input: {
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== undefined && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
+    let result: RoleTurnResult;
     try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
+      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -374,22 +347,27 @@ export async function runPublicCollector(
     throw error;
   }
 
-  const extraArgs = buildCollectorActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+  const turnRequest = buildCollectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "initial",
+      prompt: buildCollectorTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...(env.engine === undefined ? {} : { engine: env.engine }), packageRoot: env.packageRoot })),
+    },
   });
 
   return await dispatchAdmittedCollector({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
+    env,
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

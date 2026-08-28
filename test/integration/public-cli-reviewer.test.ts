@@ -1,4 +1,9 @@
+import {
+  buildReviewerActivationExtraArgs,
+  buildReviewerResumeActivationExtraArgs
+} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -31,10 +36,7 @@ import {
   buildReviewerTransportPrompt,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
-import {
-  buildReviewerActivationExtraArgs,
-  buildReviewerResumeActivationExtraArgs,
-} from "../../src/public-cli/reviewer-run.ts";
+
 import {
   loadResumableReviewerRun,
   markRunAdmitted,
@@ -673,7 +675,10 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           cwd: project,
           createRunId: () => "run-cli-reviewer-blank-ok",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -716,6 +721,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
@@ -778,7 +784,10 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           cwd: project,
           createRunId: () => "run-cli-reviewer-ok",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -821,6 +830,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
@@ -917,7 +927,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -932,6 +945,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume, "reviewer 429 must be resumable");
@@ -965,7 +979,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args.includes("--ak-review-task"), false);
@@ -1011,6 +1028,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "reviewer resume failed");
     assert.equal(Array.isArray(resumeArgs), true);

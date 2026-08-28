@@ -7,6 +7,8 @@ import test from "node:test";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { packageRoot, runPiSubprocess } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 
 const git = (cwd: string, args: string[], input?: string) => execFileSync("git", args, {
   cwd, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"],
@@ -52,12 +54,17 @@ async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt"
       createRunId: () => "run-merger-baseline-public",
       mergerExtraPiArgs: ["-e", providerPath], mergerTimeoutMs: 90_000,
       io: { stdout() {}, stderr() {} },
-      piRunner: async (args, options) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
         const run = await runPiSubprocess([...args], { cwd: options.cwd, timeoutMs: options.timeoutMs ?? 90_000,
           env: { ...options.env, PI_OFFLINE: "1", AK_MERGER_FIXTURE_COMMIT: commit,
             ...(residual === undefined ? {} : { AK_MERGER_FIXTURE_RESIDUAL: residual }) } });
         return { code: run.code, stdout: run.stdout, stderr: run.stderr, timedOut: run.localTimeout, args: [...args] };
       },
+            extraPiArgs: ["-e", providerPath],
+          }),
     });
   } finally { await rm(home, { recursive: true, force: true }); }
 }

@@ -84,7 +84,12 @@ export const piDurablePrincipalAuthority: DurablePrincipalAuthority = {
   },
 };
 
-/** Transitional coordinate accessor; S1b-2 removes it with argv builders. */
+/**
+ * Transitional coordinate accessor.
+ * S1b-2 (#526) removed 13 per-role builder accessors and auto-resume decode
+ * consumption. Remaining consumers: admission persistence projection and
+ * settlement/inspect (S4 #519 retires this seam).
+ */
 export function decodePiDurablePrincipal(
   authority: DurablePrincipalAuthority,
   principal: DurablePrincipal,

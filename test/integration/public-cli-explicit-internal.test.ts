@@ -1,3 +1,6 @@
+/**
+ * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
+ */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5,10 +8,14 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
-  defaultExplicitInternalPiRunner,
-  runExplicitInternalActivation,
-} from "../../src/public-cli/explicit-internal.ts";
+  createDefaultPiSpawnRunner,
+  createPiRoleTurnHost,
+  type LaunchedPiIdentity,
+} from "../../src/pi/role-turn-host.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
@@ -55,12 +62,46 @@ const sessionLine = `${JSON.stringify({
   },
 })}\n`;
 
+/** Capture Pi identity via the production recording callback (result no longer carries it). */
+function spawnRunnerWithIdentityCapture(): {
+  runner: ReturnType<typeof createDefaultPiSpawnRunner>;
+  lastIdentity: () => LaunchedPiIdentity | undefined;
+} {
+  let last: LaunchedPiIdentity | undefined;
+  const runner = createDefaultPiSpawnRunner({
+    recordLaunchedPiIdentity: async (_runDirectory, identity) => {
+      last = identity;
+    },
+  });
+  return { runner, lastIdentity: () => last };
+}
+
+function minimalTurnRequest(home: string, runDirectory: string): RoleTurnRequest {
+  const principal = piDurablePrincipalAuthority.issue({
+    cwd: home,
+    runId: "explicit-internal-test",
+    role: "judge",
+    home,
+  });
+  return {
+    principal,
+    activation: { role: "judge" },
+    methods: [],
+    continuation: { kind: "initial", prompt: "probe" },
+    cwd: home,
+    home,
+    agentDir: join(home, ".pi", "agent"),
+    runDirectory,
+  };
+}
+
 test("default runner preserves unexpected executable filesystem failures", async () => {
   await withTempHome(async (home) => {
     const loop = join(home, "pi-loop");
     await symlink(loop, loop);
+    const { runner } = spawnRunnerWithIdentityCapture();
     await assert.rejects(
-      defaultExplicitInternalPiRunner([], {
+      runner([], {
         cwd: home,
         env: isolatedTestProcessEnv({ env: { PATH: home, PI_BINARY: loop }, home, agentDir: join(home, ".pi", "agent") }),
       }),
@@ -76,6 +117,8 @@ test("default runner resolves PI_BINARY and PATH with the child cwd semantics", 
     await mkdir(bin, { recursive: true });
     const pi = join(bin, "pi");
     await writeExecutableStub(pi, `#!${process.execPath}\nprocess.exit(0);\n`);
+    const runDirectory = join(home, "run");
+    await mkdir(runDirectory, { recursive: true });
 
     const cases = [
       { name: "relative PI_BINARY", command: "bin/pi", path: "/no/such/path", expected: pi },
@@ -84,26 +127,36 @@ test("default runner resolves PI_BINARY and PATH with the child cwd semantics", 
     ] as const;
     await symlink(pi, join(childCwd, "pi"));
     for (const scenario of cases) {
-      const result = await defaultExplicitInternalPiRunner([], {
+      const { runner, lastIdentity } = spawnRunnerWithIdentityCapture();
+      const result = await runner([], {
         cwd: childCwd,
         env: isolatedTestProcessEnv({
-          env: { PATH: scenario.path, PI_BINARY: scenario.command },
+          env: {
+            PATH: scenario.path,
+            PI_BINARY: scenario.command,
+            AK_ROLE_RUN_DIR: runDirectory,
+          },
           home,
           agentDir: join(home, ".pi", "agent"),
         }),
       });
       assert.equal(result.code, 0, scenario.name);
-      assert.equal(result.piIdentity?.executable, await realpath(scenario.expected), scenario.name);
-      assert.equal(result.piIdentity?.version, "test-pi-1.0.0", scenario.name);
+      assert.equal(lastIdentity()?.executable, await realpath(scenario.expected), scenario.name);
+      assert.equal(lastIdentity()?.version, "test-pi-1.0.0", scenario.name);
     }
 
     if (process.platform !== "win32") {
-      const result = await defaultExplicitInternalPiRunner(["-c", "true"], {
+      const { runner, lastIdentity } = spawnRunnerWithIdentityCapture();
+      const result = await runner(["-c", "true"], {
         cwd: childCwd,
-        env: isolatedTestProcessEnv({ env: { PI_BINARY: "bash" }, home, agentDir: join(home, ".pi", "agent") }),
+        env: isolatedTestProcessEnv({
+          env: { PI_BINARY: "bash", AK_ROLE_RUN_DIR: runDirectory },
+          home,
+          agentDir: join(home, ".pi", "agent"),
+        }),
       });
       assert.equal(result.code, 0, "missing PATH uses Node's platform default");
-      assert.match(result.piIdentity?.version ?? "", /bash/i);
+      assert.match(lastIdentity()?.version ?? "", /bash/i);
     }
   });
 });
@@ -134,7 +187,8 @@ process.on("SIGTERM", () => {
 `,
     );
 
-    const resultPromise = defaultExplicitInternalPiRunner(["--help"], {
+    const { runner } = spawnRunnerWithIdentityCapture();
+    const resultPromise = runner(["--help"], {
       cwd: home,
       env: isolatedTestProcessEnv({ env: { ...process.env, PI_BINARY: stub }, home, agentDir: join(home, ".pi", "agent") }),
     });
@@ -156,7 +210,9 @@ test("explicit short budget sends only SIGTERM after readiness and preserves pri
     const ready = join(home, "ready");
     const sessionDir = join(home, "session");
     const stub = join(home, "term-child.mjs");
+    const runDirectory = join(home, "run");
     await mkdir(sessionDir, { recursive: true });
+    await mkdir(runDirectory, { recursive: true });
     await writeExecutableStub(
       stub,
       `#!/usr/bin/env node
@@ -180,14 +236,45 @@ setInterval(() => {}, 1000);
 `,
     );
 
-    const resultPromise = runExplicitInternalActivation({
+    const host = createPiRoleTurnHost({
       packageRoot,
-      extraArgs: ["--session-dir", sessionDir, "--help"],
+      principalAuthority: piDurablePrincipalAuthority,
+      timeoutMs: 750,
+      spawnRunner: createDefaultPiSpawnRunner({}),
+    });
+    // Force PI_BINARY via env on the host by wrapping spawn
+    const baseSpawn = createDefaultPiSpawnRunner({});
+    const hostWithStub = createPiRoleTurnHost({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      timeoutMs: 750,
+      spawnRunner: async (args, options) =>
+        baseSpawn(args, {
+          ...options,
+          env: { ...options.env, PI_BINARY: stub },
+        }),
+    });
+
+    const principal = piDurablePrincipalAuthority.issue({
+      cwd: home,
+      runId: "timeout-test",
+      role: "judge",
+      home,
+    });
+    // Use the issued principal's real session dir so argv session-dir matches stub write
+    const coords = piDurablePrincipalAuthority.decode(principal);
+    await mkdir(coords.sessionDirectory, { recursive: true });
+
+    const resultPromise = hostWithStub.executeTurn({
+      principal,
+      activation: { role: "judge" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "help-probe" },
       cwd: home,
       home,
       agentDir: join(home, ".pi", "agent"),
+      runDirectory,
       timeoutMs: 750,
-      env: isolatedTestProcessEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, ".pi", "agent") }),
     });
     await waitForFile(ready, resultPromise);
     t.mock.timers.tick(750);
@@ -196,41 +283,37 @@ setInterval(() => {}, 1000);
     assert.equal(result.timedOut, true);
     assert.notEqual(result.code, 0);
     assert.equal(await readFile(signalFile, "utf8"), "SIGTERM");
-    assert.equal((await readFile(join(sessionDir, "session.jsonl"), "utf8")), sessionLine);
+    assert.equal(
+      await readFile(join(coords.sessionDirectory, "session.jsonl"), "utf8"),
+      sessionLine,
+    );
   });
 });
 
-test("explicit activation canonicalizes an aliased role entry once for argv and ledger", async () => {
+test("turn host canonicalizes an aliased role entry once for argv", async () => {
   await withTempHome(async (home) => {
     const packageAlias = join(home, "package-alias");
     const runDirectory = join(home, "run");
     await symlink(packageRoot, packageAlias);
     await mkdir(runDirectory);
-    await writeFile(join(runDirectory, "invocation.json"), "{}\n");
 
     let launchedArgs: readonly string[] = [];
-    await runExplicitInternalActivation({
+    const host = createPiRoleTurnHost({
       packageRoot: packageAlias,
-      cwd: home,
-      home,
-      agentDir: join(home, ".pi", "agent"),
-      env: { AK_ROLE_RUN_DIR: runDirectory },
-      runner: async (args) => {
+      principalAuthority: piDurablePrincipalAuthority,
+      spawnRunner: async (args) => {
         launchedArgs = args;
-        return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        return { code: 0, stderr: "", timedOut: false };
       },
     });
+    await host.executeTurn(minimalTurnRequest(home, runDirectory));
 
-    const invocation = JSON.parse(
-      await readFile(join(runDirectory, "invocation.json"), "utf8"),
-    ) as { roleEntry: string };
     const selectedEntry = launchedArgs[launchedArgs.indexOf("-e") + 1];
     assert.equal(selectedEntry, await realpath(join(packageAlias, "extensions", "role-runtime.ts")));
-    assert.equal(invocation.roleEntry, selectedEntry);
   });
 });
 
-test("explicit activation masks ambient ledger and machine Pi home after env remerge", async () => {
+test("turn host masks ambient ledger and machine Pi home after env remerge", async () => {
   await withTempHome(async (home) => {
     const machineRun = join(home, "machine-run");
     const machineAgent = join(home, "machine-agent");
@@ -254,13 +337,21 @@ process.exit(0);
     process.env.AK_ROLE_RUN_DIR = machineRun;
     process.env.PI_CODING_AGENT_DIR = machineAgent;
     try {
-      const isolated = isolatedTestProcessEnv({ env: { PI_BINARY: stub }, home, agentDir: testAgent });
-      const result = await runExplicitInternalActivation({
+      const baseSpawn = createDefaultPiSpawnRunner({});
+      const host = createPiRoleTurnHost({
         packageRoot,
-        cwd: home,
-        home,
+        principalAuthority: piDurablePrincipalAuthority,
+        spawnRunner: async (args, options) =>
+          baseSpawn(args, {
+            ...options,
+            env: { ...options.env, PI_BINARY: stub },
+          }),
+      });
+      const runDirectory = join(home, "test-run");
+      await mkdir(runDirectory, { recursive: true });
+      const result = await host.executeTurn({
+        ...minimalTurnRequest(home, runDirectory),
         agentDir: testAgent,
-        env: isolated,
       });
       assert.equal(result.code, 0);
     } finally {
@@ -270,7 +361,10 @@ process.exit(0);
       else process.env.PI_CODING_AGENT_DIR = previousAgent;
     }
 
-    assert.deepEqual(JSON.parse(await readFile(observed, "utf8")), { agent: testAgent });
+    assert.deepEqual(JSON.parse(await readFile(observed, "utf8")), {
+      run: join(home, "test-run"),
+      agent: testAgent,
+    });
     assert.equal(await readFile(invocation, "utf8"), "outer-invocation");
     assert.equal(await readFile(machineMarker, "utf8"), "machine-home");
   });
@@ -296,14 +390,79 @@ process.exit(0);
 `,
     );
 
-    const result = await defaultExplicitInternalPiRunner(["x"], {
+    const { runner } = spawnRunnerWithIdentityCapture();
+    const result = await runner(["x"], {
       cwd: home,
-      env: isolatedTestProcessEnv({ env: { ...process.env, AK_ROLE_RUN_DIR: parentRun, PI_BINARY: stub }, home, agentDir: join(home, ".pi", "agent") }),
+      env: isolatedTestProcessEnv({
+        env: { ...process.env, AK_ROLE_RUN_DIR: parentRun, PI_BINARY: stub },
+        home,
+        agentDir: join(home, ".pi", "agent"),
+      }),
     });
 
     assert.equal(result.code, 0);
     assert.equal(await readFile(invocation, "utf8"), "parent-identity");
     assert.equal(Object.hasOwn(result, "stdout"), false);
     assert.ok(result.stderr.includes("stderr-ok"));
+  });
+});
+
+test("close settles once on natural return, execution error, and SIGTERM timeout", async (t) => {
+  await withTempHome(async (home) => {
+    // Natural return
+    {
+      const stub = join(home, "natural.mjs");
+      await writeExecutableStub(stub, `#!/usr/bin/env node\nprocess.stderr.write("ok");\nprocess.exit(0);\n`);
+      const { runner } = spawnRunnerWithIdentityCapture();
+      const result = await runner([], {
+        cwd: home,
+        env: isolatedTestProcessEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
+      });
+      assert.equal(result.timedOut, false);
+      assert.equal(result.code, 0);
+      assert.equal(result.stderr, "ok");
+    }
+    // Execution error (spawn failure before child — zero close)
+    {
+      const { runner } = spawnRunnerWithIdentityCapture();
+      await assert.rejects(
+        runner([], {
+          cwd: home,
+          env: isolatedTestProcessEnv({
+            env: { PI_BINARY: join(home, "missing-binary") },
+            home,
+            agentDir: join(home, "a"),
+          }),
+        }),
+      );
+    }
+    // SIGTERM timeout
+    {
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      const ready = join(home, "to-ready");
+      const signal = join(home, "to-signal");
+      const stub = join(home, "timeout.mjs");
+      await writeExecutableStub(
+        stub,
+        `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(ready)}, "ready");
+process.on("SIGTERM", () => { writeFileSync(${JSON.stringify(signal)}, "SIGTERM"); process.exit(143); });
+setInterval(() => {}, 1000);
+`,
+      );
+      const { runner } = spawnRunnerWithIdentityCapture();
+      const resultPromise = runner([], {
+        cwd: home,
+        env: isolatedTestProcessEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
+        timeoutMs: 500,
+      });
+      await waitForFile(ready, resultPromise);
+      t.mock.timers.tick(500);
+      const result = await resultPromise;
+      assert.equal(result.timedOut, true);
+      assert.equal(await readFile(signal, "utf8"), "SIGTERM");
+      t.mock.timers.reset();
+    }
   });
 });

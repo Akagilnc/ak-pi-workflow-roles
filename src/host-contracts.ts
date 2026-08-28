@@ -14,6 +14,140 @@ export type HostToolResult<T = unknown> = {
 /** Opaque host-owned identity persisted with a Role run. */
 export type DurablePrincipal = object & { readonly __durablePrincipal?: never };
 
+/** Controlled post-admission failure classes (ADR 0052 / #107). Owner = host contract. */
+export type ControlledFailureCause =
+  | "activation"
+  | "provider"
+  | "session"
+  | "output"
+  | "timeout"
+  | "unrecognized";
+
+/** Production-owned typed failure carried on a resolved turn result. */
+export type RoleTurnKnownFailure = {
+  readonly cause: ControlledFailureCause;
+  readonly identity?: {
+    readonly name?: string;
+    readonly code?: string | number;
+  };
+  /**
+   * Optional diagnostic already owned by a typed production field (e.g. session
+   * assistant errorMessage). Settlement prefers this over child stderr selection.
+   */
+  readonly diagnostic?: string;
+  /** Secondary evidence attached to the same typed failure record. */
+  readonly details?: Readonly<Record<string, unknown>>;
+};
+
+/**
+ * Thrown activation failure with a production-owned typed cause.
+ * Prefer this over ad-hoc Error property tags so settlement retains typed identity.
+ * Final owner = host contract (#526); public-cli/pi/role-runtime all import here.
+ */
+export class ExplicitInternalActivationError extends Error {
+  readonly knownCause: ControlledFailureCause;
+  readonly failureCode?: string | number;
+
+  constructor(
+    message: string,
+    options: {
+      knownCause: ControlledFailureCause;
+      code?: string | number;
+      name?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(
+      message,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = options.name ?? "ExplicitInternalActivationError";
+    this.knownCause = options.knownCause;
+    if (options.code !== undefined) {
+      this.failureCode = options.code;
+    }
+  }
+}
+
+/** Packaged method skill binding (zero/one/many). */
+export type MethodBinding = {
+  readonly kind: "skill";
+  readonly path: string;
+};
+
+/**
+ * Host-neutral closed role activation projection.
+ * Adapter translates to host-specific flags; does not reverse-parse prompt prose.
+ */
+export type RoleTurnActivation =
+  | { readonly role: "judge" }
+  | {
+      readonly role: "coder";
+      readonly phase: string;
+      readonly taskPath: string;
+    }
+  | {
+      readonly role: "fixer";
+      readonly phase: string;
+      readonly packetPath: string;
+      readonly prerequisitesPath?: string;
+    }
+  | {
+      readonly role: "reviewer";
+      readonly baseRevision: string;
+      readonly authorityRefs: readonly string[];
+      readonly ticketNumber?: number;
+    }
+  | { readonly role: "merger"; readonly inputPath: string }
+  | {
+      readonly role: "collector";
+      readonly repo: string;
+      readonly pr: string;
+      readonly requestManifestPath?: string;
+    }
+  | { readonly role: "doctor"; readonly casePath: string }
+  | { readonly role: "notary"; readonly sourceRun: string };
+
+export type RoleTurnContinuation =
+  | { readonly kind: "initial"; readonly prompt: string }
+  | { readonly kind: "resume"; readonly prompt: string };
+
+/** Seat model consumed by the turn host (provider/model/thinking). */
+export type RoleTurnModelConfig = {
+  readonly provider: string;
+  readonly model: string;
+  readonly thinking?: string;
+};
+
+/** One main-session turn request over the host-neutral execution seam. */
+export type RoleTurnRequest = {
+  readonly principal: DurablePrincipal;
+  readonly activation: RoleTurnActivation;
+  readonly methods: readonly MethodBinding[];
+  readonly continuation: RoleTurnContinuation;
+  readonly model?: RoleTurnModelConfig;
+  readonly engine?: string;
+  readonly cwd: string;
+  readonly home: string;
+  readonly agentDir: string;
+  readonly runDirectory: string;
+  readonly correlationId?: string;
+  readonly timeoutMs?: number;
+};
+
+/** Turn result — only fields upper layers currently consume. */
+export type RoleTurnResult = {
+  readonly code: number | null;
+  readonly stderr: string;
+  readonly timedOut: boolean;
+  readonly knownFailure?: RoleTurnKnownFailure;
+};
+
+/** Host-neutral main-session execution seam (S1b-2 / #526). */
+export interface RoleTurnHost {
+  executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult>;
+}
+
 export type DurablePrincipalCoordinates = {
   readonly sessionDirectory: string;
   readonly sessionFile: string;

@@ -1,5 +1,9 @@
+import {
+  buildDoctorActivationExtraArgs
+} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -27,9 +31,7 @@ import {
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import {
-  buildDoctorActivationExtraArgs,
-} from "../../src/public-cli/doctor-run.ts";
+
 import {
   admitDoctorInvocation,
 } from "../../src/public-cli/invocation.ts";
@@ -365,7 +367,10 @@ test("buildDoctorActivationExtraArgs pins isolation and --ak-doctor-case to admi
       instruction: "diagnose retries",
       createRunId: () => "run-doctor-args",
     });
-    const args = buildDoctorActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, model: {
+    const args = buildDoctorActivationExtraArgs(admitted, {
+      principalAuthority: piDurablePrincipalAuthority,
+      packageRoot,
+      model: {
         provider: "openai-codex",
         model: "gpt-5.6-luna",
         thinking: "high",
@@ -408,10 +413,14 @@ test("runAkRole doctor rejects malformed grammar before admission", async () => 
         cwd: project,
         credentials: { "openai-codex": true, xai: false },
         io: captured.io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           dispatched = true;
           throw new Error("doctor must not dispatch for malformed issue");
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 2);
@@ -440,7 +449,10 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         correlationId: "corr-doctor-113",
         io: completedIo.io,
         createRunId: () => "run-doctor-settle",
-        piRunner: async (args, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
           assert.equal(options.env.AK_CORRELATION_ID, "corr-doctor-113");
           const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
           const patient = await loadDoctorCase(casePath);
@@ -466,6 +478,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(completed.exitCode, 0);
@@ -500,7 +513,10 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         credentials: { "openai-codex": true, xai: false },
         io: refusedIo.io,
         createRunId: () => "run-doctor-refuse",
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(
@@ -529,6 +545,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(refused.exitCode, 0);
@@ -634,9 +651,13 @@ test("doctor resume is rejected as one-shot", async () => {
       cwd: project,
       credentials: { "openai-codex": true, xai: false },
       io: captured.io,
-      piRunner: async () => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
         throw new Error("doctor must not resume");
       },
+          }),
     });
     assert.equal(result.exitCode, 2);
     assert.equal(captured.stdout.join(""), "");

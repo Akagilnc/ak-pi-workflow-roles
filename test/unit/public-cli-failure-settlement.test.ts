@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
@@ -16,7 +17,8 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { ExplicitInternalActivationError } from "../../src/public-cli/explicit-internal.ts";
+import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
+
 import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, CONCISE_DIAGNOSTIC_MAX_CHARS, exitCodeForTerminalOutcome, extractDoctorRoleOutcome, extractJudgeRoleOutcome, isChildDiagnosticFloodLine, isChildDiagnosticHelpFooterLine, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -55,7 +57,10 @@ test("malformed CLI structure and empty --project= reject structurally before ad
         home,
         cwd: project,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           dispatched += 1;
           return {
             code: 0,
@@ -64,6 +69,7 @@ test("malformed CLI structure and empty --project= reject structurally before ad
             args: [...args],
           };
         },
+          }),
       });
       assert.equal(result.exitCode, 2, row.label);
       assert.equal(dispatched, 0, row.label);
@@ -92,7 +98,10 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
         cwd: project,
         createRunId: () => "run-domain-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           dispatchedPrompt = String(args.at(-1));
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
@@ -116,6 +125,7 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 0);
@@ -369,7 +379,10 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
           cwd: project,
           createRunId: () => "run-jsonl-flood-001",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -380,6 +393,7 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
               args: [...args],
             };
           },
+          }),
         },
       );
       const { terminal } = await assertPublicFailureSettlement({
@@ -414,7 +428,10 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
           cwd: project,
           createRunId: () => "run-oversize-diag-001",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -425,6 +442,7 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
               args: [...args],
             };
           },
+          }),
         },
       );
       const { terminal, errorRef } = await assertPublicFailureSettlement({
@@ -463,7 +481,10 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
         cwd: project,
         createRunId: () => "run-escalate-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(
@@ -492,6 +513,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 0);
@@ -519,11 +541,15 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
         cwd: project,
         createRunId: () => "run-unrec-001",
         io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           const err = new Error("ECONNRESET from upstream");
           err.name = "RawSocketError";
           throw err;
         },
+          }),
       },
     );
 
@@ -554,9 +580,13 @@ test("post-admission throw undefined stays unrecognized (not activation/null-exi
         cwd: project,
         createRunId: () => "run-throw-undefined-001",
         io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           throw undefined;
         },
+          }),
       },
     );
 
@@ -590,7 +620,10 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
         cwd: project,
         createRunId: () => "run-timeout-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -601,6 +634,7 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
             args: [...args],
           };
         },
+          }),
       },
     );
     const { terminal, errorRef } = await assertPublicFailureSettlement({
@@ -791,7 +825,10 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
         cwd: project,
         createRunId: () => "run-419-pointer-overwrite-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           calls += 1;
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           sessionFile = join(sessionDir, "session.jsonl");
@@ -808,6 +845,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
           );
           return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
         },
+          }),
       },
     );
     assert.equal(calls, 2);

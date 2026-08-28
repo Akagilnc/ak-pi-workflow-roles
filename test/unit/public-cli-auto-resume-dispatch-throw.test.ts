@@ -56,8 +56,8 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:"throw-loop-limit2b"},
       io,
       autoResumeLimit:2,
-      buildInitialArgs: ()=>["--initial"],
-      buildResumeArgs: ()=>["--resume"],
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
       dispatch:alwaysThrowingDispatch(callsRef,[`boom-attempt-${1}`,`boom-attempt-${2}`,`boom-final`]),
     });
     const terminal=result.terminal as TerminalResult;
@@ -116,8 +116,8 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"fixer",runId:"throw-sink-fails"},
       io,
       autoResumeLimit:2,
-      buildInitialArgs: ()=>["--initial"],
-      buildResumeArgs: ()=>["--resume"],
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
       dispatch:alwaysThrowingDispatch(callsRef,["boom-sink"]),
     });
     // Retries still ran to budget and ended in the loud typed failure terminal.

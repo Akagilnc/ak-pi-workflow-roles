@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #106 end-to-end: ak-role judge → existing Judge gate (real Pi + faux provider)
  * → one Terminal result with registry-rendered Navigator command.
@@ -203,7 +204,10 @@ test(
             stdout: (text) => stdout.push(text),
             stderr: (text) => stderr.push(text),
           },
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             const subprocess = await runPiSubprocess([...args], {
               cwd: options.cwd,
               env: {
@@ -221,6 +225,8 @@ test(
               args: [...args],
             };
           },
+            extraPiArgs: ["-e", providerPath],
+          }),
         },
       );
 
@@ -333,7 +339,10 @@ async function traceJudgeInfrastructureFailure(input: {
         judgeExtraPiArgs: ["-e", providerPath],
         judgeTimeoutMs: 90_000,
         io: { stdout() {}, stderr() {} },
-        piRunner: async (args, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
           const env: NodeJS.ProcessEnv = {
             ...options.env,
             PI_OFFLINE: "1",
@@ -355,6 +364,8 @@ async function traceJudgeInfrastructureFailure(input: {
             args: [...args],
           };
         },
+            extraPiArgs: ["-e", providerPath],
+          }),
       },
     );
 
@@ -557,7 +568,10 @@ test(
               stderr.push(text);
             },
           },
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             // Delivery outcome scripts a lawful soul-audit pass + Judge converge
             // and a typed Navigator recommendation (model command prose ignored).
             const subprocess = await runPiSubprocess([...args], {
@@ -577,6 +591,8 @@ test(
               args: [...args],
             };
           },
+            extraPiArgs: ["-e", providerPath],
+          }),
         },
       );
 

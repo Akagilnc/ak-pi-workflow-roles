@@ -1,8 +1,13 @@
+import {
+  buildJudgeActivationExtraArgs,
+  buildReviewerActivationExtraArgs
+} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
   fixtureJudgeAdmitted,
   fixtureReviewerAdmitted,
 } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -40,12 +45,8 @@ import {
   PUBLIC_CALLABLE_ROLES,
   type PublicCallableRole,
 } from "../../src/public-cli/registry.ts";
-import {
-  buildJudgeActivationExtraArgs,
-} from "../../src/public-cli/judge-run.ts";
-import {
-  buildReviewerActivationExtraArgs,
-} from "../../src/public-cli/reviewer-run.ts";
+
+
 import {
   buildJudgeTransportPrompt,
   buildReviewerTransportPrompt,
@@ -453,7 +454,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-persist-001",
           credentials,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             capturedArgs = [...args];
             return {
               code: 1,
@@ -462,6 +466,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -502,7 +507,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-invoke-001",
           credentials,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             capturedArgs = [...args];
             return {
               code: 1,
@@ -511,6 +519,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
@@ -552,7 +561,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-none-001",
           credentials,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             capturedArgs = [...args];
             return {
               code: 1,
@@ -561,6 +573,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
@@ -590,7 +603,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-free-name-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -600,6 +616,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -649,7 +666,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-company-dots-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -659,6 +679,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -744,7 +765,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-reviewer-cursor-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -754,6 +778,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -923,7 +948,10 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
           createRunId: () => "engine-fixer-persist-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -933,6 +961,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -972,7 +1001,10 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
           createRunId: () => "engine-fixer-invoke-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -982,6 +1014,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -1043,7 +1076,10 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
           createRunId: () => "engine-ambient-free-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -1053,6 +1089,7 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -1204,7 +1241,10 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
               createRunId: () => runId,
               credentials,
               io,
-              piRunner: async (_args, options) => {
+              roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (_args, options) => {
                 capturedEnv = options.env;
                 return {
                   code: 1,
@@ -1213,6 +1253,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                   args: [..._args],
                 };
               },
+          }),
             },
           );
           assert.notEqual(
@@ -1265,6 +1306,9 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
             createRunId: () => runId,
             credentials,
             io,
+            roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (_args, options) => {
               capturedEnv = options.env;
               return {
@@ -1274,6 +1318,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                 args: [..._args],
               };
             },
+          }),
           });
           assert.notEqual(
             result.exitCode,

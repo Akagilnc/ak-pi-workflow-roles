@@ -1,6 +1,11 @@
 import { writeSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { RoleHost, HostContext } from "./host-contracts.ts";
+import {
+  ExplicitInternalActivationError,
+  type HostContext,
+  type RoleHost,
+} from "./host-contracts.ts";
+import { recordReviewerDispatchRejectionSync } from "./public-cli/reviewer-dispatch-rejection.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "./pi/adapter.ts";
 import { Value } from "typebox/value";
 
@@ -50,10 +55,6 @@ import {
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
-import {
-  ExplicitInternalActivationError,
-  recordReviewerDispatchRejectionSync,
-} from "./public-cli/explicit-internal.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";

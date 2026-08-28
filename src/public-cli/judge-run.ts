@@ -1,3 +1,4 @@
+import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Public Judge Role run: admit → explicit Internal activate → settle Terminal result.
  * #107: controlled post-admission failures and human decisions settle honestly.
@@ -8,14 +9,14 @@ import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
+import type {
+  MethodBinding,
+  RoleTurnHost,
+  RoleTurnKnownFailure,
+  RoleTurnRequest,
+  RoleTurnResult,
+} from "../host-contracts.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitJudgeInvocation,
@@ -23,7 +24,6 @@ import {
   type AdmittedJudgeInvocation
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -79,7 +79,10 @@ export type JudgeRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
+  roleTurnHost?: RoleTurnHost;
+  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
+  piRunner?: LegacyPiRunner;
+  extraPiArgs?: readonly string[];
   /** Effective judge seat model (persistent/startup/invocation). */
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material only). */
@@ -94,83 +97,40 @@ export type JudgeRunEnv = {
   /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
   autoResumeLimit?: number;
   /** Extra Pi args inserted before the prompt (tests: faux provider extension). */
-  extraPiArgs?: readonly string[];
   /** Override default role-run timeout. */
   timeoutMs?: number;
 };
 
-/**
- * Build Internal activation extra-args for an admitted Judge run
- * (everything after `--no-extensions -e <entrypoint>`).
- * No public burden selector. Session placed under the #78 ledger book.
- */
-export function buildJudgeActivationExtraArgs(
+/** Project admitted invocation onto the host-neutral turn request. */
+export function buildJudgeTurnRequest(
   admitted: AdmittedJudgeInvocation,
   options: {
-    principalAuthority: DurablePrincipalAuthority;
+    packageRoot: string;
+    home: string;
+    agentDir: string;
     model?: SeatModelConfig;
     engine?: string;
-    packageRoot?: string;
-    extraPiArgs?: readonly string[];
+    timeoutMs?: number;
+    correlationId?: string;
+    continuation: RoleTurnRequest["continuation"];
   },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const prompt = buildJudgeTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    // Exact Pi session file principal (SessionManager.open), not directory-latest.
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "judge",
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
-}
-
-/**
- * Build Internal activation args that reopen the exact Pi session for resume.
- * Does not resubmit the admitted instruction; uses the package resume envelope.
- * Reopens the durable session file principal explicitly — never --continue latest.
- */
-export function buildJudgeResumeActivationExtraArgs(
-  admitted: AdmittedJudgeInvocation,
-  options: {
-    principalAuthority: DurablePrincipalAuthority;
-    model?: SeatModelConfig;
-    extraPiArgs?: readonly string[];
-    message?: string;
-  },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "judge",
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message),
-  ];
+): RoleTurnRequest {
+  return {
+    principal: admitted.principal!,
+    activation: { role: "judge" as const },
+    methods: [],
+    continuation: options.continuation,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.engine === undefined ? {} : { engine: options.engine }),
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...(options.correlationId === undefined || options.correlationId.trim() === ""
+      ? {}
+      : { correlationId: options.correlationId }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  };
 }
 
 async function presentControlledFailure(
@@ -180,7 +140,7 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
+    knownFailure?: RoleTurnKnownFailure;
     /** Pre-resolved typed-HTTP outcome — no second sidecar read when settled. */
     typedHttpObservationSettled?: true;
     typedHttpObservation?: TypedProviderHttpObservation;
@@ -262,7 +222,7 @@ async function dispatchAdmittedJudge(input: {
   admitted: AdmittedJudgeInvocation;
   env: JudgeRunEnv;
   io: CliIo;
-  extraArgs: string[];
+  request: RoleTurnRequest;
   lease: RunWriterLease;
   /**
    * Mechanical engine provenance for initial Judge dispatch only.
@@ -274,7 +234,7 @@ async function dispatchAdmittedJudge(input: {
   admitted: AdmittedJudgeInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, effectiveEngine } = input;
   try {
     // Fail closed at the public credential seam before model dispatch: missing
     // selected-provider auth must not be washed by ambient keys or zero-exit runs.
@@ -299,32 +259,9 @@ async function dispatchAdmittedJudge(input: {
     // the current initial/resume attempt can qualify v1 resume.
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      // Public-run marker so Navigator work context prefers admitted instruction
-      // and role-runtime can record typed provider HTTP observations.
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== undefined && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
+    let result: RoleTurnResult;
     try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
+      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -463,21 +400,38 @@ export async function runPublicJudge(
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () =>
-      buildJudgeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+    buildInitialPayload: () =>
+      buildJudgeTurnRequest(admitted, {
         packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "initial",
+          prompt: buildJudgeTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...(env.engine === undefined ? {} : { engine: env.engine }), packageRoot: env.packageRoot })),
+        },
       }),
-    buildResumeArgs: () =>
-      buildJudgeResumeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+    buildResumePayload: () =>
+      buildJudgeTurnRequest(admitted, {
+        packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "resume",
+          prompt: selectResumeContinuationPrompt(),
+        },
       }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+    dispatch: (request, lease, isFirst, attemptIo) =>
       dispatchAdmittedJudge({
         admitted,
         env: {
@@ -485,7 +439,7 @@ export async function runPublicJudge(
           ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
         },
         io: attemptIo,
-        extraArgs,
+        request,
         lease,
         ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
       }),
@@ -531,11 +485,19 @@ export async function runPublicResume(
     throw error;
   }
 
-  const extraArgs = buildJudgeResumeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+  const turnRequest = buildJudgeTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    ...(request.message === undefined ? {} : { message: request.message }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message),
+    },
   });
 
   const result = await dispatchAdmittedJudge({
@@ -545,7 +507,7 @@ export async function runPublicResume(
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
   });
   // Manual resume: distinct scope from per-call auto retry; just expose observation.

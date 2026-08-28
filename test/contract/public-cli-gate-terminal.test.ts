@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #478 Terminal gate projection — real public CLI entry (runAkRole).
  *
@@ -205,7 +207,10 @@ async function runJudgePublic(input: {
       cwd: input.project,
       createRunId: () => input.runId,
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         const runDir = join(sessionDir, "..");
         await mkdir(sessionDir, { recursive: true });
@@ -217,6 +222,7 @@ async function runJudgePublic(input: {
           args: [...args],
         };
       },
+          }),
     },
   );
   assert.ok(result.terminal, "public entry must settle a Terminal");
@@ -430,7 +436,10 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           await mkdir(sessionDir, { recursive: true });
@@ -468,6 +477,7 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 1);

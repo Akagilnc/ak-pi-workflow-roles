@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107 session provider-stop 绑定与 #307 typed HTTP 观察家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -14,7 +15,9 @@ import { createComplianceDecisionTool, runComplianceAudit } from "../../src/comp
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { knownFailureFromProviderStop, readReviewerDispatchRejection } from "../../src/public-cli/explicit-internal.ts";
+import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
+import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
+
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
@@ -45,7 +48,10 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
       packageRoot, home, cwd: project, io,
       credentials: { "openai-codex": true, xai: true },
       createRunId: () => `run-${role}-auditor-provider-stop`,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         const entries: unknown[] = [];
         const faux = fauxProvider({ provider: "openai-codex" });
         faux.setResponses(Array.from({ length: 3 }, () =>
@@ -71,6 +77,7 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
         await writeFile(join(sessionDir, "session.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
         return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
       },
+          }),
     });
     const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized", diagnosticEquals: "WebSocket error" });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
@@ -157,7 +164,10 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-reviewer-detour-soft-380-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await writeFile(
             sessionFile,
@@ -218,6 +228,7 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
             },
           };
         },
+          }),
       },
     );
     // Soft detour is not infra; later knownFailure remains the settlement principal.
@@ -536,7 +547,10 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => row.runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), sessionRows(row.errorMessage), "utf8");
@@ -546,6 +560,7 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
               // deliberately omit knownFailure — production default runner path
             };
           },
+          }),
         },
       );
       const { terminal, errorRef } = await assertPublicFailureSettlement({
@@ -1040,7 +1055,10 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
         cwd: project,
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           await mkdir(sessionDir, { recursive: true });
@@ -1053,6 +1071,7 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
             args: [...args],
           };
         },
+          }),
       },
     );
 

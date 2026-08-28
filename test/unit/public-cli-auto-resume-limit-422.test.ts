@@ -1,3 +1,4 @@
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #422: single-call auto-resume ceiling becomes configurable via
  * public-cli.json top-level key `autoResumeLimit` (sibling of `seats`).
@@ -55,8 +56,8 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:4,
-      buildInitialArgs: ()=>["--initial"],
-      buildResumeArgs: ()=>["--resume"],
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
       // Loop contract (#416): the dispatcher owns the per-round lease release.
       dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
     });
@@ -75,8 +76,8 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
-      buildInitialArgs: ()=>["--initial"],
-      buildResumeArgs: ()=>["--resume"],
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
       dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
     });
     assert.equal(calls,1);
@@ -92,7 +93,11 @@ test("#422 configured autoResumeLimit=N changes ceiling via real entry (judge, N
     const runId="422-e2e-n1";const callsRef={n:0};
     const {io}=captureIo();
     const result=await runAkRole(["judge","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
-      piRunner:failingJudgeRunner(callsRef)});
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: failingJudgeRunner(callsRef),
+          })});
     assert.equal(callsRef.n,2);
     assert.equal(result.exitCode,1);
     assert.equal(result.terminal?.autoResumeCount,1);
@@ -107,7 +112,11 @@ test("#422 configured autoResumeLimit=0 disables auto resume via real entry (jud
     const runId="422-e2e-zero";const callsRef={n:0};
     const {io}=captureIo();
     const result=await runAkRole(["judge","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
-      piRunner:failingJudgeRunner(callsRef)});
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: failingJudgeRunner(callsRef),
+          })});
     assert.equal(callsRef.n,1);
     assert.equal(result.exitCode,1);
     assert.equal(result.terminal?.autoResumeCount,0);
@@ -236,8 +245,8 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
           admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
           io,
           autoResumeLimit:bad,
-          buildInitialArgs: ()=>["--initial"],
-          buildResumeArgs: ()=>["--resume"],
+          buildInitialPayload: ()=>["--initial"],
+          buildResumePayload: ()=>["--resume"],
           dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
         }),
         /non-negative integer/,
@@ -263,7 +272,11 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
         credentials:{"openai-codex":true,xai:true},
         createRunId:()=>runId,
         autoResumeLimit:Number.NaN,
-        piRunner:async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
+          }),
       },io,PUBLIC_ROLE_ARGV.judge.parse),
       (error:unknown)=>error instanceof Error &&
         /non-negative integer/.test(error.message) &&

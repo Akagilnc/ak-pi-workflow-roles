@@ -1,20 +1,21 @@
+import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Shared one-shot public Role dispatch seam (Doctor-isomorphic path).
  * Post-admission lifecycle — mark admitted → writer lease → running → spawn →
  * settle/fail → terminal → release — lives here once. Role runners supply only
- * activation args and settlement adapters (ADR 0018 / #448).
+ * turn request projection and settlement adapters (ADR 0018 / #448 / #526).
  */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 
-import { applyEngineChildEnv } from "../engine-detour.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
+import type {
+  DurablePrincipalAuthority,
+  RoleTurnHost,
+  RoleTurnKnownFailure,
+  RoleTurnRequest,
+  RoleTurnResult,
+} from "../host-contracts.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   missingCredentialPreDispatchFailure,
@@ -40,7 +41,6 @@ import {
   explicitInternalKnownFailureClassificationInput,
   settleFailureTerminalResult,
 } from "./settlement.ts";
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 import type { CliIo } from "./cli-io.ts";
 import {
   type AdmittedRoleInvocation,
@@ -53,7 +53,10 @@ export type OneShotRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
+  roleTurnHost?: RoleTurnHost;
+  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
+  piRunner?: LegacyPiRunner;
+  extraPiArgs?: readonly string[];
   model?: SeatModelConfig;
   engine?: string;
   credentials?: CredentialProviders;
@@ -80,7 +83,7 @@ async function presentControlledFailure<A extends AdmittedRoleInvocation>(
     code: number | null;
     stderr: string;
     thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
+    knownFailure?: RoleTurnKnownFailure;
   },
   authority: DurablePrincipalAuthority,
   io: CliIo,
@@ -129,7 +132,7 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
   admitted: A;
   env: OneShotRunEnv;
   io: CliIo;
-  extraArgs: string[];
+  request: RoleTurnRequest;
   lease: RunWriterLease;
   effectiveEngine?: string;
   adapters: OneShotSettlementAdapters<A>;
@@ -138,7 +141,7 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
   admitted: A;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine, adapters } = input;
+  const { admitted, env, io, request, lease, effectiveEngine, adapters } = input;
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((_terminal: TerminalResult) => true);
   try {
@@ -157,29 +160,9 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
+    let result: RoleTurnResult;
     try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
+      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -278,7 +261,7 @@ export async function runAdmittedOneShotRole<A extends AdmittedRoleInvocation>(i
   admitted: A;
   env: OneShotRunEnv;
   io: CliIo;
-  extraArgs: string[];
+  request: RoleTurnRequest;
   adapters: OneShotSettlementAdapters<A>;
   effectiveEngine?: string;
 }): Promise<{
@@ -286,7 +269,7 @@ export async function runAdmittedOneShotRole<A extends AdmittedRoleInvocation>(i
   admitted: A;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, adapters, effectiveEngine } = input;
+  const { admitted, env, io, request, adapters, effectiveEngine } = input;
   await markRunAdmitted(admitted, env.principalAuthority);
 
   let lease: RunWriterLease;
@@ -306,7 +289,7 @@ export async function runAdmittedOneShotRole<A extends AdmittedRoleInvocation>(i
     admitted,
     env,
     io,
-    extraArgs,
+    request,
     lease,
     adapters,
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),

@@ -1,26 +1,29 @@
+import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
- * Public Coder Role run: admit → explicit Internal activate → settle Terminal result.
+ * Public Coder Role run: admit → host turn execute → settle Terminal result.
  * #109: package-owned TDD method, default apply / explicit plan, shared #106 success interface.
  * Controlled-failure settlement reuses the #107 shared owner (no new failure classes).
+ * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import type {
+  DurablePrincipalAuthority,
+  MethodBinding,
+  RoleTurnHost,
+  RoleTurnKnownFailure,
+  RoleTurnRequest,
+  RoleTurnResult,
+} from "../host-contracts.ts";
+import type { ControlledFailureCause } from "../host-contracts.ts";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCoderInvocation,
@@ -28,7 +31,6 @@ import {
   type AdmittedCoderInvocation
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -72,7 +74,6 @@ import {
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type {
-  ControlledFailureCause,
   TerminalResult,
 } from "./terminal.ts";
 
@@ -83,7 +84,10 @@ export type CoderRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
+  roleTurnHost?: RoleTurnHost;
+  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
+  piRunner?: LegacyPiRunner;
+  extraPiArgs?: readonly string[];
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material + env signal). */
   engine?: string;
@@ -91,105 +95,52 @@ export type CoderRunEnv = {
   createRunId?: () => string;
   /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
   autoResumeLimit?: number;
-  extraPiArgs?: readonly string[];
   timeoutMs?: number;
 };
 
-/**
- * Build Internal activation extra-args for an admitted Coder run.
- * Apply phase pins the package-owned TDD Skill via --skill (no ambient home).
- * Plan phase keeps --no-skills without a method Skill.
- */
-export function buildCoderActivationExtraArgs(
-  admitted: AdmittedCoderInvocation,
-  options: {
-    principalAuthority: DurablePrincipalAuthority;
-    packageRoot: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    extraPiArgs?: readonly string[];
-  },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const prompt = buildCoderTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  const skillArgs =
-    admitted.phase === "apply"
-      ? [
-          "--skill",
-          resolvePackagedMethodSkillPath(options.packageRoot, "tdd"),
-        ]
-      : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
+function coderMethods(
+  phase: string,
+  packageRoot: string,
+): readonly MethodBinding[] {
+  return phase === "apply"
+    ? [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "tdd") }]
+    : [];
 }
 
-/**
- * Reopen the exact Coder Pi session for resume. Preserves admitted phase and
- * package TDD binding; does not resubmit the original instruction.
- */
-export function buildCoderResumeActivationExtraArgs(
+/** Project admitted Coder invocation onto the host-neutral turn request. */
+export function buildCoderTurnRequest(
   admitted: AdmittedCoderInvocation,
   options: {
-    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
+    home: string;
+    agentDir: string;
     model?: SeatModelConfig;
-    extraPiArgs?: readonly string[];
-    message?: string;
+    engine?: string;
+    timeoutMs?: number;
+    correlationId?: string;
+    continuation: RoleTurnRequest["continuation"];
   },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const skillArgs =
-    admitted.phase === "apply"
-      ? [
-          "--skill",
-          resolvePackagedMethodSkillPath(options.packageRoot, "tdd"),
-        ]
-      : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message),
-  ];
+): RoleTurnRequest {
+  return {
+    principal: admitted.principal!,
+    activation: {
+      role: "coder",
+      phase: admitted.phase,
+      taskPath: admitted.taskPath,
+    },
+    methods: coderMethods(admitted.phase, options.packageRoot),
+    continuation: options.continuation,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.engine === undefined ? {} : { engine: options.engine }),
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...(options.correlationId === undefined || options.correlationId.trim() === ""
+      ? {}
+      : { correlationId: options.correlationId }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  };
 }
 
 async function presentControlledFailure(
@@ -199,7 +150,7 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
+    knownFailure?: RoleTurnKnownFailure;
     knownCause?: ControlledFailureCause;
     knownIdentity?: {
       readonly name?: string;
@@ -291,7 +242,7 @@ async function dispatchAdmittedCoder(input: {
   admitted: AdmittedCoderInvocation;
   env: CoderRunEnv;
   io: CliIo;
-  extraArgs: string[];
+  request: RoleTurnRequest;
   lease: RunWriterLease;
   methodProvenance?: PackagedMethodSkillProvenance;
   /** Mechanical engine provenance for initial Coder dispatch only. */
@@ -301,7 +252,7 @@ async function dispatchAdmittedCoder(input: {
   admitted: AdmittedCoderInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, methodProvenance, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, methodProvenance, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -318,30 +269,9 @@ async function dispatchAdmittedCoder(input: {
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== undefined && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
+    let result: RoleTurnResult;
     try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
+      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -493,22 +423,44 @@ export async function runPublicCoder(
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () =>
-      buildCoderActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+    buildInitialPayload: () =>
+      buildCoderTurnRequest(admitted, {
         packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "initial",
+          prompt: buildCoderTransportPrompt(
+            admitted,
+            engineSessionMaterialFromOptions({
+              ...(env.engine === undefined ? {} : { engine: env.engine }),
+              packageRoot: env.packageRoot,
+            }),
+          ),
+        },
       }),
-    buildResumeArgs: () =>
-      buildCoderResumeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+    buildResumePayload: () =>
+      buildCoderTurnRequest(admitted, {
         packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "resume",
+          prompt: selectResumeContinuationPrompt(),
+        },
       }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+    dispatch: (request, lease, isFirst, attemptIo) =>
       dispatchAdmittedCoder({
         admitted,
         env: {
@@ -516,7 +468,7 @@ export async function runPublicCoder(
           ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
         },
         io: attemptIo,
-        extraArgs,
+        request,
         lease,
         ...(methodProvenance === undefined ? {} : { methodProvenance }),
         ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
@@ -587,12 +539,19 @@ export async function runPublicCoderResume(
     }
   }
 
-  const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+  const turnRequest = buildCoderTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    ...(request.message === undefined ? {} : { message: request.message }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message),
+    },
   });
 
   const result = await dispatchAdmittedCoder({
@@ -602,7 +561,7 @@ export async function runPublicCoderResume(
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     ...(methodProvenance === undefined ? {} : { methodProvenance }),
   });
@@ -613,4 +572,4 @@ export async function runPublicCoderResume(
 }
 
 // Re-export for tests that assert typed credential failure channel shape.
-export type { ExplicitInternalKnownFailure };
+export type { RoleTurnKnownFailure };
