@@ -1144,20 +1144,27 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     ...bare,
     reason: "prerequisite_missing: owner has not answered which adapter branch is in scope",
   };
-  let gatekeeperProviderRequests = 0;
-  const nonCompletedContext = (id: string) => Object.assign(
+  let bounceGatekeeperProviderRequests = 0;
+  const bounceContext = (id: string) => Object.assign(
     toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
-    { modelRegistry: { getProvider() { gatekeeperProviderRequests += 1; } } },
+    { modelRegistry: { getProvider() { bounceGatekeeperProviderRequests += 1; } } },
   );
-  // Positive: no reason → bounce → same-run reasoned resubmit accepted.
+  // Positive: no reason → bounce → same-run reasoned resubmit accepted through Gatekeeper.
   await assert.rejects(
-    tool.execute("unfinished-bare", bare, undefined, undefined, nonCompletedContext("unfinished-bare")),
+    tool.execute("unfinished-bare", bare, undefined, undefined, bounceContext("unfinished-bare")),
     (error: unknown) =>
       error instanceof WorkerUnfinishedReasonReminderError &&
       error.code === "worker_unfinished_reason_reminder",
   );
+  assert.equal(bounceGatekeeperProviderRequests, 0);
   assert.deepEqual(
-    (await tool.execute("unfinished-reasoned", reasoned, undefined, undefined, nonCompletedContext("unfinished-reasoned"))).details,
+    (await tool.execute(
+      "unfinished-reasoned",
+      reasoned,
+      undefined,
+      undefined,
+      withPassingGatekeeper(toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }])),
+    )).details,
     reasoned,
   );
   const { extractCoderRoleOutcome } = await import("../../src/public-cli/settlement.ts");
@@ -1175,7 +1182,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   assert.equal(projected?.outcome.decisiveFacts.reason, reasoned.reason);
   assert.equal(projected?.outcome.decisiveFacts.remainingScope, reasoned.remainingScope);
 
-  // Negative: continuous bare resubmits bounce at most twice, then accept (no loop).
+  // Negative: continuous bare resubmits bounce at most twice, then accept through Gatekeeper (no loop).
   const harness2 = extensionHarness("coder", {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -1193,19 +1200,26 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   });
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
+  bounceGatekeeperProviderRequests = 0;
   await assert.rejects(
-    tool2.execute("u1", bare, undefined, undefined, nonCompletedContext("u1")),
+    tool2.execute("u1", bare, undefined, undefined, bounceContext("u1")),
     (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
   );
   await assert.rejects(
-    tool2.execute("u2", bare, undefined, undefined, nonCompletedContext("u2")),
+    tool2.execute("u2", bare, undefined, undefined, bounceContext("u2")),
     (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
   );
+  assert.equal(bounceGatekeeperProviderRequests, 0);
   assert.deepEqual(
-    (await tool2.execute("u3", bare, undefined, undefined, nonCompletedContext("u3"))).details,
+    (await tool2.execute(
+      "u3",
+      bare,
+      undefined,
+      undefined,
+      withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }])),
+    )).details,
     bare,
   );
-  assert.equal(gatekeeperProviderRequests, 0);
 });
 
 test("Gatekeeper non-pass projects structured details through role-runtime tool_result", async () => {
@@ -1350,7 +1364,8 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
     execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
     toolName: FIXER_OUTPUT_TOOL_NAME,
     output: completed,
-    passingRuns: 2,
+    // completed + partially_completed + unfinished each consume one pass pair.
+    passingRuns: 3,
   });
   const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
   await tracer.assertRejectSequence();
@@ -1372,15 +1387,27 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
   await partialRuntime.activate();
   assert.equal((await partialHarness.tools.get(FIXER_OUTPUT_TOOL_NAME)!.execute("partial", partial, undefined, undefined, submissionContext("partial"))).terminate, true);
 
+  const unfinished = {
+    status: "unfinished" as const,
+    report: "handover",
+    remainingScope: "owner answer",
+    reason: "prerequisite_missing: owner answer",
+  };
+  const unfinishedTool = await start("apply");
+  assert.equal(
+    (await unfinishedTool.execute("unfinished", unfinished, undefined, undefined, submissionContext("unfinished"))).terminate,
+    true,
+  );
+
   const beforeSkipped = tracer.providerRequests;
   const planTool = await start("plan");
   await planTool.execute("planned", { status: "planned", report: "plan" }, undefined, undefined, submissionContext("planned"));
   await planTool.execute("plan-refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }, undefined, undefined, submissionContext("plan-refused"));
   const applyTool = await start("apply");
   await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"));
-  await applyTool.execute("unfinished", { status: "unfinished", report: "handover", remainingScope: "owner answer", reason: "prerequisite_missing: owner answer" }, undefined, undefined, submissionContext("unfinished"));
   assert.equal(tracer.providerRequests, beforeSkipped);
-  assert.equal(tracer.providerRequests, 19);
+  // reject matrix (15) + three pass pairs (6) = 21.
+  assert.equal(tracer.providerRequests, 21);
   assert.equal(tracer.remainingResponses, 0);
 });
 
