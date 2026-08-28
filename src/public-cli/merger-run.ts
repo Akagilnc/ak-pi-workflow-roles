@@ -1,15 +1,24 @@
+import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Public Merger Role run: derive active-merge envelope → force package
- * merge-only method → explicit Internal activate → settle Terminal result (#114).
+ * merge-only method → host turn execute → settle Terminal result (#114).
  * Controlled-failure settlement reuses the #107 shared owner.
+ * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import type {
+  DurablePrincipalAuthority,
+  MethodBinding,
+  RoleTurnHost,
+  RoleTurnKnownFailure,
+  RoleTurnRequest,
+  RoleTurnResult,
+} from "../host-contracts.ts";
+import type { ControlledFailureCause } from "../host-contracts.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
-import { applyEngineChildEnv } from "../engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -18,12 +27,6 @@ import {
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import { uuidv7 } from "../uuidv7.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitMergerInvocation,
@@ -33,7 +36,6 @@ import {
   type AdmittedMergerInvocation
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
@@ -65,6 +67,7 @@ import {
   formatTerminalResult,
   hasLawfulMergerTerminalResult,
   inspectJudgeSession,
+  isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
   explicitInternalKnownFailureClassificationInput,
@@ -76,7 +79,6 @@ import {
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type {
-  ControlledFailureCause,
   TerminalResult,
 } from "./terminal.ts";
 
@@ -87,7 +89,10 @@ export type MergerRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
+  roleTurnHost?: RoleTurnHost;
+  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
+  piRunner?: LegacyPiRunner;
+  extraPiArgs?: readonly string[];
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material + env signal). */
   engine?: string;
@@ -95,97 +100,51 @@ export type MergerRunEnv = {
   createRunId?: () => string;
   /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
   autoResumeLimit?: number;
-  extraPiArgs?: readonly string[];
   timeoutMs?: number;
 };
 
-/**
- * Build Internal activation extra-args for an admitted Merger run.
- * Package resolving-merge-conflicts Skill is forced via --skill; ambient home off.
- * Transport prompt forces `/skill:resolving-merge-conflicts` expansion first.
- */
-export function buildMergerActivationExtraArgs(
-  admitted: AdmittedMergerInvocation,
-  options: {
-    principalAuthority: DurablePrincipalAuthority;
-    packageRoot: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    extraPiArgs?: readonly string[];
-  },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const prompt = buildMergerTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "resolving-merge-conflicts",
-  );
+function mergerMethods(packageRoot: string): readonly MethodBinding[] {
   return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "merger",
-    "--ak-merger-input",
-    admitted.mergerInputPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
+    {
+      kind: "skill",
+      path: resolvePackagedMethodSkillPath(packageRoot, "resolving-merge-conflicts"),
+    },
   ];
 }
 
-/**
- * Reopen the exact Merger Pi session for resume. Preserves derived input and
- * package method binding; does not resubmit the original instruction.
- */
-export function buildMergerResumeActivationExtraArgs(
+/** Project admitted Merger invocation onto the host-neutral turn request. */
+export function buildMergerTurnRequest(
   admitted: AdmittedMergerInvocation,
   options: {
-    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
+    home: string;
+    agentDir: string;
     model?: SeatModelConfig;
-    extraPiArgs?: readonly string[];
-    message?: string;
+    engine?: string;
+    timeoutMs?: number;
+    correlationId?: string;
+    continuation: RoleTurnRequest["continuation"];
   },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "resolving-merge-conflicts",
-  );
-  return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "merger",
-    "--ak-merger-input",
-    admitted.mergerInputPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message),
-  ];
+): RoleTurnRequest {
+  return {
+    principal: admitted.principal!,
+    activation: {
+      role: "merger",
+      inputPath: admitted.mergerInputPath,
+    },
+    methods: mergerMethods(options.packageRoot),
+    continuation: options.continuation,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.engine === undefined ? {} : { engine: options.engine }),
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...(options.correlationId === undefined || options.correlationId.trim() === ""
+      ? {}
+      : { correlationId: options.correlationId }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  };
 }
 
 async function presentControlledFailure(
@@ -195,7 +154,7 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
+    knownFailure?: RoleTurnKnownFailure;
     knownCause?: ControlledFailureCause;
     knownIdentity?: {
       readonly name?: string;
@@ -286,7 +245,7 @@ async function dispatchAdmittedMerger(input: {
   admitted: AdmittedMergerInvocation;
   env: MergerRunEnv;
   io: CliIo;
-  extraArgs: string[];
+  request: RoleTurnRequest;
   lease: RunWriterLease;
   methodMaterial: PackagedMethodSkillMaterial;
   effectiveEngine?: string;
@@ -295,7 +254,7 @@ async function dispatchAdmittedMerger(input: {
   admitted: AdmittedMergerInvocation;
   terminal?: TerminalResult;
 }> {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
+  const { admitted, env, io, request, lease, methodMaterial, effectiveEngine } = input;
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -312,30 +271,9 @@ async function dispatchAdmittedMerger(input: {
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
 
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== undefined && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
+    let result: RoleTurnResult;
     try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
+      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,
@@ -383,7 +321,7 @@ async function dispatchAdmittedMerger(input: {
         io,
       );
     }
-    if (lawful !== undefined) {
+    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
       await markRunTerminal(admitted.runDirectory).catch(() => undefined);
       io.stdout(formatTerminalResult(lawful));
       return {
@@ -505,6 +443,31 @@ async function admitMergerShellForActivationFailure(options: {
   };
 }
 
+function mergerTurnOptions(
+  admitted: AdmittedMergerInvocation,
+  env: MergerRunEnv,
+): {
+  packageRoot: string;
+  home: string;
+  agentDir: string;
+  model?: SeatModelConfig;
+  engine?: string;
+  timeoutMs?: number;
+  correlationId?: string;
+} {
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+  };
+}
+
 export async function runPublicMerger(
   argv: readonly string[],
   env: MergerRunEnv,
@@ -608,22 +571,36 @@ export async function runPublicMerger(
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () =>
-      buildMergerActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
-        packageRoot: env.packageRoot,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    buildInitialPayload: () =>
+      buildMergerTurnRequest(admitted, {
+        ...mergerTurnOptions(admitted, env),
+        continuation: {
+          kind: "initial",
+          prompt: buildMergerTransportPrompt(
+            admitted,
+            engineSessionMaterialFromOptions({
+              ...(env.engine === undefined ? {} : { engine: env.engine }),
+              packageRoot: env.packageRoot,
+            }),
+          ),
+        },
       }),
-    buildResumeArgs: () =>
-      buildMergerResumeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+    buildResumePayload: () =>
+      buildMergerTurnRequest(admitted, {
         packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "resume",
+          prompt: selectResumeContinuationPrompt(),
+        },
       }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
+    dispatch: (request, lease, isFirst, attemptIo) =>
       dispatchAdmittedMerger({
         admitted,
         env: {
@@ -631,7 +608,7 @@ export async function runPublicMerger(
           ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
         },
         io: attemptIo,
-        extraArgs,
+        request,
         lease,
         methodMaterial,
         ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
@@ -695,12 +672,19 @@ export async function runPublicMergerResume(
     );
   }
 
-  const extraArgs = buildMergerResumeActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+  const turnRequest = buildMergerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    ...(request.message === undefined ? {} : { message: request.message }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message),
+    },
   });
 
   const result = await dispatchAdmittedMerger({
@@ -710,7 +694,7 @@ export async function runPublicMergerResume(
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
     },
     io,
-    extraArgs,
+    request: turnRequest,
     lease,
     methodMaterial,
   });
@@ -718,4 +702,4 @@ export async function runPublicMergerResume(
   return result;
 }
 
-export type { ExplicitInternalKnownFailure, PackagedMethodSkillProvenance };
+export type { RoleTurnKnownFailure, PackagedMethodSkillProvenance };
