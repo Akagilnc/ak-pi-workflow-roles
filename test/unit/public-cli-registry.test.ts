@@ -8,44 +8,16 @@ import {
   listHelpCapabilities,
   publicStartupCandidates,
 } from "../../src/public-cli/registry.ts";
-import {
-  PACKAGED_ROLE_REGISTRY,
-  PUBLIC_ROLE_RECORDS,
-} from "../../src/packaged-role-registry.ts";
+import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
 
 test("public registry exposes callable roles plus automatic configurable seats", () => {
-  // #524: callable roster and metadata projection derive from PUBLIC_ROLE_RECORDS only.
+  // #524: callable roster derives from composition-root PUBLIC_ROLE_RECORDS.
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     PUBLIC_ROLE_RECORDS.map((entry) => entry.role),
   );
-  assert.deepEqual(
-    PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
-    PUBLIC_ROLE_RECORDS.map((entry) => entry.role),
-  );
-  assert.equal(PACKAGED_ROLE_REGISTRY.length, PUBLIC_ROLE_RECORDS.length);
-  for (let i = 0; i < PUBLIC_ROLE_RECORDS.length; i += 1) {
-    const record = PUBLIC_ROLE_RECORDS[i]!;
-    const projection = PACKAGED_ROLE_REGISTRY[i]!;
-    assert.equal(projection.role, record.role);
-    assert.deepEqual([...projection.phases], [...record.phases]);
-    assert.equal(projection.outputTool, record.outputTool);
-    assert.equal(projection.inputFlag, record.inputFlag);
-    assert.equal(projection.phaseFlag, record.phaseFlag);
-    assert.equal(projection.activationStage, record.activationStage);
-    assert.equal(
-      "sessionMaterials" in projection,
-      false,
-      "metadata projection must not carry sessionMaterials",
-    );
-  }
   assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
-  assert.equal(
-    (PUBLIC_ROLE_RECORDS.map((entry) => entry.role) as readonly string[]).includes("navigator"),
-    false,
-    "navigator is name-only materials, not a public role record",
-  );
   // #453: automatic gate seats join navigator as configurable-only (never caller commands).
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],

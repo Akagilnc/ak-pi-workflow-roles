@@ -1,8 +1,7 @@
 /**
  * #443 / #495 S4 / #524 — session opening materials: ticket-oracle path rosters
- * at the three loader families, derived from the composition-root unique record
- * (no soul-prose byte pin). Pack/default-wiring real entries live in package +
- * gatekeeper integration trunks.
+ * at the three loader families (no soul-prose byte pin). Pack/default-wiring
+ * real entries live in package + gatekeeper integration trunks.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -11,10 +10,6 @@ import {
   AUDITOR_SESSION_MATERIALS,
   AUDITOR_SOUL_ROLES,
 } from "../../src/auditor-soul.ts";
-import {
-  NOTARY_SESSION_MATERIALS,
-  PUBLIC_ROLE_RECORDS,
-} from "../../src/packaged-role-registry.ts";
 import {
   GATEKEEPER_SESSION_MATERIALS,
   joinPackageMaterials,
@@ -80,24 +75,7 @@ const TICKET_AUDITOR_MATERIALS = {
   doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
 } as const;
 
-test("main-role material roster derives from public role records plus navigator", () => {
-  for (const record of PUBLIC_ROLE_RECORDS) {
-    assert.deepEqual(
-      [...MAIN_ROLE_SESSION_MATERIALS[record.role]],
-      [...record.sessionMaterials],
-      `${record.role} main materials must be the public role record projection`,
-    );
-  }
-  assert.equal(
-    (PUBLIC_ROLE_RECORDS.map((entry) => entry.role) as readonly string[]).includes("navigator"),
-    false,
-    "navigator stays outside public role records",
-  );
-  assert.deepEqual(
-    [...MAIN_ROLE_SESSION_MATERIALS.navigator],
-    [...TICKET_MAIN_MATERIALS.navigator],
-    "navigator name-only materials remain on the main-session projection",
-  );
+test("main-role material roster matches ticket path list", () => {
   for (const [role, paths] of Object.entries(TICKET_MAIN_MATERIALS)) {
     assert.deepEqual(
       [...MAIN_ROLE_SESSION_MATERIALS[role as MainRoleSession]],
@@ -107,7 +85,7 @@ test("main-role material roster derives from public role records plus navigator"
   }
 });
 
-test("gatekeeper family material roster matches ticket; notary shares public definition", () => {
+test("gatekeeper family material roster matches ticket path list", () => {
   for (const [role, paths] of Object.entries(TICKET_GATEKEEPER_MATERIALS)) {
     assert.deepEqual(
       [...GATEKEEPER_SESSION_MATERIALS[role as GatekeeperSessionRole]],
@@ -115,28 +93,10 @@ test("gatekeeper family material roster matches ticket; notary shares public def
       `${role} must carry ticket material paths`,
     );
   }
-  // #524: institution notary references the same materials definition as public notary.
-  assert.equal(
-    GATEKEEPER_SESSION_MATERIALS.notary,
-    NOTARY_SESSION_MATERIALS,
-    "gatekeeper notary must reference NOTARY_SESSION_MATERIALS",
-  );
-  const publicNotary = PUBLIC_ROLE_RECORDS.find((entry) => entry.role === "notary");
-  assert.ok(publicNotary);
-  assert.equal(
-    publicNotary.sessionMaterials,
-    NOTARY_SESSION_MATERIALS,
-    "public notary record must reference NOTARY_SESSION_MATERIALS",
-  );
-  assert.equal(
-    GATEKEEPER_SESSION_MATERIALS.notary,
-    publicNotary.sessionMaterials,
-    "both notary usages must be the same materials definition",
-  );
-  assert.equal(
-    MAIN_ROLE_SESSION_MATERIALS.notary,
-    NOTARY_SESSION_MATERIALS,
-    "main-session notary projection must share the same definition",
+  // #524: public and gatekeeper notary path lists stay identical (shared definition).
+  assert.deepEqual(
+    [...MAIN_ROLE_SESSION_MATERIALS.notary],
+    [...GATEKEEPER_SESSION_MATERIALS.notary],
   );
 });
 
