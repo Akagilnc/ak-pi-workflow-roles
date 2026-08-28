@@ -99,3 +99,10 @@ export function rehydratePiDurablePrincipal(
 ): DurablePrincipal {
   return encode(authority.decode(wire));
 }
+
+/** Encode already-decoded coordinates into an opaque principal (no second decode). */
+export function encodePiDurablePrincipal(
+  coordinates: DurablePrincipalCoordinates,
+): DurablePrincipal {
+  return encode(coordinates);
+}

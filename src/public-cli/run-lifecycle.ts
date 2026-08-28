@@ -4,7 +4,7 @@ import type {
 } from "../host-contracts.ts";
 import {
   decodePiDurablePrincipal,
-  rehydratePiDurablePrincipal,
+  encodePiDurablePrincipal,
 } from "../pi/durable-principal.ts";
 /**
  * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
@@ -297,24 +297,28 @@ async function writeRoleRunStateDisk(
   );
 }
 
-function materializeRoleRunRecord(
+/** One authority.decode of the uninterpreted wire → record + opaque principal. */
+function materializeRoleRunFromDisk(
   disk: RoleRunStateDisk,
   authority: DurablePrincipalAuthority,
-): RoleRunRecord | undefined {
+): { readonly run: RoleRunRecord; readonly principal: DurablePrincipal } | undefined {
   try {
     const coordinates = authority.decode(disk.principalWire);
     return {
-      runId: disk.runId,
-      role: disk.role,
-      state: disk.state,
-      bookKey: disk.bookKey,
-      projectRoot: disk.projectRoot,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      runDirectory: disk.runDirectory,
-      admittedRequestPath: disk.admittedRequestPath,
-      ...(disk.phase === undefined ? {} : { phase: disk.phase }),
-      ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
+      principal: encodePiDurablePrincipal(coordinates),
+      run: {
+        runId: disk.runId,
+        role: disk.role,
+        state: disk.state,
+        bookKey: disk.bookKey,
+        projectRoot: disk.projectRoot,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
+        runDirectory: disk.runDirectory,
+        admittedRequestPath: disk.admittedRequestPath,
+        ...(disk.phase === undefined ? {} : { phase: disk.phase }),
+        ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
+      },
     };
   } catch {
     return undefined;
@@ -331,7 +335,7 @@ export async function readRoleRunState(
 ): Promise<RoleRunRecord | undefined> {
   const disk = await readRoleRunStateDisk(runDirectory);
   if (disk === undefined) return undefined;
-  return materializeRoleRunRecord(disk, authority);
+  return materializeRoleRunFromDisk(disk, authority)?.run;
 }
 
 /**
@@ -677,12 +681,12 @@ async function loadResumableRunRecord(
   }
   // #416: removed terminal/resumable gates per owner decision "根本不要有限制" (2026-08-22).
   // Only the exact Pi session principal check remains as honest failure.
-  // Hand the uninterpreted principal wire to the host authority — no local fallback/reassembly.
-  const principal = rehydratePiDurablePrincipal(authority, disk.principalWire);
-  const run = materializeRoleRunRecord(disk, authority);
-  if (run === undefined) {
+  // One authority.decode of the uninterpreted wire yields both principal and record.
+  const materialized = materializeRoleRunFromDisk(disk, authority);
+  if (materialized === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
+  const { run, principal } = materialized;
   if (!(await isDurablePrincipalAvailable(principal, authority))) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`,

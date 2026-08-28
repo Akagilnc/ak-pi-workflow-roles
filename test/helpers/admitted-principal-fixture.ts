@@ -1,6 +1,5 @@
 /**
- * Typed admitted-principal fixtures for public-cli tests.
- * Keeps principal required without `as any` erasures.
+ * Minimal typed principal fixture — avoids `as any` on required Admitted.principal.
  */
 import { join } from "node:path";
 
@@ -25,112 +24,68 @@ export function fixturePrincipal(
   });
 }
 
+function sessionCoords(runDirectory: string, sessionDirectory?: string, sessionFile?: string) {
+  const dir = sessionDirectory ?? join(runDirectory, "session");
+  return { sessionDirectory: dir, sessionFile: sessionFile ?? join(dir, "session.jsonl") };
+}
+
 export function fixtureJudgeAdmitted(
-  input: {
-    readonly runId: string;
-    readonly bookKey: string;
-    readonly projectRoot: string;
-    readonly runDirectory: string;
-    readonly instruction?: string;
-    readonly instructionEmpty?: boolean;
-    readonly attachments?: AdmittedJudgeInvocation["attachments"];
-    readonly admittedRequestPath?: string;
-    readonly principal?: DurablePrincipal;
-    readonly sessionDirectory?: string;
-    readonly sessionFile?: string;
-    readonly correlationId?: string;
-    readonly ticketNumber?: number;
-  },
+  input: Omit<AdmittedJudgeInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath"> &
+    Partial<Pick<AdmittedJudgeInvocation, "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "principal">> & {
+      sessionDirectory?: string;
+      sessionFile?: string;
+    },
 ): AdmittedJudgeInvocation {
-  const sessionDirectory = input.sessionDirectory ?? join(input.runDirectory, "session");
-  const sessionFile = input.sessionFile ?? join(sessionDirectory, "session.jsonl");
+  const coords = sessionCoords(input.runDirectory, input.sessionDirectory, input.sessionFile);
+  const { sessionDirectory: _sd, sessionFile: _sf, ...rest } = input;
   return {
     role: "judge",
-    runId: input.runId,
-    bookKey: input.bookKey,
-    projectRoot: input.projectRoot,
-    runDirectory: input.runDirectory,
-    instruction: input.instruction ?? "x",
-    instructionEmpty: input.instructionEmpty ?? false,
-    attachments: input.attachments ?? [],
-    principal: input.principal ?? fixturePrincipal(sessionDirectory, sessionFile),
-    admittedRequestPath:
-      input.admittedRequestPath ?? join(input.runDirectory, "admitted-request.json"),
-    ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
-    ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+    instruction: "x",
+    instructionEmpty: false,
+    attachments: [],
+    admittedRequestPath: join(input.runDirectory, "admitted-request.json"),
+    ...rest,
+    principal: input.principal ?? fixturePrincipal(coords.sessionDirectory, coords.sessionFile),
   } satisfies AdmittedJudgeInvocation;
 }
 
 export function fixtureDoctorAdmitted(
-  input: {
-    readonly runId: string;
-    readonly bookKey: string;
-    readonly projectRoot: string;
-    readonly runDirectory: string;
-    readonly issueNumber: number;
-    readonly caseRunsPath: string;
-    readonly caseIdentity: AdmittedDoctorInvocation["caseIdentity"];
-    readonly instruction?: string;
-    readonly instructionEmpty?: boolean;
-    readonly attachments?: AdmittedDoctorInvocation["attachments"];
-    readonly admittedRequestPath?: string;
-    readonly principal?: DurablePrincipal;
-    readonly sessionDirectory?: string;
-    readonly sessionFile?: string;
-  },
+  input: Omit<AdmittedDoctorInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath"> &
+    Partial<Pick<AdmittedDoctorInvocation, "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "principal">> & {
+      sessionDirectory?: string;
+      sessionFile?: string;
+    },
 ): AdmittedDoctorInvocation {
-  const sessionDirectory = input.sessionDirectory ?? join(input.runDirectory, "session");
-  const sessionFile = input.sessionFile ?? join(sessionDirectory, "session.jsonl");
+  const coords = sessionCoords(input.runDirectory, input.sessionDirectory, input.sessionFile);
+  const { sessionDirectory: _sd, sessionFile: _sf, ...rest } = input;
   return {
     role: "doctor",
-    runId: input.runId,
-    bookKey: input.bookKey,
-    projectRoot: input.projectRoot,
-    runDirectory: input.runDirectory,
-    instruction: input.instruction ?? "inspect",
-    instructionEmpty: input.instructionEmpty ?? false,
-    attachments: input.attachments ?? [],
-    principal: input.principal ?? fixturePrincipal(sessionDirectory, sessionFile),
-    admittedRequestPath:
-      input.admittedRequestPath ?? join(input.runDirectory, "admitted-request.json"),
-    issueNumber: input.issueNumber,
-    caseRunsPath: input.caseRunsPath,
-    caseIdentity: input.caseIdentity,
+    instruction: "inspect",
+    instructionEmpty: false,
+    attachments: [],
+    admittedRequestPath: join(input.runDirectory, "admitted-request.json"),
+    ...rest,
+    principal: input.principal ?? fixturePrincipal(coords.sessionDirectory, coords.sessionFile),
   } satisfies AdmittedDoctorInvocation;
 }
 
 export function fixtureReviewerAdmitted(
-  input: {
-    readonly runId: string;
-    readonly bookKey: string;
-    readonly projectRoot: string;
-    readonly runDirectory: string;
-    readonly baseRevision: string;
-    readonly instruction?: string;
-    readonly instructionEmpty?: boolean;
-    readonly attachments?: AdmittedReviewerInvocation["attachments"];
-    readonly admittedRequestPath?: string;
-    readonly authorityRefs?: readonly string[];
-    readonly principal?: DurablePrincipal;
-    readonly sessionDirectory?: string;
-    readonly sessionFile?: string;
-  },
+  input: Omit<AdmittedReviewerInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "authorityRefs"> &
+    Partial<Pick<AdmittedReviewerInvocation, "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "authorityRefs" | "principal">> & {
+      sessionDirectory?: string;
+      sessionFile?: string;
+    },
 ): AdmittedReviewerInvocation {
-  const sessionDirectory = input.sessionDirectory ?? join(input.runDirectory, "session");
-  const sessionFile = input.sessionFile ?? join(sessionDirectory, "session.jsonl");
+  const coords = sessionCoords(input.runDirectory, input.sessionDirectory, input.sessionFile);
+  const { sessionDirectory: _sd, sessionFile: _sf, ...rest } = input;
   return {
     role: "reviewer",
-    runId: input.runId,
-    bookKey: input.bookKey,
-    projectRoot: input.projectRoot,
-    runDirectory: input.runDirectory,
-    instruction: input.instruction ?? "",
-    instructionEmpty: input.instructionEmpty ?? true,
-    attachments: input.attachments ?? [],
-    principal: input.principal ?? fixturePrincipal(sessionDirectory, sessionFile),
-    admittedRequestPath:
-      input.admittedRequestPath ?? join(input.runDirectory, "admitted-request.json"),
-    baseRevision: input.baseRevision,
-    authorityRefs: input.authorityRefs ?? [],
+    instruction: "",
+    instructionEmpty: true,
+    attachments: [],
+    admittedRequestPath: join(input.runDirectory, "admitted-request.json"),
+    authorityRefs: [],
+    ...rest,
+    principal: input.principal ?? fixturePrincipal(coords.sessionDirectory, coords.sessionFile),
   } satisfies AdmittedReviewerInvocation;
 }
