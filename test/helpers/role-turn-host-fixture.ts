@@ -6,12 +6,20 @@ import type {
   DurablePrincipalAuthority,
   RoleTurnHost,
   RoleTurnKnownFailure,
+  RoleTurnRequest,
   RoleTurnResult,
 } from "../../src/host-contracts.ts";
 import {
   createPiRoleTurnHost,
   type PiSpawnRunner,
 } from "../../src/pi/role-turn-host.ts";
+
+/** Minimal alternative host: controls typed results without entering the Pi adapter. */
+export function createMinimalHost(
+  executeTurn: (request: RoleTurnRequest) => Promise<RoleTurnResult>,
+): RoleTurnHost {
+  return { executeTurn };
+}
 
 /** Legacy faux runner shape used by pre-#526 tests. */
 export type LegacyFauxPiRunner = (

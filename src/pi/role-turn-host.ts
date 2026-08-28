@@ -26,13 +26,6 @@ import type {
 import { applyEngineChildEnv } from "../engine-detour.ts";
 import { decodePiDurablePrincipal } from "./durable-principal.ts";
 
-/** Create a minimal non-Pi host that directly controls typed results (#526). */
-export function createMinimalHost(
-  executeTurn: (request: RoleTurnRequest) => Promise<RoleTurnResult>,
-): RoleTurnHost {
-  return { executeTurn };
-}
-
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
 
