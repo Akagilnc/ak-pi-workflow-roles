@@ -1,5 +1,5 @@
 /**
- * Public Reviewer Role run: admit → host turn execute → settle Terminal result (#111).
+ * Public Reviewer Role run: admit → post-admission coordinator → settle Terminal result (#111 / #517).
  * Package-owned adapted code-review method is forced; users never submit
  * extra packets. Controlled-failure settlement reuses #107.
  * #526: execution via RoleTurnHost; argv is Pi adapter internal.
@@ -7,16 +7,9 @@
 import type {
   DurablePrincipalAuthority,
   MethodBinding,
-  RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
-  RoleTurnResult,
-  SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -28,85 +21,41 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitReviewerInvocation,
   buildReviewerTransportPrompt,
-  type AdmittedReviewerInvocation
+  type AdmittedReviewerInvocation,
 } from "./invocation.ts";
 import {
-  type CredentialProviders,
-  type SeatModelConfig,
-} from "./config.ts";
-import {
-  missingCredentialPreDispatchFailure,
-  postRunMissingCredentialFailure,
-} from "./public-run-credentials.ts";
-import {
-  acquireRunWriterLease,
-  clearTypedProviderHttpObservation,
-  isV1ResumableFailure,
   loadResumableReviewerRun,
-  markRunAdmitted,
-  markRunResumable,
-  markRunRunning,
-  markRunTerminal,
-  renderResumeCommand,
-  type PublicResumeRequest,
   selectResumeContinuationPrompt,
-  RunWriterLeaseHeldError,
-  type RunWriterLease,
-  type TypedProviderHttpObservation,
+  type PublicResumeRequest,
 } from "./run-lifecycle.ts";
-import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
-  classifyPostAdmissionFailure,
-  exitCodeForTerminalOutcome,
-  formatCliDiagnostic,
-  formatTerminalResult,
   hasLawfulReviewerTerminalResult,
-  inspectJudgeSession,
-  isLawfulTypedTerminalOutcome,
-  presentFailureTerminal,
   presentStructuralRejection,
-  resolveAuditedRunnerFailureResolution,
-  resolveControlledFailureResumeObservation,
-  controlledFailureInputFromResolution,
-  explicitInternalKnownFailureClassificationInput,
   readEngineDetourInfrastructureFailure,
-  settleFailureTerminalResult,
   trySettleReviewerTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type {
-  TerminalResult,
-} from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+import {
+  presentControlledFailure,
+  runPostAdmissionManualResume,
+  runPostAdmissionResumable,
+  type PostAdmissionAdapters,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
 
-export type ReviewerRunEnv = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  agentDir: string;
-  packageRoot: string;
-  cwd: string;
-  correlationId?: string;
-  roleTurnHost: RoleTurnHost;
-  model?: SeatModelConfig;
-  /** Optional labor engine name (config→activation; session material + env signal). */
-  engine?: string;
-  credentials?: CredentialProviders;
+export type ReviewerRunEnv = PostAdmissionEnv & {
   createRunId?: () => string;
-  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
-  autoResumeLimit?: number;
-  timeoutMs?: number;
-  /** Host-neutral Pi session codec for dispatch-error retention (#526 S1b-2). */
-  sessionAppender: SessionCustomEntryAppender;
 };
 
 function reviewerMethods(packageRoot: string): readonly MethodBinding[] {
   return [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "code-review") }];
 }
-
-import {
-  projectRoleTurnRequest,
-  type RoleTurnRequestProjectionOptions,
-} from "./turn-request.ts";
 
 /** Project admitted Reviewer invocation onto the host-neutral turn request. */
 export function buildReviewerTurnRequest(
@@ -128,218 +77,38 @@ export function buildReviewerTurnRequest(
   );
 }
 
-async function presentControlledFailure(
-  admitted: AdmittedReviewerInvocation,
-  failureInput: {
-    timedOut: boolean;
-    code: number | null;
-    stderr: string;
-    thrown?: unknown;
-    knownFailure?: RoleTurnKnownFailure;
-    typedHttpObservationSettled?: true;
-    typedHttpObservation?: TypedProviderHttpObservation;
-  },
-  authority: DurablePrincipalAuthority,
-  io: CliIo,
-): Promise<{
-  exitCode: number;
-  admitted: AdmittedReviewerInvocation;
-  terminal: TerminalResult;
-}> {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...(failureInput.typedHttpObservationSettled === true
-      ? {
-        typedHttpObservationSettled: true as const,
-        ...(failureInput.typedHttpObservation === undefined
-          ? {}
-          : { typedHttpObservation: failureInput.typedHttpObservation }),
-      }
-      : {}),
-  });
-  const knownFailure =
-    failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session =
-    !hasThrown &&
-    !failureInput.timedOut &&
-    knownFailure === undefined
-      ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile)
-      : undefined;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
-    ...(session === undefined ? {} : { session }),
-  });
-
-  const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted, authority);
-  const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
-  const resumable =
-    sessionPrincipalAvailable &&
-    isV1ResumableFailure({
-      hasLawfulTerminalResult,
-      ...(typedHttp429 === undefined ? {} : { typedHttp429 }),
-    });
-  if (resumable && typedHttp429 !== undefined) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-  }
-
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    authority,
-    resumable
-      ? { resume: { command: renderResumeCommand(admitted.runId) } }
-      : {},
-  );
-  presentFailureTerminal(terminal, io);
+function reviewerAdapters(
+  packageRoot: string,
+  methodMaterial?: PackagedMethodSkillMaterial,
+): PostAdmissionAdapters<AdmittedReviewerInvocation> {
   return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal,
+    beforeDispatch: (admitted) => clearReviewerDispatchRejection(admitted.runDirectory),
+    trySettle: (admitted, authority) =>
+      methodMaterial === undefined
+        ? Promise.resolve(undefined)
+        : trySettleReviewerTerminalResult(admitted, authority, {
+            methodProvenance: methodMaterial.provenance,
+            methodSkillPath: methodMaterial.skillPath,
+            methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+              packageRoot,
+              "code-review",
+            ),
+          }),
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulReviewerTerminalResult(admitted, authority),
+    isResumableRole: true,
+    resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
+      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+      return infrastructureFailure === undefined
+        ? result.knownFailure
+        : {
+            cause: infrastructureFailure.cause,
+            diagnostic: infrastructureFailure.diagnostic,
+            ...(infrastructureFailure.identity === undefined
+              ? {}
+              : { identity: infrastructureFailure.identity }),
+          };
+    },
   };
-}
-
-async function dispatchAdmittedReviewer(input: {
-  admitted: AdmittedReviewerInvocation;
-  env: ReviewerRunEnv;
-  io: CliIo;
-  request: RoleTurnRequest;
-  lease: RunWriterLease;
-  methodMaterial: PackagedMethodSkillMaterial;
-  /**
-   * Mechanical engine provenance for initial Reviewer dispatch only.
-   * Explicit — never read from env.engine here, so resume cannot rewrite it.
-   */
-  effectiveEngine?: string;
-}): Promise<{
-  exitCode: number;
-  admitted: AdmittedReviewerInvocation;
-  terminal?: TerminalResult;
-}> {
-  const { admitted, env, io, request, lease, methodMaterial, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials,
-    );
-    if (missingCredential !== undefined) {
-      return await presentControlledFailure(
-        admitted,
-        missingCredential,
-        env.principalAuthority,
-        io,
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    await clearReviewerDispatchRejection(admitted.runDirectory);
-
-    let result: RoleTurnResult;
-    try {
-      result = await env.roleTurnHost.executeTurn(request);
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-        },
-        env.principalAuthority,
-        io,
-      );
-    }
-
-    try {
-      await writeFile(
-        join(admitted.runDirectory, "stderr.log"),
-        result.stderr,
-        "utf8",
-      );
-    } catch {
-      // continue to lawful / controlled-failure settlement
-    }
-
-    let lawful: TerminalResult | undefined;
-    try {
-      lawful = await trySettleReviewerTerminalResult(admitted, env.principalAuthority, {
-        methodProvenance: methodMaterial.provenance,
-        methodSkillPath: methodMaterial.skillPath,
-        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-          env.packageRoot,
-          "code-review",
-        ),
-      });
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: result.code,
-          stderr: result.stderr,
-          thrown: error,
-        },
-        env.principalAuthority,
-        io,
-      );
-    }
-    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful,
-      };
-    }
-
-    // Prefer engine-detour infrastructure failure already on the session principal
-    // over a later secondary knownFailure / provider-stop after abort (#357 T2 / #378).
-    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
-      decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
-    );
-    const credentialFailure = postRunMissingCredentialFailure(
-      result,
-      env.model,
-      env.credentials,
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner:
-        infrastructureFailure === undefined
-          ? result.knownFailure
-          : {
-              cause: infrastructureFailure.cause,
-              diagnostic: infrastructureFailure.diagnostic,
-              ...(infrastructureFailure.identity === undefined
-                ? {}
-                : { identity: infrastructureFailure.identity }),
-            },
-      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory,
-    });
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...controlledFailureInputFromResolution(resolution),
-      },
-      env.principalAuthority,
-      io,
-    );
-  } finally {
-    await lease.release();
-  }
 }
 
 async function loadReviewerMethodMaterial(
@@ -387,13 +156,11 @@ export async function runPublicReviewer(
     throw error;
   }
 
-  await markRunAdmitted(admitted, env.principalAuthority);
-
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    return await presentControlledFailure(
+    return (await presentControlledFailure(
       admitted,
       {
         timedOut: false,
@@ -401,19 +168,17 @@ export async function runPublicReviewer(
         stderr: "",
         thrown: error,
       },
+      reviewerAdapters(env.packageRoot),
       env.principalAuthority,
       io,
-    );
+    )) as { exitCode: number; admitted: AdmittedReviewerInvocation; terminal: TerminalResult };
   }
 
-  return runWithAutoResumeLoop({
+  return await runPostAdmissionResumable({
     admitted,
-    principalAuthority: env.principalAuthority,
+    env,
     io,
-    sessionAppender: env.sessionAppender,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialPayload: () =>
+    buildInitialRequest: () =>
       buildReviewerTurnRequest(admitted, {
         packageRoot: env.packageRoot,
         home: env.home,
@@ -435,7 +200,7 @@ export async function runPublicReviewer(
           ),
         },
       }),
-    buildResumePayload: () =>
+    buildResumeRequest: () =>
       buildReviewerTurnRequest(admitted, {
         packageRoot: env.packageRoot,
         home: env.home,
@@ -451,19 +216,8 @@ export async function runPublicReviewer(
           prompt: selectResumeContinuationPrompt(),
         },
       }),
-    dispatch: (request, lease, isFirst, attemptIo) =>
-      dispatchAdmittedReviewer({
-        admitted,
-        env: {
-          ...env,
-          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-        },
-        io: attemptIo,
-        request,
-        lease,
-        methodMaterial,
-        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
-      }),
+    adapters: reviewerAdapters(env.packageRoot, methodMaterial),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
@@ -493,23 +247,11 @@ export async function runPublicReviewerResume(
 
   const { admitted } = loaded;
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
-
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
-    return await presentControlledFailure(
+    return (await presentControlledFailure(
       admitted,
       {
         timedOut: false,
@@ -517,9 +259,10 @@ export async function runPublicReviewerResume(
         stderr: "",
         thrown: error,
       },
+      reviewerAdapters(env.packageRoot),
       env.principalAuthority,
       io,
-    );
+    )) as { exitCode: number; admitted: AdmittedReviewerInvocation; terminal: TerminalResult };
   }
 
   const turnRequest = buildReviewerTurnRequest(admitted, {
@@ -538,19 +281,13 @@ export async function runPublicReviewerResume(
     },
   });
 
-  const result = await dispatchAdmittedReviewer({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
+    env,
     io,
     request: turnRequest,
-    lease,
-    methodMaterial,
+    adapters: reviewerAdapters(env.packageRoot, methodMaterial),
   });
-  if (result.terminal !== undefined) (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
-  return result;
 }
 
 export type { RoleTurnKnownFailure, PackagedMethodSkillProvenance };
