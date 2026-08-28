@@ -59,11 +59,11 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
     // Mechanical projection of the scripted officer receipt; session order Gatekeeper → officer.
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
     assert.equal(seen.length, 2);
-    // #443/#476: constitution + soul + gate guide; inspector also gets quality-law.
+    // #443/#476: constitution + soul + gate guide; gatekeeper + inspector carry quality-law.
     // #495 S2: machine INVOCATION_OVERLAY removed; 取证授权 lives in gate-output-guide only.
     assert.equal(
       seen[0],
-      [constitution, gatekeeperSoul, gateGuide].join("\n\n"),
+      [constitution, gatekeeperSoul, qualityLaw, gateGuide].join("\n\n"),
     );
     assert.equal(
       seen[1],
@@ -88,6 +88,7 @@ test("Gatekeeper accepts its typed officer choice instead of machine-rejecting d
 
 test("scripted officer bounce projects rewrite disposition and loads that officer's session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
+  const qualityLaw = await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8");
   const gateGuide = await readFile(resolve(packageRoot, "souls/gate-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
@@ -116,7 +117,7 @@ test("scripted officer bounce projects rewrite disposition and loads that office
     // #495 S2: machine INVOCATION_OVERLAY removed; 取证授权 lives in gate-output-guide only.
     assert.equal(
       seen[0],
-      [constitution, gatekeeperSoul, gateGuide].join("\n\n"),
+      [constitution, gatekeeperSoul, qualityLaw, gateGuide].join("\n\n"),
     );
     assert.equal(
       seen[1],
