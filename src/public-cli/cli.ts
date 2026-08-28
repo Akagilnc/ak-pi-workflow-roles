@@ -905,6 +905,7 @@ export async function runAkRole(
               ? {}
               : { correlationId: env.correlationId }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
+            ...projectSeatEngine(seat),
             ...(env.coderTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.coderTimeoutMs }),
@@ -935,6 +936,7 @@ export async function runAkRole(
               ? {}
               : { correlationId: env.correlationId }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
+            ...projectSeatEngine(seat),
             ...(env.fixerTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.fixerTimeoutMs }),
@@ -965,6 +967,7 @@ export async function runAkRole(
               ? {}
               : { correlationId: env.correlationId }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
+            ...projectSeatEngine(seat),
             ...(env.reviewerTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.reviewerTimeoutMs }),
@@ -995,6 +998,7 @@ export async function runAkRole(
               ? {}
               : { correlationId: env.correlationId }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
+            ...projectSeatEngine(seat),
             ...(env.mergerTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.mergerTimeoutMs }),
@@ -1024,6 +1028,7 @@ export async function runAkRole(
             ? {}
             : { correlationId: env.correlationId }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...projectSeatEngine(seat),
           ...(env.judgeTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.judgeTimeoutMs }),
