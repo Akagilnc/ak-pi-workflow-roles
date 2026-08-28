@@ -33,8 +33,16 @@ hermes -z "YOUR_LABOR_PROMPT" --in /path/to/project --no-restore-cwd \
 - `--usage-file PATH` (works with `-z` only) writes a JSON spend report
   (`estimated_cost_usd`, token counts, model, provider, `completed`/`failed`)
   **even when the run fails** — attach it to the leg's receipt for accounting.
-- Long or untrusted prompts: `--query-file PATH` reads the prompt from a file
-  verbatim ("nothing is shell-interpreted"); mutually exclusive with `-q`.
+- Long prompts in scripting mode: write the prompt to a file, then pass it as
+  the single `-z` argument — `hermes -z "$(cat PATH)" ...`. The substitution
+  result is one argv entry; file content is not re-parsed by the shell.
+  Smoke-verified 2026-08-28: clean final-response-only stdout.
+- `--query-file PATH` belongs to the `hermes chat` subcommand only (mutually
+  exclusive with its `-q`); it is NOT a top-level flag and does NOT combine
+  with `-z` — `hermes -z --query-file ...` fails with
+  `-z/--oneshot: expected one argument` (incident: Ming #1585 fixer leg,
+  2026-08-28). `hermes chat --query-file` also prints a session summary
+  instead of the bare final response, so it is unfit for labor pipelines.
 - Model/provider default comes from host `~/.hermes/config.yaml`
   (owner-selected; verified 2026-08-28: `poolside/laguna-s-2.1:free` on Nous
   Portal). Override with `-m provider/model` + `--provider` only when the
@@ -54,6 +62,9 @@ hermes -z "YOUR_LABOR_PROMPT" --in /path/to/project --no-restore-cwd \
 
 ```bash
 hermes -z "Reply with exactly one word: OK" --no-restore-cwd
+# long-prompt form used by labor legs:
+printf 'Reply with exactly one word: OK' > /tmp/smoke.txt
+hermes -z "$(cat /tmp/smoke.txt)" --no-restore-cwd
 ```
 
 Expected: stdout is exactly `OK`, exit code 0. Verified 2026-08-28 on this
