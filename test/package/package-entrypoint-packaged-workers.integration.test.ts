@@ -652,12 +652,17 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           );
 
           let coderContext: Context | undefined;
-          // completed zero-commit: ① bounces once; same payload resubmit confirms.
-          // unfinished: ① does not apply — single call accepted.
+          // completed zero-commit: ① bounces once; same payload resubmit confirms + province pass.
+          // unfinished: ① does not apply — single call + scripted province pass (unfinished 过闸).
           const firstCallId = row.output.status === "completed"
             ? `${row.callId}-bounce`
             : row.callId;
-          // completed: bounce once then confirm + scripted province pass; unfinished: single call.
+          const provinceOrIdle = (context: Context) => {
+            const names = context.tools?.map((tool) => tool.name) ?? [];
+            const province = scriptProvincePass(names, "inspector");
+            if (province !== undefined) return province;
+            return fauxAssistantMessage("coder fixture idle");
+          };
           faux.setResponses(
             row.output.status === "completed"
               ? [
@@ -692,12 +697,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                     { stopReason: "toolUse" },
                   );
                 },
-                (context: Context) => {
-                  const names = context.tools?.map((tool) => tool.name) ?? [];
-                  const province = scriptProvincePass(names, "inspector");
-                  if (province !== undefined) return province;
-                  return fauxAssistantMessage("coder fixture idle");
-                },
+                provinceOrIdle,
               ]
               : [
                 (context: Context) => {
@@ -709,6 +709,8 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                     { stopReason: "toolUse" },
                   );
                 },
+                provinceOrIdle,
+                provinceOrIdle,
               ],
           );
           await session.prompt(row.prompt);
@@ -977,14 +979,38 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           );
           assert.equal(mixed.message.isError, true);
 
-          faux.setResponses([
-            fauxAssistantMessage(
-              fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, {
-                id: `sole-fixer-${phase}`,
-              }),
-              { stopReason: "toolUse" },
-            ),
-          ]);
+          // plan/planned skips province; apply/unfinished requires Gatekeeper pass.
+          faux.setResponses(
+            phase === "apply"
+              ? [
+                fauxAssistantMessage(
+                  fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, {
+                    id: `sole-fixer-${phase}`,
+                  }),
+                  { stopReason: "toolUse" },
+                ),
+                (context: Context) => {
+                  const names = context.tools?.map((tool) => tool.name) ?? [];
+                  const province = scriptProvincePass(names, "inspector");
+                  if (province !== undefined) return province;
+                  return fauxAssistantMessage("fixer fixture idle");
+                },
+                (context: Context) => {
+                  const names = context.tools?.map((tool) => tool.name) ?? [];
+                  const province = scriptProvincePass(names, "inspector");
+                  if (province !== undefined) return province;
+                  return fauxAssistantMessage("fixer fixture idle");
+                },
+              ]
+              : [
+                fauxAssistantMessage(
+                  fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, {
+                    id: `sole-fixer-${phase}`,
+                  }),
+                  { stopReason: "toolUse" },
+                ),
+              ],
+          );
           await session.prompt(`Accept a sole Fixer output in ${phase}.`);
           const accepted = sessionManager.getEntries().find(
             (entry) =>

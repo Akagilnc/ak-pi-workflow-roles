@@ -284,7 +284,11 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
-            if (output.status === "completed" || output.status === "partially_completed") {
+            if (
+              output.status === "completed" ||
+              output.status === "partially_completed" ||
+              output.status === "unfinished"
+            ) {
               await requireGatekeeperPass({
                 context: ctx,
                 subject: { kind: "worker_completion", material: JSON.stringify(output) },
@@ -425,7 +429,7 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
-            if (output.status === "completed") {
+            if (output.status === "completed" || output.status === "unfinished") {
               await requireGatekeeperPass({
                 context: ctx,
                 subject: { kind: "worker_completion", material: JSON.stringify(output) },
