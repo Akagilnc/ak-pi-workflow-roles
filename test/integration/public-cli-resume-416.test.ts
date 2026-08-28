@@ -4,7 +4,8 @@
  * F1: lawful 三态 (accepted/audit_escalation/no_receipt) 均不触发
  */
 import assert from "node:assert/strict";
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal, rehydratePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -166,7 +167,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     let calls=0;const {io,stdout}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
-      admitted:{principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],
@@ -187,7 +188,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     const noReceiptFacts={acceptedReceipt:false, rejectedReceipts:[], deliveryTurns:0, sessionCompletion:"completed" as const};
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
-      admitted:{principal:rehydratePiDurablePrincipal(piDurablePrincipalAuthority,{sessionDirectory:dirname(sessionFile),sessionFile}),runDirectory:runDir,role:"judge",runId:runDir},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
       buildInitialArgs: ()=>["--initial"],

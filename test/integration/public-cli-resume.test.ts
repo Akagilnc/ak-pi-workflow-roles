@@ -13,7 +13,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal, rehydratePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -1265,7 +1266,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       instructionEmpty: false,
       attachments: [],
       runDirectory,
-      principal: rehydratePiDurablePrincipal(piDurablePrincipalAuthority, { sessionDirectory, sessionFile }),
+      principal: fixturePrincipal(sessionDirectory, sessionFile),
       admittedRequestPath,
     };
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
@@ -1312,10 +1313,10 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
       issue(request: Parameters<typeof piDurablePrincipalAuthority.issue>[0]) {
         const base = piDurablePrincipalAuthority.issue(request);
         const coords = piDurablePrincipalAuthority.decode(base);
-        return rehydratePiDurablePrincipal(piDurablePrincipalAuthority, {
-          sessionDirectory: coords.sessionDirectory,
-          sessionFile: join(coords.sessionDirectory, "host-issued-principal.jsonl"),
-        });
+        return fixturePrincipal(
+          coords.sessionDirectory,
+          join(coords.sessionDirectory, "host-issued-principal.jsonl"),
+        );
       },
       decode(value: unknown) {
         const coords = piDurablePrincipalAuthority.decode(value);
@@ -1492,7 +1493,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       instructionEmpty: false,
       attachments: [],
       runDirectory,
-      principal: rehydratePiDurablePrincipal(piDurablePrincipalAuthority, { sessionDirectory, sessionFile }),
+      principal: fixturePrincipal(sessionDirectory, sessionFile),
       admittedRequestPath,
     }, piDurablePrincipalAuthority);
     await markRunResumable(runDirectory, {

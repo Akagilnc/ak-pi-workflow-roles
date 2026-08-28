@@ -91,11 +91,3 @@ export function decodePiDurablePrincipal(
 ): DurablePrincipalCoordinates {
   return authority.decode(principal);
 }
-
-/** Rehydrate a durable principal from persisted two-field wire bytes. */
-export function rehydratePiDurablePrincipal(
-  authority: DurablePrincipalAuthority,
-  wire: unknown,
-): DurablePrincipal {
-  return encode(authority.decode(wire));
-}
