@@ -15373,6 +15373,30 @@ var init_cli_errors = __esm({
   }
 });
 
+// src/host-contracts.ts
+var ExplicitInternalActivationError;
+var init_host_contracts = __esm({
+  "src/host-contracts.ts"() {
+    "use strict";
+    init_build();
+    ExplicitInternalActivationError = class extends Error {
+      knownCause;
+      failureCode;
+      constructor(message, options) {
+        super(
+          message,
+          options.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = options.name ?? "ExplicitInternalActivationError";
+        this.knownCause = options.knownCause;
+        if (options.code !== void 0) {
+          this.failureCode = options.code;
+        }
+      }
+    };
+  }
+});
+
 // src/engine-detour.ts
 function applyEngineChildEnv(childEnv, engine) {
   delete childEnv[AK_ROLE_ENGINE_ENV];
@@ -15515,11 +15539,16 @@ async function resolveSelectedPi(command, cwd, env) {
     } catch (error) {
       const code = error.code;
       if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
-      throw error;
+      throw new ExplicitInternalActivationError(
+        `Pi executable resolution failed: ${String(error.message)}`,
+        { knownCause: "activation", cause: error }
+      );
     }
     return await realpath(candidate);
   }
-  throw new Error(`Pi executable not found: ${command}`);
+  throw new ExplicitInternalActivationError(`Pi executable not found: ${command}`, {
+    knownCause: "activation"
+  });
 }
 async function selectedPiIdentity(command, cwd, env) {
   const executable = await resolveSelectedPi(command, cwd, env);
@@ -15537,7 +15566,7 @@ function createDefaultPiSpawnRunner(options) {
     const command = spawnOptions.env.PI_BINARY ?? "pi";
     const piIdentity = await selectedPiIdentity(command, spawnOptions.cwd, spawnOptions.env);
     return await new Promise((resolveResult, reject) => {
-      const child = (options.spawnProcess ?? spawn)(piIdentity.executable, [...args], {
+      const child = spawn(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         stdio: ["ignore", "ignore", "pipe"]
@@ -15664,6 +15693,7 @@ var INTERNAL_ROLE_ENTRYPOINT_RELATIVE2, execFileAsync;
 var init_role_turn_host = __esm({
   "src/pi/role-turn-host.ts"() {
     "use strict";
+    init_host_contracts();
     init_engine_detour();
     init_durable_principal();
     INTERNAL_ROLE_ENTRYPOINT_RELATIVE2 = "extensions/role-runtime.ts";
@@ -24104,6 +24134,32 @@ var init_auto_resume = __esm({
   }
 });
 
+// src/public-cli/turn-request.ts
+function projectRoleTurnRequest(admitted, roleDetails, options) {
+  const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
+  if (cwd === void 0) throw new Error("admitted invocation missing working directory");
+  if (admitted.principal === void 0) throw new Error("admitted invocation missing principal");
+  return {
+    principal: admitted.principal,
+    activation: roleDetails.activation,
+    methods: roleDetails.methods ?? [],
+    continuation: options.continuation,
+    ...options.model === void 0 ? {} : { model: options.model },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
+}
+var init_turn_request = __esm({
+  "src/public-cli/turn-request.ts"() {
+    "use strict";
+  }
+});
+
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
 import { join as join16 } from "node:path";
@@ -24111,24 +24167,18 @@ function coderMethods(phase, packageRoot2) {
   return phase === "apply" ? [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "tdd") }] : [];
 }
 function buildCoderTurnRequest(admitted, options) {
-  return {
-    principal: admitted.principal,
-    activation: {
-      role: "coder",
-      phase: admitted.phase,
-      taskPath: admitted.taskPath
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "coder",
+        phase: admitted.phase,
+        taskPath: admitted.taskPath
+      },
+      methods: coderMethods(admitted.phase, options.packageRoot)
     },
-    methods: coderMethods(admitted.phase, options.packageRoot),
-    continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
-    ...options.engine === void 0 ? {} : { engine: options.engine },
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
-  };
+    options
+  );
 }
 async function presentControlledFailure2(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -24458,6 +24508,7 @@ var init_coder_run = __esm({
     init_run_lifecycle();
     init_auto_resume();
     init_settlement();
+    init_turn_request();
   }
 });
 
@@ -24465,25 +24516,18 @@ var init_coder_run = __esm({
 import { writeFile as writeFile7 } from "node:fs/promises";
 import { join as join17 } from "node:path";
 function buildCollectorTurnRequest(admitted, options) {
-  return {
-    principal: admitted.principal,
-    activation: {
-      role: "collector",
-      repo: admitted.repository.display,
-      pr: String(admitted.prNumber),
-      ...admitted.requestManifestPath === void 0 ? {} : { requestManifestPath: admitted.requestManifestPath }
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "collector",
+        repo: admitted.repository.display,
+        pr: String(admitted.prNumber),
+        ...admitted.requestManifestPath === void 0 ? {} : { requestManifestPath: admitted.requestManifestPath }
+      }
     },
-    methods: [],
-    continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
-    ...options.engine === void 0 ? {} : { engine: options.engine },
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
-  };
+    options
+  );
 }
 async function presentControlledFailure3(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -24675,6 +24719,7 @@ var init_collector_run = __esm({
     init_public_run_credentials();
     init_run_lifecycle();
     init_settlement();
+    init_turn_request();
   }
 });
 
@@ -24852,20 +24897,13 @@ var init_one_shot_dispatch = __esm({
 
 // src/public-cli/doctor-run.ts
 function buildDoctorTurnRequest(admitted, options) {
-  return {
-    principal: admitted.principal,
-    activation: { role: "doctor", casePath: admitted.caseRunsPath },
-    methods: [],
-    continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
-    ...options.engine === void 0 ? {} : { engine: options.engine },
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
-  };
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: { role: "doctor", casePath: admitted.caseRunsPath }
+    },
+    options
+  );
 }
 async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
   let admitted;
@@ -24926,6 +24964,7 @@ var init_doctor_run = __esm({
     init_one_shot_dispatch();
     init_settlement();
     init_terminal();
+    init_turn_request();
   }
 });
 
@@ -24939,25 +24978,19 @@ function fixerMethods(packageRoot2) {
   ];
 }
 function buildFixerTurnRequest(admitted, options) {
-  return {
-    principal: admitted.principal,
-    activation: {
-      role: "fixer",
-      phase: admitted.phase,
-      packetPath: admitted.packetPath,
-      ...admitted.prerequisitesPath === void 0 ? {} : { prerequisitesPath: admitted.prerequisitesPath }
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "fixer",
+        phase: admitted.phase,
+        packetPath: admitted.packetPath,
+        ...admitted.prerequisitesPath === void 0 ? {} : { prerequisitesPath: admitted.prerequisitesPath }
+      },
+      methods: fixerMethods(options.packageRoot)
     },
-    methods: fixerMethods(options.packageRoot),
-    continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
-    ...options.engine === void 0 ? {} : { engine: options.engine },
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
-  };
+    options
+  );
 }
 async function presentControlledFailure5(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -25277,25 +25310,19 @@ var init_fixer_run = __esm({
     init_run_lifecycle();
     init_auto_resume();
     init_settlement();
+    init_turn_request();
   }
 });
 
 // src/public-cli/notary-run.ts
 function buildNotaryTurnRequest(admitted, options) {
-  return {
-    principal: admitted.principal,
-    activation: { role: "notary", sourceRun: admitted.sourceRunPath },
-    methods: [],
-    continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
-    ...options.engine === void 0 ? {} : { engine: options.engine },
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
-  };
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: { role: "notary", sourceRun: admitted.sourceRunPath }
+    },
+    options
+  );
 }
 async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
   let admitted;
@@ -25354,6 +25381,7 @@ var init_notary_run = __esm({
     init_config2();
     init_one_shot_dispatch();
     init_settlement();
+    init_turn_request();
   }
 });
 
@@ -25361,20 +25389,7 @@ var init_notary_run = __esm({
 import { writeFile as writeFile10 } from "node:fs/promises";
 import { join as join20 } from "node:path";
 function buildJudgeTurnRequest(admitted, options) {
-  return {
-    principal: admitted.principal,
-    activation: { role: "judge" },
-    methods: [],
-    continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
-    ...options.engine === void 0 ? {} : { engine: options.engine },
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
-  };
+  return projectRoleTurnRequest(admitted, { activation: { role: "judge" } }, options);
 }
 async function presentControlledFailure6(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -25653,6 +25668,7 @@ var init_judge_run = __esm({
     init_run_lifecycle();
     init_auto_resume();
     init_settlement();
+    init_turn_request();
   }
 });
 
@@ -25668,23 +25684,17 @@ function mergerMethods(packageRoot2) {
   ];
 }
 function buildMergerTurnRequest(admitted, options) {
-  return {
-    principal: admitted.principal,
-    activation: {
-      role: "merger",
-      inputPath: admitted.mergerInputPath
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "merger",
+        inputPath: admitted.mergerInputPath
+      },
+      methods: mergerMethods(options.packageRoot)
     },
-    methods: mergerMethods(options.packageRoot),
-    continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
-    ...options.engine === void 0 ? {} : { engine: options.engine },
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
-  };
+    options
+  );
 }
 async function presentControlledFailure7(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -26114,6 +26124,7 @@ var init_merger_run = __esm({
     init_run_lifecycle();
     init_auto_resume();
     init_settlement();
+    init_turn_request();
   }
 });
 
@@ -26124,25 +26135,19 @@ function reviewerMethods(packageRoot2) {
   return [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "code-review") }];
 }
 function buildReviewerTurnRequest(admitted, options) {
-  return {
-    principal: admitted.principal,
-    activation: {
-      role: "reviewer",
-      baseRevision: admitted.baseRevision,
-      authorityRefs: admitted.authorityRefs,
-      ...admitted.ticketNumber === void 0 ? {} : { ticketNumber: admitted.ticketNumber }
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "reviewer",
+        baseRevision: admitted.baseRevision,
+        authorityRefs: admitted.authorityRefs,
+        ...admitted.ticketNumber === void 0 ? {} : { ticketNumber: admitted.ticketNumber }
+      },
+      methods: reviewerMethods(options.packageRoot)
     },
-    methods: reviewerMethods(options.packageRoot),
-    continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
-    ...options.engine === void 0 ? {} : { engine: options.engine },
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
-  };
+    options
+  );
 }
 async function presentControlledFailure8(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
@@ -26471,6 +26476,7 @@ var init_reviewer_run = __esm({
     init_auto_resume();
     init_reviewer_dispatch_rejection();
     init_settlement();
+    init_turn_request();
   }
 });
 
@@ -28710,6 +28716,31 @@ function resolveRoleTurnHost(env, options) {
     observeLaunchedRolePackageIdentity
   });
 }
+function createRoleEnvironment(env, options) {
+  const role = options.role;
+  const extraPiArgs = role === "coder" ? env.coderExtraPiArgs : role === "fixer" ? env.fixerExtraPiArgs : role === "reviewer" ? env.reviewerExtraPiArgs : role === "merger" ? env.mergerExtraPiArgs : role === "judge" ? env.judgeExtraPiArgs : role === "collector" ? env.collectorExtraPiArgs : role === "doctor" ? env.doctorExtraPiArgs : role === "notary" ? env.notaryExtraPiArgs : void 0;
+  const timeoutMs = role === "coder" ? env.coderTimeoutMs : role === "fixer" ? env.fixerTimeoutMs : role === "reviewer" ? env.reviewerTimeoutMs : role === "merger" ? env.mergerTimeoutMs : role === "judge" ? env.judgeTimeoutMs : role === "collector" ? env.collectorTimeoutMs : role === "doctor" ? env.doctorTimeoutMs : role === "notary" ? env.notaryTimeoutMs : void 0;
+  return {
+    home: options.home,
+    principalAuthority: env.principalAuthority,
+    agentDir: options.agentDir,
+    sessionAppender: appendPiSessionCustomEntry,
+    packageRoot: env.packageRoot,
+    roleTurnHost: resolveRoleTurnHost(env, {
+      principalAuthority: env.principalAuthority,
+      ...extraPiArgs === void 0 ? {} : { extraPiArgs },
+      ...timeoutMs === void 0 ? {} : { timeoutMs }
+    }),
+    cwd: options.cwd,
+    ...options.credentials === void 0 ? {} : { credentials: options.credentials },
+    ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+    ...options.seat.selection === void 0 ? {} : { model: options.seat.selection },
+    ...projectSeatEngine(options.seat),
+    ...timeoutMs === void 0 ? {} : { timeoutMs },
+    ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+    ...options.config?.autoResumeLimit === void 0 ? {} : { autoResumeLimit: options.config.autoResumeLimit }
+  };
+}
 function defaultIo() {
   return {
     stdout: (text) => {
@@ -29204,24 +29235,7 @@ async function runAkRole(argv, env) {
       if (resumeRole === "coder") {
         const result3 = await runPublicCoderResume(
           resumeRequest,
-          {
-            home,
-            principalAuthority: env.principalAuthority,
-            agentDir,
-            sessionAppender: appendPiSessionCustomEntry,
-            packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority,
-              ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
-              ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
-            }),
-            cwd,
-            credentials,
-            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...projectSeatEngine(seat),
-            ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
-          },
+          createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
           io
         );
         return {
@@ -29232,24 +29246,7 @@ async function runAkRole(argv, env) {
       if (resumeRole === "fixer") {
         const result3 = await runPublicFixerResume(
           resumeRequest,
-          {
-            home,
-            principalAuthority: env.principalAuthority,
-            agentDir,
-            sessionAppender: appendPiSessionCustomEntry,
-            packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority,
-              ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
-              ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
-            }),
-            cwd,
-            credentials,
-            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...projectSeatEngine(seat),
-            ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
-          },
+          createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
           io
         );
         return {
@@ -29260,24 +29257,7 @@ async function runAkRole(argv, env) {
       if (resumeRole === "reviewer") {
         const result3 = await runPublicReviewerResume(
           resumeRequest,
-          {
-            home,
-            principalAuthority: env.principalAuthority,
-            agentDir,
-            sessionAppender: appendPiSessionCustomEntry,
-            packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority,
-              ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
-              ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
-            }),
-            cwd,
-            credentials,
-            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...projectSeatEngine(seat),
-            ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
-          },
+          createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
           io
         );
         return {
@@ -29288,24 +29268,7 @@ async function runAkRole(argv, env) {
       if (resumeRole === "merger") {
         const result3 = await runPublicMergerResume(
           resumeRequest,
-          {
-            home,
-            principalAuthority: env.principalAuthority,
-            agentDir,
-            sessionAppender: appendPiSessionCustomEntry,
-            packageRoot: env.packageRoot,
-            roleTurnHost: resolveRoleTurnHost(env, {
-              principalAuthority: env.principalAuthority,
-              ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
-              ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs }
-            }),
-            cwd,
-            credentials,
-            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...projectSeatEngine(seat),
-            ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs }
-          },
+          createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
           io
         );
         return {
@@ -29315,24 +29278,7 @@ async function runAkRole(argv, env) {
       }
       const result2 = await runPublicResume(
         resumeRequest,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
-            ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs }
-        },
+        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io
       );
       return {
@@ -29356,27 +29302,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicJudge(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
-            ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.judge.parse
       );
@@ -29398,27 +29324,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicCoder(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
-            ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.coder.parse
       );
@@ -29440,27 +29346,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicFixer(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
-            ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.fixer.parse
       );
@@ -29482,24 +29368,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicCollector(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.collectorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.collectorExtraPiArgs },
-            ...env.collectorTimeoutMs === void 0 ? {} : { timeoutMs: env.collectorTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.collectorTimeoutMs === void 0 ? {} : { timeoutMs: env.collectorTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-        },
+        createRoleEnvironment(env, { role: "collector", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.collector.parse
       );
@@ -29521,27 +29390,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicReviewer(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
-            ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.reviewer.parse
       );
@@ -29563,24 +29412,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicDoctor(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.doctorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.doctorExtraPiArgs },
-            ...env.doctorTimeoutMs === void 0 ? {} : { timeoutMs: env.doctorTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.doctorTimeoutMs === void 0 ? {} : { timeoutMs: env.doctorTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-        },
+        createRoleEnvironment(env, { role: "doctor", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.doctor.parse
       );
@@ -29602,24 +29434,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicNotary(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.notaryExtraPiArgs === void 0 ? {} : { extraPiArgs: env.notaryExtraPiArgs },
-            ...env.notaryTimeoutMs === void 0 ? {} : { timeoutMs: env.notaryTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.notaryTimeoutMs === void 0 ? {} : { timeoutMs: env.notaryTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-        },
+        createRoleEnvironment(env, { role: "notary", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.notary.parse
       );
@@ -29641,27 +29456,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicMerger(
         parsed.args,
-        {
-          home,
-          principalAuthority: env.principalAuthority,
-          agentDir,
-          sessionAppender: appendPiSessionCustomEntry,
-          packageRoot: env.packageRoot,
-          roleTurnHost: resolveRoleTurnHost(env, {
-            principalAuthority: env.principalAuthority,
-            ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
-            ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs }
-          }),
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.merger.parse
       );
