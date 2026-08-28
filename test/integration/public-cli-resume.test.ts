@@ -13,7 +13,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority, decodePiDurablePrincipal, rehydratePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -1084,7 +1084,7 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
 
     // Unit: loadResumableJudgeRun rejects terminal/non-resumable.
     await assert.rejects(
-      () => loadResumableJudgeRun(home, "missing"),
+      () => loadResumableJudgeRun(home, "missing", piDurablePrincipalAuthority),
       /unknown role run id/,
     );
   });
@@ -1263,6 +1263,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       instructionEmpty: false,
       attachments: [],
       runDirectory,
+      principal: rehydratePiDurablePrincipal(piDurablePrincipalAuthority, { sessionDirectory, sessionFile }),
       sessionDirectory,
       sessionFile,
       admittedRequestPath,
@@ -1274,7 +1275,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     });
 
     const withResume = await settleJudgeFailureTerminalResult(
-      admitted,
+      { ...admitted, ...decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal) },
       { cause: "provider", diagnostic: "upstream declined" },
       {
         resume: {
@@ -1286,7 +1287,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     assert.equal(withResume.artifacts.length, 0);
 
     await markRunTerminal(runDirectory);
-    const without = await settleJudgeFailureTerminalResult(admitted, {
+    const without = await settleJudgeFailureTerminalResult({ ...admitted, ...decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal) }, {
       cause: "activation",
       diagnostic: "boom",
     });
@@ -1302,16 +1303,18 @@ test("initial activation and resume bind the exact host-issued durable principal
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-session-principal-001";
-    let issued = 0;
-    let checked = 0;
+    // Replacement host issues a distinctive principal filename under the ledger tree.
     const principalAuthority = {
       issue(request: Parameters<typeof piDurablePrincipalAuthority.issue>[0]) {
-        issued += 1;
-        return piDurablePrincipalAuthority.issue(request);
+        const base = piDurablePrincipalAuthority.issue(request);
+        const coords = piDurablePrincipalAuthority.decode(base);
+        return rehydratePiDurablePrincipal(piDurablePrincipalAuthority, {
+          sessionDirectory: coords.sessionDirectory,
+          sessionFile: join(coords.sessionDirectory, "host-issued-principal.jsonl"),
+        });
       },
       decode: piDurablePrincipalAuthority.decode.bind(piDurablePrincipalAuthority),
       async isAvailable(principal: Parameters<typeof piDurablePrincipalAuthority.isAvailable>[0]) {
-        checked += 1;
         return piDurablePrincipalAuthority.isAvailable(principal);
       },
     };
@@ -1332,6 +1335,7 @@ test("initial activation and resume bind the exact host-issued durable principal
           piRunner: async (args) => {
             initialArgs = [...args];
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const sessionPath = args[args.indexOf("--session") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await observeTyped429ViaProductionHandler({
               runDirectory: join(sessionDir, ".."),
@@ -1341,6 +1345,8 @@ test("initial activation and resume bind the exact host-issued durable principal
               provider: "openai-codex",
               errorMessage: "rate limited",
             });
+            // Materialize the host-issued principal so resume availability can pass.
+            await writeFile(sessionPath, "\n", "utf8");
             return {
               code: 1,
               stderr: "fail\n",
@@ -1356,7 +1362,7 @@ test("initial activation and resume bind the exact host-issued durable principal
     assert.ok(initialArgs);
     const boundSession = initialArgs[initialArgs.indexOf("--session") + 1]!;
     assert.equal(initialArgs.includes("--continue"), false);
-    assert.equal(boundSession.endsWith("/session/session.jsonl"), true);
+    assert.equal(boundSession.endsWith("/session/host-issued-principal.jsonl"), true);
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -1371,6 +1377,34 @@ test("initial activation and resume bind the exact host-issued durable principal
     assert.equal(durable?.sessionFile, boundSession);
     assert.equal(durable?.state, "resumable");
 
+    // Resume path: same host-issued principal; then force availability false while file exists.
+    let resumeDispatches = 0;
+    const blockingAuthority = {
+      issue: principalAuthority.issue,
+      decode: principalAuthority.decode,
+      async isAvailable() {
+        return false;
+      },
+    };
+    {
+      const { io } = captureIo();
+      const blocked = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        principalAuthority: blockingAuthority,
+        io,
+        piRunner: async (args) => {
+          resumeDispatches += 1;
+          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        },
+      });
+      assert.equal(blocked.exitCode, 2);
+      assert.equal(resumeDispatches, 0, "host-denied availability must not dispatch");
+    }
+
+    // Successful resume with the host that keeps availability true.
     const { io } = captureIo();
     let resumeArgs: string[] | undefined;
     const resumed = await runAkRole(["resume", runId], {
@@ -1408,8 +1442,6 @@ test("initial activation and resume bind the exact host-issued durable principal
     assert.ok(resumeArgs);
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(issued, 1, "initial admission issues through the replacement host");
-    assert.ok(checked >= 1, "resume availability is decided by the replacement host");
   });
 });
 
@@ -1451,6 +1483,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       instructionEmpty: false,
       attachments: [],
       runDirectory,
+      principal: rehydratePiDurablePrincipal(piDurablePrincipalAuthority, { sessionDirectory, sessionFile }),
       sessionDirectory,
       sessionFile,
       admittedRequestPath,
@@ -1462,7 +1495,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     // Principal path is bound but the file itself is missing.
 
     await assert.rejects(
-      () => loadResumableJudgeRun(home, runId),
+      () => loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof Error &&
         error.message.includes("Pi session principal is unavailable"),

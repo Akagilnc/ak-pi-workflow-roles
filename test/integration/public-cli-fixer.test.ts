@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -102,6 +103,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
     await assert.rejects(
       () =>
         admitFixerInvocationRaw({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           phase: "apply",
@@ -117,6 +119,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
     await assert.rejects(
       () =>
         admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           phase: "apply",
@@ -141,6 +144,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
     const source = join(home, "notes.txt");
     await writeFile(source, "attachment-v1", "utf8");
     const admitted = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",
@@ -184,6 +188,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const admitted = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "apply",
@@ -301,6 +306,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
 
     // Without skill expansion, provenance remains and invocation is not forced/observed.
     const noDiag = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "apply",
@@ -648,6 +654,7 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     // Production seam: admit valid prerequisites, then settle a phase-legal plan refusal
     // that judges the declared prerequisite unmet — must stay accepted Terminal exit 0.
     const admitted = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",
@@ -935,6 +942,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
 
     for (const row of cases) {
       const admitted = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
         home,
         cwd: project,
         phase: row.phase,

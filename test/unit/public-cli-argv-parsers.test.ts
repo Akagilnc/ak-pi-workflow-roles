@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 // #420 整改移档（自 test/integration/public-cli-{coder,collector,doctor,fixer,engine-axis}.test.ts）：
 // 纯 parser / typed resolver 按性质归位快档。契约断言一字不减；
 // 真 admission（冻结 FS）与真子进程条仍留 integration。
@@ -88,6 +89,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
     await assert.rejects(
       () =>
         admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           phase: "apply",
@@ -101,6 +103,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
     const source = join(home, "notes.txt");
     await writeFile(source, "attachment-v1", "utf8");
     const admitted = await admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",

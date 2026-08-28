@@ -1,4 +1,5 @@
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Coder Role run: admit → explicit Internal activate → settle Terminal result.
  * #109: package-owned TDD method, default apply / explicit plan, shared #106 success interface.
@@ -24,7 +25,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCoderInvocation,
   buildCoderTransportPrompt,
-  type AdmittedCoderInvocation,
+  type AdmittedCoderInvocation
 } from "./invocation.ts";
 import {
   buildSeatModelCliArgs,
@@ -38,7 +39,6 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableCoderRun,
   markRunAdmitted,
@@ -78,7 +78,7 @@ import type {
 
 export type CoderRunEnv = {
   home: string;
-  principalAuthority?: DurablePrincipalAuthority;
+  principalAuthority: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -95,7 +95,6 @@ export type CoderRunEnv = {
   timeoutMs?: number;
 };
 
-
 /**
  * Build Internal activation extra-args for an admitted Coder run.
  * Apply phase pins the package-owned TDD Skill via --skill (no ambient home).
@@ -104,12 +103,14 @@ export type CoderRunEnv = {
 export function buildCoderActivationExtraArgs(
   admitted: AdmittedCoderInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
     model?: SeatModelConfig;
     engine?: string;
     extraPiArgs?: readonly string[];
   },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const prompt = buildCoderTransportPrompt(
     admitted,
     engineSessionMaterialFromOptions(options),
@@ -128,9 +129,9 @@ export function buildCoderActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "coder",
@@ -152,12 +153,14 @@ export function buildCoderActivationExtraArgs(
 export function buildCoderResumeActivationExtraArgs(
   admitted: AdmittedCoderInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
     model?: SeatModelConfig;
     extraPiArgs?: readonly string[];
     message?: string;
   },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const skillArgs =
     admitted.phase === "apply"
       ? [
@@ -172,9 +175,9 @@ export function buildCoderResumeActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "coder",
@@ -206,6 +209,7 @@ async function presentControlledFailure(
     typedHttpObservationSettled?: true;
     typedHttpObservation?: TypedProviderHttpObservation;
   },
+  authority: DurablePrincipalAuthority,
   io: CliIo,
 ): Promise<{
   exitCode: number;
@@ -253,9 +257,7 @@ async function presentControlledFailure(
 
   const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
-    admitted.sessionFile,
-  );
+  const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
     sessionPrincipalAvailable &&
     isV1ResumableFailure({
@@ -308,6 +310,7 @@ async function dispatchAdmittedCoder(input: {
       return await presentControlledFailure(
         admitted,
         missingCredential,
+        env.principalAuthority,
         io,
       );
     }
@@ -333,7 +336,6 @@ async function dispatchAdmittedCoder(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -348,6 +350,7 @@ async function dispatchAdmittedCoder(input: {
           stderr: "",
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -378,6 +381,7 @@ async function dispatchAdmittedCoder(input: {
           stderr: result.stderr,
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -410,6 +414,7 @@ async function dispatchAdmittedCoder(input: {
         stderr: result.stderr,
         ...controlledFailureInputFromResolution(resolution),
       },
+      env.principalAuthority,
       io,
     );
   } finally {
@@ -437,7 +442,7 @@ export async function runPublicCoder(
     const parsed = parseCoderArgv(argv);
     admitted = await admitCoderInvocation({
       home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -475,6 +480,7 @@ export async function runPublicCoder(
           thrown: error,
           knownCause: "activation",
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -482,11 +488,13 @@ export async function runPublicCoder(
 
   return runWithAutoResumeLoop({
     admitted,
+    principalAuthority: env.principalAuthority,
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () =>
       buildCoderActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
@@ -494,6 +502,7 @@ export async function runPublicCoder(
       }),
     buildResumeArgs: () =>
       buildCoderResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
@@ -571,12 +580,14 @@ export async function runPublicCoderResume(
           thrown: error,
           knownCause: "activation",
         },
+        env.principalAuthority,
         io,
       );
     }
   }
 
   const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),

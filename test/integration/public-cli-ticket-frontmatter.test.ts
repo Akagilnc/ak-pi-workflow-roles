@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #176 typed ticket face — parse contract + one real public-runner tracer.
  * Positive path goes through runAkRole (production admission entry), not admit*
@@ -294,7 +295,7 @@ test("public runner typed face: freeze/admit → durable pages → resume → bo
     ) as { ticketNumber?: number };
     assert.equal(invocation.ticketNumber, 176);
 
-    const loaded = await loadResumableJudgeRun(home, runId);
+    const loaded = await loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.admitted.ticketNumber, 176);
 
     // Resume keeps the typed field.

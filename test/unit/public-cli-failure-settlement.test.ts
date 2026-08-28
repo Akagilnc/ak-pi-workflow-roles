@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
@@ -345,7 +346,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
     };
     await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
 
-    const terminal = await settleJudgeFailureTerminalResult(admitted, {
+    const terminal = await settleJudgeFailureTerminalResult(admitted as any, {
       cause: "activation",
       diagnostic: "role infrastructure failed",
     });
@@ -924,7 +925,7 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
         admittedRequestPath: join(runDirectory, "admitted-request.json"),
       };
       await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-      const terminal = await settleJudgeFailureTerminalResult(admitted, {
+      const terminal = await settleJudgeFailureTerminalResult(admitted as any, {
         cause,
         diagnostic: `diagnostic for ${cause}`,
         identity: { name: "CauseProbeError", code: cause },

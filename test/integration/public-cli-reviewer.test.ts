@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -246,6 +247,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     seedGitProject(project);
 
     const blank = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "   ",
@@ -263,6 +265,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     );
 
     const admitted = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Review the work since the base revision.",
@@ -282,6 +285,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     );
 
     const withRefs = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Scope only; refs carry authority.",
@@ -300,6 +304,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     await assert.rejects(
       () =>
         admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           instruction: "",
@@ -352,6 +357,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     seedGitProject(project);
 
     const admitted = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Review since HEAD~1.",
@@ -359,7 +365,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
       baseRevision: "HEAD~1",
       createRunId: () => "run-reviewer-args",
     });
-    const args = buildReviewerActivationExtraArgs(admitted, { packageRoot });
+    const args = buildReviewerActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
     assert.equal(args.includes("--no-skills"), true);
     assert.equal(args.includes("--skill"), true);
     assert.equal(args.includes("--ak-role"), true);
@@ -372,6 +378,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args.at(-1), buildReviewerTransportPrompt(admitted));
 
     const admittedWithRefs = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Scope the review.",
@@ -383,7 +390,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
       ],
       createRunId: () => "run-reviewer-args-refs",
     });
-    const argsWithRefs = buildReviewerActivationExtraArgs(admittedWithRefs, { packageRoot });
+    const argsWithRefs = buildReviewerActivationExtraArgs(admittedWithRefs, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
     assert.equal(
       argsWithRefs[argsWithRefs.indexOf("--ak-review-authority-refs") + 1],
       JSON.stringify([
@@ -391,8 +398,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
         "https://example.com/b,with-comma",
       ]),
     );
-    const resumeWithRefs = buildReviewerResumeActivationExtraArgs(admittedWithRefs, {
-      packageRoot,
+    const resumeWithRefs = buildReviewerResumeActivationExtraArgs(admittedWithRefs, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     });
     assert.equal(
       resumeWithRefs[resumeWithRefs.indexOf("--ak-review-authority-refs") + 1],
@@ -404,8 +410,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args.some((a) => a.includes(admitted.instruction)), false);
     assert.equal(args.some((a) => a.includes(".agents/skills")), false);
 
-    const resume = buildReviewerResumeActivationExtraArgs(admitted, {
-      packageRoot,
+    const resume = buildReviewerResumeActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     });
     assert.equal(resume.includes("--skill"), true);
     assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
@@ -421,6 +426,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
       "utf8",
     );
     const admittedWithTicket = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Scope only.",
@@ -429,15 +435,13 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
       createRunId: () => "run-reviewer-args-ticket",
     });
     assert.equal(admittedWithTicket.ticketNumber, 343);
-    const argsWithTicket = buildReviewerActivationExtraArgs(admittedWithTicket, {
-      packageRoot,
+    const argsWithTicket = buildReviewerActivationExtraArgs(admittedWithTicket, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     });
     assert.equal(
       argsWithTicket[argsWithTicket.indexOf("--ak-review-ticket-number") + 1],
       "343",
     );
-    const resumeWithTicket = buildReviewerResumeActivationExtraArgs(admittedWithTicket, {
-      packageRoot,
+    const resumeWithTicket = buildReviewerResumeActivationExtraArgs(admittedWithTicket, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
     });
     assert.equal(
       resumeWithTicket[resumeWithTicket.indexOf("--ak-review-ticket-number") + 1],
@@ -452,6 +456,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const admitted = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Review standards and spec axes.",
@@ -854,6 +859,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const admitted = await admitReviewerInvocationRaw({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Scope only",
@@ -883,7 +889,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     );
 
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId),
+      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError &&
         error.code === "AK_ROLE_USAGE" &&

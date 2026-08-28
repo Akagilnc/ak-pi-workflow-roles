@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
@@ -16,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
+import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
   activationBookDirectory,
@@ -130,7 +131,7 @@ async function seedCanonicalSourceRun(
   home: string,
   project: string,
 ): Promise<string> {
-  const coords = roleRunSessionCoordinates({
+  const coords = issuePiDurablePrincipalCoordinates({
     cwd: project,
     runId: CANONICAL_SOURCE_RUN_ID,
     role: CANONICAL_SOURCE_ROLE,
@@ -250,6 +251,7 @@ test("notary activation binds locator only — zero instruction/attachment on ad
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
 
     const admitted = await admitNotaryInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       sourceRun: sourceRunPath,
@@ -264,7 +266,7 @@ test("notary activation binds locator only — zero instruction/attachment on ad
     assert.equal(admitted.sourceRun.runId, "01a034f1-75bf-71a6-bcf5-d1299145b1a5");
     assert.equal(admitted.sourceRun.role, "judge");
 
-    const extra = buildNotaryActivationExtraArgs(admitted, { packageRoot });
+    const extra = buildNotaryActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
     assert.equal(flagValue(extra, "--ak-role"), "notary");
     assert.equal(flagValue(extra, "--ak-notary-source-run"), sourceRunPath);
   });

@@ -16,10 +16,13 @@ import { randomUUID } from "node:crypto";
 import { appendFile, lstat, mkdir, open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+} from "../host-contracts.ts";
 import {
   AUTO_RESUME_LIMIT,
   describeErrorIdentity,
-  isDurablePrincipalAvailable,
   acquireRunWriterLease,
   markRunTerminal,
   RunWriterLeaseHeldError,
@@ -338,7 +341,9 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
     /** Identity for the loop-owned typed failure terminal (dispatch-exception exhaustion). */
     role: TerminalRoleName;
     runId: string;
+    principal: DurablePrincipal;
   };
+  principalAuthority: DurablePrincipalAuthority;
   io: CliIo;
   /**
    * Effective ceiling (#422), resolved by the caller before the loop; never re-read
@@ -430,7 +435,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-      if (!(await isDurablePrincipalAvailable(options.admitted.sessionFile))) {
+      if (!(await options.principalAuthority.isAvailable(options.admitted.principal))) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
@@ -453,7 +458,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
           terminal,
         } as T;
       }
-      if (!(await isDurablePrincipalAvailable(options.admitted.sessionFile))) {
+      if (!(await options.principalAuthority.isAvailable(options.admitted.principal))) {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,

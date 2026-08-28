@@ -1,4 +1,5 @@
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Fixer Role run: admit → explicit Internal activate → settle Terminal result.
  * #110/#177: package-owned diagnosing-bugs and tdd methods (available, not forced),
@@ -26,7 +27,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitFixerInvocation,
   buildFixerTransportPrompt,
-  type AdmittedFixerInvocation,
+  type AdmittedFixerInvocation
 } from "./invocation.ts";
 import {
   buildSeatModelCliArgs,
@@ -40,7 +41,6 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableFixerRun,
   markRunAdmitted,
@@ -80,7 +80,7 @@ import type {
 
 export type FixerRunEnv = {
   home: string;
-  principalAuthority?: DurablePrincipalAuthority;
+  principalAuthority: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -97,7 +97,6 @@ export type FixerRunEnv = {
   timeoutMs?: number;
 };
 
-
 /**
  * Build Internal activation extra-args for an admitted Fixer run.
  * Package diagnosing-bugs and tdd Skills are available via --skill on every phase
@@ -106,12 +105,14 @@ export type FixerRunEnv = {
 export function buildFixerActivationExtraArgs(
   admitted: AdmittedFixerInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
     model?: SeatModelConfig;
     engine?: string;
     extraPiArgs?: readonly string[];
   },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const prompt = buildFixerTransportPrompt(
     admitted,
     engineSessionMaterialFromOptions(options),
@@ -135,9 +136,9 @@ export function buildFixerActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "fixer",
@@ -160,12 +161,14 @@ export function buildFixerActivationExtraArgs(
 export function buildFixerResumeActivationExtraArgs(
   admitted: AdmittedFixerInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
     model?: SeatModelConfig;
     extraPiArgs?: readonly string[];
     message?: string;
   },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs",
@@ -185,9 +188,9 @@ export function buildFixerResumeActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "fixer",
@@ -214,6 +217,7 @@ async function presentControlledFailure(
     typedHttpObservationSettled?: true;
     typedHttpObservation?: TypedProviderHttpObservation;
   },
+  authority: DurablePrincipalAuthority,
   io: CliIo,
 ): Promise<{
   exitCode: number;
@@ -251,9 +255,7 @@ async function presentControlledFailure(
 
   const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
-    admitted.sessionFile,
-  );
+  const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
     sessionPrincipalAvailable &&
     isV1ResumableFailure({
@@ -306,6 +308,7 @@ async function dispatchAdmittedFixer(input: {
       return await presentControlledFailure(
         admitted,
         missingCredential,
+        env.principalAuthority,
         io,
       );
     }
@@ -331,7 +334,6 @@ async function dispatchAdmittedFixer(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -346,6 +348,7 @@ async function dispatchAdmittedFixer(input: {
           stderr: "",
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -379,6 +382,7 @@ async function dispatchAdmittedFixer(input: {
           stderr: result.stderr,
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -391,7 +395,6 @@ async function dispatchAdmittedFixer(input: {
         terminal: lawful,
       };
     }
-
 
     const credentialFailure = postRunMissingCredentialFailure(
       result,
@@ -412,6 +415,7 @@ async function dispatchAdmittedFixer(input: {
         stderr: result.stderr,
         ...controlledFailureInputFromResolution(resolution),
       },
+      env.principalAuthority,
       io,
     );
   } finally {
@@ -446,7 +450,7 @@ export async function runPublicFixer(
     const parsed = parseFixerArgv(argv);
     admitted = await admitFixerInvocation({
       home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -480,17 +484,20 @@ export async function runPublicFixer(
         stderr: "",
         thrown: error,
       },
+      env.principalAuthority,
       io,
     );
   }
 
   return runWithAutoResumeLoop({
     admitted,
+    principalAuthority: env.principalAuthority,
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () =>
       buildFixerActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
@@ -498,6 +505,7 @@ export async function runPublicFixer(
       }),
     buildResumeArgs: () =>
       buildFixerResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
@@ -568,11 +576,13 @@ export async function runPublicFixerResume(
         stderr: "",
         thrown: error,
       },
+      env.principalAuthority,
       io,
     );
   }
 
   const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),

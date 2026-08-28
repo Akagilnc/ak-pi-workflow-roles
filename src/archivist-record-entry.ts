@@ -9,10 +9,6 @@ import { dirname, isAbsolute, resolve, join, relative, sep } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
-export {
-  roleRunSessionCoordinates,
-  type RoleRunSessionCoordinates,
-} from "./archivist-role-run-coordinates.ts";
 import {
   ActivationLedgerError,
   activationBookDirectory,

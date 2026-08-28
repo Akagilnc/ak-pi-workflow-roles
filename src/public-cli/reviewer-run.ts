@@ -1,4 +1,5 @@
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Reviewer Role run: admit → explicit Internal
  * activate → settle Terminal result (#111).
@@ -27,7 +28,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitReviewerInvocation,
   buildReviewerTransportPrompt,
-  type AdmittedReviewerInvocation,
+  type AdmittedReviewerInvocation
 } from "./invocation.ts";
 import {
   buildSeatModelCliArgs,
@@ -41,7 +42,6 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableReviewerRun,
   markRunAdmitted,
@@ -82,7 +82,7 @@ import type {
 
 export type ReviewerRunEnv = {
   home: string;
-  principalAuthority?: DurablePrincipalAuthority;
+  principalAuthority: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -98,7 +98,6 @@ export type ReviewerRunEnv = {
   extraPiArgs?: readonly string[];
   timeoutMs?: number;
 };
-
 
 /** Encode admitted ticketNumber as CLI argv for activation/resume (no defaults). */
 function buildReviewerTicketNumberArgs(
@@ -117,12 +116,14 @@ function buildReviewerTicketNumberArgs(
 export function buildReviewerActivationExtraArgs(
   admitted: AdmittedReviewerInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
     model?: SeatModelConfig;
     engine?: string;
     extraPiArgs?: readonly string[];
   },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const prompt = buildReviewerTransportPrompt(
     admitted,
     engineSessionMaterialFromOptions(options),
@@ -144,9 +145,9 @@ export function buildReviewerActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "reviewer",
@@ -168,12 +169,14 @@ export function buildReviewerActivationExtraArgs(
 export function buildReviewerResumeActivationExtraArgs(
   admitted: AdmittedReviewerInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     packageRoot: string;
     model?: SeatModelConfig;
     extraPiArgs?: readonly string[];
     message?: string;
   },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const skillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "code-review",
@@ -191,9 +194,9 @@ export function buildReviewerResumeActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "reviewer",
@@ -219,6 +222,7 @@ async function presentControlledFailure(
     typedHttpObservationSettled?: true;
     typedHttpObservation?: TypedProviderHttpObservation;
   },
+  authority: DurablePrincipalAuthority,
   io: CliIo,
 ): Promise<{
   exitCode: number;
@@ -256,9 +260,7 @@ async function presentControlledFailure(
 
   const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
-    admitted.sessionFile,
-  );
+  const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal!);
   const resumable =
     sessionPrincipalAvailable &&
     isV1ResumableFailure({
@@ -313,6 +315,7 @@ async function dispatchAdmittedReviewer(input: {
       return await presentControlledFailure(
         admitted,
         missingCredential,
+        env.principalAuthority,
         io,
       );
     }
@@ -339,7 +342,6 @@ async function dispatchAdmittedReviewer(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -354,6 +356,7 @@ async function dispatchAdmittedReviewer(input: {
           stderr: "",
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -387,6 +390,7 @@ async function dispatchAdmittedReviewer(input: {
           stderr: result.stderr,
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -399,7 +403,6 @@ async function dispatchAdmittedReviewer(input: {
         terminal: lawful,
       };
     }
-
 
     // Prefer engine-detour infrastructure failure already on the session principal
     // over a later secondary knownFailure / provider-stop after abort (#357 T2 / #378).
@@ -434,6 +437,7 @@ async function dispatchAdmittedReviewer(input: {
         stderr: result.stderr,
         ...controlledFailureInputFromResolution(resolution),
       },
+      env.principalAuthority,
       io,
     );
   } finally {
@@ -468,7 +472,7 @@ export async function runPublicReviewer(
     const parsed = parseReviewerArgv(argv);
     admitted = await admitReviewerInvocation({
       home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -500,17 +504,20 @@ export async function runPublicReviewer(
         stderr: "",
         thrown: error,
       },
+      env.principalAuthority,
       io,
     );
   }
 
   return runWithAutoResumeLoop({
     admitted,
+    principalAuthority: env.principalAuthority,
     io,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
     buildInitialArgs: () =>
       buildReviewerActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
@@ -518,6 +525,7 @@ export async function runPublicReviewer(
       }),
     buildResumeArgs: () =>
       buildReviewerResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
         packageRoot: env.packageRoot,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
@@ -588,11 +596,13 @@ export async function runPublicReviewerResume(
         stderr: "",
         thrown: error,
       },
+      env.principalAuthority,
       io,
     );
   }
 
   const extraArgs = buildReviewerResumeActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),

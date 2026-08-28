@@ -1,4 +1,5 @@
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Public Collector Role run: admit a structured PR target → explicit Internal activate
  * → settle Terminal result (#112). One-shot; no resume path (Collector rejects
@@ -20,7 +21,7 @@ import {
   admitCollectorInvocation,
   buildCollectorTransportPrompt,
   type AdmittedCollectorInvocation,
-  type ParseCollectorArgvResult,
+  type ParseCollectorArgvResult
 } from "./invocation.ts";
 import {
   buildSeatModelCliArgs,
@@ -61,7 +62,7 @@ import type {
 
 export type CollectorRunEnv = {
   home: string;
-  principalAuthority?: DurablePrincipalAuthority;
+  principalAuthority: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -76,7 +77,6 @@ export type CollectorRunEnv = {
   timeoutMs?: number;
 };
 
-
 /**
  * Build Internal activation extra-args for an admitted Collector run.
  * Always --no-skills (Collector forbids every Skill). Session under #78 book.
@@ -84,12 +84,14 @@ export type CollectorRunEnv = {
 export function buildCollectorActivationExtraArgs(
   admitted: AdmittedCollectorInvocation,
   options: {
+    principalAuthority: DurablePrincipalAuthority;
     model?: SeatModelConfig;
     engine?: string;
     packageRoot?: string;
     extraPiArgs?: readonly string[];
-  } = {},
+  },
 ): string[] {
+  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
   const prompt = buildCollectorTransportPrompt(
     admitted,
     engineSessionMaterialFromOptions(options),
@@ -100,9 +102,9 @@ export function buildCollectorActivationExtraArgs(
     "--no-themes",
     "--no-context-files",
     "--session",
-    admitted.sessionFile,
+    sessionFile,
     "--session-dir",
-    admitted.sessionDirectory,
+    sessionDirectory,
     ...(options.extraPiArgs ?? []),
     "--ak-role",
     "collector",
@@ -135,6 +137,7 @@ async function presentControlledFailure(
     };
     knownDiagnostic?: string;
   },
+  authority: import("../host-contracts.ts").DurablePrincipalAuthority,
   io: CliIo,
 ): Promise<{
   exitCode: number;
@@ -201,6 +204,7 @@ async function dispatchAdmittedCollector(input: {
       return await presentControlledFailure(
         admitted,
         missingCredential,
+        env.principalAuthority,
         io,
       );
     }
@@ -226,7 +230,6 @@ async function dispatchAdmittedCollector(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -241,6 +244,7 @@ async function dispatchAdmittedCollector(input: {
           stderr: "",
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -267,6 +271,7 @@ async function dispatchAdmittedCollector(input: {
           stderr: result.stderr,
           thrown: error,
         },
+        env.principalAuthority,
         io,
       );
     }
@@ -314,6 +319,7 @@ async function dispatchAdmittedCollector(input: {
         stderr: result.stderr,
         ...(knownFailure === undefined ? {} : { knownFailure }),
       },
+      env.principalAuthority,
       io,
     );
   } finally {
@@ -336,7 +342,7 @@ export async function runPublicCollector(
     const parsed = parseCollectorArgv(argv);
     admitted = await admitCollectorInvocation({
       home: env.home,
-      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       prNumber: parsed.prNumber,
       instruction: parsed.instruction,
@@ -369,6 +375,7 @@ export async function runPublicCollector(
   }
 
   const extraArgs = buildCollectorActivationExtraArgs(admitted, {
+        principalAuthority: env.principalAuthority,
     packageRoot: env.packageRoot,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
