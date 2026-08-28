@@ -22,6 +22,7 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
+  RoleTurnModelConfig,
 } from "../host-contracts.ts";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { resolveTicketNumberFromAttachmentBodies } from "../ticket-frontmatter.ts";
@@ -277,11 +278,7 @@ async function writeAdmittedRequestPersistence(
  * Effective provider/model selection recorded on the invocation identity page.
  * thinking is present only when the caller/seat supplied it — bare model omits it.
  */
-export type InvocationEffectiveModel = {
-  readonly provider: string;
-  readonly model: string;
-  readonly thinking?: string;
-};
+export type InvocationEffectiveModel = RoleTurnModelConfig;
 
 /** Project effective model onto ledger fields; absent thinking stays absent. */
 function effectiveModelLedgerFields(
@@ -365,8 +362,16 @@ export async function recordEffectiveInvocationModel(
     `${JSON.stringify(next, null, 2)}\n`,
     "utf8",
   );
+  const effectiveModel: InvocationEffectiveModel | undefined =
+    typeof next.provider === "string" && typeof next.model === "string"
+      ? {
+          provider: next.provider,
+          model: next.model,
+          ...(typeof next.thinking === "string" ? { thinking: next.thinking } : {}),
+        }
+      : undefined;
   const config = await loadPublicCliConfig();
-  const institutionalPage = resolveInstitutionalSeatSelections(config, model);
+  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
   await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 
