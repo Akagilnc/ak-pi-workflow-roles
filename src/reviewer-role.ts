@@ -10,7 +10,10 @@ import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
-import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import {
+  failOnInfrastructureFailureDeclaration,
+  withInfrastructureFailureDeclaration,
+} from "./package-contracts/terminating-infrastructure.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
@@ -40,7 +43,9 @@ const reviewerOutputVariants = Type.Union([
     amendments: Type.Optional(reviewerAmendmentsSchema),
   }, { additionalProperties: false }),
 ]);
-const reviewerOutputSchema = openToolObjectFromUnion(reviewerOutputVariants);
+export const reviewerOutputSchema = withInfrastructureFailureDeclaration(
+  openToolObjectFromUnion(reviewerOutputVariants),
+);
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
