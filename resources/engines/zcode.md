@@ -44,3 +44,20 @@ the smoke prompt returns normally.
 Plan quotas are daily and per-model (GLM-5.3 3M/day, Flash 5M/day on the
 current plan; a weekend event granted a larger temporary pool). Whether cached
 tokens count toward quota is unverified.
+
+## Lane status: PARKED (host-verified 2026-08-29)
+
+The "working" configuration above drew from a new-user gift resource package
+(2M general-model tokens), not from any plan. Once that package expired,
+glm-5.3-flash returns `1113` (insufficient balance) with the same key on BOTH
+the anthropic endpoint and the coding endpoint
+(`open.bigmodel.cn/api/coding/paas/v4`, HTTP 429 + code 1113, probed with a
+minimal request). The ZCode Start/Weekend plan quotas are bound to the desktop
+app's OAuth connection ("Start Plan" connection mode); the CLI's
+`/login bigmodel-coding-plan` OAuth variant hard-fails with
+`BigModel OAuth appSecret is required.` (the client secret ships only inside
+the desktop app; no env override exists — only `BIGMODEL_*_API_BASE_URL`).
+The plan page issues exactly one API key and it is the key tested above.
+
+Net: this engine lane has no funded model until a key with actual balance or
+an in-plan API path exists. Do not dispatch `--engine zcode` until then.
