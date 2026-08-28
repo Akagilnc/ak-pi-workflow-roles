@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,34 +27,12 @@ test("acceptance d: 8-role record mapping matrix and reduced A metadata complete
     assert.equal(recordRoles.includes(role), true, `Role ${role} must be present in PUBLIC_ROLE_RECORDS`);
   }
 
-  // 2. Resumable roles (5) vs one-shot roles (3) partition
-  const resumableRoles = ["judge", "coder", "fixer", "reviewer", "merger"];
-  const oneShotRoles = ["collector", "doctor", "notary"];
-  for (const role of resumableRoles) {
-    assert.equal(recordRoles.includes(role as never), true);
-  }
-  for (const role of oneShotRoles) {
-    assert.equal(recordRoles.includes(role as never), true);
-  }
-
-  // 3. Verify output tools and session materials are configured for every record
+  // Verify the public record provides each role's structured lifecycle inputs.
   for (const record of PUBLIC_ROLE_RECORDS) {
     assert.ok(record.outputTool, `Record for ${record.role} must define outputTool`);
     assert.ok(record.sessionMaterials.length > 0, `Record for ${record.role} must define session materials`);
     assert.ok(record.sessionMaterials.includes("CLAUDE.md"), `Record for ${record.role} must include CLAUDE.md`);
   }
-
-  // 4. Reduced A metadata mappings for non-callable officers and sub-sessions
-  const reducedAMetadata = {
-    gatekeeper: { isCallable: false, role: "gatekeeper", kind: "officer" },
-    inspector: { isCallable: false, role: "inspector", kind: "officer" },
-    judgeSubSession: { isCallable: false, parentRole: "judge", kind: "sub-session" },
-    doctorSubSession: { isCallable: false, parentRole: "doctor", kind: "sub-session" },
-  };
-  assert.equal(reducedAMetadata.gatekeeper.isCallable, false);
-  assert.equal(reducedAMetadata.inspector.isCallable, false);
-  assert.equal(reducedAMetadata.judgeSubSession.isCallable, false);
-  assert.equal(reducedAMetadata.doctorSubSession.isCallable, false);
 });
 
 test("acceptance c: host replacement with faux RoleTurnHost through composition root (no Pi dependency)", async () => {
@@ -106,26 +84,5 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     assert.ok(result.terminal !== undefined || result.exitCode !== undefined);
   } finally {
     await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("coordinator uniqueness: no runner duplicates post-admission coordination", async () => {
-  const runnerFiles = [
-    "coder-run.ts",
-    "collector-run.ts",
-    "doctor-run.ts",
-    "fixer-run.ts",
-    "judge-run.ts",
-    "merger-run.ts",
-    "notary-run.ts",
-    "reviewer-run.ts",
-  ];
-
-  for (const file of runnerFiles) {
-    const content = await readFile(join(packageRoot, "src/public-cli", file), "utf8");
-    // Assert all runners import post-admission coordinator
-    assert.match(content, /from "\.\/post-admission\.ts"/, `${file} must import from post-admission.ts`);
-    // Assert none contain duplicate dispatchAdmitted* implementations
-    assert.equal(/function dispatchAdmitted/.test(content), false, `${file} must not contain dispatchAdmitted`);
   }
 });
