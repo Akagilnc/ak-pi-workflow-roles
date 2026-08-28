@@ -263,12 +263,8 @@ export type InstitutionalSeat =
   | "evidenceChild"
   | (string & {});
 
-/** Non-secret host-neutral seat model selection. */
-export type HostInstitutionalModelSelection = {
-  readonly provider: string;
-  readonly model: string;
-  readonly thinking?: string;
-};
+/** Non-secret host-neutral seat model selection. Single truth source is RoleTurnModelConfig. */
+export type HostInstitutionalModelSelection = RoleTurnModelConfig;
 
 /** Usage statistics for institutional sub-session events and turns. */
 export type HostSessionUsage = {
