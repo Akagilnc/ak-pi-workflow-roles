@@ -517,7 +517,15 @@ test("same-turn evidence failure propagates its identity past injected and rejec
     await mkdir(runDirectory);
     try {
       const sessionManager = parentWithJudgeSubjects(cwd);
-      const tool = createComplianceDecisionTool("ak_same_turn_rejected_decision", "Submit.");
+      const baseTool = createComplianceDecisionTool("ak_same_turn_rejected_decision", "Submit.");
+      let executions = 0;
+      const tool = {
+        ...baseTool,
+        async execute(...args: Parameters<typeof baseTool.execute>) {
+          executions += 1;
+          throw new Error("decision rejected");
+        },
+      };
       const faux = fauxProvider({ provider: "same-turn-rejected-evidence-test" });
       await assert.rejects(
         () => withRunDir(runDirectory, () => runComplianceAudit({
@@ -530,11 +538,12 @@ test("same-turn evidence failure propagates its identity past injected and rejec
             fauxToolCall(tool.name, { status: "pass" }),
           ], { stopReason: "toolUse" }),
           context: auditExtensionContext(cwd, sessionManager, faux),
-      runDirectory,
+          runDirectory,
         })),
         (error: unknown) => error instanceof Error
           && (error as NodeJS.ErrnoException).code === "ENOENT",
       );
+      assert.equal(executions, 1);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
