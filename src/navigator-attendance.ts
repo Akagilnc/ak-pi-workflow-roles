@@ -791,7 +791,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         "本次导航材料如下：",
         `<navigator_soul>\n${soul}\n</navigator_soul>`,
         ...(routePlaybookReadFailure === undefined
-          ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
+          ? [
+              `<route_playbook>\n${routePlaybook}\n</route_playbook>`,
+              "荐路以 route_playbook 为准；偏离路书的荐路须在理由中点名所依据的路书条目。",
+            ]
           : ["可选路线手册未能读取。"]),
         `<work_subject>\n${subject}\n</work_subject>`,
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
