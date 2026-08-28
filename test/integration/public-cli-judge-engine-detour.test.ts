@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #357 T2 acceptance — four tracers at real public Judge entry.
  * PATH fake engine + scripted session LLM; mock only LLM I/O.
@@ -87,7 +89,10 @@ async function runJudgeWithEngine(input: {
       stdout: (text) => stdout.push(text),
       stderr: (text) => stderr.push(text),
     },
-    piRunner: async (args, options) => {
+    roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
       assert.ok(
         args.some((arg) => arg.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE)),
       );
@@ -108,6 +113,8 @@ async function runJudgeWithEngine(input: {
         args: [...args],
       };
     },
+            extraPiArgs: ["-e", providerPath],
+          }),
   });
   return {
     exitCode: result.exitCode,

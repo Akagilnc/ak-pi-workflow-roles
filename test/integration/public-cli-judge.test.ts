@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
@@ -55,7 +56,8 @@ import {
   withActivationHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
-import { resolveInternalRoleEntrypoint } from "../../src/public-cli/explicit-internal.ts";
+import { resolveInternalRoleEntrypoint } from "../../src/pi/role-turn-host.ts";
+
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
@@ -170,7 +172,10 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
         cwd: project,
         createRunId: () => "run-s1-judge-options",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(
@@ -183,6 +188,7 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
           );
           return { code: 0, stderr: "", timedOut: false, args: [...args] };
         },
+          }),
       },
     );
 
@@ -1072,7 +1078,10 @@ test("runAkRole judge rejects burden selector before admission", async () => {
       packageRoot,
       home,
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         ran = true;
         return {
           code: 0,
@@ -1081,6 +1090,7 @@ test("runAkRole judge rejects burden selector before admission", async () => {
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(result.exitCode, 2);
     assert.equal(ran, false);
@@ -1119,7 +1129,10 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
         correlationId: "corr-106-unit",
         createRunId: () => "run-cli-judge-001",
         io,
-        piRunner: async (args, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
           capturedArgs = [...args];
           capturedEnv = options.env;
           const sessionDirIdx = args.indexOf("--session-dir");
@@ -1192,6 +1205,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             args: [...args],
           };
         },
+          }),
       },
     );
 
@@ -1301,7 +1315,10 @@ test("runAkRole judge empty request does not invent semantic task content on the
       cwd: project,
       createRunId: () => "run-empty-001",
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         prompt = String(args.at(-1));
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
@@ -1325,6 +1342,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(result.exitCode, 0);
     assert.equal(prompt, "");

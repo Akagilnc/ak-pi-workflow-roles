@@ -24,6 +24,8 @@ import {
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
@@ -340,12 +342,16 @@ test("every public callable role is a completed path (no deferred slice)", async
         packageRoot,
         home,
         io,
-        piRunner: async (args) => ({
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => ({
           code: 1,
           stderr: "forced runner stop",
           timedOut: false,
           args: [...args],
         }),
+          }),
       });
       assert.notEqual(result.exitCode, 0, role);
       assert.equal(

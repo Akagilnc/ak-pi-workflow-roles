@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #176 typed ticket face — parse contract + one real public-runner tracer.
  * Positive path goes through runAkRole (production admission entry), not admit*
@@ -181,7 +182,10 @@ test("public runner decoy face (illegal UTF-8 / malformed fence) admits unbound"
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -192,6 +196,7 @@ test("public runner decoy face (illegal UTF-8 / malformed fence) admits unbound"
             args: [...args],
           };
         },
+          }),
       },
     );
 
@@ -249,7 +254,10 @@ test("public runner typed face: freeze/admit → durable pages → resume → bo
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await observeTyped429ViaProductionHandler({
@@ -267,6 +275,7 @@ test("public runner typed face: freeze/admit → durable pages → resume → bo
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.ok(first.terminal?.resume, "typed-face run must be resumable after 429");
@@ -305,7 +314,10 @@ test("public runner typed face: freeze/admit → durable pages → resume → bo
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io: captureIo().io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await writeFile(
           join(sessionDir, "session.jsonl"),
@@ -327,6 +339,7 @@ test("public runner typed face: freeze/admit → durable pages → resume → bo
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(resumed.exitCode, 0, "resume should settle");
     const after = JSON.parse(

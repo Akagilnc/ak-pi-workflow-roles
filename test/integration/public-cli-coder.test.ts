@@ -1,4 +1,9 @@
+import {
+  buildCoderActivationExtraArgs,
+  buildCoderResumeActivationExtraArgs
+} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -22,10 +27,7 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import {
-  buildCoderActivationExtraArgs,
-  buildCoderResumeActivationExtraArgs,
-} from "../../src/public-cli/coder-run.ts";
+
 import { admitCoderInvocation } from "../../src/public-cli/invocation.ts";
 import {
   RESUME_TRANSPORT_ENVELOPE,
@@ -253,9 +255,13 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         home,
         cwd: project,
         io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           throw new Error("must not dispatch");
         },
+          }),
       });
       assert.equal(result.exitCode, 2);
       assert.equal(stderr.join("").length > 0, true);
@@ -279,7 +285,10 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           cwd: project,
           createRunId: () => "run-cli-coder-plan",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             // Write a lawful planned receipt into the session the args reserved.
             const sessionIdx = args.indexOf("--session");
@@ -310,6 +319,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "coder plan failed");
@@ -352,7 +362,10 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           cwd: project,
           createRunId: () => "run-cli-coder-apply",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             return {
               code: 1,
@@ -361,6 +374,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(Array.isArray(captured), true);
@@ -392,7 +406,10 @@ test("ak-role resume continues coder with preserved plan phase and exact session
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -407,6 +424,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume, "coder plan 429 must be resumable");
@@ -438,7 +456,10 @@ test("ak-role resume continues coder with preserved plan phase and exact session
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "coder");
         assert.equal(args[args.indexOf("--ak-coder-phase") + 1], "plan");
@@ -471,6 +492,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "coder resume failed");
     assert.equal(Array.isArray(resumeArgs), true);
@@ -513,7 +535,10 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => "run-cli-coder-bare-model",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -543,6 +568,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(
@@ -603,7 +629,10 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => "run-cli-coder-thinking-suffix",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             return {
               code: 1,
@@ -612,6 +641,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(Array.isArray(captured), true, stderr.join("") || "suffix dispatch missing args");
@@ -669,7 +699,10 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-cli-coder-unknown-model",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           dispatched = true;
           captured = [...args];
           // Simulate existing typed model-resolution refusal from the host runtime.
@@ -680,6 +713,7 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(dispatched, true, stderr.join("") || "unknown model must reach pi dispatch");
@@ -730,7 +764,10 @@ test("malformed --model thinking suffix is rejected at public entry without disp
                   : "bogus"
             }`,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             dispatched = true;
             return {
               code: 0,
@@ -739,6 +776,7 @@ test("malformed --model thinking suffix is rejected at public entry without disp
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(dispatched, false, `${badSpec} must not reach pi dispatch`);

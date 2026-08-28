@@ -26,6 +26,7 @@ import {
 import { buildCollectorReceipt } from "../../src/collector-receipt.ts";
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { createFakeGitHubTransport } from "../helpers/fake-github-transport.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 
 function clockAt(startWall: string): CollectorClock & { advance(ms: number): void } {
   let mono = 0;

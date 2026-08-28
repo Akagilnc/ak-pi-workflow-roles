@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -25,12 +26,9 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { runExplicitInternalActivation } from "../../src/public-cli/explicit-internal.ts";
+
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import {
-  buildFixerActivationExtraArgs,
-  buildFixerResumeActivationExtraArgs,
-} from "../../src/public-cli/fixer-run.ts";
+
 import {
   admitFixerInvocation as admitFixerInvocationRaw,
 } from "../../src/public-cli/invocation.ts";
@@ -358,9 +356,13 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
         home,
         cwd: project,
         io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           throw new Error("must not dispatch");
         },
+          }),
       });
       assert.equal(result.exitCode, 2);
       assert.equal(stderr.join("").length > 0, true);
@@ -377,9 +379,13 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
           home,
           cwd: project,
           io,
-          piRunner: async () => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
             throw new Error("must not dispatch malformed prereq");
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 2);
@@ -402,7 +408,10 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
           cwd: project,
           createRunId: () => "run-cli-fixer-plan",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -432,6 +441,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "fixer plan failed");
@@ -471,7 +481,10 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
           cwd: project,
           createRunId: () => "run-cli-fixer-apply",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             return {
               code: 1,
@@ -480,6 +493,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(Array.isArray(captured), true);
@@ -508,7 +522,10 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -523,6 +540,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume, "fixer plan 429 must be resumable");
@@ -554,7 +572,10 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
         assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
@@ -587,6 +608,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "fixer resume failed");
     assert.equal(Array.isArray(resumeArgs), true);
@@ -724,7 +746,10 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
         cwd: project,
         createRunId: () => "run-cli-fixer-prereq-unmet",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, fixerSessionLine(receipt), "utf8");
@@ -735,6 +760,7 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 0, stdout.join("") || "prereq_unmet refused failed");
@@ -979,7 +1005,10 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         cwd: project,
         createRunId: () => row.runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, fixerSessionLine(row.details), "utf8");
@@ -990,6 +1019,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
             args: [...args],
           };
         },
+          }),
       });
       assert.equal(
         result.exitCode,

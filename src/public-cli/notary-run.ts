@@ -3,7 +3,7 @@
  * → settle Terminal result (#448). Zero caller prompt/attachment. Lifecycle is
  * the shared Doctor-isomorphic seam; this module keeps only Notary adapters.
  */
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -14,7 +14,6 @@ import {
   type ParseNotaryArgvResult
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
   type SeatModelConfig,
 } from "./config.ts";
 import {
@@ -31,43 +30,38 @@ import type { TerminalResult } from "./terminal.ts";
 export type NotaryRunEnv = OneShotRunEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
-  extraPiArgs?: readonly string[];
 };
 
-export function buildNotaryActivationExtraArgs(
+/** Project admitted invocation onto the host-neutral turn request. */
+export function buildNotaryTurnRequest(
   admitted: AdmittedNotaryInvocation,
   options: {
-    principalAuthority: DurablePrincipalAuthority;
+    packageRoot: string;
+    home: string;
+    agentDir: string;
     model?: SeatModelConfig;
     engine?: string;
-    packageRoot?: string;
-    extraPiArgs?: readonly string[];
+    timeoutMs?: number;
+    correlationId?: string;
+    continuation: RoleTurnRequest["continuation"];
   },
-): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(options.principalAuthority, admitted.principal!);
-  const prompt = buildNotaryTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    sessionFile,
-    "--session-dir",
-    sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "notary",
-    "--ak-notary-source-run",
-    admitted.sourceRunPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
+): RoleTurnRequest {
+  return {
+    principal: admitted.principal!,
+    activation: { role: "notary" as const, sourceRun: admitted.sourceRunPath },
+    methods: [],
+    continuation: options.continuation,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.engine === undefined ? {} : { engine: options.engine }),
+    cwd: admitted.projectRoot,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...(options.correlationId === undefined || options.correlationId.trim() === ""
+      ? {}
+      : { correlationId: options.correlationId }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  };
 }
 
 export async function runPublicNotary(
@@ -101,19 +95,27 @@ export async function runPublicNotary(
     throw error;
   }
 
-  const extraArgs = buildNotaryActivationExtraArgs(admitted, {
-        principalAuthority: env.principalAuthority,
+  const turnRequest = buildNotaryTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(env.correlationId === undefined || env.correlationId.trim() === ""
+      ? {}
+      : { correlationId: env.correlationId }),
+    continuation: {
+      kind: "initial",
+      prompt: buildNotaryTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...(env.engine === undefined ? {} : { engine: env.engine }), packageRoot: env.packageRoot })),
+    },
   });
 
   return await runAdmittedOneShotRole({
     admitted,
     env,
     io,
-    extraArgs,
+    request: turnRequest,
     adapters: {
       trySettle: (admitted) => trySettleNotaryTerminalResult(admitted, env.principalAuthority),
       // Accepted receipts and failure terminals both present via shared path.

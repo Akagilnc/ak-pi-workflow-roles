@@ -33,10 +33,13 @@ import {
 } from "./config.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
+import type { RoleTurnHost } from "../host-contracts.ts";
 import {
-  type ExplicitInternalPiRunner,
-} from "./explicit-internal.ts";
+  createPiRoleTurnHost,
+} from "../pi/role-turn-host.ts";
 import {
+  observeLaunchedRolePackageIdentity,
+  parseAnalystArgv,
   parseCoderArgv,
   parseCollectorArgv,
   parseDoctorArgv,
@@ -45,7 +48,8 @@ import {
   parseMergerArgv,
   parseNotaryArgv,
   parseReviewerArgv,
-  parseAnalystArgv,
+  recordLaunchedPiIdentity,
+  recordLaunchedRolePackageIdentity,
 } from "./invocation.ts";
 import {
   createTypedOptionConsumer,
@@ -90,7 +94,7 @@ import type { TerminalResult } from "./terminal.ts";
 export {
   buildExplicitInternalActivationArgs,
   resolveInternalRoleEntrypoint,
-} from "./explicit-internal.ts";
+} from "../pi/role-turn-host.ts";
 export { CliUsageError } from "./cli-errors.ts";
 export type { CliIo } from "./cli-io.ts";
 
@@ -172,8 +176,24 @@ export type CliEnv = {
   packageRoot: string;
   credentials?: CredentialProviders;
   io?: CliIo;
-  /** Injectable Pi runner (tests); production resolves `pi` on PATH. */
-  piRunner?: ExplicitInternalPiRunner;
+  /**
+   * Injectable host-neutral turn host (tests). Production composes the Pi
+   * adapter once per dispatch from packageRoot + seat extraPiArgs/timeout.
+   */
+  roleTurnHost?: RoleTurnHost;
+  /**
+   * Test-only legacy injection. Composition root converts once to roleTurnHost
+   * via the shared helper — not a second production seam (#526).
+   */
+  piRunner?: (
+    args: readonly string[],
+    options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number },
+  ) => Promise<{
+    code: number | null;
+    stderr: string;
+    timedOut: boolean;
+    knownFailure?: import("../host-contracts.ts").RoleTurnKnownFailure;
+  }>;
   /** Optional caller correlation id (#78 host channel). */
   correlationId?: string;
   /** Extra Pi args for Judge runs (tests: faux provider). */
@@ -210,6 +230,41 @@ export type CliEnv = {
   notaryTimeoutMs?: number;
   createRunId?: () => string;
 };
+
+/** Compose the Pi turn host for one role dispatch (sole public-cli → pi contact). */
+function resolveRoleTurnHost(
+  env: CliEnv,
+  options: {
+    principalAuthority: DurablePrincipalAuthority;
+    extraPiArgs?: readonly string[];
+    timeoutMs?: number;
+  },
+): RoleTurnHost {
+  if (env.roleTurnHost !== undefined) return env.roleTurnHost;
+  // Test legacy piRunner → single RoleTurnHost (shared adapter argv + spawn inject).
+  if (env.piRunner !== undefined) {
+    return createPiRoleTurnHost({
+      packageRoot: env.packageRoot,
+      principalAuthority: options.principalAuthority,
+      ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      spawnRunner: env.piRunner,
+      recordLaunchedPiIdentity,
+      recordLaunchedRolePackageIdentity,
+      observeLaunchedRolePackageIdentity,
+    });
+  }
+  return createPiRoleTurnHost({
+    packageRoot: env.packageRoot,
+    principalAuthority: options.principalAuthority,
+    ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    recordLaunchedPiIdentity,
+    recordLaunchedRolePackageIdentity,
+    observeLaunchedRolePackageIdentity,
+  });
+}
+
 
 export type CliResult = {
   exitCode: number;
@@ -865,16 +920,17 @@ export async function runAkRole(
             principalAuthority: env.principalAuthority!,
             agentDir,
             packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.coderExtraPiArgs === undefined ? {} : { extraPiArgs: env.coderExtraPiArgs }),
+              ...(env.coderTimeoutMs === undefined ? {} : { timeoutMs: env.coderTimeoutMs }),
+            }),
             cwd,
             credentials,
             ...(env.correlationId === undefined
               ? {}
               : { correlationId: env.correlationId }),
-            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...(env.coderExtraPiArgs === undefined
-              ? {}
-              : { extraPiArgs: env.coderExtraPiArgs }),
             ...(env.coderTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.coderTimeoutMs }),
@@ -894,16 +950,17 @@ export async function runAkRole(
             principalAuthority: env.principalAuthority!,
             agentDir,
             packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.fixerExtraPiArgs === undefined ? {} : { extraPiArgs: env.fixerExtraPiArgs }),
+              ...(env.fixerTimeoutMs === undefined ? {} : { timeoutMs: env.fixerTimeoutMs }),
+            }),
             cwd,
             credentials,
             ...(env.correlationId === undefined
               ? {}
               : { correlationId: env.correlationId }),
-            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...(env.fixerExtraPiArgs === undefined
-              ? {}
-              : { extraPiArgs: env.fixerExtraPiArgs }),
             ...(env.fixerTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.fixerTimeoutMs }),
@@ -923,16 +980,17 @@ export async function runAkRole(
             principalAuthority: env.principalAuthority!,
             agentDir,
             packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.reviewerExtraPiArgs === undefined ? {} : { extraPiArgs: env.reviewerExtraPiArgs }),
+              ...(env.reviewerTimeoutMs === undefined ? {} : { timeoutMs: env.reviewerTimeoutMs }),
+            }),
             cwd,
             credentials,
             ...(env.correlationId === undefined
               ? {}
               : { correlationId: env.correlationId }),
-            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...(env.reviewerExtraPiArgs === undefined
-              ? {}
-              : { extraPiArgs: env.reviewerExtraPiArgs }),
             ...(env.reviewerTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.reviewerTimeoutMs }),
@@ -952,16 +1010,17 @@ export async function runAkRole(
             principalAuthority: env.principalAuthority!,
             agentDir,
             packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.mergerExtraPiArgs === undefined ? {} : { extraPiArgs: env.mergerExtraPiArgs }),
+              ...(env.mergerTimeoutMs === undefined ? {} : { timeoutMs: env.mergerTimeoutMs }),
+            }),
             cwd,
             credentials,
             ...(env.correlationId === undefined
               ? {}
               : { correlationId: env.correlationId }),
-            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
             ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...(env.mergerExtraPiArgs === undefined
-              ? {}
-              : { extraPiArgs: env.mergerExtraPiArgs }),
             ...(env.mergerTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.mergerTimeoutMs }),
@@ -980,16 +1039,17 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.judgeExtraPiArgs === undefined ? {} : { extraPiArgs: env.judgeExtraPiArgs }),
+              ...(env.judgeTimeoutMs === undefined ? {} : { timeoutMs: env.judgeTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(env.judgeExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.judgeExtraPiArgs }),
           ...(env.judgeTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.judgeTimeoutMs }),
@@ -1026,17 +1086,18 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.judgeExtraPiArgs === undefined ? {} : { extraPiArgs: env.judgeExtraPiArgs }),
+              ...(env.judgeTimeoutMs === undefined ? {} : { timeoutMs: env.judgeTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.judgeExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.judgeExtraPiArgs }),
           ...(env.judgeTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.judgeTimeoutMs }),
@@ -1075,17 +1136,18 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.coderExtraPiArgs === undefined ? {} : { extraPiArgs: env.coderExtraPiArgs }),
+              ...(env.coderTimeoutMs === undefined ? {} : { timeoutMs: env.coderTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.coderExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.coderExtraPiArgs }),
           ...(env.coderTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.coderTimeoutMs }),
@@ -1124,17 +1186,18 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.fixerExtraPiArgs === undefined ? {} : { extraPiArgs: env.fixerExtraPiArgs }),
+              ...(env.fixerTimeoutMs === undefined ? {} : { timeoutMs: env.fixerTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.fixerExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.fixerExtraPiArgs }),
           ...(env.fixerTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.fixerTimeoutMs }),
@@ -1173,17 +1236,18 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.collectorExtraPiArgs === undefined ? {} : { extraPiArgs: env.collectorExtraPiArgs }),
+              ...(env.collectorTimeoutMs === undefined ? {} : { timeoutMs: env.collectorTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.collectorExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.collectorExtraPiArgs }),
           ...(env.collectorTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.collectorTimeoutMs }),
@@ -1218,17 +1282,18 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.reviewerExtraPiArgs === undefined ? {} : { extraPiArgs: env.reviewerExtraPiArgs }),
+              ...(env.reviewerTimeoutMs === undefined ? {} : { timeoutMs: env.reviewerTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.reviewerExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.reviewerExtraPiArgs }),
           ...(env.reviewerTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.reviewerTimeoutMs }),
@@ -1267,17 +1332,18 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.doctorExtraPiArgs === undefined ? {} : { extraPiArgs: env.doctorExtraPiArgs }),
+              ...(env.doctorTimeoutMs === undefined ? {} : { timeoutMs: env.doctorTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.doctorExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.doctorExtraPiArgs }),
           ...(env.doctorTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.doctorTimeoutMs }),
@@ -1312,17 +1378,18 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.notaryExtraPiArgs === undefined ? {} : { extraPiArgs: env.notaryExtraPiArgs }),
+              ...(env.notaryTimeoutMs === undefined ? {} : { timeoutMs: env.notaryTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.notaryExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.notaryExtraPiArgs }),
           ...(env.notaryTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.notaryTimeoutMs }),
@@ -1357,17 +1424,18 @@ export async function runAkRole(
           principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
+            roleTurnHost: resolveRoleTurnHost(env, {
+              principalAuthority: env.principalAuthority!,
+              ...(env.mergerExtraPiArgs === undefined ? {} : { extraPiArgs: env.mergerExtraPiArgs }),
+              ...(env.mergerTimeoutMs === undefined ? {} : { timeoutMs: env.mergerTimeoutMs }),
+            }),
           cwd,
           credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.mergerExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.mergerExtraPiArgs }),
           ...(env.mergerTimeoutMs === undefined
             ? {}
             : { timeoutMs: env.mergerTimeoutMs }),

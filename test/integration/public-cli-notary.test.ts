@@ -1,4 +1,8 @@
+import {
+  buildNotaryActivationExtraArgs
+} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
@@ -34,7 +38,7 @@ import {
   admitNotaryInvocation,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
-import { buildNotaryActivationExtraArgs } from "../../src/public-cli/notary-run.ts";
+
 import {
   readRoleRunState,
   writeRoleRunState,
@@ -452,7 +456,11 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
         cwd: project,
         io,
         createRunId: () => "01a0notary-0000-7000-8000-0000000000aa",
-        piRunner: scriptedNotarySession({ status: "pass", findings: [] }),
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedNotarySession({ status: "pass", findings: [] }),
+          }),
       },
     );
     assert.equal(admittedBare.exitCode, 0);
@@ -495,7 +503,11 @@ test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
           io,
           createRunId: () =>
             `01a0notary-0000-7000-8000-${String(index).padStart(12, "0")}`,
-          piRunner: scriptedNotarySession(receipt),
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedNotarySession(receipt),
+          }),
         },
       );
       assert.equal(result.exitCode, 0, `receipt ${receipt.status}`);
@@ -530,7 +542,11 @@ test("layer ② no usable Notary release keeps candidate on failure channel and 
         cwd: project,
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000002",
-        piRunner: scriptedNotarySession(bad),
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedNotarySession(bad),
+          }),
       },
     );
 
@@ -570,7 +586,10 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000003",
         notaryTimeoutMs: 5_000,
-        piRunner: async (extraArgs, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (extraArgs, options) => {
           const sessionFile = flagValue(extraArgs, "--session");
           assert.ok(sessionFile);
           await mkdir(join(sessionFile, ".."), { recursive: true });
@@ -607,6 +626,7 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
             args: [...extraArgs],
           };
         },
+          }),
       },
     );
 
@@ -641,10 +661,14 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000004",
         notaryTimeoutMs: 5_000,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           void args;
           throw new Error("provider disconnected");
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 1);
@@ -673,7 +697,10 @@ test("default judge public path admits no notary seat intake (observable run)", 
         cwd: project,
         io,
         createRunId: () => judgeRunId,
-        piRunner: async (args, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
           dispatchedArgs = args;
           const sessionFile = flagValue(args, "--session");
           assert.ok(sessionFile);
@@ -687,6 +714,7 @@ test("default judge public path admits no notary seat intake (observable run)", 
             args: [...args],
           };
         },
+          }),
       },
     );
 
