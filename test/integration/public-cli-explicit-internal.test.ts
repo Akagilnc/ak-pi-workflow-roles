@@ -451,6 +451,9 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
     }
     // Pre-spawn activation failure has no child close and must reject with the
     // host-contract typed activation error; zero close is possible without a child.
+    // The typed rejection originates from the resolution owner BEFORE spawn(), so
+    // no close event can own settlement (any spawn/close settlement would carry a
+    // raw error identity instead of the typed activation error).
     {
       const { runner } = spawnRunnerWithIdentityCapture();
       await assert.rejects(
@@ -469,31 +472,20 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
         },
       );
     }
-    // Once spawn fires against a real child, a post-spawn execution error is
-    // retained until the single child `close` owns settlement; the original
-    // error identity must survive exactly once.
+    // Spawned execution error: a real child that crashes (SIGABRT) settles
+    // exactly once through close, resolved with its true outcome shape (null
+    // exit code) rather than rejected — a child execution failure is a child
+    // outcome, not a host re-attachment.
     {
       const stub = join(home, "spawned-error.mjs");
-      await writeExecutableStub(
-        stub,
-        `#!/usr/bin/env node
-import { spawnSync } from "node:child_process";
-// A real grandchild child process is launched and immediately errored so the
-// parent Pi child itself emits a post-spawn 'error' before any close.
-spawnSync("no-such-binary-xyz", [], { stdio: "ignore" });
-process.exit(0);
-`,
-      );
+      await writeExecutableStub(stub, `#!/usr/bin/env node\nprocess.abort();\n`);
       const { runner } = spawnRunnerWithIdentityCapture();
-      let settled = false;
-      const result = runner([], {
+      const value = await runner([], {
         cwd: home,
         env: spawnEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
-      }).finally(() => { settled = true; });
-      const value = await result;
-      // The real child returned a single settlement; no second close happened.
-      assert.equal(settled, true);
+      });
       assert.equal(value.timedOut, false);
+      assert.notEqual(value.code, 0);
     }
     // SIGTERM timeout
     {
