@@ -30,15 +30,11 @@ import {
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
-function withRunDir<T>(runDirectory: string, run: () => Promise<T>): Promise<T> {
-  const previous = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = runDirectory;
-  return writeInstitutionalSeatTable(runDirectory, {
+async function withRunDir<T>(runDirectory: string, run: () => Promise<T>): Promise<T> {
+  await writeInstitutionalSeatTable(runDirectory, {
     auditor: seatSelection("audit-test", "audit-test"),
-  }).then(() => run()).finally(() => {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
   });
+  return run();
 }
 
 function parentWithJudgeSubjects(cwd: string): SessionManager {
