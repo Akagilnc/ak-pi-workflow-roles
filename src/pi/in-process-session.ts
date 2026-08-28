@@ -718,7 +718,17 @@ export async function openPiInstitutionalSession(
     return handle;
   } catch (openError) {
     if (scratchDir !== undefined) {
-      await rm(scratchDir, { recursive: true, force: true }).catch(() => undefined);
+      try {
+        await rm(scratchDir, { recursive: true, force: true });
+      } catch (cleanupFailure) {
+        // ADR 0018 / #518 §1④: primary failure and cleanup failure stay
+        // separated — cleanup must not mask the original open cause.
+        throw new AggregateError(
+          [openError, cleanupFailure],
+          `${label} open failed and its scratch cleanup also failed`,
+          { cause: openError },
+        );
+      }
     }
     throw openError;
   }

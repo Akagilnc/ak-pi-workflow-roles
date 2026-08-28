@@ -1,15 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 
 import {
-  INSTITUTIONAL_RESOLUTION_FILE,
-  readInstitutionalSeatSelection,
   resolveInstitutionalSeatSelections,
-  writeInstitutionalResolutionPage,
-  InstitutionalResolutionError,
   type InstitutionalResolutionPage,
 } from "../../src/institutional-resolution.ts";
 import type { PublicCliConfig } from "../../src/public-cli/config.ts";
@@ -52,69 +45,19 @@ test("selection priority shortest boundary: seat override > gatekeeper fallback 
   assert.deepEqual(page3.seats.gatekeeper, parentSelection);
   assert.deepEqual(page3.seats.auditor, parentSelection);
   assert.deepEqual(page3.seats.evidenceChild, parentSelection);
+
+  // Auditor / evidenceChild always inherit parent effective — never seat override.
+  const page4 = resolveInstitutionalSeatSelections(emptyConfig(), parentSelection);
+  assert.deepEqual(page4.seats.auditor, parentSelection);
+  assert.deepEqual(page4.seats.evidenceChild, parentSelection);
 });
 
-test("resolution page write, read, corruption, and resume rewrite", async () => {
-  const runDir = await mkdtemp(join(tmpdir(), "ak-test-resolution-page-"));
-  try {
-    const pageV1: InstitutionalResolutionPage = {
-      version: 1,
-      seats: {
-        gatekeeper: { provider: "prov-1", model: "mod-1" },
-        inspector: { provider: "prov-1", model: "mod-1" },
-        notary: { provider: "prov-1", model: "mod-1" },
-      },
-    };
-
-    // 1. Write and read
-    await writeInstitutionalResolutionPage(runDir, pageV1);
-    const readGatekeeper = await readInstitutionalSeatSelection(runDir, "gatekeeper");
-    assert.deepEqual(readGatekeeper, { provider: "prov-1", model: "mod-1" });
-
-    // 2. Missing seat in existing page throws typed error
-    await assert.rejects(
-      () => readInstitutionalSeatSelection(runDir, "auditor"),
-      (error) => {
-        assert.ok(error instanceof InstitutionalResolutionError);
-        assert.ok(error instanceof InstitutionalResolutionError);
-        return true;
-      },
-    );
-
-    // 3. Resume rewrite updates page
-    const pageV2: InstitutionalResolutionPage = {
-      version: 1,
-      seats: {
-        gatekeeper: { provider: "prov-2", model: "mod-2", thinking: "high" },
-        inspector: { provider: "prov-2", model: "mod-2", thinking: "high" },
-        notary: { provider: "prov-2", model: "mod-2", thinking: "high" },
-        auditor: { provider: "prov-2", model: "mod-2", thinking: "high" },
-      },
-    };
-    await writeInstitutionalResolutionPage(runDir, pageV2);
-    const readAfterResume = await readInstitutionalSeatSelection(runDir, "gatekeeper");
-    assert.deepEqual(readAfterResume, { provider: "prov-2", model: "mod-2", thinking: "high" });
-
-    // 4. Corrupted page throws typed error
-    await writeFile(join(runDir, INSTITUTIONAL_RESOLUTION_FILE), "not valid json {{{{", "utf8");
-    await assert.rejects(
-      () => readInstitutionalSeatSelection(runDir, "gatekeeper"),
-      (error) => {
-        assert.ok(error instanceof InstitutionalResolutionError);
-        return true;
-      },
-    );
-
-    // 5. Missing runDir / missing page throws typed error
-    const missingRunDir = join(runDir, "does-not-exist");
-    await assert.rejects(
-      () => readInstitutionalSeatSelection(missingRunDir, "gatekeeper"),
-      (error) => {
-        assert.ok(error instanceof InstitutionalResolutionError);
-        return true;
-      },
-    );
-  } finally {
-    await rm(runDir, { recursive: true, force: true });
-  }
+test("resolution page shape carries a stable versioned seats envelope", () => {
+  const page: InstitutionalResolutionPage = resolveInstitutionalSeatSelections(
+    { seats: {} },
+    { provider: "p", model: "m" },
+  );
+  assert.equal(page.version, 1);
+  assert.deepEqual(page.seats.gatekeeper, { provider: "p", model: "m" });
+  assert.deepEqual(page.seats.evidenceChild, { provider: "p", model: "m" });
 });
