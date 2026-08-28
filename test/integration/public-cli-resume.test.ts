@@ -1298,13 +1298,15 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
   });
 });
 
-test("initial activation and resume bind the exact host-issued durable principal", async () => {
+test("host-issued sessionFile coordinate reaches activation and resume execution seams", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-session-principal-001";
-    // Replacement host issues a distinctive principal filename under the ledger tree.
+    // Host issues a distinctive sessionFile coordinate (not the Pi default name).
+    // Contract under test: that coordinate — not opaque object identity — reaches the
+    // real Pi execution seam on activation and again on resume (disk rehydrate rebuilds objects).
     const principalAuthority = {
       issue(request: Parameters<typeof piDurablePrincipalAuthority.issue>[0]) {
         const base = piDurablePrincipalAuthority.issue(request);
@@ -1320,9 +1322,9 @@ test("initial activation and resume bind the exact host-issued durable principal
       },
     };
 
-    // Principal identity observed at the real Pi execution seam (session file path).
-    const activationPrincipalIds: string[] = [];
-    const resumePrincipalIds: string[] = [];
+    // SessionFile coordinate observed at the real Pi execution seam.
+    const activationSessionFiles: string[] = [];
+    const resumeSessionFiles: string[] = [];
 
     {
       const { io } = captureIo();
@@ -1339,7 +1341,7 @@ test("initial activation and resume bind the exact host-issued durable principal
           piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             const sessionPath = args[args.indexOf("--session") + 1]!;
-            activationPrincipalIds.push(sessionPath);
+            activationSessionFiles.push(sessionPath);
             await mkdir(sessionDir, { recursive: true });
             await observeTyped429ViaProductionHandler({
               runDirectory: join(sessionDir, ".."),
@@ -1362,16 +1364,16 @@ test("initial activation and resume bind the exact host-issued durable principal
       assert.ok(first.terminal?.resume);
     }
 
-    assert.ok(activationPrincipalIds.length >= 1);
-    const boundPrincipalId = activationPrincipalIds[0]!;
+    assert.ok(activationSessionFiles.length >= 1);
+    const boundSessionFile = activationSessionFiles[0]!;
     assert.equal(
-      boundPrincipalId.endsWith("/session/host-issued-principal.jsonl"),
+      boundSessionFile.endsWith("/session/host-issued-principal.jsonl"),
       true,
     );
-    // Every auto-resume attempt must reopen the same host-issued principal identity.
+    // Every auto-resume attempt must reopen the same host-issued sessionFile coordinate.
     assert.deepEqual(
-      [...new Set(activationPrincipalIds)],
-      [boundPrincipalId],
+      [...new Set(activationSessionFiles)],
+      [boundSessionFile],
     );
 
     const bookKey = resolveBookKeyFromGit(project);
@@ -1385,7 +1387,7 @@ test("initial activation and resume bind the exact host-issued durable principal
     );
     const durable = await readRoleRunState(runDirectory, principalAuthority);
     assert.ok(durable);
-    assert.equal(durable.sessionFile, boundPrincipalId);
+    assert.equal(durable.sessionFile, boundSessionFile);
     assert.equal(durable.state, "resumable");
 
     // Host-denied availability must fail honestly without a typed accepted Terminal.
@@ -1416,7 +1418,7 @@ test("initial activation and resume bind the exact host-issued durable principal
       assert.equal(blocked.terminal, undefined);
     }
 
-    // Successful resume must reopen the same principal identity at the execution seam.
+    // Successful resume must reopen the same sessionFile coordinate at the execution seam.
     const { io } = captureIo();
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
@@ -1427,7 +1429,7 @@ test("initial activation and resume bind the exact host-issued durable principal
       io,
       piRunner: async (args) => {
         const sessionPath = args[args.indexOf("--session") + 1]!;
-        resumePrincipalIds.push(sessionPath);
+        resumeSessionFiles.push(sessionPath);
         await writeFile(
           sessionPath,
           `${JSON.stringify({
@@ -1451,11 +1453,11 @@ test("initial activation and resume bind the exact host-issued durable principal
     });
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(resumePrincipalIds.length, 1);
-    assert.equal(resumePrincipalIds[0], boundPrincipalId);
+    assert.equal(resumeSessionFiles.length, 1);
+    assert.equal(resumeSessionFiles[0], boundSessionFile);
     const after = await readRoleRunState(runDirectory, principalAuthority);
     assert.equal(after?.state, "terminal");
-    assert.equal(after?.sessionFile, boundPrincipalId);
+    assert.equal(after?.sessionFile, boundSessionFile);
   });
 });
 
