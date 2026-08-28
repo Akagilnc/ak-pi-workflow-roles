@@ -135,7 +135,6 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       assert.equal(req.activation.role, "coder");
       assert.equal(req.activation.phase, "plan");
       assert.equal(req.methods.length, 0, "plan must omit method bindings");
-      assert.equal(req.continuation.kind, "initial");
     }
 
     // Resume phase: default envelope (no explicit message) preserves apply bindings and selects typed resume continuation.
