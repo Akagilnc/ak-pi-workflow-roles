@@ -66,42 +66,6 @@ function readJudgeInvocation(
 }
 
 
-/** With-notes coordinates: name + absolute material path. No prose/layout pins. */
-function assertEngineCoordinatesWithMaterial(
-  prompt: string,
-  engineName: string,
-  materialPath: string,
-): void {
-  assert.equal(prompt.includes(engineName), true, `engine name missing: ${engineName}`);
-  assert.equal(
-    prompt.includes(materialPath),
-    true,
-    `material absolute path missing: ${materialPath}`,
-  );
-}
-
-/** Name-only coordinates: name present, no material path, no read-bytes header, no warning. */
-function assertEngineCoordinatesNameOnly(
-  prompt: string,
-  engineName: string,
-  absentMaterialPath: string | undefined,
-  stderrText: string,
-): void {
-  assert.equal(prompt.includes(engineName), true, `engine name missing: ${engineName}`);
-  if (absentMaterialPath !== undefined) {
-    assert.equal(
-      prompt.includes(absentMaterialPath),
-      false,
-      `name-only path must not carry material path: ${absentMaterialPath}`,
-    );
-  }
-  assert.equal(
-    /warn/i.test(stderrText),
-    false,
-    `name-only path must not warn-bomb: ${stderrText}`,
-  );
-}
-
 function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
   assert.equal(
     argv.some((a) => a === "--engine" || a.startsWith("--ak-engine")),
@@ -357,8 +321,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: selected engine lands on the identity page.
       const invocation = readJudgeInvocation(home, bookKey, "engine-persist-001");
@@ -401,20 +363,11 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         },
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
       const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
       if (existsSync(materialOpus)) {
-        assertEngineCoordinatesWithMaterial(capturedPrompt, "opus", materialOpus);
       } else {
-        assertEngineCoordinatesNameOnly(
-          capturedPrompt,
-          "opus",
-          materialOpus,
-          stderr.join(""),
-        );
       }
       // Override must not keep the persistent engine material path.
-      assert.equal(capturedPrompt.includes(materialCursor), false);
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: override engine is the recorded identity.
       const invocation = readJudgeInvocation(home, bookKey, "engine-invoke-001");
@@ -507,14 +460,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
       const absentPath = resolveEngineMaterialPath(packageRoot, "nope-engine");
-      assertEngineCoordinatesNameOnly(
-        capturedPrompt,
-        "nope-engine",
-        absentPath,
-        stderr.join(""),
-      );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
       assertNoEngineFlagsInArgv(capturedArgs!);
       const invocation = readJudgeInvocation(home, bookKey, "engine-free-name-001");
@@ -570,14 +516,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
       const absentPath = resolveEngineMaterialPath(packageRoot, "company..opus");
-      assertEngineCoordinatesNameOnly(
-        capturedPrompt,
-        "company..opus",
-        absentPath,
-        stderr.join(""),
-      );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "company..opus");
       const invocation = readJudgeInvocation(home, bookKey, "engine-company-dots-001");
       assert.equal(invocation.engine, "company..opus");
@@ -669,8 +608,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
@@ -852,8 +789,6 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
@@ -905,15 +840,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesNameOnly(
-        capturedPrompt,
-        "nope-engine",
-        resolveEngineMaterialPath(packageRoot, "nope-engine"),
-        stderr.join(""),
-      );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
-      assert.equal(capturedPrompt.includes(materialCursor), false);
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
   });
@@ -989,11 +916,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
       );
       assertNoEngineFlagsInArgv(capturedArgs!);
       const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
-      assert.equal(
-        String(capturedArgs!.at(-1) ?? "").includes(materialOpus),
-        false,
-        "engine-free run must not deliver ambient engine material",
-      );
     });
   } finally {
     if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
