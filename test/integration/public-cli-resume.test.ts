@@ -13,6 +13,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -1295,12 +1296,25 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
   });
 });
 
-test("initial activation and resume bind the exact Pi session file principal", async () => {
+test("initial activation and resume bind the exact host-issued durable principal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-session-principal-001";
+    let issued = 0;
+    let checked = 0;
+    const principalAuthority = {
+      issue(request: Parameters<typeof piDurablePrincipalAuthority.issue>[0]) {
+        issued += 1;
+        return piDurablePrincipalAuthority.issue(request);
+      },
+      decode: piDurablePrincipalAuthority.decode.bind(piDurablePrincipalAuthority),
+      async isAvailable(principal: Parameters<typeof piDurablePrincipalAuthority.isAvailable>[0]) {
+        checked += 1;
+        return piDurablePrincipalAuthority.isAvailable(principal);
+      },
+    };
 
     let initialArgs: string[] | undefined;
     {
@@ -1313,6 +1327,7 @@ test("initial activation and resume bind the exact Pi session file principal", a
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          principalAuthority,
           io,
           piRunner: async (args) => {
             initialArgs = [...args];
@@ -1363,6 +1378,7 @@ test("initial activation and resume bind the exact Pi session file principal", a
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
+      principalAuthority,
       io,
       piRunner: async (args) => {
         resumeArgs = [...args];
@@ -1392,6 +1408,8 @@ test("initial activation and resume bind the exact Pi session file principal", a
     assert.ok(resumeArgs);
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(issued, 1, "initial admission issues through the replacement host");
+    assert.ok(checked >= 1, "resume availability is decided by the replacement host");
   });
 });
 

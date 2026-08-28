@@ -1,3 +1,4 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 /**
  * Public Collector Role run: admit a structured PR target → explicit Internal activate
  * → settle Terminal result (#112). One-shot; no resume path (Collector rejects
@@ -60,6 +61,7 @@ import type {
 
 export type CollectorRunEnv = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -224,6 +226,7 @@ async function dispatchAdmittedCollector(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -333,6 +336,7 @@ export async function runPublicCollector(
     const parsed = parseCollectorArgv(argv);
     admitted = await admitCollectorInvocation({
       home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
       cwd: env.cwd,
       prNumber: parsed.prNumber,
       instruction: parsed.instruction,

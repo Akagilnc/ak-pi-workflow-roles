@@ -1,3 +1,4 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 /**
  * Public Notary Role run: admit source-run locator → shared one-shot dispatch
  * → settle Terminal result (#448). Zero caller prompt/attachment. Lifecycle is
@@ -27,6 +28,7 @@ import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult } from "./terminal.ts";
 
 export type NotaryRunEnv = OneShotRunEnv & {
+  principalAuthority?: DurablePrincipalAuthority;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
 };
@@ -80,6 +82,7 @@ export async function runPublicNotary(
     const parsed = parseNotaryArgv(argv);
     admitted = await admitNotaryInvocation({
       home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
       cwd: env.cwd,
       sourceRun: parsed.sourceRun,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),

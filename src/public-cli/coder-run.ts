@@ -1,3 +1,4 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 /**
  * Public Coder Role run: admit → explicit Internal activate → settle Terminal result.
  * #109: package-owned TDD method, default apply / explicit plan, shared #106 success interface.
@@ -37,7 +38,7 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isSessionPrincipalAvailable,
+  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableCoderRun,
   markRunAdmitted,
@@ -77,6 +78,7 @@ import type {
 
 export type CoderRunEnv = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -251,7 +253,7 @@ async function presentControlledFailure(
 
   const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile,
   );
   const resumable =
@@ -331,6 +333,7 @@ async function dispatchAdmittedCoder(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -434,6 +437,7 @@ export async function runPublicCoder(
     const parsed = parseCoderArgv(argv);
     admitted = await admitCoderInvocation({
       home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -525,7 +529,7 @@ export async function runPublicCoderResume(
 }> {
   let loaded;
   try {
-    loaded = await loadResumableCoderRun(env.home, request.runId);
+    loaded = await loadResumableCoderRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);

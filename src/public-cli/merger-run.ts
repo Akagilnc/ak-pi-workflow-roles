@@ -1,3 +1,4 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 /**
  * Public Merger Role run: derive active-merge envelope → force package
  * merge-only method → explicit Internal activate → settle Terminal result (#114).
@@ -42,7 +43,7 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isSessionPrincipalAvailable,
+  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableMergerRun,
   markRunAdmitted,
@@ -81,6 +82,7 @@ import type {
 
 export type MergerRunEnv = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -247,7 +249,7 @@ async function presentControlledFailure(
 
   const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile,
   );
   const resumable =
@@ -325,6 +327,7 @@ async function dispatchAdmittedMerger(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -516,6 +519,7 @@ export async function runPublicMerger(
   try {
     admitted = await admitMergerInvocation({
       home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -533,6 +537,7 @@ export async function runPublicMerger(
       // Place a shell admitted run so Terminal identity stays role-correct.
       const shell = await admitMergerShellForActivationFailure({
         home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         cwd: env.cwd,
         instruction: parsed.instruction,
         ...(parsed.project === undefined ? {} : { project: parsed.project }),
@@ -625,7 +630,7 @@ export async function runPublicMergerResume(
 }> {
   let loaded;
   try {
-    loaded = await loadResumableMergerRun(env.home, request.runId);
+    loaded = await loadResumableMergerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);

@@ -1,3 +1,4 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 /**
  * Public Fixer Role run: admit → explicit Internal activate → settle Terminal result.
  * #110/#177: package-owned diagnosing-bugs and tdd methods (available, not forced),
@@ -39,7 +40,7 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isSessionPrincipalAvailable,
+  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableFixerRun,
   markRunAdmitted,
@@ -79,6 +80,7 @@ import type {
 
 export type FixerRunEnv = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -249,7 +251,7 @@ async function presentControlledFailure(
 
   const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile,
   );
   const resumable =
@@ -329,6 +331,7 @@ async function dispatchAdmittedFixer(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -443,6 +446,7 @@ export async function runPublicFixer(
     const parsed = parseFixerArgv(argv);
     admitted = await admitFixerInvocation({
       home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -529,7 +533,7 @@ export async function runPublicFixerResume(
 }> {
   let loaded;
   try {
-    loaded = await loadResumableFixerRun(env.home, request.runId);
+    loaded = await loadResumableFixerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);

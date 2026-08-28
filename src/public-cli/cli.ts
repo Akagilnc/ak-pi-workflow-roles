@@ -1,3 +1,5 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
 /**
  * Public ak-role CLI dispatcher (roles / config / layered help / Judge run).
  */
@@ -162,6 +164,8 @@ function takePublicGlobalFlag(
 
 export type CliEnv = {
   home?: string;
+  /** Host durable-principal authority; production uses the Pi adapter. */
+  principalAuthority?: DurablePrincipalAuthority;
   agentDir?: string;
   /** Process cwd for any Pi subprocess owned by ak-role. */
   cwd?: string;
@@ -751,7 +755,11 @@ export async function runAkRole(
   try {
     // Select the installed package identity once, before any role-owned Skill,
     // runtime entry, activation argv, or invocation provenance is derived.
-    env = { ...env, packageRoot: await realpath(env.packageRoot) };
+    env = {
+      ...env,
+      packageRoot: await realpath(env.packageRoot),
+      principalAuthority: env.principalAuthority ?? piDurablePrincipalAuthority,
+    };
     const parsed = parseArgv(argv);
     // Invocation --engine rejects at the call-request seam (not role submission).
     // #356 / #378 / #391: engine axis is every callable role (not resume / support).
@@ -854,6 +862,7 @@ export async function runAkRole(
           resumeRequest,
           {
             home,
+            principalAuthority: env.principalAuthority!,
             agentDir,
             packageRoot: env.packageRoot,
             cwd,
@@ -882,6 +891,7 @@ export async function runAkRole(
           resumeRequest,
           {
             home,
+            principalAuthority: env.principalAuthority!,
             agentDir,
             packageRoot: env.packageRoot,
             cwd,
@@ -910,6 +920,7 @@ export async function runAkRole(
           resumeRequest,
           {
             home,
+            principalAuthority: env.principalAuthority!,
             agentDir,
             packageRoot: env.packageRoot,
             cwd,
@@ -938,6 +949,7 @@ export async function runAkRole(
           resumeRequest,
           {
             home,
+            principalAuthority: env.principalAuthority!,
             agentDir,
             packageRoot: env.packageRoot,
             cwd,
@@ -965,6 +977,7 @@ export async function runAkRole(
         resumeRequest,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -1010,6 +1023,7 @@ export async function runAkRole(
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -1058,6 +1072,7 @@ export async function runAkRole(
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -1106,6 +1121,7 @@ export async function runAkRole(
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -1154,6 +1170,7 @@ export async function runAkRole(
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -1198,6 +1215,7 @@ export async function runAkRole(
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -1246,6 +1264,7 @@ export async function runAkRole(
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -1290,6 +1309,7 @@ export async function runAkRole(
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
@@ -1334,6 +1354,7 @@ export async function runAkRole(
         parsed.args,
         {
           home,
+          principalAuthority: env.principalAuthority!,
           agentDir,
           packageRoot: env.packageRoot,
           cwd,

@@ -1,3 +1,4 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 /**
  * Public Judge Role run: admit → explicit Internal activate → settle Terminal result.
  * #107: controlled post-admission failures and human decisions settle honestly.
@@ -32,7 +33,7 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isSessionPrincipalAvailable,
+  isDurablePrincipalAvailable,
   isV1ResumableFailure,
   loadResumableJudgeRun,
   markRunAdmitted,
@@ -73,6 +74,7 @@ import type {
 
 export type JudgeRunEnv = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   agentDir: string;
   packageRoot: string;
   cwd: string;
@@ -224,7 +226,7 @@ async function presentControlledFailure(
   // Lawful presence is session-owned and must not depend on artifact publication.
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+  const sessionPrincipalAvailable = await isDurablePrincipalAvailable(
     admitted.sessionFile,
   );
   const resumable =
@@ -315,6 +317,7 @@ async function dispatchAdmittedJudge(input: {
         extraArgs,
         cwd: admitted.projectRoot,
         home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
         agentDir: env.agentDir,
         env: childEnv,
         timeoutMs: env.timeoutMs,
@@ -431,6 +434,7 @@ export async function runPublicJudge(
     const parsed = parseJudgeArgv(argv);
     admitted = await admitJudgeInvocation({
       home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -496,7 +500,7 @@ export async function runPublicResume(
 }> {
   let loaded;
   try {
-    loaded = await loadResumableJudgeRun(env.home, request.runId);
+    loaded = await loadResumableJudgeRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
