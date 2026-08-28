@@ -143,6 +143,14 @@ export type RoleTurnResult = {
   readonly knownFailure?: RoleTurnKnownFailure;
 };
 
+/** Host-neutral session custom-entry appender (Pi adapter provides the concrete codec). */
+export type SessionCustomEntryAppender = (
+  authority: DurablePrincipalAuthority,
+  principal: DurablePrincipal,
+  customType: string,
+  data: unknown,
+) => Promise<void>;
+
 /** Host-neutral main-session execution seam (S1b-2 / #526). */
 export interface RoleTurnHost {
   executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult>;

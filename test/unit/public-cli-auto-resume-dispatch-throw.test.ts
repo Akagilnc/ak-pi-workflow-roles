@@ -19,6 +19,7 @@ import { join, dirname } from "node:path";
 import test from "node:test";
 
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
@@ -53,6 +54,7 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:"throw-loop-limit2b"},
       io,
       autoResumeLimit:2,
@@ -113,6 +115,7 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     const {io,stderr}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"fixer",runId:"throw-sink-fails"},
       io,
       autoResumeLimit:2,

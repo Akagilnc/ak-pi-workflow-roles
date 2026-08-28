@@ -11,6 +11,7 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
   RoleTurnResult,
+  SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
@@ -92,6 +93,8 @@ export type CoderRunEnv = {
   /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
   autoResumeLimit?: number;
   timeoutMs?: number;
+  /** Host-neutral Pi session codec for dispatch-error retention (#526 S1b-2). */
+  sessionAppender: SessionCustomEntryAppender;
 };
 
 function coderMethods(
@@ -417,6 +420,7 @@ export async function runPublicCoder(
     admitted,
     principalAuthority: env.principalAuthority,
     io,
+    sessionAppender: env.sessionAppender,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: () =>

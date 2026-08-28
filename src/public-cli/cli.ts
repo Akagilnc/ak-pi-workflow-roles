@@ -36,6 +36,7 @@ import type { CliIo } from "./cli-io.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
 import {
   createPiRoleTurnHost,
+  appendPiSessionCustomEntry,
 } from "../pi/role-turn-host.ts";
 import {
   observeLaunchedRolePackageIdentity,
@@ -893,6 +894,7 @@ export async function runAkRole(
             home,
             principalAuthority: env.principalAuthority!,
             agentDir,
+            sessionAppender: appendPiSessionCustomEntry,
             packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -924,6 +926,7 @@ export async function runAkRole(
             home,
             principalAuthority: env.principalAuthority!,
             agentDir,
+            sessionAppender: appendPiSessionCustomEntry,
             packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -955,6 +958,7 @@ export async function runAkRole(
             home,
             principalAuthority: env.principalAuthority!,
             agentDir,
+            sessionAppender: appendPiSessionCustomEntry,
             packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -986,6 +990,7 @@ export async function runAkRole(
             home,
             principalAuthority: env.principalAuthority!,
             agentDir,
+            sessionAppender: appendPiSessionCustomEntry,
             packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -1016,6 +1021,7 @@ export async function runAkRole(
           home,
           principalAuthority: env.principalAuthority!,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -1064,6 +1070,7 @@ export async function runAkRole(
           home,
           principalAuthority: env.principalAuthority!,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -1114,6 +1121,7 @@ export async function runAkRole(
           home,
           principalAuthority: env.principalAuthority!,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -1164,6 +1172,7 @@ export async function runAkRole(
           home,
           principalAuthority: env.principalAuthority!,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -1260,6 +1269,7 @@ export async function runAkRole(
           home,
           principalAuthority: env.principalAuthority!,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,
@@ -1402,6 +1412,7 @@ export async function runAkRole(
           home,
           principalAuthority: env.principalAuthority!,
           agentDir,
+          sessionAppender: appendPiSessionCustomEntry,
           packageRoot: env.packageRoot,
             roleTurnHost: resolveRoleTurnHost(env, {
               principalAuthority: env.principalAuthority!,

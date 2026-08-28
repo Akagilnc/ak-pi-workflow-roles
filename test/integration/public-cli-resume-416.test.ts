@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { loadResumableJudgeRun, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
@@ -212,6 +213,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     let calls=0;const {io,stdout}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
+    sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
@@ -233,6 +235,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     const noReceiptFacts={acceptedReceipt:false, rejectedReceipts:[], deliveryTurns:0, sessionCompletion:"completed" as const};
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
+    sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
