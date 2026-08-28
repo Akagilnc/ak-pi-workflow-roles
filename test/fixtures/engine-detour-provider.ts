@@ -1,6 +1,6 @@
 /**
  * #357 T2 — scripted session LLM for engine detour acceptance.
- * Mock only at LLM I/O: calls package detour tool once when registered,
+ * Mock only at LLM I/O: calls package detour tool twice in one activation when registered,
  * then existing typed Judge submission. Zero production hooks.
  */
 import {
@@ -27,7 +27,7 @@ export default function fixture(pi: ExtensionAPI): void {
     provider: "ak-engine-detour",
     tokenSize: { min: 1000, max: 1000 },
   });
-  let detourIssued = false;
+  let detourCount = 0;
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     // Scripted Gatekeeper → Notary pass before auditor (officer choice is fixture, not oracle).
@@ -70,16 +70,17 @@ export default function fixture(pi: ExtensionAPI): void {
       );
     }
     // Prefer the detour tool when registered (Judge+engine activation).
-    if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !detourIssued) {
-      detourIssued = true;
+    if (names.includes(ENGINE_DETOUR_TOOL_NAME) && detourCount < 2) {
+      detourCount += 1;
+      const index = detourCount;
       return fauxAssistantMessage(
         fauxToolCall(
           ENGINE_DETOUR_TOOL_NAME,
           {
             // argv first element resolves via PATH (test injects fake `kimi`).
-            argv: ["kimi", "--fixture-detour"],
+            argv: ["kimi", "--call", index === 1 ? "first" : "second"],
           },
-          { id: "engine-detour-1" },
+          { id: `engine-detour-${index}` },
         ),
         { stopReason: "toolUse" },
       );
