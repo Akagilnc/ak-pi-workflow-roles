@@ -16,6 +16,7 @@ import {
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
+import { markRunAdmitted } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleDoctorTerminalResult,
@@ -81,6 +82,8 @@ export async function runPublicDoctor(
     }
     throw error;
   }
+
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   const turnRequest = buildDoctorTurnRequest(admitted, {
     packageRoot: env.packageRoot,

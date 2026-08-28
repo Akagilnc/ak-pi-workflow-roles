@@ -295,6 +295,8 @@ export async function runPublicMerger(
     throw error;
   }
 
+  await markRunAdmitted(admitted, env.principalAuthority);
+
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);

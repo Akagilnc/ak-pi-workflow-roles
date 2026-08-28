@@ -25,6 +25,7 @@ import {
 } from "./invocation.ts";
 import {
   loadResumableReviewerRun,
+  markRunAdmitted,
   selectResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
@@ -155,6 +156,8 @@ export async function runPublicReviewer(
     }
     throw error;
   }
+
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
