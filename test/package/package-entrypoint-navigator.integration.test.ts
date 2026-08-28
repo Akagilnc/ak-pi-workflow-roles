@@ -852,7 +852,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       const child = String.raw`
         import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
         import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
-        import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME } from "./src/role-runtime.ts";
+        import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME, GATEKEEPER_OUTPUT_TOOL, NOTARY_OUTPUT_TOOL } from "./src/role-runtime.ts";
         import { loadRawPackageManifest, resolvePackageEntrypoint, withInProcessPi } from "./test/helpers/pi-test-harness.ts";
         const role = process.env.AK_ROLE;
         const root = process.env.AK_ROOT;
@@ -864,6 +864,12 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         await writeNavigatorModelSetting(model.provider + "/" + model.id, agentDir + "/navigator-model.json");
         const response = (context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
+          if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+            return fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }), { stopReason: "toolUse" });
+          }
+          if (names.includes(NOTARY_OUTPUT_TOOL)) {
+            return fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }), { stopReason: "toolUse" });
+          }
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             const fixer = role === "fixer";
             const route = fixer ? [{ role: "fixer", phase: "plan" }, { role: "reviewer", phase: null }] : [{ role: "coder", phase: "plan" }, { role: "fixer", phase: "plan" }];
@@ -874,7 +880,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
           return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh coder plan" }), { stopReason: "toolUse" });
         };
         const manifest = await loadRawPackageManifest();
-        faux.setResponses([response, response, response]);
+        faux.setResponses(Array.from({ length: 10 }, () => response));
         let result;
         await withInProcessPi({ activationLedgerSession: true, cwd: root, agentDir, faux, additionalExtensionPaths: [resolvePackageEntrypoint(manifest)], systemPrompt: "FRESH PROCESS NAVIGATOR", mode: "json", flags: role === "fixer" ? { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": input } : { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": input }, noTools: "builtin" }, async ({ session, sessionManager }) => {
           await session.prompt("fresh process role invocation");

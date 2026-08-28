@@ -718,7 +718,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
       { status: "planned", report: "Plan the smallest repair." },
       undefined,
       undefined,
-      toolCallContext([{ id: "plan-call", name: FIXER_OUTPUT_TOOL_NAME }]),
+      withPassingGatekeeper(toolCallContext([{ id: "plan-call", name: FIXER_OUTPUT_TOOL_NAME }])),
     )).details,
     { status: "planned", report: "Plan the smallest repair." },
   );
@@ -828,9 +828,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       fixture.output,
       undefined,
       undefined,
-      fixture.role === "fixer" || fixture.role === "judge"
-        ? withPassingGatekeeper(toolCallContext([{ id: "receipt", name: fixture.name }]))
-        : toolCallContext([{ id: "receipt", name: fixture.name }]),
+      withPassingGatekeeper(toolCallContext([{ id: "receipt", name: fixture.name }])),
     );
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
@@ -1103,18 +1101,15 @@ test("coder plan loads its task without construction skill and returns planned",
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const output = { status: "planned", report: "Plan the public seam first." };
-  let gatekeeperProviderRequests = 0;
   const result = await tool.execute(
     "coder",
     output,
     undefined,
     undefined,
-    Object.assign(toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]), {
-      modelRegistry: { getProvider() { gatekeeperProviderRequests += 1; } },
-    }),
+    withPassingGatekeeper(toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }])),
   );
   assert.deepEqual(result.details, output);
-  assert.equal(gatekeeperProviderRequests, 0);
+  assert.equal(result.terminate, true);
 });
 
 test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
@@ -1340,7 +1335,7 @@ test("coder completed submissions traverse the real Gatekeeper provider gate unt
   assert.equal(tracer.remainingResponses, 0);
 });
 
-test("fixer completed-side submissions traverse the real Gatekeeper provider gate while non-completions skip it", async () => {
+test("fixer submissions of every status traverse the real Gatekeeper provider gate", async () => {
   const start = async (phase: "plan" | "apply") => {
     const harness = extensionHarness(undefined, {
       "ak-fix-packet": "/materials/fix.md",
@@ -1364,8 +1359,9 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
     execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
     toolName: FIXER_OUTPUT_TOOL_NAME,
     output: completed,
-    // completed + partially_completed + unfinished each consume one pass pair.
-    passingRuns: 3,
+    // completed + partially_completed + unfinished + planned + plan-refused + apply-refused
+    // each consume one pass pair.
+    passingRuns: 6,
   });
   const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
   await tracer.assertRejectSequence();
@@ -1399,15 +1395,25 @@ test("fixer completed-side submissions traverse the real Gatekeeper provider gat
     true,
   );
 
-  const beforeSkipped = tracer.providerRequests;
+  const beforeAllStatuses = tracer.providerRequests;
   const planTool = await start("plan");
-  await planTool.execute("planned", { status: "planned", report: "plan" }, undefined, undefined, submissionContext("planned"));
-  await planTool.execute("plan-refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }, undefined, undefined, submissionContext("plan-refused"));
+  assert.equal(
+    (await planTool.execute("planned", { status: "planned", report: "plan" }, undefined, undefined, submissionContext("planned"))).terminate,
+    true,
+  );
+  assert.equal(
+    (await planTool.execute("plan-refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }, undefined, undefined, submissionContext("plan-refused"))).terminate,
+    true,
+  );
   const applyTool = await start("apply");
-  await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"));
-  assert.equal(tracer.providerRequests, beforeSkipped);
-  // reject matrix (15) + three pass pairs (6) = 21.
-  assert.equal(tracer.providerRequests, 21);
+  assert.equal(
+    (await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"))).terminate,
+    true,
+  );
+  // planned + plan-refused + apply-refused each consume one pass pair (6 requests).
+  assert.equal(tracer.providerRequests, beforeAllStatuses + 6);
+  // reject matrix (15) + six pass pairs (12) = 27.
+  assert.equal(tracer.providerRequests, 27);
   assert.equal(tracer.remainingResponses, 0);
 });
 
@@ -1895,7 +1901,8 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     assert.deepEqual((await submitCompleted(harness, "collision")).details, completed);
   }
 
-  // Refusal remains a sole-final-call terminal without the TDD expansion obligation.
+  // Refusal remains a sole-final-call terminal without the TDD expansion obligation,
+  // and still traverses the Gatekeeper province gate.
   {
     const harness = await start();
     const refused = {
@@ -1910,9 +1917,16 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       refused,
       undefined,
       undefined,
-      toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]),
+      Object.assign(toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]), {
+        cwd: process.cwd(),
+        model: harness.model,
+        modelRegistry: scriptedGatekeeperModelRegistry(harness.model, harness.provider, {
+          matchProvider: false,
+        }),
+        thinkingLevel: "off",
+      }),
     )).details, refused);
-    assert.equal(harness.providerRequests(), requestsBeforeRefusal);
+    assert.equal(harness.providerRequests(), requestsBeforeRefusal + 2);
     await assert.rejects(
       refusalTool.execute(
         "coder-mixed",
@@ -1966,7 +1980,7 @@ test("undeclared prerequisite submissions are rejected; declared references acce
     const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
     const candidate = (prerequisiteId: string) => ({ status: "refused" as const, report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId, evidence: "Choice absent." } }] });
     await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }])), /Fixer output/);
-    const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
+    const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.equal(Object.isFrozen(accepted.details), true);
     assert.deepEqual(accepted.details, candidate("owner.choice"));
 
@@ -2006,7 +2020,7 @@ test("declared plan refusal accepts without LLM audit", async () => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
     const candidate = { status: "refused", report: "Blocked.", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "Choice absent." } };
-    const accepted = await tool.execute("plan-refused", candidate, undefined, undefined, toolCallContext([{ id: "plan-refused", name: FIXER_OUTPUT_TOOL_NAME }]));
+    const accepted = await tool.execute("plan-refused", candidate, undefined, undefined, withPassingGatekeeper(toolCallContext([{ id: "plan-refused", name: FIXER_OUTPUT_TOOL_NAME }])));
     assert.deepEqual(accepted.details, candidate);
     assert.equal(accepted.terminate, true);
   });
@@ -2058,9 +2072,9 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
       },
       undefined,
       undefined,
-      toolCallContext([
+      withPassingGatekeeper(toolCallContext([
         { id: "fixer-call", name: FIXER_OUTPUT_TOOL_NAME },
-      ]),
+      ])),
     )).details,
     {
       status: "refused",

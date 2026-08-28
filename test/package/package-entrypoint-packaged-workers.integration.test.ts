@@ -979,38 +979,23 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           );
           assert.equal(mixed.message.isError, true);
 
-          // plan/planned skips province; apply/unfinished requires Gatekeeper pass.
-          faux.setResponses(
-            phase === "apply"
-              ? [
-                fauxAssistantMessage(
-                  fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, {
-                    id: `sole-fixer-${phase}`,
-                  }),
-                  { stopReason: "toolUse" },
-                ),
-                (context: Context) => {
-                  const names = context.tools?.map((tool) => tool.name) ?? [];
-                  const province = scriptProvincePass(names, "inspector");
-                  if (province !== undefined) return province;
-                  return fauxAssistantMessage("fixer fixture idle");
-                },
-                (context: Context) => {
-                  const names = context.tools?.map((tool) => tool.name) ?? [];
-                  const province = scriptProvincePass(names, "inspector");
-                  if (province !== undefined) return province;
-                  return fauxAssistantMessage("fixer fixture idle");
-                },
-              ]
-              : [
-                fauxAssistantMessage(
-                  fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, {
-                    id: `sole-fixer-${phase}`,
-                  }),
-                  { stopReason: "toolUse" },
-                ),
-              ],
-          );
+          // Every Fixer status (plan/planned and apply/unfinished) requires Gatekeeper pass.
+          const provinceOrIdle = (context: Context) => {
+            const names = context.tools?.map((tool) => tool.name) ?? [];
+            const province = scriptProvincePass(names, "inspector");
+            if (province !== undefined) return province;
+            return fauxAssistantMessage("fixer fixture idle");
+          };
+          faux.setResponses([
+            fauxAssistantMessage(
+              fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, {
+                id: `sole-fixer-${phase}`,
+              }),
+              { stopReason: "toolUse" },
+            ),
+            provinceOrIdle,
+            provinceOrIdle,
+          ]);
           await session.prompt(`Accept a sole Fixer output in ${phase}.`);
           const accepted = sessionManager.getEntries().find(
             (entry) =>
