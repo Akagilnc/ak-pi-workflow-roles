@@ -19,7 +19,7 @@ import { join } from "node:path";
 import {
   AUTO_RESUME_LIMIT,
   describeErrorIdentity,
-  isSessionPrincipalAvailable,
+  isDurablePrincipalAvailable,
   acquireRunWriterLease,
   markRunTerminal,
   RunWriterLeaseHeldError,
@@ -430,7 +430,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-      if (!(await isSessionPrincipalAvailable(options.admitted.sessionFile))) {
+      if (!(await isDurablePrincipalAvailable(options.admitted.sessionFile))) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
@@ -453,7 +453,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
           terminal,
         } as T;
       }
-      if (!(await isSessionPrincipalAvailable(options.admitted.sessionFile))) {
+      if (!(await isDurablePrincipalAvailable(options.admitted.sessionFile))) {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,

@@ -1,3 +1,4 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 /**
  * Public Doctor Role run: admit Issue → retained case via #78 → shared one-shot
  * dispatch → settle Terminal result (#113). Lifecycle is the shared
@@ -30,6 +31,7 @@ import {
 } from "./terminal.ts";
 
 export type DoctorRunEnv = OneShotRunEnv & {
+  principalAuthority?: DurablePrincipalAuthority;
   createRunId?: () => string;
   extraPiArgs?: readonly string[];
 };
@@ -88,6 +90,7 @@ export async function runPublicDoctor(
     const parsed = parseDoctorArgv(argv);
     admitted = await admitDoctorInvocation({
       home: env.home,
+      ...(env.principalAuthority === undefined ? {} : { principalAuthority: env.principalAuthority }),
       cwd: env.cwd,
       issueNumber: parsed.issueNumber,
       instruction: parsed.instruction,

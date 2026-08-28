@@ -1,3 +1,5 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
 /**
  * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
  * States: admitted → running → resumable | terminal.
@@ -6,7 +8,7 @@
  * Prose is never regex-classified as quota evidence.
  */
 import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   activationBookDirectory,
@@ -336,16 +338,13 @@ export async function markRunTerminal(runDirectory: string): Promise<void> {
  * True when the durable Pi session file principal exists as a regular file.
  * Resume must reopen this exact principal; directory-latest is not identity.
  */
-export async function isSessionPrincipalAvailable(
+export async function isDurablePrincipalAvailable(
   sessionFile: string,
+  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
 ): Promise<boolean> {
   if (sessionFile.trim() === "") return false;
-  try {
-    const st = await lstat(sessionFile);
-    return st.isFile() && !st.isSymbolicLink();
-  } catch {
-    return false;
-  }
+  const principal = { sessionDirectory: dirname(sessionFile), sessionFile };
+  return authority.isAvailable(principal);
 }
 
 export class RunWriterLeaseHeldError extends Error {
@@ -539,6 +538,7 @@ function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
 async function loadResumableRunRecord(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly observation?: TypedHttp429Observation;
@@ -555,7 +555,7 @@ async function loadResumableRunRecord(
   // #416: removed terminal/resumable gates per owner decision "根本不要有限制" (2026-08-22).
   // Only the exact Pi session principal check remains as honest failure.
   // Exact Pi session principal must be present before resume dispatches.
-  if (!(await isSessionPrincipalAvailable(run.sessionFile))) {
+  if (!(await isDurablePrincipalAvailable(run.sessionFile, authority))) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`,
     );
@@ -754,8 +754,9 @@ export type LoadedResumableReviewerRun = {
 export async function loadResumableJudgeRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
 ): Promise<LoadedResumableJudgeRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "judge") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not judge`,
@@ -789,8 +790,9 @@ export async function loadResumableJudgeRun(
 export async function loadResumableCoderRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
 ): Promise<LoadedResumableCoderRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "coder") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not coder`,
@@ -843,8 +845,9 @@ export async function loadResumableCoderRun(
 export async function loadResumableFixerRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
 ): Promise<LoadedResumableFixerRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "fixer") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not fixer`,
@@ -906,8 +909,9 @@ export async function loadResumableFixerRun(
 export async function loadResumableReviewerRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
 ): Promise<LoadedResumableReviewerRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "reviewer") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`,
@@ -955,8 +959,9 @@ export type LoadedResumableMergerRun = {
 export async function loadResumableMergerRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority = piDurablePrincipalAuthority,
 ): Promise<LoadedResumableMergerRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "merger") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not merger`,
