@@ -14036,12 +14036,12 @@ var init_terminating_infrastructure = __esm({
           {
             [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: typebox_exports.String({
               minLength: 1,
-              description: "\u975E\u7A7A\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u8BCA\u65AD\uFF1B\u6A21\u578B\u4ECE detour body \u8BC6\u522B engine failure \u540E\u636E\u6B64\u58F0\u660E\uFF0Cexecute \u7ECF\u5171\u4EAB host seam \u8F6C failInfrastructure\u3002"
+              description: "\u975E\u7A7A\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u8BCA\u65AD"
             })
           },
           {
             additionalProperties: true,
-            description: "\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u58F0\u660E\uFF1B\u4EC5\u5F53\u6A21\u578B\u8BC6\u522B\u5230 engine \u5931\u8D25\u65F6\u643A\u5E26\uFF0C\u5426\u5219\u7701\u7565\u3002"
+            description: "\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u58F0\u660E"
           }
         )
       },

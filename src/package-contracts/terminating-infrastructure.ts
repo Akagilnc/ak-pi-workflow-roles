@@ -24,13 +24,12 @@ const infrastructureFailureDeclarationSchema = Type.Object(
       {
         [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: Type.String({
           minLength: 1,
-          description:
-            "非空基础设施失败诊断；模型从 detour body 识别 engine failure 后据此声明，execute 经共享 host seam 转 failInfrastructure。",
+          description: "非空基础设施失败诊断",
         }),
       },
       {
         additionalProperties: true,
-        description: "基础设施失败声明；仅当模型识别到 engine 失败时携带，否则省略。",
+        description: "基础设施失败声明",
       },
     ),
   },

@@ -268,7 +268,7 @@ export function createFixerRoleRuntime(
         pi.registerTool({
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "修内司输出",
-          description: "提交修内司终局回执；本工具经共享 host seam 承接基础设施失败。",
+          description: "提交修内司终局回执",
           promptSnippet: "提交修内司终局回执",
           parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
