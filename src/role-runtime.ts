@@ -1109,7 +1109,6 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
       pendingGatekeeperNonPassByToolCallId.clear();
-      engineDetourRegistration?.resetLatch();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
