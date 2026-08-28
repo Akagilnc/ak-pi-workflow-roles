@@ -15942,15 +15942,19 @@ async function readRoleRunState(runDirectory) {
     ...resumable === void 0 ? {} : { resumable }
   };
 }
-async function markRunAdmitted(admitted) {
+async function markRunAdmitted(admitted, authority) {
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(
+    authority,
+    admitted.principal
+  );
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
     role: admitted.role,
     state: "admitted",
     bookKey: admitted.bookKey,
     projectRoot: admitted.projectRoot,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
+    sessionDirectory,
+    sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
@@ -16272,8 +16276,6 @@ async function loadResumableJudgeRun(home, runId, authority) {
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     ...restoredTicketFields(loaded.admittedFields)
   };
@@ -16321,8 +16323,6 @@ async function loadResumableCoderRun(home, runId, authority) {
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
     ...restoredTicketFields(loaded.admittedFields)
@@ -16372,8 +16372,6 @@ async function loadResumableFixerRun(home, runId, authority) {
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
@@ -16412,8 +16410,6 @@ async function loadResumableReviewerRun(home, runId, authority) {
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
@@ -16462,8 +16458,6 @@ async function loadResumableMergerRun(home, runId, authority) {
       sessionDirectory: loaded.run.sessionDirectory,
       sessionFile: loaded.run.sessionFile
     }),
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
@@ -17827,8 +17821,6 @@ async function admitJudgeInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -17843,7 +17835,7 @@ async function admitJudgeInvocation(options) {
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
   await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "judge",
     runId,
@@ -17854,8 +17846,6 @@ async function admitJudgeInvocation(options) {
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     ...ticketFields
   };
@@ -17914,8 +17904,6 @@ async function admitCoderInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -17931,7 +17919,7 @@ async function admitCoderInvocation(options) {
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
   await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "coder",
     phase: options.phase,
@@ -17943,8 +17931,6 @@ async function admitCoderInvocation(options) {
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     taskPath,
     ...ticketFields
@@ -18030,8 +18016,6 @@ async function admitFixerInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -18052,7 +18036,7 @@ async function admitFixerInvocation(options) {
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
   await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "fixer",
     phase: options.phase,
@@ -18064,8 +18048,6 @@ async function admitFixerInvocation(options) {
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     packetPath,
     ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
@@ -18273,8 +18255,6 @@ async function admitCollectorInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -18298,7 +18278,7 @@ async function admitCollectorInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "collector",
     runId,
@@ -18309,8 +18289,6 @@ async function admitCollectorInvocation(options) {
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     prNumber,
     repository,
@@ -18509,8 +18487,6 @@ async function admitDoctorInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -18532,7 +18508,7 @@ async function admitDoctorInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "doctor",
     runId,
@@ -18543,8 +18519,6 @@ async function admitDoctorInvocation(options) {
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     issueNumber: options.issueNumber,
     caseRunsPath,
@@ -18644,8 +18618,6 @@ async function admitNotaryInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     instruction: "",
     instructionEmpty: true,
     attachments: [],
@@ -18660,7 +18632,7 @@ async function admitNotaryInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "notary",
     runId,
@@ -18671,8 +18643,6 @@ async function admitNotaryInvocation(options) {
     attachments: [],
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     sourceRunPath: sourceRun.runDirectory,
     sourceRun,
@@ -18764,8 +18734,6 @@ async function admitReviewerInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -18786,7 +18754,7 @@ async function admitReviewerInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "reviewer",
     runId,
@@ -18797,8 +18765,6 @@ async function admitReviewerInvocation(options) {
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     baseRevision: options.baseRevision,
     authorityRefs,
@@ -18949,8 +18915,6 @@ async function admitMergerInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -18977,7 +18941,7 @@ async function admitMergerInvocation(options) {
 `,
     "utf8"
   );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "merger",
     runId,
@@ -18988,8 +18952,6 @@ async function admitMergerInvocation(options) {
     attachments,
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,
@@ -20781,6 +20743,9 @@ var init_navigator_invocation_identity = __esm({
 import { randomUUID } from "node:crypto";
 import { appendFile, readFile as readFile10, readdir as readdir4, writeFile as writeFile5 } from "node:fs/promises";
 import { dirname as dirname7, join as join13 } from "node:path";
+function coordinatesFromAdmitted(authority, admitted) {
+  return decodePiDurablePrincipal(authority, admitted.principal);
+}
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
   if (line2.startsWith("event:")) return true;
@@ -21801,8 +21766,8 @@ function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolNa
   }
   return matches.length === 1 ? matches[0] : void 0;
 }
-async function appendRunAttemptHistory(admitted, outcome) {
-  const entries = await readBoundSessionEntries(admitted.sessionFile);
+async function appendRunAttemptHistory(source, outcome) {
+  const entries = await readBoundSessionEntries(source.sessionFile);
   let parentId = null;
   let priorEntries = 0;
   for (const entry of entries) {
@@ -21817,8 +21782,8 @@ async function appendRunAttemptHistory(admitted, outcome) {
     customType: ATTEMPT_HISTORY_ENTRY_TYPE,
     data: {
       sequence: priorEntries + 1,
-      role: admitted.role,
-      runId: admitted.runId,
+      role: source.role,
+      runId: source.runId,
       recordedAt: timestamp2,
       outcome
     },
@@ -21827,7 +21792,7 @@ async function appendRunAttemptHistory(admitted, outcome) {
     timestamp: timestamp2
   })}
 `;
-  await appendFile(admitted.sessionFile, line2, "utf8");
+  await appendFile(source.sessionFile, line2, "utf8");
 }
 function extractJudgeRoleOutcome(entries) {
   if (!isReceiptSettlementBindingClear(entries)) return void 0;
@@ -22028,9 +21993,9 @@ function extractNavigatorFact(entries) {
     reason: "Navigator attendance is missing from the session"
   };
 }
-async function extractNavigatorFactFromAdmittedSession(admitted) {
+async function extractNavigatorFactFromAdmittedSession(sessionFile) {
   try {
-    const entries = await readBoundSessionEntries(admitted.sessionFile);
+    const entries = await readBoundSessionEntries(sessionFile);
     return extractNavigatorFact(entries);
   } catch (error) {
     if (isMissingPathError2(error)) {
@@ -22047,8 +22012,8 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
     };
   }
 }
-async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishJudgeArtifacts(admitted, roleOutcome, coordinates) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join13(artifactsDir, "report.json");
   const evidencePath = join13(artifactsDir, "evidence.json");
@@ -22071,8 +22036,8 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
     `${JSON.stringify(
       {
         runId: admitted.runId,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -22092,8 +22057,8 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
     { kind: "evidence", path: evidencePath }
   ];
 }
-async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishCoderArtifacts(admitted, roleOutcome, coordinates, options = {}) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join13(artifactsDir, "report.json");
   const evidencePath = join13(artifactsDir, "evidence.json");
@@ -22120,8 +22085,8 @@ async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, op
         runId: admitted.runId,
         role: "coder",
         phase: admitted.phase,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         taskPath: admitted.taskPath,
         attachments: admitted.attachments.map((a) => ({
@@ -22168,29 +22133,31 @@ function extractCoderRoleOutcome(entries) {
   }
   return void 0;
 }
-async function readLawfulSettlementEntries(admitted) {
+async function readLawfulSettlementEntries(sessionFile) {
   try {
-    return await readBoundSessionEntries(admitted.sessionFile);
+    return await readBoundSessionEntries(sessionFile);
   } catch (error) {
     if (isMissingPathError2(error)) return void 0;
     throw error instanceof Error && error.knownCause === "session" ? error : sessionReadFailure(error, "session unreadable");
   }
 }
-async function readLawfulJudgeRoleOutcome(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function readLawfulJudgeRoleOutcome(admitted, authority) {
+  const { sessionFile } = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === void 0) return void 0;
   return extractJudgeRoleOutcome(entries);
 }
-async function hasLawfulJudgeTerminalResult(admitted) {
+async function hasLawfulJudgeTerminalResult(admitted, authority) {
   try {
-    const outcome = await readLawfulJudgeRoleOutcome(admitted);
+    const outcome = await readLawfulJudgeRoleOutcome(admitted, authority);
     return outcome !== void 0 && isLawfulTypedTerminalOutcome(outcome);
   } catch {
     return false;
   }
 }
-async function settleLawfulJudgeTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function settleLawfulJudgeTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile);
   if (entries === void 0) return void 0;
   const roleOutcome = extractJudgeRoleOutcome(entries);
   if (roleOutcome === void 0) {
@@ -22200,7 +22167,7 @@ async function settleLawfulJudgeTerminalResult(admitted) {
   const artifacts = await publishJudgeArtifacts(
     admitted,
     roleOutcome,
-    admitted.sessionDirectory
+    coordinates
   );
   return withOptionalGateProjection(
     {
@@ -22209,14 +22176,15 @@ async function settleLawfulJudgeTerminalResult(admitted) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    coordinates.sessionDirectory
   );
 }
-async function trySettleJudgeTerminalResult(admitted) {
-  return settleLawfulJudgeTerminalResult(admitted);
+async function trySettleJudgeTerminalResult(admitted, authority) {
+  return settleLawfulJudgeTerminalResult(admitted, authority);
 }
-async function settleLawfulCoderTerminalResult(admitted, options = {}) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function settleLawfulCoderTerminalResult(admitted, authority, options = {}) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile);
   if (entries === void 0) return void 0;
   const extracted = extractCoderRoleOutcome(entries);
   if (extracted === void 0) return void 0;
@@ -22224,7 +22192,7 @@ async function settleLawfulCoderTerminalResult(admitted, options = {}) {
   const artifacts = await publishCoderArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     {
       coderOutput: extracted.output,
       ...options.methodProvenance === void 0 ? {} : { methodProvenance: options.methodProvenance }
@@ -22237,7 +22205,7 @@ async function settleLawfulCoderTerminalResult(admitted, options = {}) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    coordinates.sessionDirectory
   );
 }
 function sessionMessageText(message) {
@@ -22268,8 +22236,8 @@ function extractFixerMethodInvocations(entries, options) {
   }
   return Object.freeze(observed);
 }
-async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishFixerArtifacts(admitted, roleOutcome, coordinates, options) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join13(artifactsDir, "report.json");
   const evidencePath = join13(artifactsDir, "evidence.json");
@@ -22296,8 +22264,8 @@ async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, op
         runId: admitted.runId,
         role: "fixer",
         phase: admitted.phase,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         packetPath: admitted.packetPath,
         ...admitted.prerequisitesPath === void 0 ? {} : { prerequisitesPath: admitted.prerequisitesPath },
@@ -22351,8 +22319,10 @@ function extractFixerRoleOutcome(entries) {
   }
   return void 0;
 }
-async function settleLawfulFixerTerminalResult(admitted, options) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function settleLawfulFixerTerminalResult(admitted, authority, options) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === void 0) return void 0;
   const extracted = extractFixerRoleOutcome(entries);
   if (extracted === void 0) return void 0;
@@ -22366,7 +22336,7 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
   const artifacts = await publishFixerArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     {
       ...extracted.output === void 0 ? {} : { fixerOutput: extracted.output },
       methodProvenance: options.methodProvenance,
@@ -22380,11 +22350,11 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishCollectorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join13(artifactsDir, "report.json");
   const evidencePath = join13(artifactsDir, "evidence.json");
@@ -22412,8 +22382,8 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
         prNumber: admitted.prNumber,
         repository: admitted.repository.canonical,
         manifestDigest: admitted.manifestDigest,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -22457,8 +22427,10 @@ function extractCollectorRoleOutcome(entries) {
   }
   return void 0;
 }
-async function settleLawfulCollectorTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function settleLawfulCollectorTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === void 0) return void 0;
   const extracted = extractCollectorRoleOutcome(entries);
   if (extracted === void 0) {
@@ -22490,7 +22462,7 @@ async function settleLawfulCollectorTerminalResult(admitted) {
   const artifacts = await publishCollectorArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     { collectorReceipt: extracted.receipt }
   );
   return withOptionalGateProjection(
@@ -22500,14 +22472,14 @@ async function settleLawfulCollectorTerminalResult(admitted) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleCollectorTerminalResult(admitted) {
-  return settleLawfulCollectorTerminalResult(admitted);
+async function trySettleCollectorTerminalResult(admitted, authority) {
+  return settleLawfulCollectorTerminalResult(admitted, authority);
 }
-async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishDoctorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join13(artifactsDir, "report.json");
   const evidencePath = join13(artifactsDir, "evidence.json");
@@ -22535,8 +22507,8 @@ async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, o
         issueNumber: admitted.issueNumber,
         caseRunsPath: admitted.caseRunsPath,
         caseIdentity: admitted.caseIdentity,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -22599,8 +22571,10 @@ function extractDoctorRoleOutcome(entries) {
   }
   return void 0;
 }
-async function settleLawfulDoctorTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function settleLawfulDoctorTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === void 0) return void 0;
   const extracted = extractDoctorRoleOutcome(entries);
   if (extracted === void 0) return void 0;
@@ -22619,7 +22593,7 @@ async function settleLawfulDoctorTerminalResult(admitted) {
   const artifacts = await publishDoctorArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     extracted.output === void 0 ? {} : { doctorOutput: extracted.output }
   );
   return withOptionalGateProjection(
@@ -22629,11 +22603,11 @@ async function settleLawfulDoctorTerminalResult(admitted) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleDoctorTerminalResult(admitted) {
-  return settleLawfulDoctorTerminalResult(admitted);
+async function trySettleDoctorTerminalResult(admitted, authority) {
+  return settleLawfulDoctorTerminalResult(admitted, authority);
 }
 function extractNotaryRoleOutcome(entries) {
   if (!isReceiptSettlementBindingClear(entries)) return void 0;
@@ -22659,8 +22633,10 @@ function extractNotaryRoleOutcome(entries) {
   }
   return void 0;
 }
-async function settleLawfulNotaryTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function settleLawfulNotaryTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === void 0) return void 0;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === void 0) {
@@ -22679,7 +22655,7 @@ async function settleLawfulNotaryTerminalResult(admitted) {
           cause: "output",
           diagnostic: residual.diagnostic,
           details: { candidate: residual.candidate, acceptedReceipt: false }
-        });
+        }, authority);
       }
       if (acceptedNonUsable === void 0 && message.toolName === NOTARY_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
         try {
@@ -22694,7 +22670,7 @@ async function settleLawfulNotaryTerminalResult(admitted) {
         cause: "output",
         diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
         details: { candidate: acceptedNonUsable, acceptedReceipt: false }
-      });
+      }, authority);
     }
     return void 0;
   }
@@ -22706,18 +22682,20 @@ async function settleLawfulNotaryTerminalResult(admitted) {
       artifacts: [],
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleNotaryTerminalResult(admitted) {
-  return settleLawfulNotaryTerminalResult(admitted);
+async function trySettleNotaryTerminalResult(admitted, authority) {
+  return settleLawfulNotaryTerminalResult(admitted, authority);
 }
-async function trySettleCoderTerminalResult(admitted, options = {}) {
-  return settleLawfulCoderTerminalResult(admitted, options);
+async function trySettleCoderTerminalResult(admitted, authority, options = {}) {
+  return settleLawfulCoderTerminalResult(admitted, authority, options);
 }
-async function hasLawfulCoderTerminalResult(admitted) {
+async function hasLawfulCoderTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
+    const entries = await readLawfulSettlementEntries(sessionFile);
     if (entries === void 0) return false;
     const extracted = extractCoderRoleOutcome(entries);
     return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
@@ -22725,12 +22703,14 @@ async function hasLawfulCoderTerminalResult(admitted) {
     return false;
   }
 }
-async function trySettleFixerTerminalResult(admitted, options) {
-  return settleLawfulFixerTerminalResult(admitted, options);
+async function trySettleFixerTerminalResult(admitted, authority, options) {
+  return settleLawfulFixerTerminalResult(admitted, authority, options);
 }
-async function hasLawfulFixerTerminalResult(admitted) {
+async function hasLawfulFixerTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
+    const entries = await readLawfulSettlementEntries(sessionFile);
     if (entries === void 0) return false;
     const extracted = extractFixerRoleOutcome(entries);
     return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
@@ -22754,8 +22734,8 @@ function extractReviewerMethodInvocations(entries, options) {
   }
   return Object.freeze(observed);
 }
-async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishReviewerArtifacts(admitted, roleOutcome, coordinates, options) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join13(artifactsDir, "report.json");
   const evidencePath = join13(artifactsDir, "evidence.json");
@@ -22780,8 +22760,8 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
       {
         runId: admitted.runId,
         role: "reviewer",
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
         authorityRefs: [...admitted.authorityRefs],
@@ -22836,8 +22816,10 @@ function extractReviewerRoleOutcome(entries) {
   }
   return void 0;
 }
-async function settleLawfulReviewerTerminalResult(admitted, options) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function settleLawfulReviewerTerminalResult(admitted, authority, options) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === void 0) return void 0;
   const extracted = extractReviewerRoleOutcome(entries);
   if (extracted === void 0) return void 0;
@@ -22851,7 +22833,7 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
   const artifacts = await publishReviewerArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     {
       ...extracted.receipt === void 0 ? {} : { reviewerReceipt: extracted.receipt },
       methodProvenance: options.methodProvenance,
@@ -22865,15 +22847,17 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleReviewerTerminalResult(admitted, options) {
-  return settleLawfulReviewerTerminalResult(admitted, options);
+async function trySettleReviewerTerminalResult(admitted, authority, options) {
+  return settleLawfulReviewerTerminalResult(admitted, authority, options);
 }
-async function hasLawfulReviewerTerminalResult(admitted) {
+async function hasLawfulReviewerTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
+    const entries = await readLawfulSettlementEntries(sessionFile);
     if (entries === void 0) return false;
     const extracted = extractReviewerRoleOutcome(entries);
     return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
@@ -22910,8 +22894,8 @@ function extractMergerMethodInvocations(entries, options) {
   }
   return Object.freeze(observed);
 }
-async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishMergerArtifacts(admitted, roleOutcome, coordinates, options) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join13(artifactsDir, "report.json");
   const evidencePath = join13(artifactsDir, "evidence.json");
@@ -22936,8 +22920,8 @@ async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, o
       {
         runId: admitted.runId,
         role: "merger",
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         mergerInputPath: admitted.mergerInputPath,
         derived: admitted.derived,
@@ -22986,8 +22970,10 @@ function extractMergerRoleOutcome(entries) {
   }
   return void 0;
 }
-async function settleLawfulMergerTerminalResult(admitted, options) {
-  const entries = await readLawfulSettlementEntries(admitted);
+async function settleLawfulMergerTerminalResult(admitted, authority, options) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === void 0) return void 0;
   const extracted = extractMergerRoleOutcome(entries);
   if (extracted === void 0) {
@@ -23030,7 +23016,7 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
   const artifacts = await publishMergerArtifacts(
     admitted,
     extracted.outcome,
-    admitted.sessionDirectory,
+    coordinates,
     {
       mergerOutput: extracted.output,
       methodProvenance: options.methodProvenance,
@@ -23044,15 +23030,17 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleMergerTerminalResult(admitted, options) {
-  return settleLawfulMergerTerminalResult(admitted, options);
+async function trySettleMergerTerminalResult(admitted, authority, options) {
+  return settleLawfulMergerTerminalResult(admitted, authority, options);
 }
-async function hasLawfulMergerTerminalResult(admitted) {
+async function hasLawfulMergerTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
+    const entries = await readLawfulSettlementEntries(sessionFile);
     if (entries === void 0) return false;
     const extracted = extractMergerRoleOutcome(entries);
     return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
@@ -23131,19 +23119,20 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   error.publicationAttempts = issues;
   throw error;
 }
-async function publishFailureArtifacts(admitted, failure) {
+async function publishFailureArtifacts(admitted, failure, authority) {
+  const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
   try {
-    await appendRunAttemptHistory(admitted, {
+    await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile }, {
       kind: "failure",
       role: admitted.role,
       ...failure
     });
   } catch (error) {
-    priorIssues.push(publicationAttemptFromError(admitted.sessionFile, error));
+    priorIssues.push(publicationAttemptFromError(sessionFile, error));
   }
   const underArtifacts = baseDir === join13(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
@@ -23184,8 +23173,8 @@ async function publishFailureArtifacts(admitted, failure) {
   );
   const evidencePayload = {
     runId: admitted.runId,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
+    sessionDirectory,
+    sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     attachments: admitted.attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -23247,9 +23236,11 @@ function redactNavigatorFactForPublicTerminal(navigator, runId) {
   }
   return { ...navigator, ...advisoryDiagnostic };
 }
-async function settleFailureTerminalResult(admitted, failure, options = {}) {
+async function settleFailureTerminalResult(admitted, failure, authority, options = {}) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   if (failure.cause === "output") {
-    const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => void 0);
+    const entries = await readBoundSessionEntries(sessionFile).catch(() => void 0);
     if (entries !== void 0) {
       let attemptStart = 0;
       for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -23268,11 +23259,11 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
             return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts: decisiveFacts2 },
-                navigator: await extractNavigatorFactFromAdmittedSession(admitted),
+                navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
                 artifacts: [],
                 runId: admitted.runId
               },
-              admitted.sessionDirectory
+              sessionDirectory
             );
           }
         } catch {
@@ -23280,8 +23271,8 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       }
     }
   }
-  const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
-  const artifacts = await publishFailureArtifacts(admitted, failure);
+  const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
+  const artifacts = await publishFailureArtifacts(admitted, failure, authority);
   const decisiveFacts = {
     cause: failure.cause,
     diagnostic: failure.diagnostic
@@ -23315,7 +23306,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
         artifacts: [],
         resume: options.resume
       },
-      admitted.sessionDirectory
+      sessionDirectory
     );
   }
   const roleOutcome = {
@@ -23332,11 +23323,11 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function settleJudgeFailureTerminalResult(admitted, failure, options = {}) {
-  return settleFailureTerminalResult(admitted, failure, options);
+async function settleJudgeFailureTerminalResult(admitted, failure, authority, options = {}) {
+  return settleFailureTerminalResult(admitted, failure, authority, options);
 }
 function presentFailureTerminal(terminal, io) {
   if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
@@ -23375,6 +23366,7 @@ var init_settlement = __esm({
     init_method_skill();
     init_navigator_invocation_identity();
     init_receipt_delivery_policy();
+    init_durable_principal();
     init_invocation();
     init_terminal();
     CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
@@ -23501,7 +23493,8 @@ function jsonSafeReplacer() {
     return value;
   };
 }
-async function retainDispatchError(admitted, attempt, error) {
+async function retainDispatchError(admitted, principalAuthority, attempt, error) {
+  const { sessionFile } = decodePiDurablePrincipal(principalAuthority, admitted.principal);
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
   const filePath = join14(
     artifactsDir,
@@ -23538,7 +23531,7 @@ async function retainDispatchError(admitted, attempt, error) {
   }
   let pointerError;
   try {
-    const text = await readFile11(admitted.sessionFile, "utf8");
+    const text = await readFile11(sessionFile, "utf8");
     let parentId = null;
     for (const line2 of text.trim().split("\n").filter(Boolean)) {
       const entry = JSON.parse(line2);
@@ -23554,7 +23547,7 @@ async function retainDispatchError(admitted, attempt, error) {
       timestamp: timestamp2
     })}
 `;
-    await appendFile2(admitted.sessionFile, pointerLine, "utf8");
+    await appendFile2(sessionFile, pointerLine, "utf8");
   } catch (error2) {
     pointerError = error2;
   } finally {
@@ -23628,7 +23621,12 @@ async function runWithAutoResumeLoop(options) {
       lastThrownError = error;
       const attempt = dispatchOrdinal;
       try {
-        const { file, pointerError } = await retainDispatchError(options.admitted, attempt, error);
+        const { file, pointerError } = await retainDispatchError(
+          options.admitted,
+          options.principalAuthority,
+          attempt,
+          error
+        );
         retainedErrorFiles.push(file);
         options.io.stderr(
           `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}
@@ -23714,6 +23712,7 @@ var dummyIo, DISPATCH_ERROR_RETENTION_ENTRY_TYPE;
 var init_auto_resume = __esm({
   "src/public-cli/auto-resume.ts"() {
     "use strict";
+    init_durable_principal();
     init_run_lifecycle();
     init_config2();
     init_terminal();
@@ -23800,7 +23799,7 @@ async function presentControlledFailure2(admitted, failureInput, authority, io) 
     } : {}
   });
   const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -23812,7 +23811,7 @@ async function presentControlledFailure2(admitted, failureInput, authority, io) 
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
-  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -23827,6 +23826,7 @@ async function presentControlledFailure2(admitted, failureInput, authority, io) 
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -23899,7 +23899,7 @@ async function dispatchAdmittedCoder(input) {
     }
     let lawful;
     try {
-      lawful = await trySettleCoderTerminalResult(admitted, {
+      lawful = await trySettleCoderTerminalResult(admitted, env.principalAuthority, {
         ...methodProvenance === void 0 ? {} : { methodProvenance }
       });
     } catch (error) {
@@ -23931,7 +23931,7 @@ async function dispatchAdmittedCoder(input) {
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
@@ -23972,7 +23972,7 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let methodProvenance;
   if (admitted.phase === "apply") {
     try {
@@ -24150,7 +24150,7 @@ function buildCollectorActivationExtraArgs(admitted, options) {
 }
 async function presentControlledFailure3(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -24163,7 +24163,7 @@ async function presentControlledFailure3(admitted, failureInput, authority, io) 
     ...session === void 0 ? {} : { session }
   });
   await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(admitted, failure);
+  const terminal = await settleFailureTerminalResult(admitted, failure, authority);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -24234,7 +24234,7 @@ async function dispatchAdmittedCollector(input) {
     }
     let lawful;
     try {
-      lawful = await trySettleCollectorTerminalResult(admitted);
+      lawful = await trySettleCollectorTerminalResult(admitted, env.principalAuthority);
     } catch (error) {
       return await presentControlledFailure3(
         admitted,
@@ -24258,7 +24258,7 @@ async function dispatchAdmittedCollector(input) {
       };
     }
     const infrastructureFailure = await readCollectorInfrastructureFailure(
-      admitted.sessionFile
+      decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile
     );
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
@@ -24271,7 +24271,7 @@ async function dispatchAdmittedCollector(input) {
         diagnostic: infrastructureFailure.diagnostic,
         ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
       }),
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
@@ -24314,7 +24314,7 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let lease;
   try {
     lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
@@ -24365,7 +24365,7 @@ import { writeFile as writeFile8 } from "node:fs/promises";
 import { join as join17 } from "node:path";
 async function presentControlledFailure4(admitted, failureInput, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -24375,7 +24375,7 @@ async function presentControlledFailure4(admitted, failureInput, authority, io) 
     ...session === void 0 ? {} : { session }
   });
   await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(admitted, failure);
+  const terminal = await settleFailureTerminalResult(admitted, failure, authority);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -24495,7 +24495,7 @@ async function dispatchAdmittedOneShotRole(input) {
     );
     const knownFailure = await resolveAuditedRunnerKnownFailure({
       runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
@@ -24516,7 +24516,7 @@ async function dispatchAdmittedOneShotRole(input) {
 }
 async function runAdmittedOneShotRole(input) {
   const { admitted, env, io, extraArgs, adapters, effectiveEngine } = input;
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let lease;
   try {
     lease = await acquireRunWriterLease(
@@ -24543,6 +24543,7 @@ async function runAdmittedOneShotRole(input) {
 var init_one_shot_dispatch = __esm({
   "src/public-cli/one-shot-dispatch.ts"() {
     "use strict";
+    init_durable_principal();
     init_engine_detour();
     init_explicit_internal();
     init_public_run_credentials();
@@ -24615,7 +24616,7 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     io,
     extraArgs,
     adapters: {
-      trySettle: (admitted2) => trySettleDoctorTerminalResult(admitted2),
+      trySettle: (admitted2) => trySettleDoctorTerminalResult(admitted2, env.principalAuthority),
       shouldPresentSettled: (terminal) => isLawfulTypedTerminalOutcome(terminal.roleOutcome)
     },
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
@@ -24722,7 +24723,7 @@ async function presentControlledFailure5(admitted, failureInput, authority, io) 
     } : {}
   });
   const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -24731,7 +24732,7 @@ async function presentControlledFailure5(admitted, failureInput, authority, io) 
     ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...session === void 0 ? {} : { session }
   });
-  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -24746,6 +24747,7 @@ async function presentControlledFailure5(admitted, failureInput, authority, io) 
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -24818,7 +24820,7 @@ async function dispatchAdmittedFixer(input) {
     }
     let lawful;
     try {
-      lawful = await trySettleFixerTerminalResult(admitted, {
+      lawful = await trySettleFixerTerminalResult(admitted, env.principalAuthority, {
         methodProvenance: methodMaterial.provenance,
         methodSkillPath: methodMaterial.skillPath,
         methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
@@ -24855,7 +24857,7 @@ async function dispatchAdmittedFixer(input) {
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
@@ -24900,7 +24902,7 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let methodMaterial;
   try {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
@@ -25089,7 +25091,7 @@ async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
     io,
     extraArgs,
     adapters: {
-      trySettle: (admitted2) => trySettleNotaryTerminalResult(admitted2),
+      trySettle: (admitted2) => trySettleNotaryTerminalResult(admitted2, env.principalAuthority),
       // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true
     },
@@ -25167,7 +25169,7 @@ async function presentControlledFailure6(admitted, failureInput, authority, io) 
     } : {}
   });
   const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -25176,7 +25178,7 @@ async function presentControlledFailure6(admitted, failureInput, authority, io) 
     ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...session === void 0 ? {} : { session }
   });
-  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -25191,6 +25193,7 @@ async function presentControlledFailure6(admitted, failureInput, authority, io) 
   const terminal = await settleJudgeFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -25269,7 +25272,7 @@ async function dispatchAdmittedJudge(input) {
     }
     let lawful;
     try {
-      lawful = await trySettleJudgeTerminalResult(admitted);
+      lawful = await trySettleJudgeTerminalResult(admitted, env.principalAuthority);
     } catch (error) {
       return await presentControlledFailure6(
         admitted,
@@ -25293,7 +25296,7 @@ async function dispatchAdmittedJudge(input) {
       };
     }
     const infrastructureFailure = await readEngineDetourInfrastructureFailure(
-      admitted.sessionFile
+      decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile
     );
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
@@ -25306,7 +25309,7 @@ async function dispatchAdmittedJudge(input) {
         diagnostic: infrastructureFailure.diagnostic,
         ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
       }),
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
@@ -25346,7 +25349,7 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
@@ -25511,7 +25514,7 @@ async function presentControlledFailure7(admitted, failureInput, authority, io) 
     } : {}
   });
   const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -25523,7 +25526,7 @@ async function presentControlledFailure7(admitted, failureInput, authority, io) 
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
-  const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -25538,6 +25541,7 @@ async function presentControlledFailure7(admitted, failureInput, authority, io) 
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -25610,7 +25614,7 @@ async function dispatchAdmittedMerger(input) {
     }
     let lawful;
     try {
-      lawful = await trySettleMergerTerminalResult(admitted, {
+      lawful = await trySettleMergerTerminalResult(admitted, env.principalAuthority, {
         methodProvenance: methodMaterial.provenance,
         methodSkillPath: methodMaterial.skillPath,
         methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
@@ -25647,7 +25651,7 @@ async function dispatchAdmittedMerger(input) {
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
       runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
@@ -25724,8 +25728,6 @@ async function admitMergerShellForActivationFailure(options) {
     attachments: [],
     runDirectory,
     principal,
-    sessionDirectory,
-    sessionFile,
     admittedRequestPath,
     mergerInputPath,
     derived: emptyDerived
@@ -25768,7 +25770,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
         ...parsed.project === void 0 ? {} : { project: parsed.project },
         ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
       });
-      await markRunAdmitted(shell);
+      await markRunAdmitted(shell, env.principalAuthority);
       return await presentControlledFailure7(
         shell,
         {
@@ -25785,7 +25787,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let methodMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
@@ -26002,7 +26004,7 @@ async function presentControlledFailure8(admitted, failureInput, authority, io) 
     } : {}
   });
   const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(decodePiDurablePrincipal(authority, admitted.principal).sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -26011,7 +26013,7 @@ async function presentControlledFailure8(admitted, failureInput, authority, io) 
     ...explicitInternalKnownFailureClassificationInput(knownFailure),
     ...session === void 0 ? {} : { session }
   });
-  const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
+  const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted, authority);
   const typedHttp429 = resumeObservation.typedHttp429;
   const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
   const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
@@ -26026,6 +26028,7 @@ async function presentControlledFailure8(admitted, failureInput, authority, io) 
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -26099,7 +26102,7 @@ async function dispatchAdmittedReviewer(input) {
     }
     let lawful;
     try {
-      lawful = await trySettleReviewerTerminalResult(admitted, {
+      lawful = await trySettleReviewerTerminalResult(admitted, env.principalAuthority, {
         methodProvenance: methodMaterial.provenance,
         methodSkillPath: methodMaterial.skillPath,
         methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
@@ -26130,7 +26133,7 @@ async function dispatchAdmittedReviewer(input) {
       };
     }
     const infrastructureFailure = await readEngineDetourInfrastructureFailure(
-      admitted.sessionFile
+      decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile
     );
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
@@ -26143,7 +26146,7 @@ async function dispatchAdmittedReviewer(input) {
         diagnostic: infrastructureFailure.diagnostic,
         ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
       },
-      sessionFile: admitted.sessionFile,
+      sessionFile: decodePiDurablePrincipal(env.principalAuthority, admitted.principal).sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
@@ -26188,7 +26191,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let methodMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);

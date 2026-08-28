@@ -308,8 +308,10 @@ test("engine material delivery: cursor with-notes coordinates; argv gains no eng
     instructionEmpty: false,
     attachments: [],
     runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
+    principal: {
+      sessionDirectory: "/runs/r/session",
+      sessionFile: "/runs/r/session/session.jsonl",
+    },
     admittedRequestPath: "/runs/r/admitted-request.json",
   } as any;
   const without = buildJudgeActivationExtraArgs(judge as any, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
@@ -336,8 +338,10 @@ test("engine name-only delivery: free name without notes carries name, no path",
     instructionEmpty: false,
     attachments: [],
     runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
+    principal: {
+      sessionDirectory: "/runs/r/session",
+      sessionFile: "/runs/r/session/session.jsonl",
+    },
     admittedRequestPath: "/runs/r/admitted-request.json",
   } as any;
   // Use a well-formed name that has no packaged notes file.
@@ -362,8 +366,10 @@ function sampleReviewer(): AdmittedReviewerInvocation {
     instructionEmpty: true,
     attachments: [],
     runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
+    principal: {
+      sessionDirectory: "/runs/r/session",
+      sessionFile: "/runs/r/session/session.jsonl",
+    },
     admittedRequestPath: "/runs/r/admitted-request.json",
     baseRevision: "abc123",
     authorityRefs: [],
