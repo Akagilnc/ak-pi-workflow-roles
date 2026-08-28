@@ -25,9 +25,6 @@ import {
   engineSessionMaterialFromOptions,
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
-import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
-import { buildJudgeTurnRequest } from "../../src/public-cli/judge-run.ts";
-import { buildReviewerTurnRequest } from "../../src/public-cli/reviewer-run.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -54,56 +51,6 @@ import {
   type AdmittedReviewerInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-
-function judgeActivationArgs(
-  judge: AdmittedJudgeInvocation,
-  engine?: string,
-): string[] {
-  return buildPiTurnExtraArgs(
-    buildJudgeTurnRequest(judge, {
-      packageRoot,
-      home: judge.projectRoot ?? "/tmp",
-      agentDir: "/tmp/agent",
-      ...(engine === undefined ? {} : { engine }),
-      continuation: {
-        kind: "initial",
-        prompt: buildJudgeTransportPrompt(
-          judge,
-          engineSessionMaterialFromOptions({
-            packageRoot,
-            ...(engine === undefined ? {} : { engine }),
-          }),
-        ),
-      },
-    }),
-    piDurablePrincipalAuthority,
-  );
-}
-
-function reviewerActivationArgs(
-  reviewer: AdmittedReviewerInvocation,
-  engine?: string,
-): string[] {
-  return buildPiTurnExtraArgs(
-    buildReviewerTurnRequest(reviewer, {
-      packageRoot,
-      home: reviewer.projectRoot ?? "/tmp",
-      agentDir: "/tmp/agent",
-      ...(engine === undefined ? {} : { engine }),
-      continuation: {
-        kind: "initial",
-        prompt: buildReviewerTransportPrompt(
-          reviewer,
-          engineSessionMaterialFromOptions({
-            packageRoot,
-            ...(engine === undefined ? {} : { engine }),
-          }),
-        ),
-      },
-    }),
-    piDurablePrincipalAuthority,
-  );
-}
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
 function readRoleInvocation(
@@ -351,7 +298,39 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     }
   });
 });
-// --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
+// --- engine-coordinate transport contract ------------------------------------
+// (argv-level engine delivery tested through the one true-child tracer in
+// public-cli-explicit-internal.test.ts — no direct buildPiTurnExtraArgs here.)
+
+/** Transport prompt with with-notes engine coordinates: name + material path. */
+function assertTransportWithNotes(
+  prompt: string,
+  engineName: string,
+  materialPath: string,
+): void {
+  assert.equal(prompt.includes(engineName), true, `engine name missing: ${engineName}`);
+  assert.equal(
+    prompt.includes(materialPath),
+    true,
+    `material absolute path missing: ${materialPath}`,
+  );
+}
+
+/** Transport prompt with name-only engine coordinates: name present, no path. */
+function assertTransportNameOnly(
+  prompt: string,
+  engineName: string,
+  absentMaterialPath: string | undefined,
+): void {
+  assert.equal(prompt.includes(engineName), true, `engine name missing: ${engineName}`);
+  if (absentMaterialPath !== undefined) {
+    assert.equal(
+      prompt.includes(absentMaterialPath),
+      false,
+      `name-only path must not carry material path: ${absentMaterialPath}`,
+    );
+  }
+}
 
 test("engine material delivery: cursor with-notes coordinates; argv gains no engine flags", () => {
   const judge = fixtureJudgeAdmitted({
@@ -365,16 +344,19 @@ test("engine material delivery: cursor with-notes coordinates; argv gains no eng
     sessionFile: "/runs/r/session/session.jsonl",
     admittedRequestPath: "/runs/r/admitted-request.json",
   });
-  const without = judgeActivationArgs(judge);
-  const withEngine = judgeActivationArgs(judge, "cursor");
-  assert.notEqual(without.at(-1), withEngine.at(-1));
-  const prompt = withEngine.at(-1)!;
   const materialPath = resolveEngineMaterialPath(packageRoot, "cursor");
   assert.equal(existsSync(materialPath), true, "cursor notes must be packaged");
-  assertEngineCoordinatesWithMaterial(prompt, "cursor", materialPath);
-  assertNoEngineFlagsInArgv(withEngine);
-  // Model argv path unchanged when model omitted.
-  assert.equal(withEngine.includes("--provider"), false);
+  assertTransportWithNotes(
+    buildJudgeTransportPrompt(judge, engineSessionMaterialFromOptions({ packageRoot, engine: "cursor" })),
+    "cursor",
+    materialPath,
+  );
+  // Without engine, the transport prompt omits material path.
+  assert.equal(
+    buildJudgeTransportPrompt(judge, engineSessionMaterialFromOptions({ packageRoot })).includes(materialPath),
+    false,
+    "no-engine prompt must not carry cursor material path",
+  );
 });
 
 test("engine name-only delivery: free name without notes carries name, no path", () => {
@@ -389,14 +371,14 @@ test("engine name-only delivery: free name without notes carries name, no path",
     sessionFile: "/runs/r/session/session.jsonl",
     admittedRequestPath: "/runs/r/admitted-request.json",
   });
-  // Use a well-formed name that has no packaged notes file.
   const freeName = "nope-engine";
-  const withEngine = judgeActivationArgs(judge, freeName);
-  const prompt = withEngine.at(-1)!;
   const absentPath = resolveEngineMaterialPath(packageRoot, freeName);
   assert.equal(existsSync(absentPath), false, "fixture assumes no notes for free name");
-  assertEngineCoordinatesNameOnly(prompt, freeName, absentPath, "");
-  assertNoEngineFlagsInArgv(withEngine);
+  assertTransportNameOnly(
+    buildJudgeTransportPrompt(judge, engineSessionMaterialFromOptions({ packageRoot, engine: freeName })),
+    freeName,
+    absentPath,
+  );
 });
 
 function sampleReviewer(): AdmittedReviewerInvocation {
@@ -417,37 +399,21 @@ function sampleReviewer(): AdmittedReviewerInvocation {
 
 test("reviewer engine material delivery: cursor with-notes + free name-only (#378)", () => {
   const reviewer = sampleReviewer();
-  const without = reviewerActivationArgs(reviewer);
-  const withNotes = reviewerActivationArgs(reviewer, "cursor");
-  assert.notEqual(without.at(-1), withNotes.at(-1));
-  const notesPrompt = withNotes.at(-1)!;
   const materialPath = resolveEngineMaterialPath(packageRoot, "cursor");
   assert.equal(existsSync(materialPath), true, "cursor notes must be packaged");
-  assertEngineCoordinatesWithMaterial(notesPrompt, "cursor", materialPath);
-  assertNoEngineFlagsInArgv(withNotes);
-
-  const freeName = "nope-engine";
-  const nameOnly = reviewerActivationArgs(reviewer, freeName);
-  const nameOnlyPrompt = nameOnly.at(-1)!;
-  const absentPath = resolveEngineMaterialPath(packageRoot, freeName);
-  assert.equal(existsSync(absentPath), false, "fixture assumes no notes for free name");
-  assertEngineCoordinatesNameOnly(nameOnlyPrompt, freeName, absentPath, "");
-  assertNoEngineFlagsInArgv(nameOnly);
-
-  // Transport helper keeps the same dual-path coordinates without activation argv.
-  assertEngineCoordinatesWithMaterial(
-    buildReviewerTransportPrompt(reviewer, {
-      name: "cursor",
-      materialPath,
-    }),
+  assertTransportWithNotes(
+    buildReviewerTransportPrompt(reviewer, { name: "cursor", materialPath }),
     "cursor",
     materialPath,
   );
-  assertEngineCoordinatesNameOnly(
+
+  const freeName = "nope-engine";
+  const absentPath = resolveEngineMaterialPath(packageRoot, freeName);
+  assert.equal(existsSync(absentPath), false, "fixture assumes no notes for free name");
+  assertTransportNameOnly(
     buildReviewerTransportPrompt(reviewer, { name: freeName }),
     freeName,
     absentPath,
-    "",
   );
 });
 

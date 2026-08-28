@@ -1,8 +1,7 @@
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
-import { engineSessionMaterialFromOptions } from "../../src/package-resources/engine-material.ts";
-import { buildCoderTurnRequest } from "../../src/public-cli/coder-run.ts";
+import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -29,11 +28,9 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 
 import {
   admitCoderInvocation,
-  buildCoderTransportPrompt,
 } from "../../src/public-cli/invocation.ts";
 import {
   RESUME_TRANSPORT_ENVELOPE,
-  selectResumeContinuationPrompt,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractCoderRoleOutcome,
@@ -41,36 +38,6 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-
-function turnHome(admitted: { projectRoot?: string }) {
-  return { home: admitted.projectRoot ?? "/tmp", agentDir: "/tmp/agent" };
-}
-
-function coderActivationArgs(
-  admitted: Parameters<typeof buildCoderTurnRequest>[0],
-  kind: "initial" | "resume",
-): string[] {
-  return buildPiTurnExtraArgs(
-    buildCoderTurnRequest(admitted, {
-      packageRoot,
-      ...turnHome(admitted),
-      continuation:
-        kind === "initial"
-          ? {
-              kind: "initial",
-              prompt: buildCoderTransportPrompt(
-                admitted,
-                engineSessionMaterialFromOptions({ packageRoot }),
-              ),
-            }
-          : {
-              kind: "resume",
-              prompt: selectResumeContinuationPrompt(),
-            },
-    }),
-    piDurablePrincipalAuthority,
-  );
-}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-coder-"));
@@ -108,57 +75,70 @@ function seedGitProject(root: string): void {
 
 
 
-test("buildCoderTurnRequest pins package TDD on apply and omits skill on plan", async () => {
+/**
+ * Replaces direct buildPiTurnExtraArgs argv locks — verifies behavior through
+ * the typed request contract, not argv string indexing.
+ */
+
+test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD method, plan omits it", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    const apply = await admitCoderInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      phase: "apply",
-      instruction: "Apply the approved plan.",
-      attachmentPaths: [],
-      createRunId: () => "run-coder-apply-args",
-    });
-    const applyArgs = coderActivationArgs(apply, "initial");
-    assert.equal(applyArgs.includes("--no-skills"), true);
-    assert.equal(applyArgs.includes("--skill"), true);
-    assert.equal(applyArgs.includes("--ak-coder-phase"), true);
-    assert.equal(applyArgs[applyArgs.indexOf("--ak-coder-phase") + 1], "apply");
-    assert.equal(applyArgs[applyArgs.indexOf("--ak-coder-task") + 1], apply.taskPath);
-    // No ambient home skill path.
-    assert.equal(
-      applyArgs.some((a) => a.includes(".agents/skills")),
-      false,
-    );
+    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
 
-    const plan = await admitCoderInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      phase: "plan",
-      instruction: "Plan only.",
-      attachmentPaths: [],
-      createRunId: () => "run-coder-plan-args",
-    });
-    const planArgs = coderActivationArgs(plan, "initial");
-    assert.equal(planArgs.includes("--no-skills"), true);
-    assert.equal(planArgs.includes("--skill"), false);
-    assert.equal(planArgs[planArgs.indexOf("--ak-coder-phase") + 1], "plan");
+    // Apply phase: TDD method binding present, phase = apply.
+    {
+      await runAkRole(
+        ["coder", "--project", project, "Apply the approved plan."],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-coder-apply-typed",
+          io: captureIo().io,
+          credentials: { "openai-codex": true, xai: true },
+          roleTurnHost: createMinimalHost((request) => {
+            captured.current = request;
+            return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+          }),
+        },
+      );
+      const req = captured.current!;
+      assert.equal(req.activation.role, "coder");
+      assert.equal(req.activation.phase, "apply");
+      assert.equal(
+        req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
+        true,
+        "apply must bind TDD method",
+      );
+      assert.equal(req.continuation.kind, "initial");
+    }
 
-    // Resume args preserve phase and package skill binding without resubmitting task prose.
-    const resumeApply = coderActivationArgs(apply, "resume");
-    assert.equal(resumeApply[resumeApply.indexOf("--ak-coder-phase") + 1], "apply");
-    assert.equal(resumeApply.includes("--skill"), true);
-    assert.equal(resumeApply.includes(RESUME_TRANSPORT_ENVELOPE), true);
-    assert.equal(resumeApply.includes(apply.instruction), false);
-    const resumePlan = coderActivationArgs(plan, "resume");
-    assert.equal(resumePlan[resumePlan.indexOf("--ak-coder-phase") + 1], "plan");
-    assert.equal(resumePlan.includes("--skill"), false);
-    assert.equal(resumePlan.includes(RESUME_TRANSPORT_ENVELOPE), true);
+    // Plan phase: no method bindings.
+    {
+      const result = await runAkRole(
+        ["coder", "plan", "--project", project, "Plan only."],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-coder-plan-typed",
+          io: captureIo().io,
+          credentials: { "openai-codex": true, xai: true },
+          roleTurnHost: createMinimalHost((request) => {
+            captured.current = request;
+            return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 1);
+      const req = captured.current!;
+      assert.equal(req.activation.role, "coder");
+      assert.equal(req.activation.phase, "plan");
+      assert.equal(req.methods.length, 0, "plan must omit method bindings");
+    }
   });
 });
 

@@ -1,9 +1,8 @@
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
-import { engineSessionMaterialFromOptions } from "../../src/package-resources/engine-material.ts";
-import { buildDoctorTurnRequest } from "../../src/public-cli/doctor-run.ts";
+import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -34,35 +33,12 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 
 import {
   admitDoctorInvocation,
-  buildDoctorTransportPrompt,
 } from "../../src/public-cli/invocation.ts";
 import {
   settleDoctorTerminalResult,
   trySettleDoctorTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-
-function doctorActivationArgs(
-  admitted: Parameters<typeof buildDoctorTurnRequest>[0],
-  model?: Parameters<typeof buildDoctorTurnRequest>[1]["model"],
-): string[] {
-  return buildPiTurnExtraArgs(
-    buildDoctorTurnRequest(admitted, {
-      packageRoot,
-      home: admitted.projectRoot ?? "/tmp",
-      agentDir: "/tmp/agent",
-      ...(model === undefined ? {} : { model }),
-      continuation: {
-        kind: "initial",
-        prompt: buildDoctorTransportPrompt(
-          admitted,
-          engineSessionMaterialFromOptions({ packageRoot }),
-        ),
-      },
-    }),
-    piDurablePrincipalAuthority,
-  );
-}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-doctor-"));
@@ -374,7 +350,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
   });
 });
 
-test("buildDoctorTurnRequest pins isolation and --ak-doctor-case to admitted runs root", async () => {
+test("doctor activation projects casePath/isolation flags through typed request via real entry", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -382,37 +358,30 @@ test("buildDoctorTurnRequest pins isolation and --ak-doctor-case to admitted run
     const bookKey = resolveBookKeyFromGit(project);
     await seedIssueRuns(home, bookKey, 12);
 
-    const admitted = await admitDoctorInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      issueNumber: 12,
-      instruction: "diagnose retries",
-      createRunId: () => "run-doctor-args",
-    });
-    const args = doctorActivationArgs(admitted, {
-      provider: "openai-codex",
-      model: "gpt-5.6-luna",
-      thinking: "high",
-    });
+    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
 
-    assert.equal(args.includes("--no-skills"), true);
-    assert.equal(args.includes("--no-prompt-templates"), true);
-    assert.equal(args.includes("--no-themes"), true);
-    assert.equal(args.includes("--no-context-files"), true);
-    assert.equal(args.includes("--skill"), false);
-    assert.equal(args[args.indexOf("--session") + 1], decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile);
-    assert.equal(
-      args[args.indexOf("--session-dir") + 1],
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory,
+    await runAkRole(
+      ["doctor", "--issue", "12", "--project", project, "diagnose retries"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-doctor-typed",
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          captured.current = request;
+          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+        }),
+      },
     );
-    assert.equal(args[args.indexOf("--ak-role") + 1], "doctor");
-    assert.equal(
-      args[args.indexOf("--ak-doctor-case") + 1],
-      admitted.caseRunsPath,
-    );
-    assert.equal(args[args.indexOf("--mode") + 1], "json");
-    assert.equal(args.at(-1), "diagnose retries");
+
+    const req = captured.current!;
+    assert.equal(req.activation.role, "doctor");
+    // Doctor activation derives casePath from the issued principal.
+    assert.ok(req.activation.casePath.length > 0, "doctor must project a casePath");
+    // Doctor activation does not bind skill methods.
+    assert.equal(req.methods.length, 0);
   });
 });
 
