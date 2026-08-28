@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import {
   fauxAssistantMessage,
@@ -33,6 +34,7 @@ import {
   withActivationHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 const PACKAGE_TOOL = "ak_package_owned_no_idle";
 
@@ -227,8 +229,20 @@ test(
               }, piHostAdapter)(pi);
             },
           ],
-        }, async ({ session }) => {
-          // Judge output → scripted Gatekeeper → Notary → injected silent compliance child.
+        }, async ({ session, sessionManager }) => {
+          // Judge → scripted Gatekeeper → Notary → injected silent compliance child.
+          // The institutional children read their seat from the resolution page at
+          // the parent run directory (composed at admission in public-cli; here the
+          // in-process fixture writes the shared seat table directly).
+          const parentFile = sessionManager.getSessionFile();
+          if (parentFile !== undefined) {
+            const parentRunDir = join(dirname(dirname(parentFile)));
+            await writeInstitutionalSeatTable(parentRunDir, {
+              gatekeeper: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
+              notary: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
+              auditor: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
+            });
+          }
           const respond = (context: { tools?: Array<{ name: string }> }) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {

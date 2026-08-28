@@ -1,9 +1,9 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
@@ -62,10 +62,89 @@ import {
   clearPersistentSeatConfig,
   savePublicCliConfig,
   setPersistentSeatConfig,
+  publicCliConfigPath,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
+import {
+  resolveInstitutionalSeatSelections,
+  INSTITUTIONAL_RESOLUTION_FILE,
+} from "../../src/institutional-resolution.ts";
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, withActivationHome } from "../helpers/pi-test-harness.ts";
+
+/**
+ * Synchronously write the institutional resolution page for the current
+ * public-cli config (mirroring admission projection) into a run directory and
+ * set AK_ROLE_RUN_DIR so real Gatekeeper/auditor children read their seat from
+ * the page (#518 S3). Callers restore the env var in finally.
+ */
+function useConfigDerivedSeatTable(
+  home: string,
+  parentModel: { provider: string; model?: string; id?: string; thinking?: string },
+): () => void {
+  const parentSelection = {
+    provider: parentModel.provider,
+    model: (parentModel.model ?? parentModel.id ?? "") as string,
+    ...(parentModel.thinking === undefined ? {} : { thinking: parentModel.thinking }),
+  };
+  const configPath = publicCliConfigPath(home);
+  let seats: PublicCliConfig["seats"];
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as { seats?: PublicCliConfig["seats"] };
+    seats = parsed?.seats ?? {};
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+      seats = {};
+    } else {
+      throw error;
+    }
+  }
+  const config = { seats } as PublicCliConfig;
+  const page = resolveInstitutionalSeatSelections(config, parentSelection);
+  const runDirectory = join(home, ".ak-roles", "books", basename(home), "runs", "seat-table");
+  mkdirSync(runDirectory, { recursive: true });
+  writeFileSync(
+    join(runDirectory, INSTITUTIONAL_RESOLUTION_FILE),
+    `${JSON.stringify(page, null, 2)}\n`,
+    "utf8",
+  );
+  const previous = process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = runDirectory;
+  return () => {
+    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previous;
+  };
+}
+
+/**
+ * Plain institutional seat table for Gatekeeper harnesses that have no
+ * persistent config overrides: every gate/officer/auditor seat inherits the
+ * parent model (matching the "unconfigured" gate behavior). Used by harnesses
+ * that are not wrapped in withActivationHome and therefore must not read the
+ * real user's public-cli.json.
+ */
+function useParentSeatTable(
+  parentModel: { provider: string; model?: string; id?: string; thinking?: string },
+): () => void {
+  const selection = {
+    provider: parentModel.provider,
+    model: (parentModel.model ?? parentModel.id ?? "") as string,
+    ...(parentModel.thinking === undefined ? {} : { thinking: parentModel.thinking }),
+  };
+  const runDirectory = join(tmpdir(), "ak-role-seat-table");
+  mkdirSync(runDirectory, { recursive: true });
+  writeFileSync(
+    join(runDirectory, INSTITUTIONAL_RESOLUTION_FILE),
+    `${JSON.stringify({ version: 1, seats: { gatekeeper: selection, inspector: selection, notary: selection, auditor: selection, evidenceChild: selection } }, null, 2)}\n`,
+    "utf8",
+  );
+  const previous = process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = runDirectory;
+  return () => {
+    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previous;
+  };
+}
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Tool = {
@@ -200,6 +279,8 @@ function toolCallContext(
 function withPassingGatekeeper(context: ExtensionContext): ExtensionContext {
   const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
   const model = faux.getModel();
+  // Gatekeeper children read their seat from the institutional resolution page.
+  useParentSeatTable(model);
   const responses = [
     fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
     fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })),
@@ -280,6 +361,7 @@ function workerCompletionGatekeeperHarness(options: {
   };
   return {
     context(id: string, toolName: string) {
+      useParentSeatTable(model);
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(), model,
         modelRegistry: scriptedGatekeeperModelRegistry(model, provider),
@@ -406,6 +488,7 @@ function realEntryGateModelHarness(options: {
     parentModel,
     seen,
     context(id: string, toolName: string) {
+      useConfigDerivedSeatTable(process.env.HOME ?? "", parentModel);
       return Object.assign(toolCallContext([{ id, name: toolName }]), {
         cwd: process.cwd(),
         model: parentModel,
@@ -415,13 +498,13 @@ function realEntryGateModelHarness(options: {
           find(providerName: string, modelId: string) {
             return catalog.get(`${providerName}/${modelId}`);
           },
-          async getProviderAuth() { return { auth: { apiKey: "test-key" } }; },
+          async getProviderAuth() { return { auth: { apiKey: "k" } }; },
           async getApiKeyAndHeaders(candidate: { id?: string }) {
             if (candidate?.id !== undefined && authFailIds.has(candidate.id)) {
               return { ok: false, error: "override credentials missing" };
             }
             // Known providers (xai/openai-codex) require a key on ModelRuntime refresh.
-            return { ok: true, apiKey: "test-key" };
+            return { ok: true, apiKey: "k" };
           },
         },
         thinkingLevel: "off",
@@ -1263,6 +1346,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
       streamSimple() { return this.stream(); },
     };
     // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
+    useParentSeatTable(model);
     const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
       cwd: process.cwd(),
       model,
@@ -1789,6 +1873,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   ) => {
     const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
     assert.ok(tool);
+    useParentSeatTable(harness.model);
     return tool.execute(
       id,
       completed,
