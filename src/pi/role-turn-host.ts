@@ -408,18 +408,3 @@ export async function appendPiSessionCustomEntry(
   })}\n`;
   await appendFile(sessionFile, pointerLine, "utf8");
 }
-
-/** Scan session file parent id for the latest non-header entry (codec helper). */
-export async function readPiSessionLatestParentId(
-  authority: DurablePrincipalAuthority,
-  principal: DurablePrincipal,
-): Promise<string | null> {
-  const { sessionFile } = decodePiDurablePrincipal(authority, principal);
-  const text = await readFile(sessionFile, "utf8");
-  let parentId: string | null = null;
-  for (const line of text.trim().split("\n").filter(Boolean)) {
-    const entry = JSON.parse(line) as { id?: unknown; type?: unknown };
-    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
-  }
-  return parentId;
-}
