@@ -118,15 +118,15 @@ export const PUBLIC_ROLE_RECORDS = [
 export type PublicRoleRecord = (typeof PUBLIC_ROLE_RECORDS)[number];
 export type PackagedRole = PublicRoleRecord["role"];
 
-/** Read-only metadata projection (no sessionMaterials). */
-export type PackagedRoleMetadata = {
-  readonly role: PublicRoleRecord["role"];
-  readonly phases: PublicRoleRecord["phases"];
-  readonly outputTool: PublicRoleRecord["outputTool"];
-  readonly inputFlag: PublicRoleRecord["inputFlag"];
-  readonly phaseFlag: PublicRoleRecord["phaseFlag"];
-  readonly activationStage: PublicRoleRecord["activationStage"];
-};
+/**
+ * Read-only metadata projection (no sessionMaterials).
+ * Distributed per PublicRoleRecord member so role↔field associations stay intact.
+ */
+export type PackagedRoleMetadata = PublicRoleRecord extends infer R
+  ? R extends PublicRoleRecord
+    ? Omit<R, "sessionMaterials">
+    : never
+  : never;
 
 /** Historical symbol — derived from PUBLIC_ROLE_RECORDS. */
 export const PACKAGED_ROLE_REGISTRY: readonly PackagedRoleMetadata[] =
