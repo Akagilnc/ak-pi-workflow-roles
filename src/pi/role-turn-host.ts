@@ -23,6 +23,7 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "../host-contracts.ts";
+import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
 import { decodePiDurablePrincipal } from "./durable-principal.ts";
 
@@ -240,11 +241,16 @@ async function resolveSelectedPi(
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
-      throw error;
+      throw new ExplicitInternalActivationError(
+        `Pi executable resolution failed: ${String((error as Error).message)}`,
+        { knownCause: "activation", cause: error },
+      );
     }
     return await realpath(candidate);
   }
-  throw new Error(`Pi executable not found: ${command}`);
+  throw new ExplicitInternalActivationError(`Pi executable not found: ${command}`, {
+    knownCause: "activation",
+  });
 }
 
 async function selectedPiIdentity(
@@ -276,7 +282,6 @@ export function createDefaultPiSpawnRunner(options: {
     runDirectory: string,
     identity: LaunchedPiIdentity,
   ) => Promise<void>;
-  spawnProcess?: typeof spawn;
 }): PiSpawnRunner {
   return async (args, spawnOptions) => {
     const command = spawnOptions.env.PI_BINARY ?? "pi";
@@ -284,7 +289,7 @@ export function createDefaultPiSpawnRunner(options: {
     return await new Promise((resolveResult, reject) => {
       // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
       // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
-      const child: SpawnedPiChild = (options.spawnProcess ?? spawn)(piIdentity.executable, [...args], {
+      const child: SpawnedPiChild = spawn(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         stdio: ["ignore", "ignore", "pipe"],

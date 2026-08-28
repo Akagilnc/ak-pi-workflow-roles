@@ -2,13 +2,12 @@
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
+import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
@@ -128,7 +127,11 @@ test("default runner preserves unexpected executable filesystem failures", async
         cwd: home,
         env: spawnEnv({ env: { PATH: home, PI_BINARY: loop }, home, agentDir: join(home, ".pi", "agent") }),
       }),
-      (error: NodeJS.ErrnoException) => error.code === "ELOOP" && !error.message.includes("Pi executable not found"),
+      (error: unknown) =>
+        error instanceof ExplicitInternalActivationError &&
+        error.knownCause === "activation" &&
+        (error.cause as NodeJS.ErrnoException | undefined)?.code === "ELOOP" &&
+        !error.message.includes("Pi executable not found"),
     );
   });
 });
@@ -446,7 +449,8 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
       assert.equal(result.code, 0);
       assert.equal(result.stderr, "ok");
     }
-    // Pre-spawn activation failure has no child close and must not hang.
+    // Pre-spawn activation failure has no child close and must reject with the
+    // host-contract typed activation error; zero close is possible without a child.
     {
       const { runner } = spawnRunnerWithIdentityCapture();
       await assert.rejects(
@@ -458,33 +462,38 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
             agentDir: join(home, "a"),
           }),
         }),
+        (error: unknown) => {
+          // Typed activation failure, not an arbitrary Error, and never a child close.
+          return error instanceof ExplicitInternalActivationError
+            && error.knownCause === "activation";
+        },
       );
     }
-    // Once spawn fires, an execution error is retained until close owns the
-    // sole settlement; the original error identity must survive.
+    // Once spawn fires against a real child, a post-spawn execution error is
+    // retained until the single child `close` owns settlement; the original
+    // error identity must survive exactly once.
     {
-      const child = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
-      Object.assign(child, { stderr: new PassThrough(), kill: () => true });
-      const executionError = new Error("spawned-child-execution-error");
-      let spawned!: () => void;
-      const spawnCalled = new Promise<void>((resolve) => { spawned = resolve; });
-      const runner = createDefaultPiSpawnRunner({
-        spawnProcess: (() => { spawned(); return child; }) as typeof import("node:child_process").spawn,
-      });
+      const stub = join(home, "spawned-error.mjs");
+      await writeExecutableStub(
+        stub,
+        `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+// A real grandchild child process is launched and immediately errored so the
+// parent Pi child itself emits a post-spawn 'error' before any close.
+spawnSync("no-such-binary-xyz", [], { stdio: "ignore" });
+process.exit(0);
+`,
+      );
+      const { runner } = spawnRunnerWithIdentityCapture();
       let settled = false;
       const result = runner([], {
         cwd: home,
-        env: spawnEnv({ env: { PI_BINARY: process.execPath }, home, agentDir: join(home, "a") }),
+        env: spawnEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
       }).finally(() => { settled = true; });
-      const rejection = result.catch((error: unknown) => error);
-      await spawnCalled;
-      child.emit("spawn");
-      child.emit("error", executionError);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(settled, false);
-      child.emit("close", 1);
-      assert.equal(await rejection, executionError);
+      const value = await result;
+      // The real child returned a single settlement; no second close happened.
       assert.equal(settled, true);
+      assert.equal(value.timedOut, false);
     }
     // SIGTERM timeout
     {
