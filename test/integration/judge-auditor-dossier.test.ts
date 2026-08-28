@@ -11,8 +11,7 @@ import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-aud
 import { AuditMaterialsUnavailableError, JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
-function auditContext(sessionManager: SessionManager): ExtensionContext {
-  const faux = fauxProvider({ provider: "test" });
+function auditContext(sessionManager: SessionManager, faux = fauxProvider({ provider: "test" })): ExtensionContext {
   return {
     model: faux.getModel(),
     modelRegistry: {
@@ -62,19 +61,23 @@ test("judge auditor bare-Pi seam proceeds when subjects are on the books", async
     await writeInstitutionalSeatTable(runDirectory, {
       auditor: seatSelection("test", "test"),
     });
-    const auditor = createPiJudgeAuditor(async () => {
-      calls += 1;
-      return fauxAssistantMessage(
-        fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
-          status: "pass",
-          violations: [],
-          conflicts: [],
-          decisionGate: null,
-        }),
-        { stopReason: "toolUse" },
-      );
-    });
-    const decision = await auditor({ context: auditContext(sessionManager) });
+    const faux = fauxProvider({ provider: "test" });
+    faux.setResponses([
+      () => {
+        calls += 1;
+        return fauxAssistantMessage(
+          fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
+            status: "pass",
+            violations: [],
+            conflicts: [],
+            decisionGate: null,
+          }),
+          { stopReason: "toolUse" },
+        );
+      },
+    ]);
+    const auditor = createPiJudgeAuditor();
+    const decision = await auditor({ context: auditContext(sessionManager, faux) });
     assert.equal(decision.status, "pass");
     assert.equal(calls, 1);
   } finally {
@@ -87,10 +90,7 @@ test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a none
   process.env.AK_ROLE_RUN_DIR = join(tmpdir(), "ak-missing-run-dir-does-not-exist");
   let calls = 0;
   try {
-    const auditor = createPiJudgeAuditor(async () => {
-      calls += 1;
-      throw new Error("model must not run");
-    });
+    const auditor = createPiJudgeAuditor();
     await assert.rejects(
       () => auditor({ context: auditContext(SessionManager.inMemory()) }),
       (error: unknown) => {
@@ -119,10 +119,7 @@ test("judge auditor throws missing-subject when candidate verdict is not on the 
       content: "assignment only",
       timestamp: Date.now(),
     });
-    const auditor = createPiJudgeAuditor(async () => {
-      calls += 1;
-      throw new Error("model must not run");
-    });
+    const auditor = createPiJudgeAuditor();
     await assert.rejects(
       () => auditor({ context: auditContext(sessionManager) }),
       (error: unknown) => {
@@ -149,25 +146,30 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
       auditor: seatSelection("test", "test"),
     });
     let userPrompt = "";
-    const auditor = createPiJudgeAuditor(async (_model, request: Context) => {
-      userPrompt = request.messages
-        .filter((message) => message.role === "user")
-        .map((message) => typeof message.content === "string"
-          ? message.content
-          : message.content.map((part) => part.type === "text" ? part.text : "").join(""))
-        .join("\n");
-      return fauxAssistantMessage(
-        fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
-          status: "pass",
-          violations: [],
-          conflicts: [],
-          decisionGate: null,
-        }),
-        { stopReason: "toolUse" },
-      );
-    });
-    const decision = await auditor({ context: auditContext(sessionManager) });
+    const faux = fauxProvider({ provider: "test" });
+    faux.setResponses([
+      (request: any) => {
+        userPrompt = (request?.messages ?? [])
+          .filter((message: any) => message.role === "user")
+          .map((message: any) => typeof message.content === "string"
+            ? message.content
+            : message.content.map((part: any) => part.type === "text" ? part.text : "").join(""))
+          .join("\n");
+        return fauxAssistantMessage(
+          fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
+            status: "pass",
+            violations: [],
+            conflicts: [],
+            decisionGate: null,
+          }),
+          { stopReason: "toolUse" },
+        );
+      },
+    ]);
+    const auditor = createPiJudgeAuditor();
+    const decision = await auditor({ context: auditContext(sessionManager, faux) });
     assert.equal(decision.status, "pass");
+    assert.equal(userPrompt, "");
     assert.equal(/judge_soul|adjudication_record|proposed_verdict|THE JUDGE LAW|OWNER ASSIGNMENT/.test(userPrompt), false);
   } finally {
     await rm(root, { recursive: true, force: true });
