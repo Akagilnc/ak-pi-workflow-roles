@@ -1,7 +1,8 @@
 /**
  * Unified post-admission Role lifecycle coordinator (stages ③–⑤; ADR 0018 / #505 / #517 / #526).
- * Post-admission lifecycle — mark admitted → writer lease → running → ③ dispatch →
- * ④ tool loop / gates → ⑤ settle / fail → terminal → release — lives here as the sole owner.
+ * Owns writer lease → running → ③ dispatch → ④ tool loop / gates → ⑤ settle / fail →
+ * terminal → release. The durable admitted mark (markRunAdmitted) is owned by the
+ * initial role facades before entering; manual resume never re-admits.
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { writeFile } from "node:fs/promises";
