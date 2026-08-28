@@ -13,10 +13,14 @@ export type AuditorDossierLocation = {
   readonly artifacts: string;
 };
 
-/** Resolve the exact run binding already carried by the parent record session. */
+/** Resolve the exact run binding already carried by the parent record session,
+ * falling back to the machine-injected AK_ROLE_RUN_DIR when the parent session
+ * is in-memory (no persisted session file). */
 export function auditorRunDirectory(context: ExtensionContext): string | undefined {
   const sessionFile = context.sessionManager?.getSessionFile?.();
-  return sessionFile === undefined ? undefined : resolve(dirname(dirname(sessionFile)));
+  if (sessionFile !== undefined) return resolve(dirname(dirname(sessionFile)));
+  const envRunDir = process.env.AK_ROLE_RUN_DIR;
+  return envRunDir === undefined || envRunDir.trim() === "" ? undefined : envRunDir;
 }
 
 /** The one shared, run-bound dossier locator exposed to every auditor seat. */

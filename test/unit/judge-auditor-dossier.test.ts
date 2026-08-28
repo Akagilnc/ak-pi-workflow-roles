@@ -9,6 +9,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { AuditMaterialsUnavailableError, JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 function auditContext(sessionManager: SessionManager): ExtensionContext {
   const faux = fauxProvider({ provider: "test" });
@@ -16,8 +17,8 @@ function auditContext(sessionManager: SessionManager): ExtensionContext {
     model: faux.getModel(),
     modelRegistry: {
       getProvider() { return faux.provider; },
-      async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
-      async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "secret" }; },
+      async getProviderAuth() { return { auth: { apiKey: "k" } }; },
+      async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "k" }; },
     },
     sessionManager,
   } as unknown as ExtensionContext;
@@ -49,13 +50,19 @@ function seedJudgeSubjects(sessionManager: SessionManager): void {
   });
 }
 
-test("judge auditor bare-Pi seam proceeds without AK_ROLE_RUN_DIR when subjects are on the books", async () => {
+test("judge auditor bare-Pi seam proceeds when subjects are on the books", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-judge-bare-pi-"));
+  const runDirectory = join(root, "run");
+  await mkdir(runDirectory);
   const previous = process.env.AK_ROLE_RUN_DIR;
-  delete process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = runDirectory;
   let calls = 0;
   try {
     const sessionManager = SessionManager.inMemory();
     seedJudgeSubjects(sessionManager);
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("test", "test"),
+    });
     const auditor = createPiJudgeAuditor(async () => {
       calls += 1;
       return fauxAssistantMessage(
@@ -74,6 +81,7 @@ test("judge auditor bare-Pi seam proceeds without AK_ROLE_RUN_DIR when subjects 
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previous;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -144,6 +152,9 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
   try {
     const sessionManager = SessionManager.inMemory(root);
     seedJudgeSubjects(sessionManager);
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("test", "test"),
+    });
     let userPrompt = "";
     const auditor = createPiJudgeAuditor(async (_model, request: Context) => {
       userPrompt = request.messages

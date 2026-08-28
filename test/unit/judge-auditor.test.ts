@@ -12,6 +12,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 const usage = {
   input: 10,
@@ -120,6 +121,9 @@ test("Pi judge auditor preserves authentication failures", async () => {
   const previous = process.env.AK_ROLE_RUN_DIR;
   process.env.AK_ROLE_RUN_DIR = runDirectory;
   try {
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("test", "auditor"),
+    });
     const context = auditContext(undefined, new Error("login expired"));
     const auditor = createPiJudgeAuditor(async () =>
       auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null }),
