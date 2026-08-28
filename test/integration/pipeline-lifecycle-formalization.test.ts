@@ -85,10 +85,19 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     ) as { state: string };
     assert.equal(runState.state, "terminal", "AK-owned run-state must settle as terminal");
 
-    // A real artifact is produced by AK settlement for the terminal.
+    // A real artifact is produced by AK settlement for the terminal. Open the
+    // exact typed artifact ref — not just assert path is a string — and confirm
+    // it is not a dangling ref by reading minimal structured role/outcome.
     const artifact = result.terminal!.artifacts[0];
     assert.ok(artifact, "settled terminal must publish at least one real artifact");
-    assert.equal(typeof artifact.path, "string");
+    const artifactBody = JSON.parse(
+      await readFile(artifact.path, "utf8"),
+    ) as { role?: string; cause?: string; kind?: string };
+    assert.equal(artifactBody.role, "judge", "artifact must carry the judge role");
+    assert.ok(
+      typeof artifactBody.cause === "string" && artifactBody.cause.length > 0,
+      "artifact must carry a structured outcome (cause)",
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }
