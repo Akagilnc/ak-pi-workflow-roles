@@ -19,7 +19,8 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import { roleRunSessionCoordinates } from "../archivist-role-run-coordinates.ts";
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { decodePiDurablePrincipal, piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
 import { resolveTicketNumberFromAttachmentBodies } from "../ticket-frontmatter.ts";
 import {
   loadDoctorCase,
@@ -763,6 +764,7 @@ export type AdmitJudgeInvocationOptions = {
   project?: string;
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
+  principalAuthority?: DurablePrincipalAuthority;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
 };
@@ -780,8 +782,11 @@ export async function admitJudgeInvocation(
   }
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "judge", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === undefined ? undefined : () => options.home!);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -885,6 +890,7 @@ export async function ensureRunArtifactsDir(runDirectory: string): Promise<strin
 
 export type AdmitCoderInvocationOptions = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   cwd: string;
   phase: CoderPhase;
   instruction: string;
@@ -918,8 +924,11 @@ export async function admitCoderInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "coder", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === undefined ? undefined : () => options.home!);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -998,6 +1007,7 @@ export function buildCoderTransportPrompt(
 
 export type AdmitFixerInvocationOptions = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   cwd: string;
   phase: FixerPhase;
   instruction: string;
@@ -1058,8 +1068,11 @@ export async function admitFixerInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "fixer", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === undefined ? undefined : () => options.home!);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1295,6 +1308,7 @@ function stripGitSuffix(name: string): string {
 
 export type AdmitCollectorInvocationOptions = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   cwd: string;
   prNumber: number;
   instruction?: string;
@@ -1355,8 +1369,11 @@ export async function admitCollectorInvocation(
   const manifestDigest = manifest.digest;
 
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "collector", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === undefined ? undefined : () => options.home!);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1533,6 +1550,7 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
 
 export type AdmitDoctorInvocationOptions = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   cwd: string;
   issueNumber: number;
   /** Optional project-relative retained runs root override. */
@@ -1639,8 +1657,11 @@ export async function admitDoctorInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "doctor", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === undefined ? undefined : () => options.home!);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
 
   let caseRunsPath: string;
   try {
@@ -1821,6 +1842,7 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
 
 export async function admitNotaryInvocation(options: {
   readonly home: string;
+  readonly principalAuthority?: DurablePrincipalAuthority;
   readonly cwd: string;
   readonly sourceRun: string;
   readonly project?: string;
@@ -1848,13 +1870,12 @@ export async function admitNotaryInvocation(options: {
   }
 
   const runId = options.createRunId?.() ?? uuidv7();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({
-      cwd: projectRoot,
-      runId,
-      role: "notary",
-      home: options.home,
-    });
+  const authority = options.principalAuthority ?? piDurablePrincipalAuthority;
+  const principal = authority.issue({ cwd: projectRoot, runId, role: "notary", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === undefined ? undefined : () => options.home!);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
 
   const admitted = {
@@ -1973,6 +1994,7 @@ export function parseReviewerArgv(
 
 export type AdmitReviewerInvocationOptions = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   cwd: string;
   /** Optional caller prose retained only as admitted provenance — never semantic control. */
   instruction: string;
@@ -2006,8 +2028,11 @@ export async function admitReviewerInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === undefined ? undefined : () => options.home!);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -2190,6 +2215,7 @@ export async function deriveMergerEnvelopeFromActiveMerge(
 
 export type AdmitMergerInvocationOptions = {
   home: string;
+  principalAuthority?: DurablePrincipalAuthority;
   cwd: string;
   instruction: string;
   attachmentPaths: readonly string[];
@@ -2226,8 +2252,11 @@ export async function admitMergerInvocation(
   );
 
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const principal = (options.principalAuthority ?? piDurablePrincipalAuthority).issue({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(options.principalAuthority ?? piDurablePrincipalAuthority, principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(options.home === undefined ? undefined : () => options.home!);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
