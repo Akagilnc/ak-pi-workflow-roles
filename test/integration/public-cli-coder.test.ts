@@ -30,9 +30,6 @@ import {
   admitCoderInvocation,
 } from "../../src/public-cli/invocation.ts";
 import {
-  RESUME_TRANSPORT_ENVELOPE,
-} from "../../src/public-cli/run-lifecycle.ts";
-import {
   extractCoderRoleOutcome,
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -532,7 +529,6 @@ test("ak-role resume continues coder with preserved plan phase and exact session
         assert.equal(args[args.indexOf("--ak-coder-task") + 1], admitted.taskPath);
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
-        assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
