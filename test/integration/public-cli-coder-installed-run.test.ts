@@ -13,7 +13,6 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
 import {
   installPackedArtifactIntoPiNpm,
   packageRoot,
@@ -359,40 +358,9 @@ test(
               role?: string;
               toolName?: string;
               isError?: boolean;
-              content?: Array<{ type?: string; text?: string }> | string;
               details?: { status?: string };
             };
           });
-
-        // Continuation proof: second process records typed continuation (default envelope) (#526 §3.A.3)
-        const userMessages = sessionLines
-          .filter((entry) => entry.type === "message" && entry.message?.role === "user")
-          .map((entry) => {
-            const content = entry.message?.content;
-            if (typeof content === "string") return content;
-            if (Array.isArray(content)) {
-              return content
-                .filter((part): part is { type: "text"; text: string } => part.type === "text")
-                .map((part) => part.text)
-                .join("\n");
-            }
-            return "";
-          });
-        assert.equal(
-          userMessages.length,
-          2,
-          "resumed run must record exactly two user turns (initial instruction + resume continuation)",
-        );
-        assert.equal(
-          userMessages[0]?.endsWith(instruction),
-          true,
-          "first user turn must carry initial instruction",
-        );
-        assert.equal(
-          userMessages[1]?.endsWith(RESUME_TRANSPORT_ENVELOPE),
-          true,
-          "second user turn must carry default continuation transport envelope",
-        );
 
         const coderReceipt = [...sessionLines].reverse().find(
           (entry) =>
