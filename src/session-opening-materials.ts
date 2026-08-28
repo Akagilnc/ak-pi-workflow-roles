@@ -1,15 +1,9 @@
 /**
- * Session opening materials (#443 / #524): factory constitution + role soul +
- * role-owned extras, composed at the three existing loader seams. Missing files
- * fail as native readFile errors — no exists/hash/empty guards, no second loader.
- *
- * Public main-role materials and metadata derive from PUBLIC_ROLE_RECORDS
- * (packaged-role-registry). Gatekeeper province stays independent except notary,
- * which reuses the same NOTARY_SESSION_MATERIALS definition. Navigator is a
- * name-only resident seat — materials here, not a public role record.
- *
- * Auditor composition stays owned by loadAuditorSoul (blank-soul identity);
- * main roles and gatekeeper family share joinPackageMaterials here.
+ * Session opening materials (#443 / #524). Missing files fail as native readFile
+ * errors. Main-role materials derive from PUBLIC_ROLE_RECORDS; gatekeeper seats
+ * stay independent except notary (shared NOTARY_SESSION_MATERIALS). Navigator is
+ * name-only here, not a public role record. Auditor composition stays in
+ * loadAuditorSoul; loaders share joinPackageMaterials.
  */
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -38,27 +32,19 @@ export async function joinPackageMaterials(
   return chunks.join("\n\n");
 }
 
-/** Navigator resident seat — name-only materials; not a public role record. */
-const NAVIGATOR_SESSION_MATERIALS = ["CLAUDE.md", "souls/navigator.md"] as const;
-
-type PublicMainRoleMaterials = {
+type PublicRoleMaterials = {
   readonly [Role in PackagedRole]: Extract<
     (typeof PUBLIC_ROLE_RECORDS)[number],
     { role: Role }
   >["sessionMaterials"];
 };
 
-const PUBLIC_MAIN_ROLE_SESSION_MATERIALS = Object.fromEntries(
-  PUBLIC_ROLE_RECORDS.map((record) => [record.role, record.sessionMaterials]),
-) as PublicMainRoleMaterials;
-
-/**
- * Read-only derived projection: public role materials from PUBLIC_ROLE_RECORDS
- * plus navigator name-only materials.
- */
+/** Derived projection: public records + navigator name-only materials. */
 export const MAIN_ROLE_SESSION_MATERIALS = {
-  ...PUBLIC_MAIN_ROLE_SESSION_MATERIALS,
-  navigator: NAVIGATOR_SESSION_MATERIALS,
+  ...(Object.fromEntries(
+    PUBLIC_ROLE_RECORDS.map((record) => [record.role, record.sessionMaterials]),
+  ) as PublicRoleMaterials),
+  navigator: ["CLAUDE.md", "souls/navigator.md"] as const,
 } as const;
 
 export type MainRoleSession = keyof typeof MAIN_ROLE_SESSION_MATERIALS;
@@ -69,10 +55,7 @@ export function loadMainRoleSessionMaterials(
   return joinPackageMaterials(MAIN_ROLE_SESSION_MATERIALS[role]);
 }
 
-/**
- * Gatekeeper province seats. Institution set is independent; notary references
- * the same NOTARY_SESSION_MATERIALS definition as the public notary record.
- */
+/** Gatekeeper province; notary reuses the public notary materials definition. */
 export const GATEKEEPER_SESSION_MATERIALS = {
   gatekeeper: ["CLAUDE.md", "souls/gatekeeper.md", "souls/gate-output-guide.md"],
   inspector: [
