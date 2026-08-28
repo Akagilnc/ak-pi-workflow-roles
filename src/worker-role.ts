@@ -284,15 +284,13 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
-            if (output.status === "completed" || output.status === "partially_completed") {
-              await requireGatekeeperPass({
-                context: ctx,
-                subject: { kind: "worker_completion", material: JSON.stringify(output) },
-                ...(_signal === undefined ? {} : { signal: _signal }),
-                hostActions,
-                toolCallId,
-              });
-            }
+            await requireGatekeeperPass({
+              context: ctx,
+              subject: { kind: "worker_completion", material: JSON.stringify(output) },
+              ...(_signal === undefined ? {} : { signal: _signal }),
+              hostActions,
+              toolCallId,
+            });
             const acceptedDetails = output;
             return {
               content: [{ type: "text" as const, text: FIXER_ACCEPTED_TEXT }],
@@ -425,15 +423,13 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
-            if (output.status === "completed") {
-              await requireGatekeeperPass({
-                context: ctx,
-                subject: { kind: "worker_completion", material: JSON.stringify(output) },
-                ...(_signal === undefined ? {} : { signal: _signal }),
-                hostActions,
-                toolCallId,
-              });
-            }
+            await requireGatekeeperPass({
+              context: ctx,
+              subject: { kind: "worker_completion", material: JSON.stringify(output) },
+              ...(_signal === undefined ? {} : { signal: _signal }),
+              hostActions,
+              toolCallId,
+            });
             const acceptedDetails = output;
             return {
               content: [{ type: "text" as const, text: CODER_ACCEPTED_TEXT }],
