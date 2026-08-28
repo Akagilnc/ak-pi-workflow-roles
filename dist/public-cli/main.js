@@ -15537,7 +15537,7 @@ function createDefaultPiSpawnRunner(options) {
     const command = spawnOptions.env.PI_BINARY ?? "pi";
     const piIdentity = await selectedPiIdentity(command, spawnOptions.cwd, spawnOptions.env);
     return await new Promise((resolveResult, reject) => {
-      const child = spawn(piIdentity.executable, [...args], {
+      const child = (options.spawnProcess ?? spawn)(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         stdio: ["ignore", "ignore", "pipe"]
