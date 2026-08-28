@@ -27,6 +27,7 @@ import {
   setPersistentSeatConfig,
 } from "../../src/public-cli/config.ts";
 import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
@@ -53,6 +54,7 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
+    sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:4,
@@ -73,6 +75,7 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
+    sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
@@ -242,6 +245,7 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
       await assert.rejects(
         ()=>runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
+    sessionAppender: appendPiSessionCustomEntry,
           admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
           io,
           autoResumeLimit:bad,
@@ -266,6 +270,7 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
       ()=>runPublicJudge(["--project",project,"auto"],{
         home,
         principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
         agentDir:join(home,".ak-roles","agent"),
         packageRoot,
         cwd:project,

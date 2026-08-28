@@ -11,6 +11,7 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
   RoleTurnResult,
+  SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { writeFile } from "node:fs/promises";
@@ -94,6 +95,8 @@ export type ReviewerRunEnv = {
   /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
   autoResumeLimit?: number;
   timeoutMs?: number;
+  /** Host-neutral Pi session codec for dispatch-error retention (#526 S1b-2). */
+  sessionAppender: SessionCustomEntryAppender;
 };
 
 function reviewerMethods(packageRoot: string): readonly MethodBinding[] {
@@ -419,6 +422,7 @@ export async function runPublicReviewer(
     admitted,
     principalAuthority: env.principalAuthority,
     io,
+    sessionAppender: env.sessionAppender,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: () =>

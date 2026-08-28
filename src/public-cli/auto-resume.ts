@@ -19,8 +19,8 @@ import { join } from "node:path";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
+  SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { appendPiSessionCustomEntry } from "../pi/role-turn-host.ts";
 import {
   AUTO_RESUME_LIMIT,
   describeErrorIdentity,
@@ -198,6 +198,7 @@ function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
 async function retainDispatchError(
   admitted: { runDirectory: string; principal: DurablePrincipal },
   principalAuthority: DurablePrincipalAuthority,
+  sessionAppender: SessionCustomEntryAppender,
   attempt: number,
   error: unknown,
 ): Promise<{ file: string; pointerError?: unknown }> {
@@ -249,7 +250,7 @@ async function retainDispatchError(
   let pointerError: unknown;
   try {
     const timestamp = new Date().toISOString();
-    await appendPiSessionCustomEntry(
+    await sessionAppender(
       principalAuthority,
       admitted.principal,
       DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
@@ -330,6 +331,7 @@ export async function runWithAutoResumeLoop<
   };
   principalAuthority: DurablePrincipalAuthority;
   io: CliIo;
+  sessionAppender: SessionCustomEntryAppender;
   /**
    * Effective ceiling (#422), resolved by the caller before the loop; never re-read
    * per round. undefined = package default (AUTO_RESUME_LIMIT). Domain-validated at
@@ -385,6 +387,7 @@ export async function runWithAutoResumeLoop<
         const { file, pointerError } = await retainDispatchError(
           options.admitted,
           options.principalAuthority,
+          options.sessionAppender,
           attempt,
           error,
         );

@@ -3,19 +3,20 @@
  * #107: controlled post-admission failures and human decisions settle honestly.
  * #108: typed HTTP 429 resume of the exact Pi session.
  */
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import type {
+  DurablePrincipalAuthority,
   MethodBinding,
   RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
   RoleTurnResult,
+  SessionCustomEntryAppender,
 } from "../host-contracts.ts";
+import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitJudgeInvocation,
@@ -94,6 +95,8 @@ export type JudgeRunEnv = {
   autoResumeLimit?: number;
   /** Override default role-run timeout. */
   timeoutMs?: number;
+  /** Host-neutral Pi session codec for dispatch-error retention (#526 S1b-2). */
+  sessionAppender: SessionCustomEntryAppender;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -393,6 +396,7 @@ export async function runPublicJudge(
     admitted,
     principalAuthority: env.principalAuthority,
     io,
+    sessionAppender: env.sessionAppender,
     // #422: pass-through only; the loop entry resolves the default and validates the domain once.
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: () =>
