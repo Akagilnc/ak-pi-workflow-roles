@@ -15,24 +15,10 @@
  * The diagnostic is carried verbatim on the thrown Error so settlement keeps
  * the original cause (kind=failure, exit 1, openable run/session pointers).
  */
-import { Type } from "typebox";
 
 export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
 export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
-
-/** Shared schema fragment reused by every terminating output tool's parameters. */
-export const infrastructureFailureDeclarationSchema = Type.Object(
-  {
-    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: Type.Object(
-      {
-        [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: Type.String({ minLength: 1 }),
-      },
-      { additionalProperties: true },
-    ),
-  },
-  { additionalProperties: true },
-);
 
 /** Structural host seam subset shared by all eight terminating execute paths. */
 export type TerminatingInfrastructureHostActions<C> = {
