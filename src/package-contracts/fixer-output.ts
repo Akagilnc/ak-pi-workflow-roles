@@ -1,6 +1,7 @@
 import { Type, type Static } from "typebox";
 import { FIXER_PREREQUISITE_ID_PATTERN, type FixerInvocationInput } from "./fixer-packet.ts";
 import { openToolObjectFromUnion } from "../open-tool-schema.ts";
+import { withInfrastructureFailureDeclaration } from "./terminating-infrastructure.ts";
 
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
 export const FIXER_ACCEPTED_TEXT = "修内司回执已接受";
@@ -40,7 +41,9 @@ const fixerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "各类拒绝结算" }) }),
   Type.Object({ status: Type.Literal("partially_completed", { description: "partially_completed — 形状指引，非 schema 闸" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { minItems: 1, description: "各类完成或拒绝结算" }), testEvidence: Type.Optional(testEvidenceSchema) }),
 ]);
-export const fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
+export const fixerOutputSchema = withInfrastructureFailureDeclaration(
+  openToolObjectFromUnion(fixerOutputVariants),
+);
 
 export type FixerBlocker = Static<typeof blockerSchema>;
 export type FixerClassResult = Static<typeof classResultSchema>;

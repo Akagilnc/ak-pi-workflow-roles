@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import { COLLECTOR_ELIGIBILITY_MS } from "./collector-evidence.ts";
+import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export const collectorObserveArgsSchema = Type.Object({}, { additionalProperties: false });
 export const collectorRequestArgsSchema = Type.Object({
@@ -10,7 +11,9 @@ export const collectorWaitArgsSchema = Type.Object({
   durationMs: Type.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "等待毫秒；单次上限五分钟且不超剩余资格" }),
 }, { additionalProperties: false });
 /** Runtime owns the observed groups; the model only signals sole-final submission. */
-export const collectorOutputArgsSchema = Type.Object({}, { additionalProperties: true });
+export const collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
+  Type.Object({}, { additionalProperties: true }),
+);
 (collectorOutputArgsSchema as unknown as { required: string[] }).required = [];
 
 export type CollectorObserveArgs = Static<typeof collectorObserveArgsSchema>;
