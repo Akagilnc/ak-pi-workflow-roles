@@ -1969,7 +1969,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
   }
 });
 
-test("undeclared prerequisite submissions are rejected; declared references accept without LLM audit", async () => {
+test("undeclared prerequisite submissions are rejected; declared references pass structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
@@ -2009,7 +2009,7 @@ test("undeclared prerequisite submissions are rejected; declared references acce
     assert.deepEqual(shared.details.classResults, [classA, classB]);
   });
 });
-test("declared plan refusal accepts without LLM audit", async () => {
+test("declared plan refusal passes structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "plan" });
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer",
@@ -2594,7 +2594,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
       for (const role of ["judge", "fixer", "reviewer", "doctor"] as const) {
         const toolName = role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME;
         if (role === "fixer" || role === "reviewer") {
-          // #242 fixer / #495 S6 reviewer: no LLM auditor — accept on typed validate only.
+          // #242 fixer / #495 S6 reviewer: no soul auditor. Fixer still traverses Gatekeeper; reviewer accepts on typed validate.
           const plain = createRole(role, pass);
           if (role === "reviewer") {
             await plain.runtime.activate(undefined, { baseRevision: "review-base" });
