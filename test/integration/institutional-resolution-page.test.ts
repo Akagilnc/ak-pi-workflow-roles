@@ -75,3 +75,58 @@ test("resolution page write, read, missing-seat, resume rewrite, and corruption 
     await rm(runDir, { recursive: true, force: true });
   }
 });
+
+test("recordEffectiveInvocationModel recovers effective model from invocation truth source on resume/refresh", async () => {
+  const { recordEffectiveInvocationModel } = await import("../../src/public-cli/invocation.ts");
+  const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
+  await withActivationHome({ prefix: "ak-test-invocation-truth-" }, async ({ home }) => {
+    const runDir = join(home, "run");
+    await (await import("node:fs/promises")).mkdir(runDir, { recursive: true });
+
+    // Initial invocation identity written with effective model
+    const initialLedger = {
+      role: "coder",
+      runId: "0195-test-run",
+      bookKey: "test-book",
+      projectRoot: home,
+      runDirectory: runDir,
+      sessionDirectory: join(runDir, "session"),
+      sessionFile: join(runDir, "session", "session.jsonl"),
+      provider: "initial-provider",
+      model: "initial-model",
+      thinking: "high",
+    };
+    await writeFile(join(runDir, "invocation.json"), JSON.stringify(initialLedger, null, 2), "utf8");
+
+    // 1. Calling recordEffectiveInvocationModel without model (e.g. engine update on resume)
+    await recordEffectiveInvocationModel(runDir, undefined, "next-engine");
+
+    // Institutional resolution page must recover parent effective model from invocation.json
+    const gatekeeperSeat = await readInstitutionalSeatSelection(runDir, "gatekeeper");
+    assert.deepEqual(gatekeeperSeat, {
+      provider: "initial-provider",
+      model: "initial-model",
+      thinking: "high",
+    });
+
+    // Auditor and evidenceChild must also inherit recovered parent effective model
+    const auditorSeat = await readInstitutionalSeatSelection(runDir, "auditor");
+    assert.deepEqual(auditorSeat, {
+      provider: "initial-provider",
+      model: "initial-model",
+      thinking: "high",
+    });
+
+    // 2. Calling recordEffectiveInvocationModel with new model (override)
+    await recordEffectiveInvocationModel(runDir, {
+      provider: "resume-provider",
+      model: "resume-model",
+    });
+
+    const updatedGatekeeper = await readInstitutionalSeatSelection(runDir, "gatekeeper");
+    assert.deepEqual(updatedGatekeeper, {
+      provider: "resume-provider",
+      model: "resume-model",
+    });
+  });
+});
