@@ -11,6 +11,28 @@ export type HostToolResult<T = unknown> = {
   terminate?: boolean;
 };
 
+/** Opaque host-owned identity persisted with a Role run. */
+export type DurablePrincipal = object & { readonly __durablePrincipal?: never };
+
+export type DurablePrincipalCoordinates = {
+  readonly sessionDirectory: string;
+  readonly sessionFile: string;
+};
+
+export type NewDurablePrincipalRequest = {
+  readonly cwd: string;
+  readonly runId: string;
+  readonly role: string;
+  readonly home?: string;
+};
+
+/** Host authority for issuing, checking, and temporarily decoding durable principals. */
+export interface DurablePrincipalAuthority {
+  issue(request: NewDurablePrincipalRequest): DurablePrincipal;
+  isAvailable(principal: DurablePrincipal): Promise<boolean>;
+  decode(principal: unknown): DurablePrincipalCoordinates;
+}
+
 type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
 /** Context supplied by a host for one activation and its interceptable events. */
