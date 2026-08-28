@@ -4,24 +4,18 @@
 import { join } from "node:path";
 
 import type { DurablePrincipal } from "../../src/host-contracts.ts";
-import {
-  piDurablePrincipalAuthority,
-  rehydratePiDurablePrincipal,
-} from "../../src/pi/durable-principal.ts";
 import type {
   AdmittedDoctorInvocation,
   AdmittedJudgeInvocation,
   AdmittedReviewerInvocation,
 } from "../../src/public-cli/invocation.ts";
 
+/** Test-owned opaque principal fixture — two-field wire shape, no production codec. */
 export function fixturePrincipal(
   sessionDirectory: string,
   sessionFile: string = join(sessionDirectory, "session.jsonl"),
 ): DurablePrincipal {
-  return rehydratePiDurablePrincipal(piDurablePrincipalAuthority, {
-    sessionDirectory,
-    sessionFile,
-  });
+  return { sessionDirectory, sessionFile } as DurablePrincipal;
 }
 
 function sessionCoords(runDirectory: string, sessionDirectory?: string, sessionFile?: string) {
