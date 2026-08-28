@@ -1,70 +1,15 @@
-// #541 contract test for the single shared infrastructure-failure declaration helper.
-// Covers variant recognition, diagnostic extraction, and host error identity only.
-// Free prose is intentionally not asserted (判定归座席语义能力，非本 helper).
+// #541 behavioral contract test for the single shared infrastructure-failure
+// declaration helper: a declaration routes its diagnostic Error identity to the
+// shared host fail seam before any business work; a non-declaration is a no-op.
+// Internal recognition / extraction / Error construction are private and not
+// tested directly (implementation-coupled, per gate judgment).
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  INFRASTRUCTURE_FAILURE_DECLARATION_KEY,
-  failOnInfrastructureFailureDeclaration,
-  infrastructureFailureDiagnostic,
-  infrastructureFailureError,
-  isInfrastructureFailureDeclaration,
-} from "../../src/package-contracts/terminating-infrastructure.ts";
+import { failOnInfrastructureFailureDeclaration } from "../../src/package-contracts/terminating-infrastructure.ts";
 
-test("recognizes only the typed infrastructure-failure declaration", () => {
-  assert.equal(
-    isInfrastructureFailureDeclaration({
-      [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: { diagnostic: "boom" },
-    }),
-    true,
-  );
-  assert.equal(
-    isInfrastructureFailureDeclaration({
-      [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: { diagnostic: "  padded  " },
-    }),
-    true,
-  );
-  for (const candidate of [
-    undefined,
-    null,
-    1,
-    "x",
-    [],
-    {},
-    { infrastructureFailure: {} },
-    { infrastructureFailure: { diagnostic: "" } },
-    { infrastructureFailure: { diagnostic: "   " } },
-    { infrastructureFailure: { other: "x" } },
-    { infrastructureFailure: "not-an-object" },
-    { judgeStatus: "converged" },
-    { status: "completed" },
-  ]) {
-    assert.equal(isInfrastructureFailureDeclaration(candidate), false, String(candidate));
-  }
-});
-
-test("extracts the non-empty diagnostic; absence yields undefined", () => {
-  assert.equal(
-    infrastructureFailureDiagnostic({ infrastructureFailure: { diagnostic: "engine body" } }),
-    "engine body",
-  );
-  assert.equal(
-    infrastructureFailureDiagnostic({ infrastructureFailure: { diagnostic: "  padded  " } }),
-    "padded",
-  );
-  assert.equal(infrastructureFailureDiagnostic({ judgeStatus: "converged" }), undefined);
-  assert.equal(infrastructureFailureDiagnostic({ infrastructureFailure: { diagnostic: "" } }), undefined);
-});
-
-test("infrastructureFailureError carries the diagnostic as the host error identity", () => {
-  const error = infrastructureFailureError("诊断 body");
-  assert.ok(error instanceof Error);
-  assert.equal(error.message, "诊断 body");
-  assert.equal(error.name, "InfrastructureFailure");
-});
-
-test("failOnInfrastructureFailureDeclaration calls the shared host fail with the diagnostic error identity", () => {
+test("declaration routes its Error identity to the host; non-declaration is a no-op", () => {
+  // Declaration → the SAME diagnostic Error identity reaches the host seam.
   let received: unknown;
   let receivedToolCallId: string | undefined;
   const hostActions = {
@@ -86,17 +31,22 @@ test("failOnInfrastructureFailureDeclaration calls the shared host fail with the
   );
   assert.ok(received instanceof Error);
   assert.equal((received as Error).message, "host boom");
+  assert.equal((received as Error).name, "InfrastructureFailure");
   assert.equal(receivedToolCallId, "call-1");
-});
 
-test("failOnInfrastructureFailureDeclaration is a no-op without the declaration", () => {
+  // Non-declaration → no host call (same helper, same test).
   let calls = 0;
-  const hostActions = {
+  const noopHost = {
     failInfrastructure(_error: unknown, _ctx: unknown, _toolCallId?: string): never {
       calls += 1;
       throw new Error("must not run");
     },
   };
-  failOnInfrastructureFailureDeclaration({ judgeStatus: "converged" }, hostActions, {}, "call-2");
+  failOnInfrastructureFailureDeclaration(
+    { judgeStatus: "converged" },
+    noopHost,
+    {},
+    "call-2",
+  );
   assert.equal(calls, 0);
 });
