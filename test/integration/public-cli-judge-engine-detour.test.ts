@@ -39,8 +39,6 @@ const providerPath = resolve(
   "test/fixtures/engine-detour-provider.ts",
 );
 
-const CANNED_VERDICT_TEXT = "canned-engine-labor-content-357\n";
-
 async function runJudgeWithEngine(input: {
   home: string;
   project: string;
@@ -130,7 +128,21 @@ test(
       seedGitProject(project);
       await writeExecutable(
         join(binDir, "kimi"),
-        `#!/bin/sh\nprintf '%s' '${CANNED_VERDICT_TEXT}'\n`,
+        `#!/bin/sh
+if [ "$1" = "--call" ] && [ "$2" = "first" ]; then
+  printf 'canned-engine-stdout-1\\n'
+  printf 'canned-engine-stderr-1\\n' >&2
+  exit 0
+elif [ "$1" = "--call" ] && [ "$2" = "second" ]; then
+  printf 'canned-engine-stdout-2\\n'
+  printf 'canned-engine-stderr-2\\n' >&2
+  exit 0
+else
+  printf 'fallback-stdout\\n'
+  printf 'fallback-stderr\\n' >&2
+  exit 0
+fi
+`,
       );
 
       const result = await runJudgeWithEngine({
@@ -148,7 +160,7 @@ test(
       const report = await readFile(reportRef!.path, "utf8");
       assert.ok(report.length > 0);
 
-      // Session principal: detour ran once and typed output accepted.
+      // Session principal: detour ran twice independently and typed output accepted.
       const bookKey = resolveBookKeyFromGit(project);
       const sessionFile = join(
         home,
@@ -164,20 +176,66 @@ test(
         .split("\n")
         .filter(Boolean)
         .map((line) => JSON.parse(line) as any);
+
+      const detourCalls: Array<{ id: string; argv: string[] }> = [];
+      for (const row of rows) {
+        if (
+          row.type === "message" &&
+          row.message?.role === "assistant" &&
+          Array.isArray(row.message?.content)
+        ) {
+          for (const part of row.message.content) {
+            if (part?.type === "toolCall" && part.name === ENGINE_DETOUR_TOOL_NAME) {
+              detourCalls.push({ id: part.id, argv: part.arguments?.argv });
+            }
+          }
+        }
+      }
+
       const detourResults = rows.filter(
         (row) =>
           row.type === "message" &&
           row.message?.role === "toolResult" &&
           row.message?.toolName === ENGINE_DETOUR_TOOL_NAME,
       );
-      assert.equal(detourResults.length, 1, "exactly one detour toolResult");
-      assert.notEqual(detourResults[0].message.isError, true);
-      const detourText = Array.isArray(detourResults[0].message.content)
-        ? detourResults[0].message.content
-            .map((p: any) => (p.type === "text" ? p.text : ""))
-            .join("")
-        : String(detourResults[0].message.content ?? "");
-      assert.equal(detourText.includes("canned-engine-labor-content-357"), true);
+
+      assert.equal(detourCalls.length, 2, "exactly two detour toolCalls");
+      assert.equal(detourResults.length, 2, "exactly two detour toolResults");
+
+      const detourResultsByCallId = new Map<string, any>();
+      for (const row of detourResults) {
+        detourResultsByCallId.set(row.message.toolCallId, row.message);
+      }
+
+      assert.equal(detourCalls[0]?.id, "engine-detour-1");
+      assert.deepEqual(detourCalls[0]?.argv, ["kimi", "--call", "first"]);
+      const res1 = detourResultsByCallId.get("engine-detour-1");
+      assert.ok(res1, "toolResult for engine-detour-1 must exist");
+      assert.notEqual(res1.isError, true);
+      assert.equal(res1.details?.tool, ENGINE_DETOUR_TOOL_NAME);
+      assert.equal(res1.details?.code, 0);
+      assert.equal(res1.details?.stderr, "canned-engine-stderr-1\n");
+      const text1 = Array.isArray(res1.content)
+        ? res1.content.map((p: any) => (p.type === "text" ? p.text : "")).join("")
+        : String(res1.content ?? "");
+      assert.equal(text1, "canned-engine-stdout-1\n");
+
+      assert.equal(detourCalls[1]?.id, "engine-detour-2");
+      assert.deepEqual(detourCalls[1]?.argv, ["kimi", "--call", "second"]);
+      const res2 = detourResultsByCallId.get("engine-detour-2");
+      assert.ok(res2, "toolResult for engine-detour-2 must exist");
+      assert.notEqual(res2.isError, true);
+      assert.equal(res2.details?.tool, ENGINE_DETOUR_TOOL_NAME);
+      assert.equal(res2.details?.code, 0);
+      assert.equal(res2.details?.stderr, "canned-engine-stderr-2\n");
+      const text2 = Array.isArray(res2.content)
+        ? res2.content.map((p: any) => (p.type === "text" ? p.text : "")).join("")
+        : String(res2.content ?? "");
+      assert.equal(text2, "canned-engine-stdout-2\n");
+
+      assert.notEqual(text1, text2);
+      assert.notEqual(res1.details?.stderr, res2.details?.stderr);
+
       const judgeAccepted = rows.some(
         (row) =>
           row.type === "message" &&

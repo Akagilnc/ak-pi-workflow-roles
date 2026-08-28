@@ -125,49 +125,5 @@ test("silent detour child is not cut by a package-owned tool idle backstop", asy
   });
 });
 
-test("multiple ak_engine_detour calls in one activation execute legally and independently", async () => {
-  const tool = createEngineDetourToolDefinition({
-    engineName: "kimi",
-    fail(error) {
-      throw error;
-    },
-  });
-  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-multiple-"));
-  try {
-    const res1 = await tool.execute(
-      "call-1",
-      { argv: [process.execPath, "-e", "console.log('detour-first')"] },
-      undefined,
-      undefined,
-      fakeCtx(cwd),
-    );
-    assert.deepEqual(res1, {
-      content: [{ type: "text", text: "detour-first\n" }],
-      details: {
-        tool: "ak_engine_detour",
-        code: 0,
-      },
-    });
-
-    const res2 = await tool.execute(
-      "call-2",
-      { argv: [process.execPath, "-e", "console.log('detour-second')"] },
-      undefined,
-      undefined,
-      fakeCtx(cwd),
-    );
-    assert.deepEqual(res2, {
-      content: [{ type: "text", text: "detour-second\n" }],
-      details: {
-        tool: "ak_engine_detour",
-        code: 0,
-      },
-    });
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
 // Keep module URL referenced so tsx resolves consistently under some runners.
 void fileURLToPath(import.meta.url);
-
