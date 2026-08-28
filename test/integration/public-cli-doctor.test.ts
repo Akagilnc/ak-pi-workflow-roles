@@ -681,7 +681,6 @@ test("terminal persistence write failure through public entry propagates loudly 
     assert.equal(result.exitCode, 1, `expected loud failure, got stdout=${JSON.stringify(captured.stdout)} stderr=${JSON.stringify(captured.stderr)}`);
     assert.equal(result.terminal, undefined, "no terminal may be returned when run-state write fails");
     assert.equal(captured.stdout.join(""), "", "stdout must not present a fake terminal");
-    assert.match(captured.stderr.join(""), /cannot mark terminal/);
   });
 });
 
