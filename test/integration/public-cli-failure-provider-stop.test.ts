@@ -1151,8 +1151,10 @@ async function settleDiskSessionStopToErrorJson(input: {
     instructionEmpty: false,
     attachments: [],
     runDirectory,
-    sessionDirectory: input.sessionDirectory,
-    sessionFile: input.sessionFile,
+    principal: {
+      sessionDirectory: input.sessionDirectory,
+      sessionFile: input.sessionFile,
+    },
     admittedRequestPath: join(runDirectory, "admitted-request.json"),
   };
   await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
