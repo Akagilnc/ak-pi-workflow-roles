@@ -1,4 +1,3 @@
-import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Public Fixer Role run: admit → host turn execute → settle Terminal result.
  * #110/#177: package-owned diagnosing-bugs and tdd methods (available, not forced),
@@ -85,10 +84,7 @@ export type FixerRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  roleTurnHost?: RoleTurnHost;
-  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
-  piRunner?: LegacyPiRunner;
-  extraPiArgs?: readonly string[];
+  roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material + env signal). */
   engine?: string;
@@ -257,7 +253,7 @@ async function dispatchAdmittedFixer(input: {
 
     let result: RoleTurnResult;
     try {
-      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
+      result = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,

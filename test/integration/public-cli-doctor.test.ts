@@ -1,9 +1,9 @@
-import {
-  buildDoctorActivationExtraArgs
-} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
+import { engineSessionMaterialFromOptions } from "../../src/package-resources/engine-material.ts";
+import { buildDoctorTurnRequest } from "../../src/public-cli/doctor-run.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -34,12 +34,35 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 
 import {
   admitDoctorInvocation,
+  buildDoctorTransportPrompt,
 } from "../../src/public-cli/invocation.ts";
 import {
   settleDoctorTerminalResult,
   trySettleDoctorTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+
+function doctorActivationArgs(
+  admitted: Parameters<typeof buildDoctorTurnRequest>[0],
+  model?: Parameters<typeof buildDoctorTurnRequest>[1]["model"],
+): string[] {
+  return buildPiTurnExtraArgs(
+    buildDoctorTurnRequest(admitted, {
+      packageRoot,
+      home: admitted.projectRoot ?? "/tmp",
+      agentDir: "/tmp/agent",
+      ...(model === undefined ? {} : { model }),
+      continuation: {
+        kind: "initial",
+        prompt: buildDoctorTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({ packageRoot }),
+        ),
+      },
+    }),
+    piDurablePrincipalAuthority,
+  );
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-doctor-"));
@@ -351,7 +374,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
   });
 });
 
-test("buildDoctorActivationExtraArgs pins isolation and --ak-doctor-case to admitted runs root", async () => {
+test("buildDoctorTurnRequest pins isolation and --ak-doctor-case to admitted runs root", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -367,14 +390,10 @@ test("buildDoctorActivationExtraArgs pins isolation and --ak-doctor-case to admi
       instruction: "diagnose retries",
       createRunId: () => "run-doctor-args",
     });
-    const args = buildDoctorActivationExtraArgs(admitted, {
-      principalAuthority: piDurablePrincipalAuthority,
-      packageRoot,
-      model: {
-        provider: "openai-codex",
-        model: "gpt-5.6-luna",
-        thinking: "high",
-      },
+    const args = doctorActivationArgs(admitted, {
+      provider: "openai-codex",
+      model: "gpt-5.6-luna",
+      thinking: "high",
     });
 
     assert.equal(args.includes("--no-skills"), true);

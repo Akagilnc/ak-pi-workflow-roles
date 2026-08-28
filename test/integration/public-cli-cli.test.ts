@@ -415,7 +415,11 @@ test("public runs write one identity-bound invocation ledger for every role", as
         home,
         cwd: project,
         createRunId: () => scenario.runId,
-        piRunner,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner,
+        }),
         io: captureIo().io,
       });
 

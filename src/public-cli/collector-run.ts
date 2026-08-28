@@ -1,4 +1,3 @@
-import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Public Collector Role run: admit a structured PR target → explicit Internal activate
  * → settle Terminal result (#112). One-shot; no resume path (Collector rejects
@@ -67,10 +66,7 @@ export type CollectorRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  roleTurnHost?: RoleTurnHost;
-  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
-  piRunner?: LegacyPiRunner;
-  extraPiArgs?: readonly string[];
+  roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   /** Optional labor engine name (config→activation; session material + env signal). */
   engine?: string;
@@ -207,7 +203,7 @@ async function dispatchAdmittedCollector(input: {
 
     let result: RoleTurnResult;
     try {
-      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
+      result = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,

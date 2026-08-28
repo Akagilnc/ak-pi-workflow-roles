@@ -1,4 +1,3 @@
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * S2 factory board — external behavior at:
  *   1) isolated BoardSnapshot → HTML (no network)

@@ -1,9 +1,8 @@
-import {
-  buildMergerActivationExtraArgs,
-  buildMergerResumeActivationExtraArgs
-} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
+import { engineSessionMaterialFromOptions } from "../../src/package-resources/engine-material.ts";
+import { buildMergerTurnRequest } from "../../src/public-cli/merger-run.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -37,7 +36,7 @@ import {
   parseMergerArgv,
 } from "../../src/public-cli/invocation.ts";
 
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+import { RESUME_TRANSPORT_ENVELOPE, selectResumeContinuationPrompt } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractMergerMethodInvocations,
   extractMergerRoleOutcome,
@@ -45,6 +44,33 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+
+function mergerActivationArgs(
+  admitted: Parameters<typeof buildMergerTurnRequest>[0],
+  kind: "initial" | "resume",
+): string[] {
+  return buildPiTurnExtraArgs(
+    buildMergerTurnRequest(admitted, {
+      packageRoot,
+      home: admitted.projectRoot ?? "/tmp",
+      agentDir: "/tmp/agent",
+      continuation:
+        kind === "initial"
+          ? {
+              kind: "initial",
+              prompt: buildMergerTransportPrompt(
+                admitted,
+                engineSessionMaterialFromOptions({ packageRoot }),
+              ),
+            }
+          : {
+              kind: "resume",
+              prompt: selectResumeContinuationPrompt(),
+            },
+    }),
+    piDurablePrincipalAuthority,
+  );
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-merger-"));
@@ -245,7 +271,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
   });
 });
 
-test("buildMergerActivationExtraArgs pins package merge-only method and internal input", async () => {
+test("buildMergerTurnRequest pins package merge-only method and internal input", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -258,7 +284,7 @@ test("buildMergerActivationExtraArgs pins package merge-only method and internal
       attachmentPaths: [],
       createRunId: () => "run-merger-args-001",
     });
-    const args = buildMergerActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+    const args = mergerActivationArgs(admitted, "initial");
     assert.equal(args.includes("--no-skills"), true);
     assert.equal(args.includes("--skill"), true);
     assert.equal(args.includes("--ak-role"), true);
@@ -277,8 +303,7 @@ test("buildMergerActivationExtraArgs pins package merge-only method and internal
       true,
     );
 
-    const resume = buildMergerResumeActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
-    });
+    const resume = mergerActivationArgs(admitted, "resume");
     assert.equal(resume.includes("--skill"), true);
     assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
     assert.equal(resume.includes(admitted.instruction), false);

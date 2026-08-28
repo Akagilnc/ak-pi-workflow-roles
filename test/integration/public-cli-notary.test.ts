@@ -1,8 +1,8 @@
-import {
-  buildNotaryActivationExtraArgs
-} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
+import { engineSessionMaterialFromOptions } from "../../src/package-resources/engine-material.ts";
+import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
@@ -36,6 +36,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitNotaryInvocation,
+  buildNotaryTransportPrompt,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
 
@@ -45,6 +46,26 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+
+function notaryActivationArgs(
+  admitted: Parameters<typeof buildNotaryTurnRequest>[0],
+): string[] {
+  return buildPiTurnExtraArgs(
+    buildNotaryTurnRequest(admitted, {
+      packageRoot,
+      home: admitted.projectRoot ?? "/tmp",
+      agentDir: "/tmp/agent",
+      continuation: {
+        kind: "initial",
+        prompt: buildNotaryTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({ packageRoot }),
+        ),
+      },
+    }),
+    piDurablePrincipalAuthority,
+  );
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-notary-"));
@@ -270,7 +291,7 @@ test("notary activation binds locator only — zero instruction/attachment on ad
     assert.equal(admitted.sourceRun.runId, "01a034f1-75bf-71a6-bcf5-d1299145b1a5");
     assert.equal(admitted.sourceRun.role, "judge");
 
-    const extra = buildNotaryActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+    const extra = notaryActivationArgs(admitted);
     assert.equal(flagValue(extra, "--ak-role"), "notary");
     assert.equal(flagValue(extra, "--ak-notary-source-run"), sourceRunPath);
   });

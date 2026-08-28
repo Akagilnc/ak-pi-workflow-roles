@@ -1,4 +1,3 @@
-import { resolveEnvRoleTurnHost, type LegacyPiRunner } from "./role-turn-env.ts";
 /**
  * Shared one-shot public Role dispatch seam (Doctor-isomorphic path).
  * Post-admission lifecycle — mark admitted → writer lease → running → spawn →
@@ -53,10 +52,7 @@ export type OneShotRunEnv = {
   packageRoot: string;
   cwd: string;
   correlationId?: string;
-  roleTurnHost?: RoleTurnHost;
-  /** @deprecated test-legacy; converted by resolveEnvRoleTurnHost */
-  piRunner?: LegacyPiRunner;
-  extraPiArgs?: readonly string[];
+  roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   engine?: string;
   credentials?: CredentialProviders;
@@ -162,7 +158,7 @@ async function dispatchAdmittedOneShotRole<A extends AdmittedRoleInvocation>(inp
 
     let result: RoleTurnResult;
     try {
-      result = await resolveEnvRoleTurnHost(env).executeTurn(request);
+      result = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure(
         admitted,

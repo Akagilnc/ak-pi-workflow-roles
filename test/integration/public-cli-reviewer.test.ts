@@ -1,9 +1,8 @@
-import {
-  buildReviewerActivationExtraArgs,
-  buildReviewerResumeActivationExtraArgs
-} from "../helpers/legacy-activation-args.ts";
 import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
+import { engineSessionMaterialFromOptions } from "../../src/package-resources/engine-material.ts";
+import { buildReviewerTurnRequest } from "../../src/public-cli/reviewer-run.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -42,6 +41,7 @@ import {
   markRunAdmitted,
   markRunResumable,
   RESUME_TRANSPORT_ENVELOPE,
+  selectResumeContinuationPrompt,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
@@ -54,6 +54,33 @@ import {
   runPiSubprocess,
 } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+
+function reviewerActivationArgs(
+  admitted: Parameters<typeof buildReviewerTurnRequest>[0],
+  kind: "initial" | "resume",
+): string[] {
+  return buildPiTurnExtraArgs(
+    buildReviewerTurnRequest(admitted, {
+      packageRoot,
+      home: admitted.projectRoot ?? "/tmp",
+      agentDir: "/tmp/agent",
+      continuation:
+        kind === "initial"
+          ? {
+              kind: "initial",
+              prompt: buildReviewerTransportPrompt(
+                admitted,
+                engineSessionMaterialFromOptions({ packageRoot }),
+              ),
+            }
+          : {
+              kind: "resume",
+              prompt: selectResumeContinuationPrompt(),
+            },
+    }),
+    piDurablePrincipalAuthority,
+  );
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-reviewer-"));
@@ -352,7 +379,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
   });
 });
 
-test("buildReviewerActivationExtraArgs forces package code-review and fixed base only", async () => {
+test("buildReviewerTurnRequest forces package code-review and fixed base only", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -367,7 +394,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
       baseRevision: "HEAD~1",
       createRunId: () => "run-reviewer-args",
     });
-    const args = buildReviewerActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+    const args = reviewerActivationArgs(admitted, "initial");
     assert.equal(args.includes("--no-skills"), true);
     assert.equal(args.includes("--skill"), true);
     assert.equal(args.includes("--ak-role"), true);
@@ -392,7 +419,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
       ],
       createRunId: () => "run-reviewer-args-refs",
     });
-    const argsWithRefs = buildReviewerActivationExtraArgs(admittedWithRefs, { principalAuthority: piDurablePrincipalAuthority, packageRoot });
+    const argsWithRefs = reviewerActivationArgs(admittedWithRefs, "initial");
     assert.equal(
       argsWithRefs[argsWithRefs.indexOf("--ak-review-authority-refs") + 1],
       JSON.stringify([
@@ -400,8 +427,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
         "https://example.com/b,with-comma",
       ]),
     );
-    const resumeWithRefs = buildReviewerResumeActivationExtraArgs(admittedWithRefs, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
-    });
+    const resumeWithRefs = reviewerActivationArgs(admittedWithRefs, "resume");
     assert.equal(
       resumeWithRefs[resumeWithRefs.indexOf("--ak-review-authority-refs") + 1],
       JSON.stringify([
@@ -412,8 +438,7 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
     assert.equal(args.some((a) => a.includes(admitted.instruction)), false);
     assert.equal(args.some((a) => a.includes(".agents/skills")), false);
 
-    const resume = buildReviewerResumeActivationExtraArgs(admitted, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
-    });
+    const resume = reviewerActivationArgs(admitted, "resume");
     assert.equal(resume.includes("--skill"), true);
     assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
     assert.equal(resume.includes("--ak-review-task"), false);
@@ -437,14 +462,12 @@ test("buildReviewerActivationExtraArgs forces package code-review and fixed base
       createRunId: () => "run-reviewer-args-ticket",
     });
     assert.equal(admittedWithTicket.ticketNumber, 343);
-    const argsWithTicket = buildReviewerActivationExtraArgs(admittedWithTicket, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
-    });
+    const argsWithTicket = reviewerActivationArgs(admittedWithTicket, "initial");
     assert.equal(
       argsWithTicket[argsWithTicket.indexOf("--ak-review-ticket-number") + 1],
       "343",
     );
-    const resumeWithTicket = buildReviewerResumeActivationExtraArgs(admittedWithTicket, { principalAuthority: piDurablePrincipalAuthority, packageRoot,
-    });
+    const resumeWithTicket = reviewerActivationArgs(admittedWithTicket, "resume");
     assert.equal(
       resumeWithTicket[resumeWithTicket.indexOf("--ak-review-ticket-number") + 1],
       "343",
