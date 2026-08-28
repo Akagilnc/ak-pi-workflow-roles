@@ -444,7 +444,12 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
       assert.equal(result.code, 0);
       assert.equal(result.stderr, "ok");
     }
-    // Execution error (spawn failure before child — zero close)
+    // Typed activation failure: missing binary is rejected during identity
+    // resolution (selectedPiIdentity) before spawn — no child is created,
+    // no close event fires. The error event path in createDefaultPiSpawnRunner
+    // handles the rare case where spawn itself emits error (process spawned
+    // but immediately errored before 'close') — close remains sole settlement
+    // once spawn fires.
     {
       const { runner } = spawnRunnerWithIdentityCapture();
       await assert.rejects(
