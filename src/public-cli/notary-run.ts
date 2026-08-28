@@ -32,36 +32,23 @@ export type NotaryRunEnv = OneShotRunEnv & {
   createRunId?: () => string;
 };
 
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+
 /** Project admitted invocation onto the host-neutral turn request. */
 export function buildNotaryTurnRequest(
   admitted: AdmittedNotaryInvocation,
-  options: {
-    packageRoot: string;
-    home: string;
-    agentDir: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    timeoutMs?: number;
-    correlationId?: string;
-    continuation: RoleTurnRequest["continuation"];
-  },
+  options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  return {
-    principal: admitted.principal!,
-    activation: { role: "notary" as const, sourceRun: admitted.sourceRunPath },
-    methods: [],
-    continuation: options.continuation,
-    ...(options.model === undefined ? {} : { model: options.model }),
-    ...(options.engine === undefined ? {} : { engine: options.engine }),
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...(options.correlationId === undefined || options.correlationId.trim() === ""
-      ? {}
-      : { correlationId: options.correlationId }),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-  };
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: { role: "notary" as const, sourceRun: admitted.sourceRunPath },
+    },
+    options,
+  );
 }
 
 export async function runPublicNotary(

@@ -75,41 +75,28 @@ export type CollectorRunEnv = {
   timeoutMs?: number;
 };
 
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+
 /** Project admitted invocation onto the host-neutral turn request. */
 export function buildCollectorTurnRequest(
   admitted: AdmittedCollectorInvocation,
-  options: {
-    packageRoot: string;
-    home: string;
-    agentDir: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    timeoutMs?: number;
-    correlationId?: string;
-    continuation: RoleTurnRequest["continuation"];
-  },
+  options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  return {
-    principal: admitted.principal!,
-    activation: {
-      role: "collector" as const,
-      repo: admitted.repository.display,
-      pr: String(admitted.prNumber),
-      ...(admitted.requestManifestPath === undefined ? {} : { requestManifestPath: admitted.requestManifestPath }),
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "collector" as const,
+        repo: admitted.repository.display,
+        pr: String(admitted.prNumber),
+        ...(admitted.requestManifestPath === undefined ? {} : { requestManifestPath: admitted.requestManifestPath }),
+      },
     },
-    methods: [],
-    continuation: options.continuation,
-    ...(options.model === undefined ? {} : { model: options.model }),
-    ...(options.engine === undefined ? {} : { engine: options.engine }),
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...(options.correlationId === undefined || options.correlationId.trim() === ""
-      ? {}
-      : { correlationId: options.correlationId }),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-  };
+    options,
+  );
 }
 
 async function presentControlledFailure(

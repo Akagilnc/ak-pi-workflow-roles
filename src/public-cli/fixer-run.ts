@@ -105,43 +105,31 @@ function fixerMethods(packageRoot: string): readonly MethodBinding[] {
   ];
 }
 
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+
 /** Project admitted Fixer invocation onto the host-neutral turn request. */
 export function buildFixerTurnRequest(
   admitted: AdmittedFixerInvocation,
-  options: {
-    packageRoot: string;
-    home: string;
-    agentDir: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    timeoutMs?: number;
-    correlationId?: string;
-    continuation: RoleTurnRequest["continuation"];
-  },
+  options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  return {
-    principal: admitted.principal!,
-    activation: {
-      role: "fixer",
-      phase: admitted.phase,
-      packetPath: admitted.packetPath,
-      ...(admitted.prerequisitesPath === undefined
-        ? {}
-        : { prerequisitesPath: admitted.prerequisitesPath }),
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "fixer",
+        phase: admitted.phase,
+        packetPath: admitted.packetPath,
+        ...(admitted.prerequisitesPath === undefined
+          ? {}
+          : { prerequisitesPath: admitted.prerequisitesPath }),
+      },
+      methods: fixerMethods(options.packageRoot),
     },
-    methods: fixerMethods(options.packageRoot),
-    continuation: options.continuation,
-    ...(options.model === undefined ? {} : { model: options.model }),
-    ...(options.engine === undefined ? {} : { engine: options.engine }),
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...(options.correlationId === undefined || options.correlationId.trim() === ""
-      ? {}
-      : { correlationId: options.correlationId }),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-  };
+    options,
+  );
 }
 
 async function presentControlledFailure(

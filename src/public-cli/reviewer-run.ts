@@ -103,41 +103,29 @@ function reviewerMethods(packageRoot: string): readonly MethodBinding[] {
   return [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "code-review") }];
 }
 
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+
 /** Project admitted Reviewer invocation onto the host-neutral turn request. */
 export function buildReviewerTurnRequest(
   admitted: AdmittedReviewerInvocation,
-  options: {
-    packageRoot: string;
-    home: string;
-    agentDir: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    timeoutMs?: number;
-    correlationId?: string;
-    continuation: RoleTurnRequest["continuation"];
-  },
+  options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  return {
-    principal: admitted.principal!,
-    activation: {
-      role: "reviewer",
-      baseRevision: admitted.baseRevision,
-      authorityRefs: admitted.authorityRefs,
-      ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "reviewer",
+        baseRevision: admitted.baseRevision,
+        authorityRefs: admitted.authorityRefs,
+        ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
+      },
+      methods: reviewerMethods(options.packageRoot),
     },
-    methods: reviewerMethods(options.packageRoot),
-    continuation: options.continuation,
-    ...(options.model === undefined ? {} : { model: options.model }),
-    ...(options.engine === undefined ? {} : { engine: options.engine }),
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...(options.correlationId === undefined || options.correlationId.trim() === ""
-      ? {}
-      : { correlationId: options.correlationId }),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-  };
+    options,
+  );
 }
 
 async function presentControlledFailure(

@@ -111,39 +111,27 @@ function mergerMethods(packageRoot: string): readonly MethodBinding[] {
   ];
 }
 
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+
 /** Project admitted Merger invocation onto the host-neutral turn request. */
 export function buildMergerTurnRequest(
   admitted: AdmittedMergerInvocation,
-  options: {
-    packageRoot: string;
-    home: string;
-    agentDir: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    timeoutMs?: number;
-    correlationId?: string;
-    continuation: RoleTurnRequest["continuation"];
-  },
+  options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  return {
-    principal: admitted.principal!,
-    activation: {
-      role: "merger",
-      inputPath: admitted.mergerInputPath,
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "merger",
+        inputPath: admitted.mergerInputPath,
+      },
+      methods: mergerMethods(options.packageRoot),
     },
-    methods: mergerMethods(options.packageRoot),
-    continuation: options.continuation,
-    ...(options.model === undefined ? {} : { model: options.model }),
-    ...(options.engine === undefined ? {} : { engine: options.engine }),
-    cwd: admitted.projectRoot,
-    home: options.home,
-    agentDir: options.agentDir,
-    runDirectory: admitted.runDirectory,
-    ...(options.correlationId === undefined || options.correlationId.trim() === ""
-      ? {}
-      : { correlationId: options.correlationId }),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-  };
+    options,
+  );
 }
 
 async function presentControlledFailure(
