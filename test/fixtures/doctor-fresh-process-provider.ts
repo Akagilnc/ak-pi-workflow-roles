@@ -26,9 +26,6 @@ export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Prom
     tokenSize: { min: 1000, max: 1000 },
   });
   const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
-  pi.on("session_shutdown", () => {
-    void seeded.close();
-  });
   let captured = false;
   const capture = (context: Context) => {
     if (captured || typeof capturePath !== "string" || capturePath.trim() === "") return;
@@ -74,6 +71,7 @@ export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Prom
   };
   pi.registerProvider(provider);
   pi.on("session_shutdown", () => {
+    void seeded.close();
     console.error(`DOCTOR_FRESH_PROVIDER_CALLS=${faux.state.callCount}`);
   });
 }

@@ -16,6 +16,7 @@ import {
   withTempHome,
 } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { realMachineAgentDir } from "../helpers/test-agent-dir-guard.ts";
 
 async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extension: string; close(): Promise<void> }> {
   const marker = join(home, "parent-judge.txt");
@@ -158,9 +159,10 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("test provider did not listen");
+  // Bake single-authority machine agent dir at generation time (test-agent-dir-guard).
+  const machineAgentDir = realMachineAgentDir();
   await writeFile(extension, `
 import { writeFileSync, mkdirSync } from "node:fs";
-import { userInfo } from "node:os";
 import { join, resolve, sep } from "node:path";
 export default function (pi) {
   console.error("[ak-patch] normal activation banner");
@@ -168,9 +170,9 @@ export default function (pi) {
   if (!agentDir) {
     throw new Error("PI_CODING_AGENT_DIR must be explicitly set");
   }
-  // passwd home, not process.env.HOME (tests override HOME).
+  // Single authority realMachineAgentDir() baked by parent (not recomputed via HOME).
   const resolved = resolve(agentDir);
-  const machine = resolve(userInfo().homedir, ".pi", "agent");
+  const machine = ${JSON.stringify(machineAgentDir)};
   if (resolved === machine || resolved.startsWith(machine + sep)) {
     throw new Error("Refusing to write models.json to machine agentDir: " + agentDir);
   }
