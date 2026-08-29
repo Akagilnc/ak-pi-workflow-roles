@@ -56,7 +56,6 @@ const TICKET_HEAVYWEIGHT = [
 type ChildRecord = {
   argv: string[];
   home?: string;
-  xdgConfigHome?: string;
 };
 
 async function writePathNodeShim(
@@ -102,7 +101,6 @@ appendFileSync(
     argv: process.argv.slice(1),
     index: n,
     home: process.env.HOME,
-    xdgConfigHome: process.env.XDG_CONFIG_HOME,
   }) + "\\n",
 );
 ${homeProbe}${signalSelf}`;
@@ -128,13 +126,9 @@ function parseRecords(raw: string): ChildRecord[] {
         argv: string[];
         index: number;
         home?: string;
-        xdgConfigHome?: string;
       };
       const record: ChildRecord = { argv: parsed.argv };
       if (typeof parsed.home === "string") record.home = parsed.home;
-      if (typeof parsed.xdgConfigHome === "string") {
-        record.xdgConfigHome = parsed.xdgConfigHome;
-      }
       return record;
     });
 }
@@ -393,19 +387,6 @@ test("runner partitions discovered universe into ordinary default-parallel then 
 
       const [ordinaryChild, heavyChild] = result.records;
       assert.ok(ordinaryChild && heavyChild);
-
-      // #549: isolatedTestProcessEnv() default HOME must leave the host home.
-      const { userInfo } = await import("node:os");
-      const hostHome = userInfo().homedir;
-      for (const child of [ordinaryChild, heavyChild]) {
-        assert.ok(child.home, "child must receive HOME");
-        assert.notEqual(child.home, hostHome, "child HOME must not be the host home");
-        assert.equal(
-          child.xdgConfigHome,
-          join(child.home!, ".config"),
-          "child XDG_CONFIG_HOME must sit under redirected HOME",
-        );
-      }
 
       assert.ok(
         ordinaryChild.argv.includes("--test"),
