@@ -140,6 +140,9 @@ function physicalPathIdentity(path) {
     }
   }
 }
+function physicallyContainedIn(root, candidate) {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
+}
 function errnoCode(error) {
   return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
 }
@@ -15417,17 +15420,227 @@ var init_engine_detour = __esm({
   }
 });
 
+// src/sitian-contracts.ts
+function attachDirectErrnoCode(error, cause) {
+  if (cause === null || typeof cause !== "object" || !("code" in cause)) return;
+  const code = cause.code;
+  if (typeof code === "string") error.code = code;
+}
+var SitianInfrastructureError;
+var init_sitian_contracts = __esm({
+  "src/sitian-contracts.ts"() {
+    "use strict";
+    SitianInfrastructureError = class extends Error {
+      knownCause = "session";
+      constructor(message, options) {
+        super(message, options);
+        this.name = "SitianInfrastructureError";
+        attachDirectErrnoCode(this, options?.cause);
+      }
+    };
+  }
+});
+
+// src/sitian-appender.ts
+import { createHash as createHash2, randomUUID } from "node:crypto";
+import { appendFileSync, existsSync as existsSync3, readFileSync } from "node:fs";
+import { basename as basename3, dirname as dirname5, join as join6, resolve as resolve3 } from "node:path";
+function isRecord4(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function resolveSitianVolumeCategory(kind) {
+  if (S4_SUBMISSION_LEDGER_KINDS.has(kind)) {
+    return "submission-ledger";
+  }
+  return kind;
+}
+function safeBookKey(cwd) {
+  try {
+    return resolveBookKeyFromGit(cwd);
+  } catch {
+    return basename3(resolve3(cwd)) || "default";
+  }
+}
+function resolveSitianRecordPath(input) {
+  const cwd = input.cwd ?? process.cwd();
+  const ledgerHome = resolveActivationLedgerHome();
+  const category = resolveSitianVolumeCategory(input.kind);
+  let sessionDir;
+  if (input.sessionParent !== void 0 && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
+    sessionDir = join6(dirname5(input.sessionParent), category);
+  } else {
+    const bookKey = safeBookKey(cwd);
+    const bookDir = activationBookDirectory(ledgerHome, bookKey);
+    if (input.subject !== void 0) {
+      let subjectStr;
+      if (typeof input.subject === "string") {
+        subjectStr = input.subject;
+      } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
+        subjectStr = input.subject.runId;
+      } else {
+        subjectStr = JSON.stringify(input.subject);
+      }
+      const digest = createHash2("sha256").update(subjectStr).digest("hex").slice(0, 32);
+      sessionDir = join6(bookDir, category, digest);
+    } else {
+      sessionDir = join6(bookDir, category);
+    }
+  }
+  const recordFile = join6(sessionDir, "records.jsonl");
+  return { sessionDir, recordFile, ledgerHome };
+}
+function appendSitianRecord(input) {
+  try {
+    const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
+    ensureRealDirectoryTree(ledgerHome, sessionDir);
+    const identity = input.identity ?? randomUUID();
+    const timestamp2 = input.timestamp ?? (/* @__PURE__ */ new Date()).toISOString();
+    const host = input.host ?? "pi";
+    const record4 = {
+      level: input.level,
+      kind: input.kind,
+      identity,
+      ...input.subject === void 0 ? {} : { subject: input.subject },
+      ...input.sessionParent === void 0 ? {} : { sessionParent: input.sessionParent },
+      ...input.priorEventId === void 0 ? {} : { priorEventId: input.priorEventId },
+      timestamp: timestamp2,
+      host,
+      ...input.source === void 0 ? {} : { source: input.source },
+      ...input.payload === void 0 ? {} : { payload: input.payload },
+      ...input.raw === void 0 ? {} : { raw: input.raw },
+      ...input.usage === void 0 ? {} : { usage: input.usage }
+    };
+    if (existsSync3(recordFile)) {
+      const buffer = readFileSync(recordFile);
+      if (buffer.length > 0) {
+        if (buffer[buffer.length - 1] !== 10) {
+          appendFileSync(recordFile, "\n", "utf8");
+        }
+        const text = readFileSync(recordFile, "utf8");
+        for (const line2 of text.split("\n")) {
+          const trimmed = line2.trim();
+          if (!trimmed) continue;
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (isRecord4(parsed) && parsed.identity === identity) {
+              return {
+                identity,
+                recordFile,
+                kind: record4.kind,
+                level: record4.level
+              };
+            }
+          } catch {
+          }
+        }
+      }
+    }
+    const row = `${JSON.stringify(record4)}
+`;
+    appendFileSync(recordFile, row, "utf8");
+    return {
+      identity,
+      recordFile,
+      kind: record4.kind,
+      level: record4.level
+    };
+  } catch (error) {
+    if (error instanceof SitianInfrastructureError) throw error;
+    throw new SitianInfrastructureError(
+      `Sitian appender persistence failure: ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+var S4_SUBMISSION_LEDGER_KINDS;
+var init_sitian_appender = __esm({
+  "src/sitian-appender.ts"() {
+    "use strict";
+    init_activation_ledger_git();
+    init_activation_ledger_topology();
+    init_sitian_contracts();
+    S4_SUBMISSION_LEDGER_KINDS = /* @__PURE__ */ new Set([
+      "candidate",
+      "batchContext",
+      "outcome",
+      "sealed",
+      "post-seal-anomaly"
+    ]);
+  }
+});
+
+// src/sitian-reader.ts
+import { existsSync as existsSync4 } from "node:fs";
+import { readFile as readFile2 } from "node:fs/promises";
+function isRecord5(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function readSitianRecords(recordFile) {
+  if (!existsSync4(recordFile)) {
+    return { records: [], diagnostics: [] };
+  }
+  const text = await readFile2(recordFile, "utf8");
+  const lines = text.split("\n");
+  const records2 = [];
+  const diagnostics = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line2 = lines[index];
+    if (!line2.trim()) continue;
+    try {
+      const parsed = JSON.parse(line2);
+      if (isRecord5(parsed)) {
+        records2.push(parsed);
+      } else {
+        const typeDesc = parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed;
+        diagnostics.push({
+          kind: "malformed",
+          line: index + 1,
+          raw: line2,
+          error: `expected JSON object, got ${typeDesc}`
+        });
+      }
+    } catch (error) {
+      diagnostics.push({
+        kind: "malformed",
+        line: index + 1,
+        raw: line2,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  return { records: records2, diagnostics };
+}
+var init_sitian_reader = __esm({
+  "src/sitian-reader.ts"() {
+    "use strict";
+  }
+});
+
+// src/sitian-facade.ts
+function sitianReport(input) {
+  return appendSitianRecord(input);
+}
+var init_sitian_facade = __esm({
+  "src/sitian-facade.ts"() {
+    "use strict";
+    init_sitian_appender();
+    init_sitian_contracts();
+    init_sitian_appender();
+    init_sitian_reader();
+  }
+});
+
 // src/pi/role-turn-host.ts
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, realpath } from "node:fs/promises";
-import { delimiter as delimiter2, isAbsolute as isAbsolute3, join as join6, resolve as resolve3 } from "node:path";
+import { delimiter as delimiter2, isAbsolute as isAbsolute3, join as join7, resolve as resolve4 } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
-import { appendFile, readFile as readFile2 } from "node:fs/promises";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { appendFile, readFile as readFile3 } from "node:fs/promises";
 function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join6(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE2);
+  return join7(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE2);
 }
 function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
   return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
@@ -15534,7 +15747,7 @@ function buildPiTurnExtraArgs(request, authority, extraPiArgs = []) {
 }
 async function resolveSelectedPi(command, cwd, env) {
   const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
-  const candidates = isAbsolute3(command) || command.includes("/") ? [resolve3(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve3(cwd, dir, command));
+  const candidates = isAbsolute3(command) || command.includes("/") ? [resolve4(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve4(cwd, dir, command));
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);
@@ -15673,7 +15886,7 @@ function createPiRoleTurnHost(config) {
 }
 async function appendPiSessionCustomEntry(authority, principal, customType, data) {
   const { sessionFile } = decodePiDurablePrincipal(authority, principal);
-  const text = await readFile2(sessionFile, "utf8");
+  const text = await readFile3(sessionFile, "utf8");
   let parentId = null;
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     const entry = JSON.parse(line2);
@@ -15684,12 +15897,22 @@ async function appendPiSessionCustomEntry(authority, principal, customType, data
     type: "custom",
     customType,
     data,
-    id: randomUUID(),
+    id: randomUUID2(),
     parentId,
     timestamp: timestamp2
   })}
 `;
   await appendFile(sessionFile, pointerLine, "utf8");
+  try {
+    sitianReport({
+      level: "event",
+      kind: "dispatch-error",
+      sessionParent: sessionFile,
+      payload: { customType, data },
+      source: "pi-role-turn-host"
+    });
+  } catch {
+  }
 }
 var INTERNAL_ROLE_ENTRYPOINT_RELATIVE2, execFileAsync;
 var init_role_turn_host = __esm({
@@ -15698,6 +15921,7 @@ var init_role_turn_host = __esm({
     init_host_contracts();
     init_engine_detour();
     init_durable_principal();
+    init_sitian_facade();
     INTERNAL_ROLE_ENTRYPOINT_RELATIVE2 = "extensions/role-runtime.ts";
     execFileAsync = promisify(execFile);
   }
@@ -15896,8 +16120,8 @@ var init_terminating_tools = __esm({
 });
 
 // src/doctor-evidence.ts
-import { readdir, readFile as readFile3, realpath as realpath2, stat } from "node:fs/promises";
-import { dirname as dirname5, relative as relative2, resolve as resolve4, sep as sep2 } from "node:path";
+import { readdir, readFile as readFile4, realpath as realpath2, stat } from "node:fs/promises";
+import { dirname as dirname6, relative as relative2, resolve as resolve5, sep as sep2 } from "node:path";
 function record2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -15905,7 +16129,7 @@ async function discoverCaseFiles(root) {
   const found = [];
   async function walk(dir, depth) {
     for (const item of await readdir(dir, { withFileTypes: true })) {
-      const path = resolve4(dir, item.name);
+      const path = resolve5(dir, item.name);
       if (item.isDirectory()) await walk(path, depth + 1);
       else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
     }
@@ -15930,12 +16154,12 @@ async function stableRunsIdentity(root) {
   let cursor = root;
   while (true) {
     try {
-      const git2 = await stat(resolve4(cursor, ".git"));
+      const git2 = await stat(resolve5(cursor, ".git"));
       if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep2).join("/");
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
     }
-    const parent = dirname5(cursor);
+    const parent = dirname6(cursor);
     if (parent === cursor) return root;
     cursor = parent;
   }
@@ -16014,7 +16238,7 @@ async function loadDoctorCase(runsPath) {
   const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
   for (const path of await discoverCaseFiles(root)) {
     const id = relative2(root, path).split(sep2).join("/");
-    const bytes = await readFile3(path);
+    const bytes = await readFile4(path);
     const content = bytes.toString("utf8");
     const kind = id.endsWith(".jsonl") ? "session" : "stderr";
     evidence.push({ id, kind, byteLength: bytes.byteLength, contentLength: content.length, sha256: sha256Hex(bytes), content });
@@ -16043,8 +16267,8 @@ var init_doctor_evidence = __esm({
 });
 
 // src/collector-config.ts
-import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile4 } from "node:fs/promises";
+import { createHash as createHash3 } from "node:crypto";
+import { readFile as readFile5 } from "node:fs/promises";
 function fail3(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
@@ -16082,12 +16306,12 @@ function canonicalManifest(requests) {
 }
 function emptyCollectorManifest() {
   const canonicalJson2 = canonicalManifest([]);
-  return { requests: [], canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex") };
+  return { requests: [], canonicalJson: canonicalJson2, digest: createHash3("sha256").update(canonicalJson2).digest("hex") };
 }
 async function loadCollectorManifest(path) {
   let bytes;
   try {
-    bytes = await readFile4(path);
+    bytes = await readFile5(path);
   } catch (error) {
     fail3(`Collector request manifest is unreadable at ${path}`, error);
   }
@@ -16109,7 +16333,7 @@ async function loadCollectorManifest(path) {
     requests.push({ id: item.id, requestBody: item.body });
   }
   const canonicalJson2 = canonicalManifest(requests);
-  return { requests, canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
+  return { requests, canonicalJson: canonicalJson2, digest: createHash3("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
 }
 var COLLECTOR_OWNER_PATTERN, COLLECTOR_REPO_PATTERN, COLLECTOR_FIXED_KICKOFF;
 var init_collector_config = __esm({
@@ -16222,10 +16446,10 @@ var init_uuidv7 = __esm({
 });
 
 // src/typed-provider-http.ts
-import { readFile as readFile5, unlink, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { readFile as readFile6, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join8 } from "node:path";
 function typedProviderHttpPath(runDirectory) {
-  return join7(runDirectory, TYPED_HTTP_FILE);
+  return join8(runDirectory, TYPED_HTTP_FILE);
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
@@ -16240,7 +16464,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readLatestTypedProviderHttpObservation(runDirectory) {
   let text;
   try {
-    text = await readFile5(typedProviderHttpPath(runDirectory), "utf8");
+    text = await readFile6(typedProviderHttpPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -16269,8 +16493,8 @@ var init_typed_provider_http = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { chmod, open, readdir as readdir2, readFile as readFile6, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join8 } from "node:path";
+import { chmod, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join9 } from "node:path";
 function selectResumeContinuationPrompt(message) {
   return message !== void 0 ? message : RESUME_TRANSPORT_ENVELOPE;
 }
@@ -16294,7 +16518,7 @@ function renderResumeCommand(runId) {
 async function writeRoleRunState(runDirectory, record4) {
   const payload = { ...record4, runDirectory };
   await writeFile3(
-    join8(runDirectory, RUN_STATE_FILE),
+    join9(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -16303,7 +16527,7 @@ async function writeRoleRunState(runDirectory, record4) {
 async function readRoleRunStateDisk(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile6(join8(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile7(join9(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -16367,7 +16591,7 @@ async function writeRoleRunStateDisk(runDirectory, disk) {
     ...disk.resumable === void 0 ? {} : { resumable: disk.resumable }
   };
   await writeFile3(
-    join8(runDirectory, RUN_STATE_FILE),
+    join9(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -16488,12 +16712,12 @@ async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
   const reportCleanupFailure = (error) => {
     try {
       onCleanupFailure?.(
-        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join8(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join9(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
       );
     } catch {
     }
   };
-  const lockPath = join8(runDirectory, WRITER_LOCK_FILE);
+  const lockPath = join9(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
     try {
@@ -16537,7 +16761,7 @@ async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
   const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join8(ledgerHome, "books");
+  const booksRoot = join9(ledgerHome, "books");
   let bookKeys;
   try {
     bookKeys = await readdir2(booksRoot);
@@ -16545,7 +16769,7 @@ async function findRunDirectoryById(home, runId) {
     return void 0;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join8(activationBookDirectory(ledgerHome, bookKey), "runs");
+    const runsDir = join9(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
       entries = await readdir2(runsDir);
@@ -16554,7 +16778,7 @@ async function findRunDirectoryById(home, runId) {
     }
     for (const entry of entries) {
       if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join8(runsDir, entry);
+        return join9(runsDir, entry);
       }
     }
   }
@@ -16609,7 +16833,7 @@ async function loadResumableRunRecord(home, runId, authority) {
   let ticketNumber;
   try {
     const raw = JSON.parse(
-      await readFile6(run.admittedRequestPath, "utf8")
+      await readFile7(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record4 = raw;
@@ -16681,7 +16905,7 @@ async function loadResumableRunRecord(home, runId, authority) {
   let model;
   try {
     const invocationRaw = JSON.parse(
-      await readFile6(join8(run.runDirectory, "invocation.json"), "utf8")
+      await readFile7(join9(run.runDirectory, "invocation.json"), "utf8")
     );
     if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
       const rec = invocationRaw;
@@ -16965,7 +17189,7 @@ var init_run_lifecycle = __esm({
 });
 
 // src/notary-source-run.ts
-import { dirname as dirname6, isAbsolute as isAbsolute4, join as join9, resolve as resolve5, basename as basename3 } from "node:path";
+import { dirname as dirname7, isAbsolute as isAbsolute4, join as join10, resolve as resolve6, basename as basename4 } from "node:path";
 import { lstat as lstat2, realpath as realpath3 } from "node:fs/promises";
 function parseRunDirectoryName(name) {
   const match = RUN_DIR_NAME.exec(name);
@@ -16996,10 +17220,10 @@ async function requireRunDirectory(candidate, display) {
       `notary --source-run must be a run directory: ${display}`
     );
   }
-  const identity = parseRunDirectoryName(basename3(real));
+  const identity = parseRunDirectoryName(basename4(real));
   if (identity === void 0) {
     throw new NotarySourceRunError(
-      `notary --source-run must be named <runId>@<role>: ${basename3(real)}`
+      `notary --source-run must be named <runId>@<role>: ${basename4(real)}`
     );
   }
   return real;
@@ -17013,18 +17237,18 @@ async function resolveNotarySourceRunLocator(options) {
     options.home === void 0 ? void 0 : () => options.home
   );
   const bookKey = resolveBookKeyFromGit(options.projectRoot);
-  const bookRunsRoot = join9(activationBookDirectory(ledgerHome, bookKey), "runs");
+  const bookRunsRoot = join10(activationBookDirectory(ledgerHome, bookKey), "runs");
   let candidate;
   const bare = parseRunDirectoryName(raw);
   if (bare !== void 0 && !raw.includes("/") && !raw.includes("\\")) {
-    candidate = join9(bookRunsRoot, `${bare.runId}@${bare.role}`);
+    candidate = join10(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
-    candidate = isAbsolute4(raw) ? raw : resolve5(options.projectRoot, raw);
+    candidate = isAbsolute4(raw) ? raw : resolve6(options.projectRoot, raw);
   }
   const real = await requireRunDirectory(candidate, raw);
-  const identity = parseRunDirectoryName(basename3(real));
+  const identity = parseRunDirectoryName(basename4(real));
   const runsRootIdentity = physicalPathIdentity(bookRunsRoot);
-  const parentIdentity = physicalPathIdentity(dirname6(real));
+  const parentIdentity = physicalPathIdentity(dirname7(real));
   if (parentIdentity !== runsRootIdentity) {
     throw new NotarySourceRunError(
       "notary --source-run must resolve to a retained run under the project machine-ledger book"
@@ -17941,8 +18165,8 @@ var init_option_definitions = __esm({
 });
 
 // src/institutional-resolution.ts
-import { readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
-import { join as join10 } from "node:path";
+import { readFile as readFile8, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join11 } from "node:path";
 function cleanSelection(model) {
   if (model === void 0) return void 0;
   if (typeof model.provider !== "string" || typeof model.model !== "string") return void 0;
@@ -17974,7 +18198,7 @@ function resolveInstitutionalSeatSelections(config, parentEffectiveModel) {
   };
 }
 async function writeInstitutionalResolutionPage(runDirectory, page) {
-  const filePath = join10(runDirectory, INSTITUTIONAL_RESOLUTION_FILE);
+  const filePath = join11(runDirectory, INSTITUTIONAL_RESOLUTION_FILE);
   await writeFile4(filePath, `${JSON.stringify(page, null, 2)}
 `, "utf8");
 }
@@ -17992,15 +18216,15 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat as lstat3,
   mkdir as mkdir2,
-  readFile as readFile8,
+  readFile as readFile9,
   realpath as realpath4,
   writeFile as writeFile5
 } from "node:fs/promises";
-import { basename as basename4, isAbsolute as isAbsolute5, join as join11, resolve as resolve6, sep as sep3 } from "node:path";
+import { basename as basename5, isAbsolute as isAbsolute5, join as join12, resolve as resolve7, sep as sep3 } from "node:path";
 function issueAdmissionPlacement(authority, request) {
   const principal = authority.issue(request);
   const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
-  const runDirectory = join11(sessionDirectory, "..");
+  const runDirectory = join12(sessionDirectory, "..");
   const ledgerHome = resolveActivationLedgerHome(
     request.home === void 0 ? void 0 : () => request.home
   );
@@ -18067,7 +18291,7 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
     ...effectiveModelLedgerFields(effectiveModel)
   };
   await writeFile5(
-    join11(source.runDirectory, "invocation.json"),
+    join12(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
 `,
     "utf8"
@@ -18078,8 +18302,8 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
   await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
 async function recordEffectiveInvocationModel(runDirectory, model, engine) {
-  const ledgerPath = join11(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile8(ledgerPath, "utf8"));
+  const ledgerPath = join12(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile9(ledgerPath, "utf8"));
   const next = { ...current };
   if (model !== void 0) {
     next.provider = model.provider;
@@ -18110,8 +18334,8 @@ async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 async function mergeInvocationIdentityPage(runDirectory, fields) {
-  const ledgerPath = join11(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile8(ledgerPath, "utf8"));
+  const ledgerPath = join12(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile9(ledgerPath, "utf8"));
   await writeFile5(
     ledgerPath,
     `${JSON.stringify({
@@ -18131,7 +18355,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
-    await readFile8(join11(rolePackageRoot, "package.json"), "utf8")
+    await readFile9(join12(rolePackageRoot, "package.json"), "utf8")
   );
   if (typeof raw.version !== "string" || raw.version.trim() === "") {
     throw new Error(
@@ -18314,7 +18538,7 @@ function parseFixerArgv(args) {
   };
 }
 async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
-  const absolute = isAbsolute5(sourcePath) ? sourcePath : resolve6(sourcePath);
+  const absolute = isAbsolute5(sourcePath) ? sourcePath : resolve7(sourcePath);
   let st;
   try {
     st = await lstat3(absolute);
@@ -18329,9 +18553,9 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile8(absolute);
-  const name = `${String(index).padStart(2, "0")}-${basename4(absolute)}`;
-  const frozenPath = join11(destinationDir, name);
+  const bytes = await readFile9(absolute);
+  const name = `${String(index).padStart(2, "0")}-${basename5(absolute)}`;
+  const frozenPath = join12(destinationDir, name);
   await writeFile5(frozenPath, bytes);
   return {
     attachment: {
@@ -18369,7 +18593,7 @@ async function admitJudgeInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -18384,7 +18608,7 @@ async function admitJudgeInvocation(options) {
     role: "judge",
     home: options.home
   });
-  const attachmentsDirectory = join11(runDirectory, "attachments");
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18412,7 +18636,7 @@ async function admitJudgeInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join11(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18444,7 +18668,7 @@ function buildJudgeTransportPrompt(admitted, engineMaterial) {
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 async function ensureRunArtifactsDir(runDirectory) {
-  const dir = join11(runDirectory, "artifacts");
+  const dir = join12(runDirectory, "artifacts");
   await mkdir2(dir, { recursive: true });
   return dir;
 }
@@ -18461,7 +18685,7 @@ async function admitCoderInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("coder phase must be plan or apply");
   }
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -18476,7 +18700,7 @@ async function admitCoderInvocation(options) {
     role: "coder",
     home: options.home
   });
-  const attachmentsDirectory = join11(runDirectory, "attachments");
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18484,7 +18708,7 @@ async function admitCoderInvocation(options) {
     attachmentsDirectory
   );
   const ticketFields = ticketAdmissionFields(ticketNumber);
-  const taskPath = join11(runDirectory, "task.md");
+  const taskPath = join12(runDirectory, "task.md");
   await writeFile5(taskPath, instruction, "utf8");
   const admitted = {
     role: "coder",
@@ -18506,7 +18730,7 @@ async function admitCoderInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join11(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18555,9 +18779,9 @@ async function admitFixerInvocation(options) {
   let prerequisites = Object.freeze([]);
   let prerequisitesSource;
   if (options.prerequisitesPath !== void 0) {
-    const absolutePrereq = isAbsolute5(options.prerequisitesPath) ? options.prerequisitesPath : resolve6(options.prerequisitesPath);
+    const absolutePrereq = isAbsolute5(options.prerequisitesPath) ? options.prerequisitesPath : resolve7(options.prerequisitesPath);
     try {
-      prerequisitesSource = await readFile8(absolutePrereq, "utf8");
+      prerequisitesSource = await readFile9(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -18573,7 +18797,7 @@ async function admitFixerInvocation(options) {
       throw error;
     }
   }
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -18588,7 +18812,7 @@ async function admitFixerInvocation(options) {
     role: "fixer",
     home: options.home
   });
-  const attachmentsDirectory = join11(runDirectory, "attachments");
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18598,7 +18822,7 @@ async function admitFixerInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let prerequisitesPath;
   if (prerequisitesSource !== void 0) {
-    prerequisitesPath = join11(runDirectory, "prerequisites.json");
+    prerequisitesPath = join12(runDirectory, "prerequisites.json");
     await writeFile5(
       prerequisitesPath,
       `${JSON.stringify(prerequisites, null, 2)}
@@ -18606,7 +18830,7 @@ async function admitFixerInvocation(options) {
       "utf8"
     );
   }
-  const packetPath = join11(runDirectory, "fix-packet.md");
+  const packetPath = join12(runDirectory, "fix-packet.md");
   await writeFile5(packetPath, instruction, "utf8");
   const admitted = {
     role: "fixer",
@@ -18633,7 +18857,7 @@ async function admitFixerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join11(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18806,7 +19030,7 @@ async function admitCollectorInvocation(options) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(detail, { cause: error });
   }
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   let repository;
   if (options.repo !== void 0) {
     try {
@@ -18843,7 +19067,7 @@ async function admitCollectorInvocation(options) {
     role: "collector",
     home: options.home
   });
-  const attachmentsDirectory = join11(runDirectory, "attachments");
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18853,7 +19077,7 @@ async function admitCollectorInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let requestManifestPath;
   if (manifestCanonicalJson !== void 0) {
-    requestManifestPath = join11(runDirectory, "request-manifest.json");
+    requestManifestPath = join12(runDirectory, "request-manifest.json");
     await writeFile5(requestManifestPath, manifestCanonicalJson, "utf8");
   }
   const instruction = options.instruction ?? "";
@@ -18881,7 +19105,7 @@ async function admitCollectorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join11(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -18979,7 +19203,7 @@ function parseDoctorArgv(args) {
 }
 async function resolveDoctorCaseRunsPath(options) {
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const defaultRuns = join11(
+  const defaultRuns = join12(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
     String(options.issueNumber),
@@ -18997,7 +19221,7 @@ async function resolveDoctorCaseRunsPath(options) {
       "doctor --runs must be a project-relative path"
     );
   }
-  const resolved = resolve6(options.projectRoot, raw);
+  const resolved = resolve7(options.projectRoot, raw);
   if (resolved !== options.projectRoot && !pathContainedIn(options.projectRoot, resolved)) {
     throw new CliUsageError(
       "doctor --runs escapes the project root"
@@ -19036,7 +19260,7 @@ async function admitDoctorInvocation(options) {
       `doctor --issue must be a positive integer, got ${options.issueNumber}`
     );
   }
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -19086,7 +19310,7 @@ async function admitDoctorInvocation(options) {
       { cause: error }
     );
   }
-  const attachmentsDirectory = join11(runDirectory, "attachments");
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -19117,7 +19341,7 @@ async function admitDoctorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join11(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -19203,7 +19427,7 @@ async function admitNotaryInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   let sourceRun;
   try {
     sourceRun = await resolveNotarySourceRunLocator({
@@ -19246,7 +19470,7 @@ async function admitNotaryInvocation(options) {
     sourceRun,
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId }
   };
-  const admittedRequestPath = join11(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -19329,7 +19553,7 @@ async function admitReviewerInvocation(options) {
   const authorityRefs = Object.freeze(
     (options.authorityRefs ?? []).map((ref) => requireAuthorityRef(ref))
   );
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -19344,7 +19568,7 @@ async function admitReviewerInvocation(options) {
     role: "reviewer",
     home: options.home
   });
-  const attachmentsDirectory = join11(runDirectory, "attachments");
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -19374,7 +19598,7 @@ async function admitReviewerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join11(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -19483,7 +19707,7 @@ async function admitMergerInvocation(options) {
   if (instruction.trim() === "") {
     throw new CliUsageError("merger requires a nonblank task instruction");
   }
-  const projectRoot = resolve6(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const derived = await deriveMergerEnvelopeFromActiveMerge(
     projectRoot,
     options.gitState ?? createProductionMergerGitState(projectRoot)
@@ -19502,7 +19726,7 @@ async function admitMergerInvocation(options) {
     role: "merger",
     home: options.home
   });
-  const attachmentsDirectory = join11(runDirectory, "attachments");
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -19534,7 +19758,7 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const mergerInputPath = join11(runDirectory, "merger-input.json");
+  const mergerInputPath = join12(runDirectory, "merger-input.json");
   await writeFile5(
     mergerInputPath,
     `${JSON.stringify(mergerInput, null, 2)}
@@ -19567,7 +19791,7 @@ async function admitMergerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join11(runDirectory, "admitted-request.json");
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
     sessionDirectory,
     sessionFile
@@ -19860,13 +20084,13 @@ var init_invocation = __esm({
 });
 
 // src/package-resources/method-skill.ts
-import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile9, realpath as realpath5 } from "node:fs/promises";
-import { join as join12 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
+import { readFile as readFile10, realpath as realpath5 } from "node:fs/promises";
+import { join as join13 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
-  return createHash3("sha1").update(header).update(body).digest("hex");
+  return createHash4("sha1").update(header).update(body).digest("hex");
 }
 function stripSkillFrontmatter(content) {
   if (!content.startsWith("---")) return content;
@@ -19879,16 +20103,16 @@ function packagedMethodSkillRelativeDirectory(name) {
   return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
 }
 function resolvePackagedMethodSkillRoot(packageRoot2, name) {
-  return join12(packageRoot2, packagedMethodSkillRelativeDirectory(name));
+  return join13(packageRoot2, packagedMethodSkillRelativeDirectory(name));
 }
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
-  return join12(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
+  return join13(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
-function isRecord4(value) {
+function isRecord6(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseProvenance(raw, expectedName) {
-  if (!isRecord4(raw)) {
+  if (!isRecord6(raw)) {
     throw new Error(`Packaged method provenance must be an object for ${expectedName}`);
   }
   if (raw.name !== expectedName) {
@@ -19902,7 +20126,7 @@ function parseProvenance(raw, expectedName) {
   if (typeof raw.packageAdaptation !== "string" || raw.packageAdaptation.trim() === "") {
     throw new Error(`Packaged method provenance packageAdaptation must be nonblank`);
   }
-  if (!isRecord4(raw.upstream)) {
+  if (!isRecord6(raw.upstream)) {
     throw new Error(`Packaged method provenance upstream must be an object`);
   }
   const upstream = raw.upstream;
@@ -19929,12 +20153,12 @@ function parseProvenance(raw, expectedName) {
       `Packaged method provenance upstream must include nonblank tag or version`
     );
   }
-  if (!isRecord4(raw.files)) {
+  if (!isRecord6(raw.files)) {
     throw new Error(`Packaged method provenance files must be an object`);
   }
   const files = {};
   for (const [rel, entry] of Object.entries(raw.files)) {
-    if (!isRecord4(entry)) {
+    if (!isRecord6(entry)) {
       throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
     }
     if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
@@ -19976,11 +20200,11 @@ function parseProvenance(raw, expectedName) {
 }
 async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
-  const skillPathConfigured = join12(rootDirectory, "SKILL.md");
-  const provenancePath = join12(rootDirectory, "provenance.json");
+  const skillPathConfigured = join13(rootDirectory, "SKILL.md");
+  const provenancePath = join13(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile9(provenancePath, "utf8");
+    provenanceRaw = await readFile10(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -19994,10 +20218,10 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   }
   const provenance = parseProvenance(provenanceJson, name);
   for (const [rel, expected] of Object.entries(provenance.files)) {
-    const absolute = join12(rootDirectory, rel);
+    const absolute = join13(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile9(absolute);
+      bytes = await readFile10(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -20013,7 +20237,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath5(skillPathConfigured);
-    raw = await readFile9(skillPath, "utf8");
+    raw = await readFile10(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -20092,12 +20316,12 @@ var init_method_skill = __esm({
 });
 
 // src/ledger-session-read.ts
-import { readFile as readFile10 } from "node:fs/promises";
-function isRecord5(value) {
+import { readFile as readFile11 } from "node:fs/promises";
+function isRecord7(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readLedgerSessionJsonl(path) {
-  const text = await readFile10(path, "utf8");
+  const text = await readFile11(path, "utf8");
   const lines = text.split("\n");
   const rows = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -20117,7 +20341,7 @@ async function readLedgerSessionJsonl(path) {
       }
       break;
     }
-    if (!isRecord5(row)) {
+    if (!isRecord7(row)) {
       const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
       throw new LedgerSessionJsonlError(
         `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
@@ -20154,7 +20378,7 @@ function extractSessionModelSequence(rows) {
     if (row.type === "model_change" && typeof row.modelId === "string") {
       push(row.modelId);
     }
-    const message = isRecord5(row.message) ? row.message : void 0;
+    const message = isRecord7(row.message) ? row.message : void 0;
     if (message?.role === "assistant" && typeof message.model === "string") {
       push(message.model);
     }
@@ -20170,11 +20394,11 @@ function extractSessionToolIntervals(rows) {
   const openById = /* @__PURE__ */ new Map();
   for (const row of rows) {
     const rowTimestamp = typeof row.timestamp === "string" ? row.timestamp : void 0;
-    const message = isRecord5(row.message) ? row.message : void 0;
+    const message = isRecord7(row.message) ? row.message : void 0;
     if (message?.role === "assistant" && Array.isArray(message.content)) {
       const callTimestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : rowTimestamp;
       for (const part of message.content) {
-        if (!isRecord5(part) || part.type !== "toolCall") continue;
+        if (!isRecord7(part) || part.type !== "toolCall") continue;
         if (typeof part.id !== "string" || part.id.length === 0) {
           throw new Error("toolCall frame missing string id");
         }
@@ -20187,7 +20411,7 @@ function extractSessionToolIntervals(rows) {
         if (openById.has(part.id)) {
           throw new Error(`duplicate toolCall id ${part.id}`);
         }
-        const args = isRecord5(part.arguments) ? part.arguments : void 0;
+        const args = isRecord7(part.arguments) ? part.arguments : void 0;
         const command = part.name === "bash" && args !== void 0 && typeof args.command === "string" ? bashCommandFirstLine(args.command) : void 0;
         const interval = {
           toolCallId: part.id,
@@ -20255,8 +20479,8 @@ var init_ledger_session_read = __esm({
 
 // src/analyst-gate-cycles-read.ts
 import { readdir as readdir3 } from "node:fs/promises";
-import { join as join13 } from "node:path";
-function isRecord6(value) {
+import { join as join14 } from "node:path";
+function isRecord8(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function isMissingDirectoryError(error) {
@@ -20281,7 +20505,7 @@ function isGateTerminatingToolName(toolName) {
 function acceptedGateReceiptIds(rows) {
   const accepted = /* @__PURE__ */ new Set();
   for (const row of rows) {
-    const message = isRecord6(row.message) ? row.message : void 0;
+    const message = isRecord8(row.message) ? row.message : void 0;
     if (message?.role !== "toolResult") continue;
     if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) continue;
     if (message.isError === false) accepted.add(message.toolCallId);
@@ -20292,17 +20516,17 @@ function extractLastAcceptedGateToolCall(rows) {
   const acceptedIds = acceptedGateReceiptIds(rows);
   let last;
   for (const row of rows) {
-    const message = isRecord6(row.message) ? row.message : void 0;
+    const message = isRecord8(row.message) ? row.message : void 0;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
-      if (!isRecord6(part) || part.type !== "toolCall") continue;
+      if (!isRecord8(part) || part.type !== "toolCall") continue;
       if (typeof part.id !== "string" || part.id.length === 0) continue;
       if (!acceptedIds.has(part.id)) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
       if (!isGateTerminatingToolName(part.name)) continue;
       last = {
         toolName: part.name,
-        args: isRecord6(part.arguments) ? part.arguments : void 0
+        args: isRecord8(part.arguments) ? part.arguments : void 0
       };
     }
   }
@@ -20430,7 +20654,7 @@ async function readAnalystGateCyclesFromAuditorRoles(auditorRolesDirectory) {
   }
   const volumes = [];
   for (const name of names) {
-    const classified = await classifyAuditorVolume(join13(auditorRolesDirectory, name));
+    const classified = await classifyAuditorVolume(join14(auditorRolesDirectory, name));
     if (classified !== void 0) volumes.push(classified);
   }
   return pairGateRounds(volumes);
@@ -20508,11 +20732,11 @@ var init_engine_detour_tool = __esm({
 });
 
 // src/receipt-delivery-policy.ts
-function isRecord7(value) {
+function isRecord9(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseNoReceiptLifecycleFacts(input) {
-  if (!isRecord7(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord7(item) && typeof item.reason === "string")) {
+  if (!isRecord9(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord9(item) && typeof item.reason === "string")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
   return {
@@ -20564,6 +20788,7 @@ var init_evidence_child_executor = __esm({
     "use strict";
     init_compliance_transport();
     init_auditor_dossier_tool();
+    init_sitian_facade();
     init_engine_detour_tool();
     init_engine_detour();
     init_engine_material();
@@ -20610,6 +20835,7 @@ var init_compliance_transport = __esm({
     init_build();
     init_evidence_child_executor();
     init_auditor_dossier_tool();
+    init_sitian_facade();
     ComplianceCandidateUnreadableError = class extends Error {
       observation;
       candidate;
@@ -20798,13 +21024,13 @@ var init_reviewer_dispatch = __esm({
 });
 
 // src/public-cli/reviewer-dispatch-rejection.ts
-import { readFile as readFile11, unlink as unlink3 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { readFile as readFile12, unlink as unlink3 } from "node:fs/promises";
+import { join as join15 } from "node:path";
 function isReviewerPreflightViolation(value) {
   return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
 }
 function reviewerDispatchRejectionPath(runDirectory) {
-  return join14(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+  return join15(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 async function clearReviewerDispatchRejection(runDirectory) {
   try {
@@ -20819,7 +21045,7 @@ async function clearReviewerDispatchRejection(runDirectory) {
 async function readReviewerDispatchRejection(runDirectory) {
   let raw;
   try {
-    raw = await readFile11(reviewerDispatchRejectionPath(runDirectory), "utf8");
+    raw = await readFile12(reviewerDispatchRejectionPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -21211,9 +21437,9 @@ var init_terminal = __esm({
 });
 
 // src/public-cli/settlement.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { appendFile as appendFile2, readFile as readFile12, readdir as readdir4, writeFile as writeFile6 } from "node:fs/promises";
-import { dirname as dirname7, join as join15 } from "node:path";
+import { randomUUID as randomUUID3 } from "node:crypto";
+import { appendFile as appendFile2, readFile as readFile13, readdir as readdir4, writeFile as writeFile6 } from "node:fs/promises";
+import { dirname as dirname8, join as join16 } from "node:path";
 function coordinatesFromAdmitted(authority, admitted) {
   return decodePiDurablePrincipal(authority, admitted.principal);
 }
@@ -21276,7 +21502,7 @@ function presentControlledFailure(failure, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile12(sessionFile, "utf8");
+    await readFile13(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError2(error)) return { state: "missing" };
@@ -21418,7 +21644,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile12(sessionFile, "utf8");
+  const text = await readFile13(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -21465,14 +21691,6 @@ function extractSessionProviderStop(entries) {
   }
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
-    const response = isRecord8(entry.data) && isRecord8(entry.data.response) ? entry.data.response : void 0;
-    const stop = sessionProviderStopFromAssistant(response);
-    if (stop !== void 0) return stop;
-    break;
-  }
-  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
-    const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "assistant") continue;
@@ -21480,7 +21698,31 @@ function extractSessionProviderStop(entries) {
   }
   return void 0;
 }
+async function readSitianRetainedAuditorProviderStop(sessionFile) {
+  try {
+    const { recordFile } = resolveSitianRecordPath({
+      level: "event",
+      kind: "auditor",
+      sessionParent: sessionFile,
+      // Path is driven by sessionParent when under ledger home; cwd is a fallback only.
+      cwd: dirname8(sessionFile)
+    });
+    const { records: records2 } = await readSitianRecords(recordFile);
+    for (let i = records2.length - 1; i >= 0; i -= 1) {
+      const payload = records2[i]?.payload;
+      if (!isRecord10(payload) || !isRecord10(payload.response)) continue;
+      if (typeof payload.type === "string") continue;
+      const stop = sessionProviderStopFromAssistant(payload.response);
+      if (stop !== void 0) return stop;
+      break;
+    }
+  } catch {
+  }
+  return void 0;
+}
 async function readSessionProviderStop(sessionFile) {
+  const retained = await readSitianRetainedAuditorProviderStop(sessionFile);
+  if (retained !== void 0) return retained;
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);
@@ -21489,7 +21731,7 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join15(dirname7(sessionFile), "evidence-children");
+  const childDirectory = join16(dirname8(sessionFile), "evidence-children");
   let names;
   try {
     names = await readdir4(childDirectory);
@@ -21500,12 +21742,12 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join15(childDirectory, file));
+      entries = await readBoundSessionEntries(join16(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord8(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord10(header) || header.parentSession !== sessionFile) continue;
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
@@ -21531,12 +21773,12 @@ async function loadBoundAuditorVolumes(sessionFile) {
   if (parentId === void 0) return void 0;
   const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
   const isResumeEnvelope = (msg) => {
-    if (!isRecord8(msg) || msg.role !== "user") return false;
+    if (!isRecord10(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof msg.content === "string" ? msg.content : void 0;
     if (text === RESUME_ENVELOPE) return true;
     const content = msg.content;
     if (Array.isArray(content)) {
-      return content.some((p) => isRecord8(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+      return content.some((p) => isRecord10(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
     }
     return false;
   };
@@ -21548,7 +21790,7 @@ async function loadBoundAuditorVolumes(sessionFile) {
     latestParentUserIndex = i;
     break;
   }
-  const childDirectory = join15(dirname7(sessionFile), "auditor-roles");
+  const childDirectory = join16(dirname8(sessionFile), "auditor-roles");
   let names;
   try {
     names = await readdir4(childDirectory);
@@ -21560,14 +21802,14 @@ async function loadBoundAuditorVolumes(sessionFile) {
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join15(childDirectory, file));
+      entries = await readBoundSessionEntries(join16(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord8(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord10(header) || header.parentSession !== sessionFile) continue;
     const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
-    const bindingParent = isRecord8(bindingEntry?.data) && isRecord8(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
+    const bindingParent = isRecord10(bindingEntry?.data) && isRecord10(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
@@ -21586,11 +21828,11 @@ function complianceFailureFromAuditorVolumes(volumes) {
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
       const entry = entries[i];
-      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord8(entry.data)) continue;
-      const parent = isRecord8(entry.data.parent) ? entry.data.parent : void 0;
-      const failure = isRecord8(entry.data.failure) ? entry.data.failure : void 0;
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord10(entry.data)) continue;
+      const parent = isRecord10(entry.data.parent) ? entry.data.parent : void 0;
+      const failure = isRecord10(entry.data.failure) ? entry.data.failure : void 0;
       if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider" && failure?.cause !== "unrecognized") continue;
-      const identity = isRecord8(failure.identity) ? failure.identity : void 0;
+      const identity = isRecord10(failure.identity) ? failure.identity : void 0;
       return {
         cause: failure.cause === "provider" ? "provider" : "unrecognized",
         ...identity === void 0 ? {} : { identity: {
@@ -21598,7 +21840,7 @@ function complianceFailureFromAuditorVolumes(volumes) {
           ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
         } },
         ...typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {},
-        ...isRecord8(failure.details) ? { details: failure.details } : {}
+        ...isRecord10(failure.details) ? { details: failure.details } : {}
       };
     }
   }
@@ -21645,9 +21887,9 @@ function typedFailedTerminatingToolKnownFailure(entries) {
     if (classification.kind !== "infrastructure") continue;
     if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
     if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
-    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord8(part) && part.type === "text" && typeof part.text === "string") : void 0;
-    const diagnostic = isRecord8(textPart) ? textPart.text : void 0;
-    const details = isRecord8(message.details) ? message.details : classification.fact;
+    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord10(part) && part.type === "text" && typeof part.text === "string") : void 0;
+    const diagnostic = isRecord10(textPart) ? textPart.text : void 0;
+    const details = isRecord10(message.details) ? message.details : classification.fact;
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
@@ -21805,7 +22047,7 @@ function controlledFailureInputFromResolution(resolution) {
     } : {}
   };
 }
-function isRecord8(value) {
+function isRecord10(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function safelyRead(object, key) {
@@ -21832,7 +22074,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   const statusBase = judgeStatus;
   if (statusBase === "continue") {
     const fix = safelyRead(verdict, "fix");
-    if (fix.readable && isRecord8(fix.value)) {
+    if (fix.readable && isRecord10(fix.value)) {
       const summary = safelyRead(fix.value, "summary");
       if (summary.readable && typeof summary.value === "string") {
         facts.fixSummary = summary.value;
@@ -21842,7 +22084,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
     if (classes.readable && Array.isArray(classes.value)) {
       try {
         facts.classes = classes.value.map((entry) => {
-          if (!isRecord8(entry)) throw new Error("unreadable Judge class");
+          if (!isRecord10(entry)) throw new Error("unreadable Judge class");
           return {
             name: entry.name,
             owner: entry.owner,
@@ -21857,7 +22099,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   }
   if (statusBase === "escalate") {
     const gate = safelyRead(verdict, "decisionGate");
-    if (gate.readable && isRecord8(gate.value)) {
+    if (gate.readable && isRecord10(gate.value)) {
       const question = safelyRead(gate.value, "question");
       const options = safelyRead(gate.value, "options");
       if (question.readable && typeof question.value === "string") {
@@ -21903,7 +22145,7 @@ function fixerDecisiveFacts(output) {
     facts.reason = reason.value;
   }
   const blockerRead = safelyRead(candidate, "blocker");
-  if (statusBase === "refused" && blockerRead.readable && isRecord8(blockerRead.value)) {
+  if (statusBase === "refused" && blockerRead.readable && isRecord10(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
     if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
     const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
@@ -21915,13 +22157,13 @@ function fixerDecisiveFacts(output) {
     const blockers = [];
     try {
       for (const entry of classResults.value) {
-        if (!isRecord8(entry)) throw new Error("unreadable class result");
+        if (!isRecord10(entry)) throw new Error("unreadable class result");
         const name = safelyRead(entry, "name");
         const disposition = safelyRead(entry, "disposition");
         if (!name.readable || !disposition.readable) throw new Error("unreadable class result");
         rows.push({ name: name.value, disposition: disposition.value });
         const blocker = safelyRead(entry, "blocker");
-        if (disposition.value === "refused" && blocker.readable && isRecord8(blocker.value)) blockers.push(blocker.value);
+        if (disposition.value === "refused" && blocker.readable && isRecord10(blocker.value)) blockers.push(blocker.value);
       }
       facts.classResultCount = rows.length;
       facts.classDispositions = rows;
@@ -21954,7 +22196,7 @@ function collectorDecisiveFacts(receipt) {
   if (groups.readable && Array.isArray(groups.value)) {
     try {
       facts.groups = groups.value.map((group) => {
-        if (!isRecord8(group)) throw new Error("unreadable Collector group");
+        if (!isRecord10(group)) throw new Error("unreadable Collector group");
         const identity = safelyRead(group, "identity");
         const attendance = safelyRead(group, "attendance");
         const materials = safelyRead(group, "materials");
@@ -21988,7 +22230,7 @@ function doctorDecisiveFacts(output) {
     return facts;
   }
   const caseValue = safelyRead(candidate, "case");
-  if (caseValue.readable && isRecord8(caseValue.value)) {
+  if (caseValue.readable && isRecord10(caseValue.value)) {
     const issueNumber = safelyRead(caseValue.value, "issueNumber");
     const runsPath = safelyRead(caseValue.value, "runsPath");
     if (issueNumber.readable && issueNumber.value !== void 0) facts.issueNumber = issueNumber.value;
@@ -21999,7 +22241,7 @@ function doctorDecisiveFacts(output) {
   return facts;
 }
 function reviewerAxes(value) {
-  if (!isRecord8(value)) return [];
+  if (!isRecord10(value)) return [];
   return ["standards", "spec"].filter((axis) => {
     const projected = safelyRead(value, axis);
     return projected.readable && projected.value !== void 0;
@@ -22132,7 +22374,7 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
     const candidateMessage = entries[index]?.message;
     if (candidateMessage?.role === "assistant" && Array.isArray(candidateMessage.content)) {
       for (const part of candidateMessage.content) {
-        if (!isRecord8(part) || part.type !== "toolCall" || part.id !== callId) {
+        if (!isRecord10(part) || part.type !== "toolCall" || part.id !== callId) {
           continue;
         }
         if (part.name !== outputToolName) return void 0;
@@ -22154,7 +22396,7 @@ function sameAuditValue(left, right) {
       (value, index) => sameAuditValue(value, right[index])
     );
   }
-  if (isRecord8(left) && isRecord8(right)) {
+  if (isRecord10(left) && isRecord10(right)) {
     const leftKeys = Object.keys(left);
     const rightKeys = Object.keys(right);
     return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
@@ -22192,7 +22434,7 @@ function boundAuditEscalationForResult(entries, resultIndex, message, role, outp
     const decision = readComplianceCandidate(retained.candidate);
     if (decision.status !== "escalate") return void 0;
     const details = message.details;
-    if (!isAuditEscalationResult(details) || !isRecord8(details)) return void 0;
+    if (!isAuditEscalationResult(details) || !isRecord10(details)) return void 0;
     const projectedDetails = snapshotAuditDetails(details);
     const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
     const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
@@ -22212,7 +22454,7 @@ function isUnboundAuditEscalationFace(details) {
     if (isAuditEscalationResult(details)) return true;
   } catch {
   }
-  if (!isRecord8(details)) return false;
+  if (!isRecord10(details)) return false;
   const kind = safelyRead(details, "kind");
   return kind.readable && kind.value === "audit_escalation";
 }
@@ -22223,11 +22465,11 @@ function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolNa
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
       continue;
     }
-    if (!isRecord8(entry.data) || !isRecord8(entry.data.response)) continue;
+    if (!isRecord10(entry.data) || !isRecord10(entry.data.response)) continue;
     const response = entry.data.response;
     if (!Array.isArray(response.content)) continue;
     const calls = response.content.filter(
-      (part) => isRecord8(part) && part.type === "toolCall"
+      (part) => isRecord10(part) && part.type === "toolCall"
     );
     if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
     matches.push({ candidate: calls[0]?.arguments });
@@ -22245,22 +22487,37 @@ async function appendRunAttemptHistory(source, outcome) {
     }
   }
   const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+  const attemptData = {
+    sequence: priorEntries + 1,
+    role: source.role,
+    runId: source.runId,
+    recordedAt: timestamp2,
+    outcome
+  };
   const line2 = `${JSON.stringify({
     type: "custom",
     customType: ATTEMPT_HISTORY_ENTRY_TYPE,
-    data: {
-      sequence: priorEntries + 1,
-      role: source.role,
-      runId: source.runId,
-      recordedAt: timestamp2,
-      outcome
-    },
-    id: randomUUID2(),
+    data: attemptData,
+    id: randomUUID3(),
     parentId,
     timestamp: timestamp2
   })}
 `;
   await appendFile2(source.sessionFile, line2, "utf8");
+  try {
+    sitianReport({
+      level: "event",
+      kind: "attempt-history",
+      subject: { runId: source.runId },
+      sessionParent: source.sessionFile,
+      payload: {
+        type: ATTEMPT_HISTORY_ENTRY_TYPE,
+        ...attemptData
+      },
+      source: "settlement"
+    });
+  } catch {
+  }
 }
 function extractJudgeRoleOutcome(entries) {
   if (!isReceiptSettlementBindingClear(entries)) return void 0;
@@ -22288,7 +22545,7 @@ function extractJudgeRoleOutcome(entries) {
       };
     }
     if (isUnboundAuditEscalationFace(details)) continue;
-    if (!isRecord8(details)) continue;
+    if (!isRecord10(details)) continue;
     const statusRead = safelyRead(details, "judgeStatus");
     if (!statusRead.readable || typeof statusRead.value !== "string") continue;
     const judgeStatus = statusRead.value;
@@ -22317,7 +22574,7 @@ function parseNavigatorAttendanceDetails(details) {
   const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {};
   if (disposition === "recommendation") {
     const next = details.next;
-    if (!isRecord8(next) || typeof next.role !== "string") {
+    if (!isRecord10(next) || typeof next.role !== "string") {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -22325,7 +22582,7 @@ function parseNavigatorAttendanceDetails(details) {
       };
     }
     const reason = typeof details.reason === "string" ? details.reason : "";
-    const route = Array.isArray(details.route) ? details.route.filter(isRecord8).map((target) => ({
+    const route = Array.isArray(details.route) ? details.route.filter(isRecord10).map((target) => ({
       role: String(target.role),
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
@@ -22387,13 +22644,13 @@ function projectTerminalGateFact(rounds) {
 }
 async function extractGateFactFromSessionDirectory(sessionDirectory) {
   const rounds = await readAnalystGateCyclesFromAuditorRoles(
-    join15(sessionDirectory, "auditor-roles")
+    join16(sessionDirectory, "auditor-roles")
   );
   return projectTerminalGateFact(rounds);
 }
 async function withOptionalGateProjection(base, sessionDirectory) {
   const secondaryEvidence = base.roleOutcome.kind === "failure" ? base.roleOutcome.decisiveFacts.secondaryEvidence : void 0;
-  if (isRecord8(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
+  if (isRecord10(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
   const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
   return gate === void 0 ? base : { ...base, gate };
 }
@@ -22433,7 +22690,7 @@ function extractNavigatorFact(entries) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord8(details)) {
+      if (!isRecord10(details)) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -22483,8 +22740,8 @@ async function extractNavigatorFactFromAdmittedSession(sessionFile) {
 async function publishJudgeArtifacts(admitted, roleOutcome, coordinates) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join15(artifactsDir, "report.json");
-  const evidencePath = join15(artifactsDir, "evidence.json");
+  const reportPath = join16(artifactsDir, "report.json");
+  const evidencePath = join16(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -22528,8 +22785,8 @@ async function publishJudgeArtifacts(admitted, roleOutcome, coordinates) {
 async function publishCoderArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join15(artifactsDir, "report.json");
-  const evidencePath = join15(artifactsDir, "evidence.json");
+  const reportPath = join16(artifactsDir, "report.json");
+  const evidencePath = join16(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -22707,8 +22964,8 @@ function extractFixerMethodInvocations(entries, options) {
 async function publishFixerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join15(artifactsDir, "report.json");
-  const evidencePath = join15(artifactsDir, "evidence.json");
+  const reportPath = join16(artifactsDir, "report.json");
+  const evidencePath = join16(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -22824,8 +23081,8 @@ async function settleLawfulFixerTerminalResult(admitted, authority, options) {
 async function publishCollectorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join15(artifactsDir, "report.json");
-  const evidencePath = join15(artifactsDir, "evidence.json");
+  const reportPath = join16(artifactsDir, "report.json");
+  const evidencePath = join16(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -22908,7 +23165,7 @@ async function settleLawfulCollectorTerminalResult(admitted, authority) {
       const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
       if (residual === void 0) continue;
       const candidate = residual.candidate;
-      const duration = isRecord8(candidate) ? candidate.durationMs : void 0;
+      const duration = isRecord10(candidate) ? candidate.durationMs : void 0;
       if (Number.isSafeInteger(duration) && duration >= 1 && duration <= 9e5) {
         continue;
       }
@@ -22949,8 +23206,8 @@ async function trySettleCollectorTerminalResult(admitted, authority) {
 async function publishDoctorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join15(artifactsDir, "report.json");
-  const evidencePath = join15(artifactsDir, "evidence.json");
+  const reportPath = join16(artifactsDir, "report.json");
+  const evidencePath = join16(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -23205,8 +23462,8 @@ function extractReviewerMethodInvocations(entries, options) {
 async function publishReviewerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join15(artifactsDir, "report.json");
-  const evidencePath = join15(artifactsDir, "evidence.json");
+  const reportPath = join16(artifactsDir, "report.json");
+  const evidencePath = join16(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -23365,8 +23622,8 @@ function extractMergerMethodInvocations(entries, options) {
 async function publishMergerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join15(artifactsDir, "report.json");
-  const evidencePath = join15(artifactsDir, "evidence.json");
+  const reportPath = join16(artifactsDir, "report.json");
+  const evidencePath = join16(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -23451,8 +23708,8 @@ async function settleLawfulMergerTerminalResult(admitted, authority, options) {
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === void 0) continue;
       const callMessage = entries[residual.callIndex]?.message;
-      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord8(part) && part.type === "toolCall") : [];
-      const attemptId = isRecord8(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
+      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord10(part) && part.type === "toolCall") : [];
+      const attemptId = isRecord10(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
       if (calls.length !== 1 || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME || !attemptId.readable || attemptId.value !== admitted.runId) {
         continue;
       }
@@ -23535,13 +23792,13 @@ function publicationAttemptFromError(path, error) {
 }
 function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   const dirs = [];
-  for (const dir of [baseDir, runDirectory, dirname7(runDirectory)]) {
+  for (const dir of [baseDir, runDirectory, dirname8(runDirectory)]) {
     if (!dirs.includes(dir)) dirs.push(dir);
   }
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join15(runDirectory, "artifacts");
+  const artifactsDir = join16(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -23557,7 +23814,7 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join15(dir, `${stem}.${randomUUID2()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join16(dir, `${stem}.${randomUUID3()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
@@ -23602,26 +23859,26 @@ async function publishFailureArtifacts(admitted, failure, authority) {
   } catch (error) {
     priorIssues.push(publicationAttemptFromError(sessionFile, error));
   }
-  const underArtifacts = baseDir === join15(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join16(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join15(baseDir, "error.json"),
-    join15(baseDir, "error.settlement.json"),
-    join15(admitted.runDirectory, "error.settlement.json")
+    join16(baseDir, "error.json"),
+    join16(baseDir, "error.settlement.json"),
+    join16(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join15(baseDir, "error.settlement.json"),
-    join15(baseDir, "error.json")
+    join16(baseDir, "error.settlement.json"),
+    join16(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join15(baseDir, "evidence.json"),
-    join15(baseDir, "evidence.settlement.json"),
-    join15(admitted.runDirectory, "evidence.settlement.json")
+    join16(baseDir, "evidence.json"),
+    join16(baseDir, "evidence.settlement.json"),
+    join16(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join15(baseDir, "evidence.settlement.json"),
-    join15(baseDir, "evidence.json")
+    join16(baseDir, "evidence.settlement.json"),
+    join16(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -23811,6 +24068,7 @@ var init_settlement = __esm({
   "src/public-cli/settlement.ts"() {
     "use strict";
     init_analyst_gate_cycles_read();
+    init_sitian_facade();
     init_audit_escalation();
     init_auditor_soul();
     init_doctor_auditor();
@@ -23923,9 +24181,9 @@ var init_public_run_credentials = __esm({
 
 // src/public-cli/auto-resume.ts
 import { constants as fsConstants } from "node:fs";
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import { lstat as lstat5, mkdir as mkdir4, open as open2 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
     presentFailureTerminal(terminal, io);
@@ -23944,7 +24202,7 @@ async function finalizeExceptionRunBestEffort(runDirectory, io) {
   }
 }
 function runArtifactsDirectory(runDirectory) {
-  return join16(runDirectory, "artifacts");
+  return join17(runDirectory, "artifacts");
 }
 async function ensureRealArtifactsDirectory(runDirectory) {
   const runStat = await lstat5(runDirectory);
@@ -24027,9 +24285,9 @@ function jsonSafeReplacer() {
 }
 async function retainDispatchError(admitted, principalAuthority, sessionAppender, attempt, error) {
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-  const filePath = join16(
+  const filePath = join17(
     artifactsDir,
-    `dispatch-error-attempt-${attempt}-${randomUUID3()}.json`
+    `dispatch-error-attempt-${attempt}-${randomUUID4()}.json`
   );
   const payload = `${JSON.stringify(
     {
@@ -24247,7 +24505,7 @@ var init_auto_resume = __esm({
 
 // src/public-cli/post-admission.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 async function presentControlledFailure2(admitted, failureInput, adapters, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
@@ -24346,7 +24604,7 @@ async function dispatchPostAdmissionTurn(input) {
     }
     try {
       await writeFile7(
-        join17(admitted.runDirectory, "stderr.log"),
+        join18(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25238,7 +25496,7 @@ var init_judge_run = __esm({
 
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir5, writeFile as writeFile8 } from "node:fs/promises";
-import { join as join18, resolve as resolve7 } from "node:path";
+import { join as join19, resolve as resolve8 } from "node:path";
 function mergerMethods(packageRoot2) {
   return [
     {
@@ -25282,7 +25540,7 @@ async function loadMergerMethodMaterial(packageRoot2) {
   );
 }
 async function admitMergerShellForActivationFailure(options) {
-  const projectRoot = resolve7(options.project ?? options.cwd);
+  const projectRoot = resolve8(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const {
     principal,
@@ -25306,8 +25564,8 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join18(runDirectory, "admitted-request.json");
-  const mergerInputPath = join18(runDirectory, "merger-input.json");
+  const admittedRequestPath = join19(runDirectory, "admitted-request.json");
+  const mergerInputPath = join19(runDirectory, "merger-input.json");
   await writeFile8(
     admittedRequestPath,
     `${JSON.stringify(
@@ -25757,12 +26015,12 @@ var init_analyst_book_key = __esm({
 });
 
 // src/atomic-write.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 import { rename, rm, writeFile as writeFile9 } from "node:fs/promises";
-import { dirname as dirname8, join as join19 } from "node:path";
+import { dirname as dirname9, join as join20 } from "node:path";
 async function writeFileAtomically(destination, contents) {
-  const parent = dirname8(destination);
-  const temporary = join19(parent, `.atomic-write-${randomUUID4()}.tmp`);
+  const parent = dirname9(destination);
+  const temporary = join20(parent, `.atomic-write-${randomUUID5()}.tmp`);
   try {
     await writeFile9(temporary, contents);
     await rename(temporary, destination);
@@ -25778,17 +26036,17 @@ var init_atomic_write = __esm({
 });
 
 // src/analyst-index.ts
-import { open as open3, readFile as readFile13, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname9, join as join20 } from "node:path";
+import { open as open3, readFile as readFile14, unlink as unlink4 } from "node:fs/promises";
+import { dirname as dirname10, join as join21 } from "node:path";
 function sleep(ms) {
-  return new Promise((resolve9) => {
-    setTimeout(resolve9, ms);
+  return new Promise((resolve10) => {
+    setTimeout(resolve10, ms);
   });
 }
 async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   const indexPath = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname9(indexPath));
-  const lockPath = join20(dirname9(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  ensureRealDirectoryTree(ledgerHome, dirname10(indexPath));
+  const lockPath = join21(dirname10(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
@@ -25815,7 +26073,7 @@ async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   }
 }
 function analystLibraryIndexPath(ledgerHome) {
-  return join20(ledgerHome, "analyst", "library-index.json");
+  return join21(ledgerHome, "analyst", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -25906,7 +26164,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
   const path = analystLibraryIndexPath(ledgerHome);
   let raw;
   try {
-    raw = await readFile13(path, "utf8");
+    raw = await readFile14(path, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
       return void 0;
@@ -25924,7 +26182,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
 }
 async function writeAnalystLibraryIndexPage(ledgerHome, page) {
   const path = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname9(path));
+  ensureRealDirectoryTree(ledgerHome, dirname10(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -26110,22 +26368,22 @@ var init_analyst_cohort = __esm({
 });
 
 // src/run-terminal-artifacts.ts
-import { readdir as readdir5, readFile as readFile14 } from "node:fs/promises";
-import { basename as basename5, dirname as dirname10, join as join21 } from "node:path";
+import { readdir as readdir5, readFile as readFile15 } from "node:fs/promises";
+import { basename as basename6, dirname as dirname11, join as join22 } from "node:path";
 function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText2(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function isRecord9(value) {
+function isRecord11(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function readUsableTerminalArtifactBody(body) {
   if (body === null) {
     return { ok: false, reason: "terminal artifact JSON value is null" };
   }
-  if (!isRecord9(body)) {
+  if (!isRecord11(body)) {
     return {
       ok: false,
       reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`
@@ -26142,7 +26400,7 @@ function readUsableTerminalArtifactBody(body) {
 async function readTerminalArtifactAtPath(path, file) {
   let raw;
   try {
-    raw = await readFile14(path, "utf8");
+    raw = await readFile15(path, "utf8");
   } catch (error) {
     if (isMissingPathError4(error)) return void 0;
     return {
@@ -26186,13 +26444,13 @@ async function listUniqueErrorFallbackPaths(directories) {
     }
     for (const name of names.sort((a, b) => a.localeCompare(b))) {
       if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join21(dir, name));
+      found.push(join22(dir, name));
     }
   }
   return found;
 }
 function runIdFromRunDirectory(runDirectory) {
-  const name = basename5(runDirectory);
+  const name = basename6(runDirectory);
   const at = name.lastIndexOf("@");
   if (at <= 0 || at === name.length - 1) return void 0;
   return name.slice(0, at);
@@ -26202,14 +26460,14 @@ function presentUniqueFallbackBoundToRun(body, expectedRunId) {
   return typeof body.runId === "string" && body.runId === expectedRunId;
 }
 async function readRunTerminalArtifact(runDirectory) {
-  const artifactsDir = join21(runDirectory, "artifacts");
+  const artifactsDir = join22(runDirectory, "artifacts");
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join21(artifactsDir, file);
+    const path = join22(artifactsDir, file);
     const read3 = await readTerminalArtifactAtPath(path, file);
     if (read3 !== void 0) return read3;
   }
   for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join21(runDirectory, relative3);
+    const path = join22(runDirectory, relative3);
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 !== void 0) return read3;
   }
@@ -26218,7 +26476,7 @@ async function readRunTerminalArtifact(runDirectory) {
     if (read3 !== void 0) return read3;
   }
   const expectedRunId = runIdFromRunDirectory(runDirectory);
-  for (const path of await listUniqueErrorFallbackPaths([dirname10(runDirectory)])) {
+  for (const path of await listUniqueErrorFallbackPaths([dirname11(runDirectory)])) {
     const read3 = await readTerminalArtifactAtPath(path, "error.json");
     if (read3 === void 0) continue;
     if (read3.status === "present") {
@@ -26246,23 +26504,23 @@ var init_run_terminal_artifacts = __esm({
 });
 
 // src/analyst-ledger.ts
-import { readdir as readdir6, readFile as readFile15 } from "node:fs/promises";
-import { join as join22 } from "node:path";
+import { readdir as readdir6, readFile as readFile16 } from "node:fs/promises";
+import { join as join23 } from "node:path";
 function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText3(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function isRecord10(value) {
+function isRecord12(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile15(join22(runDirectory, "run-state.json"), "utf8")
+      await readFile16(join23(runDirectory, "run-state.json"), "utf8")
     );
-    if (!isRecord10(raw) || typeof raw.state !== "string") return void 0;
+    if (!isRecord12(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
   } catch {
     return void 0;
@@ -26292,13 +26550,13 @@ async function listLedgerBookNames(booksRoot) {
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile15(join22(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile16(join23(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
     if (isMissingPathError5(error)) return void 0;
     throw error;
   }
   const parsed = JSON.parse(raw);
-  if (!isRecord10(parsed)) return void 0;
+  if (!isRecord12(parsed)) return void 0;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return void 0;
   }
@@ -26324,15 +26582,15 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile15(join22(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile16(join23(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
-    if (isRecord10(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
+    if (isRecord12(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
     }
   } catch (error) {
     if (!isMissingPathError5(error)) throw error;
   }
-  return join22(runDirectory, "session", "session.jsonl");
+  return join23(runDirectory, "session", "session.jsonl");
 }
 async function classifyScopedRun(input) {
   const missingSources = [];
@@ -26443,7 +26701,7 @@ async function classifyScopedRun(input) {
   let gateCycles;
   try {
     gateCycles = await readAnalystGateCyclesFromAuditorRoles(
-      join22(input.runDirectory, "session", "auditor-roles")
+      join23(input.runDirectory, "session", "auditor-roles")
     );
   } catch (error) {
     return {
@@ -26475,7 +26733,7 @@ async function classifyScopedRun(input) {
 async function scanAnalystIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
-  const booksRoot = join22(ledgerHome, "books");
+  const booksRoot = join23(ledgerHome, "books");
   let wholeBook = false;
   let scopeRootIdentity;
   let bookNames;
@@ -26507,7 +26765,7 @@ async function scanAnalystIssueRuns(input) {
   const unreadable = [];
   const scopeConflicts = [];
   for (const book of bookNames) {
-    const runsDir = join22(booksRoot, book, "runs");
+    const runsDir = join23(booksRoot, book, "runs");
     let runNames;
     try {
       const entries = await readdir6(runsDir, { withFileTypes: true });
@@ -26519,7 +26777,7 @@ async function scanAnalystIssueRuns(input) {
     for (const runName of runNames) {
       const parsed = parseRunDirectoryName2(runName);
       if (parsed === void 0) continue;
-      const runDirectory = join22(runsDir, runName);
+      const runDirectory = join23(runsDir, runName);
       let scopeFields;
       try {
         scopeFields = await readInvocationScopeFields(runDirectory);
@@ -26567,7 +26825,7 @@ var init_analyst_ledger = __esm({
 });
 
 // src/analyst-metric-families/acceptance-success-rework.ts
-function isRecord11(value) {
+function isRecord13(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan(span) {
@@ -26576,21 +26834,21 @@ function wallMsFromSpan(span) {
 function findCollectorGroups(body) {
   if (Array.isArray(body.groups)) return body.groups;
   const receipt = body.receipt;
-  if (isRecord11(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
+  if (isRecord13(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
   const outcome = body.outcome;
-  if (isRecord11(outcome)) {
+  if (isRecord13(outcome)) {
     const facts = outcome.decisiveFacts;
-    if (isRecord11(facts) && Array.isArray(facts.groups)) return facts.groups;
+    if (isRecord13(facts) && Array.isArray(facts.groups)) return facts.groups;
   }
   return void 0;
 }
 function extractStatus(body) {
   const outcome = body.outcome;
-  if (isRecord11(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
+  if (isRecord13(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
     return outcome.status;
   }
   const receipt = body.receipt;
-  if (isRecord11(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
+  if (isRecord13(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
     return receipt.status;
   }
   if (typeof body.status === "string" && body.status.trim() !== "") {
@@ -27214,21 +27472,21 @@ var init_leg_wall_clock = __esm({
 });
 
 // src/analyst-metric-families/round-timeline.ts
-function isRecord12(value) {
+function isRecord14(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan2(startedAt, endedAt) {
   return Date.parse(endedAt) - Date.parse(startedAt);
 }
 function readOutcomeStatus(body) {
-  if (!isRecord12(body.outcome)) return void 0;
+  if (!isRecord14(body.outcome)) return void 0;
   const status = body.outcome.status;
   if (typeof status !== "string" || status.trim() === "") return void 0;
   return status;
 }
 function readClassCount(body) {
-  if (!isRecord12(body.outcome)) return void 0;
-  if (!isRecord12(body.outcome.decisiveFacts)) return void 0;
+  if (!isRecord14(body.outcome)) return void 0;
+  if (!isRecord14(body.outcome.decisiveFacts)) return void 0;
   const classCount = body.outcome.decisiveFacts.classCount;
   if (typeof classCount !== "number" || !Number.isFinite(classCount)) {
     return void 0;
@@ -27371,8 +27629,8 @@ var init_analyst_metric_family = __esm({
 });
 
 // src/analyst-page.ts
-import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname11, join as join23 } from "node:path";
+import { createHash as createHash5 } from "node:crypto";
+import { dirname as dirname12, join as join24 } from "node:path";
 function analystIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
@@ -27380,10 +27638,10 @@ function analystIssuePageKey(address) {
   } else if (address.scopeRootIdentity !== void 0) {
     parts.push("root", physicalPathIdentity(address.scopeRootIdentity));
   }
-  return createHash4("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
+  return createHash5("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
 function analystIssuePagePath(ledgerHome, address) {
-  return join23(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
+  return join24(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
 }
 function analystIssuePageAddressFromPage(page) {
   return {
@@ -27502,7 +27760,7 @@ async function buildAnalystIssueMetricsPage(input) {
 }
 async function writeAnalystIssueMetricsPage(ledgerHome, page) {
   const path = analystIssuePagePath(ledgerHome, analystIssuePageAddressFromPage(page));
-  ensureRealDirectoryTree(ledgerHome, dirname11(path));
+  ensureRealDirectoryTree(ledgerHome, dirname12(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -27519,7 +27777,7 @@ var init_analyst_page = __esm({
 });
 
 // src/analyst-entry.ts
-import { readFile as readFile16 } from "node:fs/promises";
+import { readFile as readFile17 } from "node:fs/promises";
 function isMissingPathError6(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -27549,7 +27807,7 @@ async function readOrComputeAnalystIssuePage(input, options) {
     ...issueNumber === void 0 && input.bookKey === void 0 ? { scopeRootIdentity: projectRoot } : {}
   });
   try {
-    const raw = await readFile16(pagePath, "utf8");
+    const raw = await readFile17(pagePath, "utf8");
     const page = JSON.parse(raw);
     if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
       return { mode: "issue", page, pagePath };
@@ -27643,7 +27901,7 @@ async function runAnalystModelGroupsMode(input) {
       scopeRootIdentity: projectRoot
     });
     try {
-      const raw = await readFile16(pagePath, "utf8");
+      const raw = await readFile17(pagePath, "utf8");
       JSON.parse(raw);
     } catch (error) {
       if (!isMissingPathError6(error)) {
@@ -27742,8 +28000,8 @@ var init_analyst_entry = __esm({
 });
 
 // src/public-cli/analyst-run.ts
-import { readFile as readFile17 } from "node:fs/promises";
-import { isAbsolute as isAbsolute7, resolve as resolve8 } from "node:path";
+import { readFile as readFile18 } from "node:fs/promises";
+import { isAbsolute as isAbsolute7, resolve as resolve9 } from "node:path";
 function resolveAnalystIssueBookKeyFromCwd(cwd = process.cwd()) {
   try {
     return resolveBookKeyFromGit(cwd);
@@ -27792,10 +28050,10 @@ async function buildAnalystSweepModeInputFromAttachmentPaths(attachmentPaths) {
     );
   }
   const sourcePath = attachmentPaths[0];
-  const absolute = isAbsolute7(sourcePath) ? sourcePath : resolve8(sourcePath);
+  const absolute = isAbsolute7(sourcePath) ? sourcePath : resolve9(sourcePath);
   let bytes;
   try {
-    bytes = await readFile17(absolute);
+    bytes = await readFile18(absolute);
   } catch (error) {
     throw new CliUsageError(
       `analyst sweep attachment is not a readable regular file: ${sourcePath}`,
@@ -27914,7 +28172,7 @@ __export(cli_exports, {
 });
 import { realpath as realpath6 } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
-import { join as join24 } from "node:path";
+import { join as join25 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
   const taken = options.takeDashed(tokens);
@@ -27998,7 +28256,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir2();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join24(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join25(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -28828,8 +29086,8 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
-import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname12, join as join25 } from "node:path";
+import { existsSync as existsSync5 } from "node:fs";
+import { dirname as dirname13, join as join26 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -28916,10 +29174,10 @@ function linkPackage(packageRoot2, name, targetDir) {
 }
 
 // src/public-cli/main.ts
-var here = dirname12(fileURLToPath(import.meta.url));
+var here = dirname13(fileURLToPath(import.meta.url));
 function resolvePackageRoot(binDir) {
-  const canonical = join25(binDir, "..", "..");
-  if (existsSync3(join25(canonical, "package.json"))) {
+  const canonical = join26(binDir, "..", "..");
+  if (existsSync5(join26(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;
