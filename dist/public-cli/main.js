@@ -23856,11 +23856,14 @@ var init_settlement = __esm({
 });
 
 // src/public-cli/turn-request.ts
+function resolveResumeModel(explicitModel, admittedModel) {
+  return explicitModel ?? admittedModel;
+}
 function projectRoleTurnRequest(admitted, roleDetails, options) {
   const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
   if (cwd === void 0) throw new Error("admitted invocation missing working directory");
   if (admitted.principal === void 0) throw new Error("admitted invocation missing principal");
-  const effectiveModel = options.model ?? admitted.model;
+  const effectiveModel = resolveResumeModel(options.model, admitted.model);
   return {
     principal: admitted.principal,
     activation: roleDetails.activation,
@@ -24467,6 +24470,7 @@ async function runPostAdmissionResumable(input) {
 }
 async function runPostAdmissionManualResume(input) {
   const { admitted, env, io, request, adapters } = input;
+  const effectiveModel = resolveResumeModel(env.model, admitted.model);
   let lease;
   try {
     lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
@@ -24481,7 +24485,7 @@ async function runPostAdmissionManualResume(input) {
     admitted,
     env: {
       ...env,
-      ...env.model === void 0 && admitted.model !== void 0 ? { model: admitted.model } : {},
+      ...effectiveModel === void 0 ? {} : { model: effectiveModel },
       ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
     },
     io,
@@ -24497,6 +24501,7 @@ async function runPostAdmissionManualResume(input) {
 var init_post_admission = __esm({
   "src/public-cli/post-admission.ts"() {
     "use strict";
+    init_turn_request();
     init_public_run_credentials();
     init_run_lifecycle();
     init_settlement();
@@ -24659,7 +24664,7 @@ async function runPublicCoderResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
+    ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -25002,7 +25007,7 @@ async function runPublicFixerResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
+    ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -25201,7 +25206,7 @@ async function runPublicResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
+    ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -25493,7 +25498,7 @@ async function runPublicMergerResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
+    ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -25685,7 +25690,7 @@ async function runPublicReviewerResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
+    ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -27957,6 +27962,7 @@ function createRoleEnvironment(env, options) {
   const role = options.role;
   const extraPiArgs = role === "coder" ? env.coderExtraPiArgs : role === "fixer" ? env.fixerExtraPiArgs : role === "reviewer" ? env.reviewerExtraPiArgs : role === "merger" ? env.mergerExtraPiArgs : role === "judge" ? env.judgeExtraPiArgs : role === "collector" ? env.collectorExtraPiArgs : role === "doctor" ? env.doctorExtraPiArgs : role === "notary" ? env.notaryExtraPiArgs : void 0;
   const timeoutMs = role === "coder" ? env.coderTimeoutMs : role === "fixer" ? env.fixerTimeoutMs : role === "reviewer" ? env.reviewerTimeoutMs : role === "merger" ? env.mergerTimeoutMs : role === "judge" ? env.judgeTimeoutMs : role === "collector" ? env.collectorTimeoutMs : role === "doctor" ? env.doctorTimeoutMs : role === "notary" ? env.notaryTimeoutMs : void 0;
+  const injectModel = options.seat.selection !== void 0 && (options.resume !== true || options.seat.source === "invocation");
   return {
     home: options.home,
     principalAuthority: env.principalAuthority,
@@ -27971,7 +27977,7 @@ function createRoleEnvironment(env, options) {
     cwd: options.cwd,
     ...options.credentials === void 0 ? {} : { credentials: options.credentials },
     ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-    ...options.seat.selection === void 0 ? {} : { model: options.seat.selection },
+    ...injectModel ? { model: options.seat.selection } : {},
     ...projectSeatEngine(options.seat),
     ...timeoutMs === void 0 ? {} : { timeoutMs },
     ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
@@ -28472,7 +28478,16 @@ async function runAkRole(argv, env) {
       if (resumeRole === "coder") {
         const result3 = await runPublicCoderResume(
           resumeRequest,
-          createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
+          createRoleEnvironment(env, {
+            role: "coder",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true
+          }),
           io
         );
         return {
@@ -28483,7 +28498,16 @@ async function runAkRole(argv, env) {
       if (resumeRole === "fixer") {
         const result3 = await runPublicFixerResume(
           resumeRequest,
-          createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
+          createRoleEnvironment(env, {
+            role: "fixer",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true
+          }),
           io
         );
         return {
@@ -28494,7 +28518,16 @@ async function runAkRole(argv, env) {
       if (resumeRole === "reviewer") {
         const result3 = await runPublicReviewerResume(
           resumeRequest,
-          createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
+          createRoleEnvironment(env, {
+            role: "reviewer",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true
+          }),
           io
         );
         return {
@@ -28505,7 +28538,16 @@ async function runAkRole(argv, env) {
       if (resumeRole === "merger") {
         const result3 = await runPublicMergerResume(
           resumeRequest,
-          createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
+          createRoleEnvironment(env, {
+            role: "merger",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true
+          }),
           io
         );
         return {
@@ -28515,7 +28557,16 @@ async function runAkRole(argv, env) {
       }
       const result2 = await runPublicResume(
         resumeRequest,
-        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
+        createRoleEnvironment(env, {
+          role: "judge",
+          home,
+          agentDir,
+          cwd,
+          credentials,
+          seat,
+          config,
+          resume: true
+        }),
         io
       );
       return {
