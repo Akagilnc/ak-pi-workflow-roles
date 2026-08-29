@@ -1217,6 +1217,9 @@ export async function createMockProviderServer(
     }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  // Do not keep the test process alive solely for the mock listener; callers still
+  // own close() for orderly teardown (session_shutdown / finally).
+  server.unref();
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : 0;
   const baseUrl = `http://127.0.0.1:${port}/v1`;
