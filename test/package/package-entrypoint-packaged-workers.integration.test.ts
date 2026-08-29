@@ -272,8 +272,16 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         },
       };
       // #518 S3: institutional children read models.json — seed mock HTTP, then layer
-      // the resolved auth fields the auditor dispatch assertion still checks.
-      const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
+      // the resolved auth fields the child must put on its real outbound request.
+      let latestChildRequestHeaders: import("node:http").IncomingHttpHeaders | undefined;
+      let auditChildRequestHeaders: import("node:http").IncomingHttpHeaders | undefined;
+      const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir, {
+        observers: {
+          onRequest({ headers }) {
+            latestChildRequestHeaders = headers;
+          },
+        },
+      });
       try {
       const modelsPath = resolve(agentDir, "models.json");
       const seededDoc = JSON.parse(await readFile(modelsPath, "utf8")) as {
@@ -324,19 +332,11 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
 
         let judgeContext: Context | undefined;
         let auditContext: Context | undefined;
-        let auditDispatch:
-          | {
-            baseUrl: string | undefined;
-            apiKey: string | undefined;
-            headers: Record<string, string | null> | undefined;
-            env: Record<string, string> | undefined;
-          }
-          | undefined;
         // Developer exact-session shape: bare judge -p prompt is the only work
         // context (no authority.md / role-input). Navigator must recover it and
         // still deliver one correlated recommendation after accepted terminal.
         const developerPrompt = "Exercise audited terminating acceptance.";
-        const response = (context: Context, requestOptions?: unknown, _state?: unknown, requestModel?: { baseUrl?: string }) => {
+        const response = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
           const province = scriptProvincePass(names, "notary");
           if (province !== undefined) return province;
@@ -352,17 +352,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
             auditContext = context;
-            const options = requestOptions as {
-              apiKey?: string;
-              headers?: Record<string, string | null>;
-              env?: Record<string, string>;
-            } | undefined;
-            auditDispatch = {
-              baseUrl: requestModel?.baseUrl,
-              apiKey: options?.apiKey,
-              headers: options?.headers,
-              env: options?.env,
-            };
+            // Snapshot the mock HTTP headers that just arrived for this child turn.
+            auditChildRequestHeaders = latestChildRequestHeaders;
             return fauxAssistantMessage(
               fauxToolCall(
                 SOUL_AUDIT_TOOL_NAME,
@@ -397,22 +388,13 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.ok(seenAuditContext);
         // Parent still carries defaultBaseUrl; child auth is models.json (S3), not ambient inherit.
         assert.notEqual(activeModel.baseUrl, resolvedBaseUrl);
-        // OpenAI-completions mock path does not re-expose apiKey on faux streamOptions;
-        // child-local models.json is the authority (seeded above with resolved-secret + headers).
-        const childModels = JSON.parse(await readFile(resolve(agentDir, "models.json"), "utf8")) as {
-          providers?: Record<string, { apiKey?: string; headers?: Record<string, string>; modelOverrides?: Record<string, { headers?: Record<string, string> }> }>;
-        };
-        const childProvider = childModels.providers?.[activeModel.provider];
-        assert.equal(childProvider?.apiKey, "resolved-secret");
-        assert.equal(childProvider?.headers?.["x-resolved-auth"], "yes");
-        assert.equal(
-          childProvider?.modelOverrides?.[activeModel.id]?.headers?.["x-model-route"],
-          "audit-tenant",
-        );
-        // Audit round-trip succeeded through the seeded mock (baseUrl is mock HTTP, not parent default).
-        assert.equal(typeof auditDispatch?.baseUrl, "string");
-        assert.ok(String(auditDispatch?.baseUrl).length > 0);
-        assert.notEqual(auditDispatch?.baseUrl, defaultBaseUrl);
+        // Prove the auditor child consumed resolved auth on the real outbound HTTP request
+        // (models.json → openai-completions → mock), not by re-reading the fixture file.
+        assert.ok(auditChildRequestHeaders, "auditor child must hit the seeded mock HTTP entry");
+        assert.equal(auditChildRequestHeaders.authorization, "Bearer resolved-secret");
+        assert.equal(auditChildRequestHeaders["x-resolved-auth"], "yes");
+        assert.equal(auditChildRequestHeaders["x-model-route"], "audit-tenant");
+        assert.notEqual(seeded.baseUrl, defaultBaseUrl);
         const auditInput = seenAuditContext.messages.find(
           (message) => message.role === "user",
         );
