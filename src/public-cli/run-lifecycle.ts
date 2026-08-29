@@ -29,6 +29,8 @@ export {
 } from "../typed-provider-http.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
+import { THINKING_LEVELS } from "./config.ts";
+import type { PublicThinkingLevel } from "./registry.ts";
 import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
@@ -624,6 +626,8 @@ type LoadedAdmittedRequestFields = {
   readonly derived?: DerivedMergerEnvelope;
   readonly correlationId?: string;
   readonly ticketNumber?: number;
+  /** Effective model restored from the invocation identity page on resume. */
+  readonly model?: InvocationEffectiveModel;
 };
 
 /** Restore optional correlation + typed ticketNumber from a durable admitted page. */
@@ -811,7 +815,10 @@ async function loadResumableRunRecord(
         model = {
           provider: rec.provider,
           model: rec.model,
-          ...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
+          ...(typeof rec.thinking === "string" &&
+          THINKING_LEVELS.has(rec.thinking as PublicThinkingLevel)
+            ? { thinking: rec.thinking as PublicThinkingLevel }
+            : {}),
         };
       }
       if (correlationId === undefined || ticketNumber === undefined) {

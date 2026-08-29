@@ -265,7 +265,7 @@ export async function runPublicFixerResume(
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...(admitted.model === undefined ? (env.model === undefined ? {} : { model: env.model }) : { model: admitted.model }),
+    ...(env.model === undefined ? (admitted.model === undefined ? {} : { model: admitted.model }) : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(admitted.correlationId === undefined && env.correlationId === undefined
