@@ -13,8 +13,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
@@ -262,11 +262,26 @@ test(
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as any);
-      const retained = rows.filter(
-        (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
-      );
+      const previousHome = process.env.HOME;
+      process.env.HOME = home;
+      let retained: Array<{ content?: any[] }>;
+      try {
+        const recordFile = resolveSitianRecordPath({
+          level: "event",
+          kind: "auditor",
+          cwd: project,
+          sessionParent: sessionFile,
+        }).recordFile;
+        retained = (await readSitianRecords(recordFile)).records.flatMap((record) => {
+          const payload = record.payload as { response?: { content?: any[] } } | undefined;
+          return payload?.response === undefined ? [] : [payload.response];
+        });
+      } finally {
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+      }
       assert.ok(retained.length >= 1, "retained auditor response must still land");
-      const retainedCall = retained[0].data.response.content.find(
+      const retainedCall = retained[0].content?.find(
         (part: any) => part.type === "toolCall",
       );
       assert.deepEqual(retainedCall.arguments, {
