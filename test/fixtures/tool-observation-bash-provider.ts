@@ -14,16 +14,22 @@ import {
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 /**
  * Offline provider that drives one real bash tool call with non-empty child output,
  * terminates Judge, and serves Navigator prepare on the private attendance session.
  */
-export default function fixture(pi: ExtensionAPI): void {
+export default async function fixture(pi: ExtensionAPI): Promise<void> {
   const faux = fauxProvider({
     api: "ak-tool-observation-bash",
     provider: "ak-tool-observation-bash",
     tokenSize: { min: 1000, max: 1000 },
+  });
+  // #518 S3: institutional children resolve auth from agentDir/models.json.
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
+  pi.on("session_shutdown", () => {
+    void seeded.close();
   });
   let bashIssued = false;
   const response = async (context: Context) => {
