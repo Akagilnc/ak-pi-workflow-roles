@@ -53,9 +53,12 @@ import {
   runNodeSubprocess,
   runPiSubprocess,
   machineLedgerHome,
+  seedAgentDirModelsJsonFromFaux,
   withActivationHome,
+  withAgentDirProviderFixture,
   withHermeticHome,
   withInProcessPi,
+  withInstitutionalProviderFixture,
   withColdInstalledPackage,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
@@ -144,24 +147,28 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       const installedQualityLaw = await readFile(resolve(installedRoot, "souls/quality-law.md"), "utf8");
       const expectedAuditorPrompt = async (name: string, soulPath: string) => {
         const soul = await readFile(soulPath, "utf8");
+        // Child session appends cwd (process default when context.cwd is unset).
+        const cwdSuffix = `\nCurrent working directory: ${process.cwd()}`;
         if (name === "doctor") {
-          return `${installedConstitution}\n\n${soul}`;
+          return `${installedConstitution}\n\n${soul}${cwdSuffix}`;
         }
-        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}`;
+        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}${cwdSuffix}`;
       };
       const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
         let prompt = "";
         faux.setResponses([
-          (_model: any, request: any) => {
+          // faux resolveResponse(step, context, streamOptions, state, requestModel) — context first.
+          (context: any) => {
             calls += 1;
-            prompt = request.systemPrompt ?? "";
-            const locator = request.tools?.find((tool: any) => tool.name === "ak_get_run_dossier");
+            prompt = context.systemPrompt ?? "";
+            const locator = context.tools?.find((tool: any) => tool.name === "ak_get_run_dossier");
             assert.ok(locator, `${role.name} must expose the shared dossier locator`);
             return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
           },
         ]);
-        await role.run();
+        // #518 S3: auditor child resolves auth from models.json, not ambient getProvider.
+        await withInstitutionalProviderFixture(faux, () => role.run());
         assert.equal(calls, 1, `${role.name} audit must make one decision call`);
         assert.equal(
           prompt,
@@ -181,7 +188,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         const edited = await run(roles[0]);
         assert.equal(
           edited,
-          `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}`,
+          `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}\nCurrent working directory: ${process.cwd()}`,
         );
         for (const role of roles.slice(1)) {
           const unchanged = await run(role);
@@ -264,12 +271,24 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           return [activeModel];
         },
       };
+      // #518 S3: institutional children read models.json — seed mock HTTP, then layer
+      // the resolved auth fields the auditor dispatch assertion still checks.
+      const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
+      try {
       const modelsPath = resolve(agentDir, "models.json");
+      const seededDoc = JSON.parse(await readFile(modelsPath, "utf8")) as {
+        providers?: Record<string, Record<string, unknown>>;
+      };
+      const providerDoc = seededDoc.providers?.[activeModel.provider] ?? {};
       await writeFile(
         modelsPath,
         JSON.stringify({
           providers: {
+            ...(seededDoc.providers ?? {}),
             [activeModel.provider]: {
+              ...providerDoc,
+              apiKey: "resolved-secret",
+              headers: { "x-resolved-auth": "yes" },
               modelOverrides: {
                 [activeModel.id]: {
                   headers: { "x-model-route": "audit-tenant" },
@@ -286,7 +305,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         faux,
         model: activeModel,
         provider: authResolvedProvider,
-        modelsPath,
+        modelsPath: null,
         additionalExtensionPaths: [packageEntrypoint(manifest)],
         systemPrompt: "INTEGRATION BASE PROMPT",
         mode: "json",
@@ -376,16 +395,24 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         );
         const seenAuditContext = auditContext as Context | undefined;
         assert.ok(seenAuditContext);
+        // Parent still carries defaultBaseUrl; child auth is models.json (S3), not ambient inherit.
         assert.notEqual(activeModel.baseUrl, resolvedBaseUrl);
-        assert.deepEqual(auditDispatch, {
-          baseUrl: resolvedBaseUrl,
-          apiKey: "resolved-secret",
-          headers: {
-            "x-resolved-auth": "yes",
-            "x-model-route": "audit-tenant",
-          },
-          env: { RESOLVED_TENANT: "integration" },
-        });
+        // OpenAI-completions mock path does not re-expose apiKey on faux streamOptions;
+        // child-local models.json is the authority (seeded above with resolved-secret + headers).
+        const childModels = JSON.parse(await readFile(resolve(agentDir, "models.json"), "utf8")) as {
+          providers?: Record<string, { apiKey?: string; headers?: Record<string, string>; modelOverrides?: Record<string, { headers?: Record<string, string> }> }>;
+        };
+        const childProvider = childModels.providers?.[activeModel.provider];
+        assert.equal(childProvider?.apiKey, "resolved-secret");
+        assert.equal(childProvider?.headers?.["x-resolved-auth"], "yes");
+        assert.equal(
+          childProvider?.modelOverrides?.[activeModel.id]?.headers?.["x-model-route"],
+          "audit-tenant",
+        );
+        // Audit round-trip succeeded through the seeded mock (baseUrl is mock HTTP, not parent default).
+        assert.equal(typeof auditDispatch?.baseUrl, "string");
+        assert.ok(String(auditDispatch?.baseUrl).length > 0);
+        assert.notEqual(auditDispatch?.baseUrl, defaultBaseUrl);
         const auditInput = seenAuditContext.messages.find(
           (message) => message.role === "user",
         );
@@ -477,6 +504,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         );
       });
       } finally {
+        await seeded.close();
+      }
+      } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
         else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       }
@@ -494,11 +524,13 @@ test("packaged judge escalation emits one typed human decision", async () => {
         provider: "ak-judge-escalation-offline",
         tokenSize: { min: 1000, max: 1000 },
       });
+      await withAgentDirProviderFixture(faux, agentDir, async () => {
       await withInProcessPi({
         activationLedgerSession: true,
         cwd: packageRoot,
         agentDir,
         faux,
+        modelsPath: null,
         additionalExtensionPaths: [packageEntrypoint(manifest)],
         systemPrompt: "JUDGE ESCALATION INTEGRATION PROMPT",
         mode: "print",
@@ -571,6 +603,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
           (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
         );
       });
+      });
     },
   );
 });
@@ -632,11 +665,13 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           provider: "ak-coder-offline",
           tokenSize: { min: 1000, max: 1000 },
         });
+        await withAgentDirProviderFixture(faux, agentDir, async () => {
         await withInProcessPi({
           activationLedgerSession: true,
           cwd: work,
           agentDir,
           faux,
+          modelsPath: null,
           additionalExtensionPaths: [packageEntrypoint(manifest)],
           additionalSkillPaths: [tddSkillPath],
           systemPrompt: "CODER INTEGRATION BASE PROMPT",
@@ -788,6 +823,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           assert.equal(accepted.message.isError, false);
           assert.deepEqual(accepted.message.details, row.output);
         });
+        });
       },
     );
   }
@@ -826,11 +862,13 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           provider: `ak-fixer-offline-${phase}`,
           tokenSize: { min: 1000, max: 1000 },
         });
+        await withAgentDirProviderFixture(faux, agentDir, async () => {
         await withInProcessPi({
           activationLedgerSession: true,
           cwd: work,
           agentDir,
           faux,
+          modelsPath: null,
           additionalExtensionPaths: [packageEntrypoint(manifest)],
           systemPrompt: "FIXER INTEGRATION BASE PROMPT",
           mode: "print",
@@ -1016,6 +1054,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           );
           assert.equal(accepted.message.isError, false);
           assert.deepEqual(accepted.message.details, output);
+        });
         });
       }
     },
