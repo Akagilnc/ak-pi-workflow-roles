@@ -16,9 +16,10 @@ export default function mergerBaselineProvider(pi: ExtensionAPI): void {
     provider: "ak-merger-baseline",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const attemptId = process.env.AK_MERGER_FIXTURE_ATTEMPT_ID ?? "run-merger-baseline-public";
   const output = {
     status: "completed",
-    attemptId: residual === "wrong-attempt" ? "other-attempt" : "run-merger-baseline-public",
+    attemptId: residual === "wrong-attempt" ? "other-attempt" : attemptId,
     report: "Resolved the ordinary conflict.",
     mergeCommitId: residual === undefined ? mergeCommitId : "malformed",
   };

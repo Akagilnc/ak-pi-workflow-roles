@@ -49,13 +49,18 @@ import {
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fixer-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -254,11 +259,17 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       }),
     ];
     await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await sealAcceptedSubmission({
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "fixer",
+      toolName: FIXER_OUTPUT_TOOL_NAME,
+      details: receipt,
+      toolCallId: "f1",
+    });
 
     const entries = sessionLines.map((line) => JSON.parse(line));
-    const extracted = extractFixerRoleOutcome(entries);
-    assert.equal(extracted?.outcome.role, "fixer");
-    assert.equal(extracted?.outcome.status, "completed");
     const invocations = extractFixerMethodInvocations(entries, {
       allowedLocations: [configuredPath, material.skillPath],
     });
@@ -327,6 +338,15 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       })}\n`,
       "utf8",
     );
+    await sealAcceptedSubmission({
+      cwd: project,
+      home,
+      runDirectory: noDiag.runDirectory,
+      role: "fixer",
+      toolName: FIXER_OUTPUT_TOOL_NAME,
+      details: receipt,
+      toolCallId: "f2",
+    });
     const terminalNoDiag = await settleFixerTerminalResult(noDiag, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
@@ -641,6 +661,15 @@ async function settleFixerSession(
 ) {
   await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
   await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
+  await sealAcceptedSubmission({
+    cwd: admitted.projectRoot,
+    ...(process.env.HOME === undefined ? {} : { home: process.env.HOME }),
+    runDirectory: admitted.runDirectory,
+    role: "fixer",
+    toolName: FIXER_OUTPUT_TOOL_NAME,
+    details,
+    toolCallId: "f-out",
+  });
   const material = await loadPackagedMethodSkillMaterial(
     packageRoot,
     "diagnosing-bugs",

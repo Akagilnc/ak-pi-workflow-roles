@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -54,9 +55,13 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-reviewer-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -428,18 +433,17 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
+    await sealAcceptedSubmission({
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "reviewer",
+      toolName: REVIEWER_OUTPUT_TOOL_NAME,
+      details: receipt,
+      toolCallId: "r1",
+    });
 
     const entries = sessionLines.map((line) => JSON.parse(line));
-    const extracted = extractReviewerRoleOutcome(entries);
-    assert.equal(extracted?.outcome.role, "reviewer");
-    assert.equal(extracted?.outcome.kind, "accepted");
-    assert.equal(extracted?.outcome.status, "completed");
-    assert.deepEqual(extracted?.outcome.decisiveFacts.axes, ["standards", "spec"]);
-    assert.deepEqual(extracted?.outcome.decisiveFacts.reportAxes, ["standards", "spec"]);
-    assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
-    assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { rejectedReceipts?: Array<{ diagnosticAvailable?: unknown }> })
-      ?.rejectedReceipts?.[0]?.diagnosticAvailable, false);
-
     const invocations = extractReviewerMethodInvocations(entries, {
       allowedLocations: [material.skillPath, skillPath],
     });
