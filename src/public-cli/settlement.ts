@@ -12,6 +12,7 @@ import {
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
 import { sitianReport } from "../sitian-facade.ts";
+import { readSealedSubmission } from "../submission-ledger.ts";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
@@ -115,7 +116,11 @@ import {
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 
-/** Settlement path reads go through the host decode accessor only. */
+async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<TerminalRoleOutcome | undefined> {
+  return await readSealedSubmission(admitted.projectRoot, admitted.runId) as TerminalRoleOutcome | undefined;
+}
+
+/** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
 function coordinatesFromAdmitted(
   authority: DurablePrincipalAuthority,
   admitted: { readonly principal: DurablePrincipal },
@@ -2392,7 +2397,7 @@ export async function readLawfulJudgeRoleOutcome(
   const { sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(sessionFile);
   if (entries === undefined) return undefined;
-  return extractJudgeRoleOutcome(entries);
+  return await sealedLedgerOutcome(admitted) as LawfulJudgeRoleOutcome | undefined ?? extractJudgeRoleOutcome(entries);
 }
 
 /**
@@ -2430,7 +2435,7 @@ async function settleLawfulJudgeTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile);
   if (entries === undefined) return undefined;
-  const roleOutcome = extractJudgeRoleOutcome(entries);
+  const roleOutcome = await sealedLedgerOutcome(admitted) as LawfulJudgeRoleOutcome | undefined ?? extractJudgeRoleOutcome(entries);
   if (roleOutcome === undefined) {
     return undefined;
   }

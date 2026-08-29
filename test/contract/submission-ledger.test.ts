@@ -6,7 +6,7 @@ import test from "node:test";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
-import { createSubmissionLedgerHost } from "../../src/submission-ledger.ts";
+import { createSubmissionLedgerHost, readSealedSubmission } from "../../src/submission-ledger.ts";
 import { Type } from "typebox";
 
 async function fixture() {
@@ -14,7 +14,7 @@ async function fixture() {
   execFileSync("git", ["init", "-q", root]);
   let registered: HostToolDefinition | undefined;
   const host = { registerTool(tool: HostToolDefinition) { registered = tool; } } as RoleHost;
-  const pipeline = createSubmissionLedgerHost(host, new Set(["ak_test_output"]));
+  const pipeline = createSubmissionLedgerHost(host, new Map([["ak_test_output", "judge"]]));
   pipeline.registerTool({ name: "ak_test_output", label: "output", description: "", parameters: Type.Object({}), async execute() { return { content: [], details: { status: "completed" }, terminate: true }; } });
   const context = { cwd: root, mode: "json", model: undefined, sessionManager: {}, abort() {} } as HostContext;
   return { root, context, tool: () => registered! };
@@ -32,13 +32,16 @@ test("pipeline ledger rejects a sibling batch and chains a later sealed retry wi
     const files = await readdir(`${f.root}/.ak-roles/books`, { recursive: true });
     const records: SitianRecord[] = [];
     for (const relative of files.filter((file) => file.endsWith(".jsonl"))) {
-      records.push(...(await readSitianRecords(`${f.root}/.ak-roles/books/${relative}`)).records.filter((record) => record.kind.startsWith("submission-")));
+      records.push(...(await readSitianRecords(`${f.root}/.ak-roles/books/${relative}`)).records.filter((record) => ["candidate", "outcome", "sealed"].includes(record.kind)));
     }
     records.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
-    assert.deepEqual(records.map((record) => record.kind), ["submission-candidate", "submission-outcome", "submission-candidate", "submission-sealed"]);
+    assert.deepEqual(records.map((record) => record.kind), ["candidate", "outcome", "candidate", "sealed"]);
     assert.equal(records[0]?.priorEventId, undefined);
     for (let i = 1; i < records.length; i += 1) assert.equal(records[i]?.priorEventId, records[i - 1]?.identity);
     assert.deepEqual(records.at(-1)?.subject, { runId: "run-ledger", attemptId: "run-ledger" });
+    assert.deepEqual(await readSealedSubmission(f.root, "run-ledger"), {
+      kind: "accepted", role: "judge", status: "completed", decisiveFacts: { status: "completed" },
+    });
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     delete process.env.AK_ROLE_RUN_DIR;
