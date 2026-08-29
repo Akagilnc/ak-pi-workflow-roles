@@ -63,10 +63,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     provider: "ak-audit-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
-  const observation = process.env.AK_NAVIGATOR_OBSERVATION === "1";
-  const seeded = observation
-    ? undefined
-    : await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
   if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
     // Header timeoutMs and body-idle both default to owner-final 183000ms but are distinct seams.
     // Idle arms first; the provider schedules timeoutMs second. Compress provider waits harder so the
@@ -82,6 +79,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
       return realSetTimeout(handler, delay, ...args);
     }) as typeof setTimeout;
   }
+  const observation = process.env.AK_NAVIGATOR_OBSERVATION === "1";
   /** Canonical delivery matrix: recommendation | unavailable | silence (extends observation seam). */
   const deliveryOutcome = process.env.AK_NAVIGATOR_DELIVERY_OUTCOME;
   const deliveryMode = deliveryOutcome === "recommendation" || deliveryOutcome === "unavailable" || deliveryOutcome === "silence"
@@ -263,7 +261,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     if (healthyNavigator && !observation) console.error(`AUDIT_FAILURE_PROCESS_RELEASE=${JSON.stringify({ at: new Date().toISOString() })}`);
   });
   pi.on("session_shutdown", async () => {
-    await seeded?.close();
+    await seeded.close();
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
     if (!healthyNavigator || observation) return;
     const root = process.env.AK_NAVIGATOR_ROOT;
