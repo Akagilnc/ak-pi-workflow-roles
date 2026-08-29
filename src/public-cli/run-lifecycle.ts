@@ -383,13 +383,92 @@ export function describeErrorIdentity(error: unknown): string {
 }
 
 /**
- * Acquire the one-writer lease for a Role run. Concurrent acquire rejects
- * without dispatch. Exclusive create — no second writer.
+ * Holder pid recorded in an existing writer.lock, or undefined when the file
+ * is unreadable or holds no parseable positive pid (the crash window between
+ * exclusive create and the pid write leaves exactly that empty shape).
+ */
+async function readWriterLockHolderPid(lockPath: string): Promise<number | undefined> {
+  let content: string;
+  try {
+    content = await readFile(lockPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  const pid = Number.parseInt(content.trim(), 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+/**
+ * Signal-0 liveness probe. Only ESRCH proves absence; any other refusal
+ * (e.g. EPERM) means the holder process exists.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { code?: unknown }).code !== "ESRCH";
+  }
+}
+
+async function createWriterLease(
+  lockPath: string,
+  runDirectory: string,
+  reportCleanupFailure: (error: unknown) => void,
+): Promise<RunWriterLease> {
+  const handle = await open(lockPath, "wx");
+  try {
+    await handle.writeFile(`${process.pid}\n`, "utf8");
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await unlink(lockPath).catch(() => undefined);
+    throw error;
+  }
+  let released = false;
+  return {
+    lockPath,
+    async release() {
+      if (released) return;
+      released = true;
+      await handle.close().catch(() => undefined);
+      try {
+        await unlink(lockPath);
+      } catch (error) {
+        if ((error as { code?: unknown }).code === "EACCES") {
+          try {
+            await chmod(runDirectory, 0o755);
+            await unlink(lockPath);
+          } catch (retryError) {
+            // best-effort cleanup: a stale lock left here is reclaimed by the
+            // next acquire's holder autopsy, but the true chmod/unlink cause
+            // must be recorded, not swallowed.
+            reportCleanupFailure(retryError);
+          }
+        } else {
+          // non-EACCES unlink failure is best-effort settlement cleanup; record true cause.
+          reportCleanupFailure(error);
+        }
+      }
+    },
+  };
+}
+
+/**
+ * Acquire the one-writer lease for a Role run. Exclusive create — no second
+ * writer; a concurrent acquire rejects without dispatch.
+ *
+ * A contested lock gets a holder autopsy before rejection (#552): a holder pid
+ * that is dead — or absent, the crash window between exclusive create and the
+ * pid write — means no writer is left to release the lock, so acquire reclaims
+ * it and retries the create. A live holder rejects as RunWriterLeaseHeldError
+ * naming the pid and path. Reclaim rounds are bounded; a lock that stays
+ * contested (e.g. a reclaim race repeatedly lost) surfaces the same typed
+ * error instead of spinning.
  *
  * `onCleanupFailure` receives a non-terminal diagnostic line when release-time
- * lock cleanup fails. Release stays best-effort (a stale lock resurfaces as
- * RunWriterLeaseHeldError on next acquire), but the true error identity must
- * still land somewhere observable — silent swallowing is forbidden.
+ * lock cleanup fails. Release stays best-effort (a stale lock is reclaimed by
+ * the next acquire's autopsy), but the true error identity must still land
+ * somewhere observable — silent swallowing is forbidden.
  */
 export async function acquireRunWriterLease(
   runDirectory: string,
@@ -401,58 +480,49 @@ export async function acquireRunWriterLease(
     // cause has already been handed to the sink as its argument.
     try {
       onCleanupFailure?.(
-        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+        `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
       );
     } catch {
       // diagnostic-sink failure is itself best-effort; never break release().
     }
   };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
-  try {
-    const handle = await open(lockPath, "wx");
+  for (let round = 0; round < 3; round += 1) {
     try {
-      await handle.writeFile(`${process.pid}\n`, "utf8");
+      return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
     } catch (error) {
-      await handle.close().catch(() => undefined);
-      await unlink(lockPath).catch(() => undefined);
-      throw error;
-    }
-    let released = false;
-    return {
-      lockPath,
-      async release() {
-        if (released) return;
-        released = true;
-        await handle.close().catch(() => undefined);
-        try {
-          await unlink(lockPath);
-        } catch (error) {
-          if ((error as { code?: unknown }).code === "EACCES") {
-            try {
-              await chmod(runDirectory, 0o755);
-              await unlink(lockPath);
-            } catch (retryError) {
-              // best-effort cleanup: stale lock will surface as lease-held on next acquire (exit 2),
-              // but the true chmod/unlink cause must be recorded, not swallowed.
-              reportCleanupFailure(retryError);
-            }
-          } else {
-            // non-EACCES unlink failure is best-effort settlement cleanup; record true cause.
-            reportCleanupFailure(error);
-          }
+      if (
+        !(
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code?: unknown }).code === "EEXIST"
+        )
+      ) {
+        throw error;
+      }
+      const holderPid = await readWriterLockHolderPid(lockPath);
+      if (holderPid !== undefined && isProcessAlive(holderPid)) {
+        throw new RunWriterLeaseHeldError(
+          `role run writer lease is already held by live pid ${holderPid} at ${lockPath}`,
+        );
+      }
+      try {
+        await unlink(lockPath);
+      } catch (unlinkError) {
+        if ((unlinkError as { code?: unknown }).code === "ENOENT") {
+          // Lock vanished between EEXIST and unlink (concurrent release or
+          // reclaim) — nothing to reclaim; retry the create.
+          continue;
         }
-      },
-    };
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "EEXIST"
-    ) {
-      throw new RunWriterLeaseHeldError();
+        throw new RunWriterLeaseHeldError(
+          `stale writer lease reclaim failed at ${lockPath} (holder: ${holderPid === undefined ? "absent or unparseable" : `pid ${holderPid}, dead`}): ${describeErrorIdentity(unlinkError)}`,
+        );
+      }
     }
-    throw error;
   }
+  throw new RunWriterLeaseHeldError(
+    `role run writer lease stayed contested at ${lockPath} after repeated stale-holder reclaim`,
+  );
 }
 
 /**
