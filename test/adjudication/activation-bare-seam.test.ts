@@ -88,6 +88,7 @@ function runtimeHarness(options: {
   );
   const ctx = activationExtensionContext({
     cwd: options.home,
+    home: options.home,
     mode: options.mode ?? "print",
     abort() { aborts++; },
   });
@@ -312,20 +313,20 @@ test("shared role runtime registers tool observation only after admitted activat
     const endHandler = handlers.get("tool_execution_end")?.[0];
     assert.ok(startHandler && updateHandler && endHandler);
 
-    await startHandler({ toolCallId: "pre", toolName: "bash" }, activationExtensionContext({ cwd: home }));
-    await updateHandler({ toolCallId: "pre", toolName: "bash", partialResult: { content: [{ type: "text", text: "x" }] } }, activationExtensionContext({ cwd: home }));
-    await endHandler({ toolCallId: "pre", toolName: "bash", isError: false }, activationExtensionContext({ cwd: home }));
+    await startHandler({ toolCallId: "pre", toolName: "bash" }, activationExtensionContext({ cwd: home, home }));
+    await updateHandler({ toolCallId: "pre", toolName: "bash", partialResult: { content: [{ type: "text", text: "x" }] } }, activationExtensionContext({ cwd: home, home }));
+    await endHandler({ toolCallId: "pre", toolName: "bash", isError: false }, activationExtensionContext({ cwd: home, home }));
     assert.equal(observations.length, 0);
 
     const sessionStart = handlers.get("session_start")?.[0];
     assert.ok(sessionStart);
-    await sessionStart({ reason: "startup" }, activationExtensionContext({ cwd: home }));
+    await sessionStart({ reason: "startup" }, activationExtensionContext({ cwd: home, home }));
     assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 1);
 
-    await startHandler({ toolCallId: "post", toolName: "bash" }, activationExtensionContext({ cwd: home }));
-    await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [] } }, activationExtensionContext({ cwd: home }));
-    await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [{ type: "text", text: "hello" }] } }, activationExtensionContext({ cwd: home }));
-    await endHandler({ toolCallId: "post", toolName: "bash", isError: true }, activationExtensionContext({ cwd: home }));
+    await startHandler({ toolCallId: "post", toolName: "bash" }, activationExtensionContext({ cwd: home, home }));
+    await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [] } }, activationExtensionContext({ cwd: home, home }));
+    await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [{ type: "text", text: "hello" }] } }, activationExtensionContext({ cwd: home, home }));
+    await endHandler({ toolCallId: "post", toolName: "bash", isError: true }, activationExtensionContext({ cwd: home, home }));
     assert.deepEqual(observations.map((record) => ({
       event: record.event,
       toolCallId: record.toolCallId,

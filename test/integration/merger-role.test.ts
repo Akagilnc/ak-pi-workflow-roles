@@ -133,8 +133,8 @@ test("role extension binds Merger Git state to session cwd while preserving inje
         mkdirSync(repo, { recursive: true });
         execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "ignore" });
       }
-      await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoA }));
-      await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoB }));
+      await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoA, home }));
+      await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoB, home }));
       assert.deepEqual(roots, injected ? [] : [repoA, repoB]);
       if (!injected) assert.notEqual(states[0], states[1]);
     }
