@@ -2327,7 +2327,7 @@ export async function readLawfulJudgeRoleOutcome(
     kind: "accepted",
     role: "judge",
     status: judgeStatus,
-    decisiveFacts: judgeDecisiveFacts(details, judgeStatus as never),
+    decisiveFacts: judgeDecisiveFacts(details, judgeStatus),
   };
 }
 
@@ -2363,20 +2363,8 @@ async function settleLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
-  if (sealed?.role !== "judge") return undefined;
-  const details = sealed.decisiveFacts as Record<string, unknown>;
-  const judgeStatus = typeof details.judgeStatus === "string"
-    ? details.judgeStatus
-    : typeof details.status === "string"
-      ? details.status
-      : sealed.status;
-  const roleOutcome: LawfulJudgeRoleOutcome = {
-    kind: "accepted",
-    role: "judge",
-    status: judgeStatus,
-    decisiveFacts: judgeDecisiveFacts(details, judgeStatus as never),
-  };
+  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority);
+  if (roleOutcome === undefined) return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
