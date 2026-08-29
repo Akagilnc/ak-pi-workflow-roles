@@ -43,7 +43,6 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
-  extractReviewerRoleOutcome,
   formatTerminalResult,
   settleReviewerTerminalResult,
 } from "../../src/public-cli/settlement.ts";

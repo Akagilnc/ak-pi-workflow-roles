@@ -36,7 +36,6 @@ import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts
 import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
 import {
   extractFixerMethodInvocations,
-  extractFixerRoleOutcome,
   settleFixerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
@@ -858,106 +857,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         options: ["owner", "caller"],
       },
     };
-
-    // extract path: each lawful status keeps typed meaning on the shared face.
-    const unfinishedExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: unfinishedReceipt,
-        },
-      },
-    ]);
-    assert.ok(unfinishedExtracted);
-    assert.equal(unfinishedExtracted.outcome.kind, "accepted");
-    assert.equal(unfinishedExtracted.outcome.status, "unfinished");
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.fixerStatus,
-      "unfinished",
-    );
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.remainingScope,
-      unfinishedReceipt.remainingScope,
-    );
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.reason,
-      unfinishedReceipt.reason,
-    );
-    assert.equal(unfinishedExtracted.outcome.decisiveFacts.classResultCount, 1);
-
-    const refusedExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: applyRefusedReceipt,
-        },
-      },
-    ]);
-    assert.ok(refusedExtracted);
-    assert.equal(refusedExtracted.outcome.kind, "accepted");
-    assert.equal(refusedExtracted.outcome.status, "refused");
-    assert.equal(refusedExtracted.outcome.decisiveFacts.fixerStatus, "refused");
-    assert.deepEqual(
-      refusedExtracted.outcome.decisiveFacts.classDispositions,
-      [{ name: "PolicyCase", disposition: "refused" }],
-    );
-    assert.deepEqual(
-      refusedExtracted.outcome.decisiveFacts.blockerCauses,
-      ["authority_violation"],
-    );
-
-    const partialExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: partialReceipt,
-        },
-      },
-    ]);
-    assert.ok(partialExtracted);
-    assert.equal(partialExtracted.outcome.kind, "accepted");
-    assert.equal(partialExtracted.outcome.status, "partially_completed");
-    assert.equal(
-      partialExtracted.outcome.decisiveFacts.fixerStatus,
-      "partially_completed",
-    );
-    assert.equal(partialExtracted.outcome.decisiveFacts.classResultCount, 2);
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.classDispositions,
-      [{ name: "ParserCase", disposition: "completed" }, { name: "TransportCase", disposition: "refused" }],
-    );
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.blockerCauses,
-      ["prerequisite_unmet"],
-    );
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.prerequisiteIds,
-      ["repository.ready"],
-    );
-
-    const escalationExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: escalation,
-        },
-      },
-    ]);
-    // A role-authored kind is not an audit identity without the retained,
-    // seat-bound compliance response.
-    assert.equal(escalationExtracted, undefined);
 
     // settle + runAkRole production path for each lawful status → exit 0.
     const cases: Array<{

@@ -1297,21 +1297,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     )).details,
     reasoned,
   );
-  const { extractCoderRoleOutcome } = await import("../../src/public-cli/settlement.ts");
-  const projected = extractCoderRoleOutcome([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: CODER_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: reasoned,
-      },
-    },
-  ] as never);
-  assert.equal(projected?.outcome.decisiveFacts.reason, reasoned.reason);
-  assert.equal(projected?.outcome.decisiveFacts.remainingScope, reasoned.remainingScope);
-
   // Negative: continuous bare resubmits bounce at most twice, then accept through Gatekeeper (no loop).
   const harness2 = extensionHarness("coder", {
     "ak-coder-task": "/materials/approved.md",
