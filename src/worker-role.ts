@@ -116,6 +116,25 @@ function isWorkerPhase(value: unknown): value is WorkerPhase {
 
 export type WorkerRoleHostActions = HostGatekeeperActions;
 
+/** Stable code for completed apply without host skill-expansion capability evidence (#525). */
+export const CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE =
+  "coder_skill_expansion_evidence_missing" as const;
+
+export type CoderSkillExpansionEvidenceMissingResult = {
+  readonly code: typeof CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE;
+};
+
+/** Correct completed rejection — not infrastructure; projected via submission non-pass bridge. */
+export class CoderSkillExpansionEvidenceMissingError extends Error {
+  readonly code = CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE;
+  readonly result: CoderSkillExpansionEvidenceMissingResult;
+  constructor() {
+    super("Coder completed requires host skill-expansion capability evidence");
+    this.name = "CoderSkillExpansionEvidenceMissingError";
+    this.result = Object.freeze({ code: CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE });
+  }
+}
+
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadPacket(path: string): Promise<string>;
@@ -406,9 +425,9 @@ export function createCoderRoleRuntime(
               phase === "apply" && output.status === "completed" &&
               !expansionCaptured
             ) {
-              throw new Error(
-                "Coder completed requires the Matt tdd skill to be expanded through Pi /skill:tdd",
-              );
+              const rejection = new CoderSkillExpansionEvidenceMissingError();
+              hostActions.bindSubmissionNonPass(toolCallId, rejection.result);
+              throw rejection;
             }
             assertAcceptableThroughHost(
               submissionGate,
@@ -466,7 +485,7 @@ export function createCoderRoleRuntime(
               expansionPending = false;
               if (originalRequest !== undefined) {
                 expansionCaptured = binding.captureExpansion(
-                  event.prompt,
+                  pi.capabilities?.skillExpansion(event.prompt),
                   originalRequest,
                 ) !== undefined;
               }

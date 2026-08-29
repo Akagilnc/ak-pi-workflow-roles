@@ -82,7 +82,7 @@ export type RunGatekeeperOptions = {
 export type GatekeeperPassHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext | HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
-  bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
+  bindSubmissionNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
 };
 
 // Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
@@ -291,6 +291,6 @@ export async function requireGatekeeperPass(options: {
     options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
   }
   // Envelope owns the execute→tool_result bridge; this module only projects + throws.
-  options.hostActions.bindGatekeeperNonPass(options.toolCallId, gatekeeper);
+  options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
   throw new GatekeeperDecisionError(gatekeeper);
 }

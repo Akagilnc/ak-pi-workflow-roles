@@ -201,7 +201,13 @@ import {
   FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
   FIXER_PHASES,
+  type CoderSkillExpansionEvidenceMissingResult,
 } from "./worker-role.ts";
+
+/** One envelope map for Gatekeeper non-pass and other correct submission rejects (#525). */
+type SubmissionNonPassResult =
+  | GatekeeperNonPassResult
+  | CoderSkillExpansionEvidenceMissingResult;
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
@@ -304,10 +310,13 @@ export {
 } from "./reviewer-role.ts";
 export {
   CODER_OUTPUT_TOOL_NAME,
+  CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE,
+  CoderSkillExpansionEvidenceMissingError,
   FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
   FIXER_PHASES,
   type CoderOutput,
+  type CoderSkillExpansionEvidenceMissingResult,
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
@@ -633,8 +642,8 @@ export function createRoleRuntimeExtension(
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
-    // Envelope-owned execute→tool_result bridge for Gatekeeper non-pass (ADR 0018).
-    const pendingGatekeeperNonPassByToolCallId = new Map<string, GatekeeperNonPassResult>();
+    // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
+    const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionNonPassResult>();
     let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
@@ -697,7 +706,10 @@ export function createRoleRuntimeExtension(
         if (!reviewerExpansionCaptured) {
           if (
             reviewerOriginalRequest === undefined
-            || activeReviewerParent.skillBinding.captureExpansion(event.prompt, reviewerOriginalRequest) === undefined
+            || activeReviewerParent.skillBinding.captureExpansion(
+              roleHost.capabilities?.skillExpansion(event.prompt),
+              reviewerOriginalRequest,
+            ) === undefined
           ) {
             failInfrastructure(
               new Error("Canonical code-review Skill expansion did not match the captured request"),
@@ -796,12 +808,12 @@ export function createRoleRuntimeExtension(
       if (infrastructureDetails !== undefined) {
         return { details: infrastructureDetails, isError: true };
       }
-      // Gatekeeper non-pass: throw kept message text for the model; project the
+      // Submission non-pass: throw kept message text for the model; project the
       // envelope-bound structured result onto session details at this tool_result seam.
-      const gatekeeperNonPass = pendingGatekeeperNonPassByToolCallId.get(event.toolCallId);
-      if (gatekeeperNonPass !== undefined) {
-        pendingGatekeeperNonPassByToolCallId.delete(event.toolCallId);
-        return { details: gatekeeperNonPass, isError: true };
+      const submissionNonPass = pendingSubmissionNonPassByToolCallId.get(event.toolCallId);
+      if (submissionNonPass !== undefined) {
+        pendingSubmissionNonPassByToolCallId.delete(event.toolCallId);
+        return { details: submissionNonPass, isError: true };
       }
       // Recommendation rides the accepted settlement record's content so the one
       // mandatory last-ak_*_output extraction surfaces route/next/reason without
@@ -911,7 +923,7 @@ export function createRoleRuntimeExtension(
       navigatorAttendance = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
-      pendingGatekeeperNonPassByToolCallId.clear();
+      pendingSubmissionNonPassByToolCallId.clear();
       observationFace.reset();
     });
 
@@ -922,8 +934,8 @@ export function createRoleRuntimeExtension(
         }
         failInfrastructure(error, ctx);
       },
-      bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void {
-        pendingGatekeeperNonPassByToolCallId.set(toolCallId, result);
+      bindSubmissionNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
+        pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
     };
     const judge = createJudgeRoleRuntime(
@@ -1132,7 +1144,7 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
-      pendingGatekeeperNonPassByToolCallId.clear();
+      pendingSubmissionNonPassByToolCallId.clear();
       engineDetourRegistration?.resetLatch();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
