@@ -43,6 +43,8 @@ async function conflictedRepository(root: string) {
 async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt") {
   const providerPath = resolve(packageRoot, "test/fixtures/merger-baseline-provider.ts");
   const home = await mkdtemp(join(tmpdir(), `ak-public-merger-${residual ?? "accepted"}-`));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     const project = join(home, "work"); await mkdir(project);
     const commit = await conflictedRepository(project);
@@ -51,22 +53,28 @@ async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt"
       "--project", project, "Resolve the ordinary conflict.",
     ], {
       packageRoot, home, agentDir: join(home, ".pi", "agent"), cwd: project,
-      createRunId: () => "run-merger-baseline-public",
+      createRunId: () => `run-merger-baseline-public-${residual ?? "accepted"}`,
       mergerExtraPiArgs: ["-e", providerPath], mergerTimeoutMs: 90_000,
       io: { stdout() {}, stderr() {} },
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args, options) => {
+        const runId = `run-merger-baseline-public-${residual ?? "accepted"}`;
         const run = await runPiSubprocess([...args], { cwd: options.cwd, timeoutMs: options.timeoutMs ?? 90_000,
           env: { ...options.env, PI_OFFLINE: "1", AK_MERGER_FIXTURE_COMMIT: commit,
+            AK_MERGER_FIXTURE_ATTEMPT_ID: runId,
             ...(residual === undefined ? {} : { AK_MERGER_FIXTURE_RESIDUAL: residual }) } });
         return { code: run.code, stdout: run.stdout, stderr: run.stderr, timedOut: run.localTimeout, args: [...args] };
       },
             extraPiArgs: ["-e", providerPath],
           }),
     });
-  } finally { await rm(home, { recursive: true, force: true }); }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 test("public Merger preserves residual failure precedence", { timeout: 240_000 }, async () => {

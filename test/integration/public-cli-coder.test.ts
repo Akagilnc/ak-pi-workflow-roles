@@ -30,17 +30,21 @@ import {
   admitCoderInvocation,
 } from "../../src/public-cli/invocation.ts";
 import {
-  extractCoderRoleOutcome,
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-coder-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -244,13 +248,15 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
-
-    const extracted = extractCoderRoleOutcome(
-      sessionLines.map((line) => JSON.parse(line)),
-    );
-    assert.equal(extracted?.outcome.role, "coder");
-    assert.equal(extracted?.outcome.kind, "accepted");
-    assert.equal(extracted?.outcome.status, "completed");
+    await sealAcceptedSubmission({
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "coder",
+      toolName: CODER_OUTPUT_TOOL_NAME,
+      details: receipt,
+      toolCallId: "c1",
+    });
 
     const terminal = await settleCoderTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
@@ -300,6 +306,51 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     // Evidence must not point at ambient home Skill discovery.
     const evidenceText = JSON.stringify(evidence);
     assert.equal(evidenceText.includes(".agents/skills"), false);
+  });
+});
+
+test("alternate host seals accepted Terminal without Pi acceptance leaf", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const receipt = {
+      status: "completed" as const,
+      report: "Alternate host sealed through production ledger producer.",
+    };
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(
+      ["coder", "--project", project, "Finish without a Pi session leaf."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-coder-alternate-host",
+        io,
+        roleTurnHost: createMinimalHost(async (request) => {
+          const { sessionDirectory, sessionFile } =
+            piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(sessionDirectory, { recursive: true });
+          // No packaged toolResult leaf — only the pipeline ledger seals acceptance.
+          await writeFile(sessionFile, "", "utf8");
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            home,
+            runDirectory: request.runDirectory,
+            role: "coder",
+            toolName: CODER_OUTPUT_TOOL_NAME,
+            details: receipt,
+            toolCallId: "alt-1",
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0, stdout.join("") || "alternate host failed");
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal!.roleOutcome.role, "coder");
+    assert.equal(result.terminal!.roleOutcome.status, "completed");
   });
 });
 

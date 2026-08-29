@@ -74,9 +74,13 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
