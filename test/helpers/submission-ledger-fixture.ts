@@ -1,12 +1,113 @@
 /**
- * Minimal durable sealed fact for settlement-only tests.
- * Does not replay the production submission protocol — producer proof lives in
- * test/contract/submission-ledger.test.ts and real role-runtime entry paths.
+ * Drive the production submission ledger producer for settlement tests.
+ * Same createSubmissionLedgerHost path as role-runtime — not a parallel sitian write.
  */
 import { basename } from "node:path";
+import { Type } from "typebox";
+import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
+import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { readSealedSubmission } from "../../src/submission-ledger.ts";
-import { sitianReport } from "../../src/sitian-facade.ts";
+import {
+  createSubmissionLedgerHost,
+  readSealedSubmission,
+} from "../../src/submission-ledger.ts";
+
+function toolNameForRole(role: TerminalRoleName): string {
+  const toolName = packagedRoleOutputTool(role);
+  if (toolName === undefined) throw new Error(`no output tool for role ${role}`);
+  return toolName;
+}
+
+/** Seal an accepted projection through the production ledger host. */
+export async function sealAcceptedSubmission(input: {
+  readonly cwd: string;
+  readonly runId: string;
+  readonly role: TerminalRoleName;
+  readonly details: unknown;
+  readonly home?: string;
+  readonly toolCallId?: string;
+  readonly runDirectory?: string;
+}): Promise<void> {
+  if (await readSealedSubmission(input.cwd, input.runId) !== undefined) return;
+  const toolName = toolNameForRole(input.role);
+  const toolCallId = input.toolCallId ?? "seal-1";
+  let registered: HostToolDefinition | undefined;
+  const host = {
+    registerTool(tool: HostToolDefinition) {
+      registered = tool;
+    },
+  } as RoleHost;
+  createSubmissionLedgerHost(host, new Map([[toolName, input.role]])).registerTool({
+    name: toolName,
+    label: "output",
+    description: "",
+    parameters: Type.Object({}),
+    execute: async () => ({ content: [], details: input.details, terminate: true }),
+  });
+  if (registered === undefined) throw new Error("submission ledger host did not register output tool");
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  if (input.home !== undefined) process.env.HOME = input.home;
+  process.env.AK_ROLE_RUN_DIR =
+    input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
+  try {
+    await registered.execute(
+      toolCallId,
+      {},
+      undefined,
+      undefined,
+      {
+        cwd: input.cwd,
+        mode: "json",
+        model: undefined,
+        sessionManager: {
+          getHeader: () => ({ type: "session", id: `${input.runId}:attempt` }),
+          getLeafId: () => null,
+          getLeafEntry: () => undefined,
+          getEntries: () => [],
+          getSessionDir: () => "",
+          getSessionFile: () => undefined,
+        },
+        terminationBatch: {
+          batchClosed: true,
+          calls: [{ id: toolCallId, name: toolName }],
+        },
+        abort() {},
+      } as HostContext,
+    );
+  } finally {
+    if (input.home !== undefined) {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+    }
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = priorRun;
+  }
+}
+
+/** @deprecated name kept for call-site migration — routes through production ledger host. */
+export async function writeSealedSubmissionFixture(input: {
+  readonly cwd: string;
+  readonly runDirectory: string;
+  readonly role: TerminalRoleName;
+  readonly details: unknown;
+  readonly home?: string;
+  readonly toolCallId?: string;
+}): Promise<void> {
+  const runId = basename(input.runDirectory).split("@")[0];
+  if (runId === undefined || runId.length === 0) {
+    throw new Error("sealed submission requires admitted run identity from runDirectory");
+  }
+  await sealAcceptedSubmission({
+    cwd: input.cwd,
+    runId,
+    role: input.role,
+    details: input.details,
+    runDirectory: input.runDirectory,
+    ...(input.home === undefined ? {} : { home: input.home }),
+    ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
+  });
+}
 
 /** Spawn-env convenience for public-cli faux runners that already own typed details. */
 export async function writeSealedSubmissionFixtureForSpawn(input: {
@@ -28,52 +129,88 @@ export async function writeSealedSubmissionFixtureForSpawn(input: {
   });
 }
 
-export async function writeSealedSubmissionFixture(input: {
+/** Record a live audit-escalation outcome through the production ledger host. */
+export async function recordAuditEscalationSubmission(input: {
   readonly cwd: string;
-  readonly runDirectory: string;
+  readonly runId: string;
   readonly role: TerminalRoleName;
   readonly details: unknown;
   readonly home?: string;
   readonly toolCallId?: string;
+  readonly runDirectory?: string;
 }): Promise<void> {
-  const runId = basename(input.runDirectory).split("@")[0] || "unbound";
-  const priorHome = process.env.HOME;
-  if (input.home !== undefined) process.env.HOME = input.home;
-  try {
-    if (await readSealedSubmission(input.cwd, runId) !== undefined) return;
-    const status =
-      typeof input.details === "object" && input.details !== null
-        ? typeof (input.details as { status?: unknown }).status === "string"
-          ? (input.details as { status: string }).status
-          : typeof (input.details as { judgeStatus?: unknown }).judgeStatus === "string"
-            ? (input.details as { judgeStatus: string }).judgeStatus
-            : "accepted"
-        : "accepted";
-    const toolCallId = input.toolCallId ?? "seal-1";
-    const attemptId = `${runId}:fixture`;
-    sitianReport({
-      level: "event",
-      kind: "sealed",
-      subject: { runId, attemptId },
-      payload: {
-        type: "sealed",
-        attemptId,
-        toolCallId,
-        accepted: input.details,
-        projection: {
-          kind: "accepted",
-          role: input.role,
-          status,
-          decisiveFacts: input.details,
-        },
+  const { isAuditEscalationProjection, buildAuditEscalationResult } = await import(
+    "../../src/audit-escalation.ts"
+  );
+  // Ensure details are live-registry projections so the ledger recognises them.
+  let details = input.details;
+  if (!isAuditEscalationProjection(details)) {
+    const record = details as { conflicts?: unknown; decisionGate?: unknown; auditDecisionGate?: unknown };
+    details = buildAuditEscalationResult(
+      {
+        status: "escalate",
+        ...(Object.hasOwn(record, "conflicts") ? { conflicts: record.conflicts } : {}),
+        ...(Object.hasOwn(record, "decisionGate")
+          ? { decisionGate: record.decisionGate }
+          : Object.hasOwn(record, "auditDecisionGate")
+            ? { decisionGate: record.auditDecisionGate }
+            : {}),
       },
-      source: "test-fixture",
-      cwd: input.cwd,
-    });
+      details,
+    );
+  }
+  const toolName = toolNameForRole(input.role);
+  const toolCallId = input.toolCallId ?? "escalate-1";
+  let registered: HostToolDefinition | undefined;
+  const host = {
+    registerTool(tool: HostToolDefinition) {
+      registered = tool;
+    },
+  } as RoleHost;
+  createSubmissionLedgerHost(host, new Map([[toolName, input.role]])).registerTool({
+    name: toolName,
+    label: "output",
+    description: "",
+    parameters: Type.Object({}),
+    execute: async () => ({ content: [], details, terminate: true }),
+  });
+  if (registered === undefined) throw new Error("submission ledger host did not register output tool");
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  if (input.home !== undefined) process.env.HOME = input.home;
+  process.env.AK_ROLE_RUN_DIR =
+    input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
+  try {
+    await registered.execute(
+      toolCallId,
+      {},
+      undefined,
+      undefined,
+      {
+        cwd: input.cwd,
+        mode: "json",
+        model: undefined,
+        sessionManager: {
+          getHeader: () => ({ type: "session", id: `${input.runId}:attempt` }),
+          getLeafId: () => null,
+          getLeafEntry: () => undefined,
+          getEntries: () => [],
+          getSessionDir: () => "",
+          getSessionFile: () => undefined,
+        },
+        terminationBatch: {
+          batchClosed: true,
+          calls: [{ id: toolCallId, name: toolName }],
+        },
+        abort() {},
+      } as HostContext,
+    );
   } finally {
     if (input.home !== undefined) {
       if (priorHome === undefined) delete process.env.HOME;
       else process.env.HOME = priorHome;
     }
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = priorRun;
   }
 }

@@ -12,7 +12,10 @@ import {
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
 import { sitianReport } from "../sitian-facade.ts";
-import { readSealedSubmission } from "../submission-ledger.ts";
+import {
+  readAuditEscalationSubmission,
+  readSealedSubmission,
+} from "../submission-ledger.ts";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
@@ -117,6 +120,15 @@ import {
 
 async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" }> | undefined> {
   return readSealedSubmission(admitted.projectRoot, admitted.runId);
+}
+
+async function auditEscalationLedgerOutcome(
+  admitted: AdmittedRoleInvocation,
+  role: "judge" | "doctor",
+): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
+  const projection = await readAuditEscalationSubmission(admitted.projectRoot, admitted.runId);
+  if (projection?.role !== role) return undefined;
+  return projection;
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -2316,19 +2328,22 @@ export async function readLawfulJudgeRoleOutcome(
   authority: DurablePrincipalAuthority,
 ): Promise<LawfulJudgeRoleOutcome | undefined> {
   const sealed = await sealedLedgerOutcome(admitted);
-  if (sealed?.role !== "judge") return undefined;
-  const details = sealed.decisiveFacts as Record<string, unknown>;
-  const judgeStatus = typeof details.judgeStatus === "string"
-    ? details.judgeStatus
-    : typeof details.status === "string"
-      ? details.status
-      : sealed.status;
-  return {
-    kind: "accepted",
-    role: "judge",
-    status: judgeStatus,
-    decisiveFacts: judgeDecisiveFacts(details, judgeStatus),
-  };
+  if (sealed?.role === "judge") {
+    const details = sealed.decisiveFacts as Record<string, unknown>;
+    const judgeStatus = typeof details.judgeStatus === "string"
+      ? details.judgeStatus
+      : typeof details.status === "string"
+        ? details.status
+        : sealed.status;
+    return {
+      kind: "accepted",
+      role: "judge",
+      status: judgeStatus,
+      decisiveFacts: judgeDecisiveFacts(details, judgeStatus),
+    };
+  }
+  // Non-final: consume ledger audit-escalation projection (no JSONL accepted rebuild).
+  return auditEscalationLedgerOutcome(admitted, "judge");
 }
 
 /**
@@ -2888,10 +2903,23 @@ async function settleLawfulDoctorTerminalResult(
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
   const sealed = await sealedLedgerOutcome(admitted);
-  if (sealed?.role !== "doctor") return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  if (sealed?.role !== "doctor") {
+    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor");
+    if (escalation === undefined) return undefined;
+    const artifacts = await publishDoctorArtifacts(admitted, escalation, coordinates);
+    return withOptionalGateProjection(
+      {
+        roleOutcome: escalation,
+        navigator: extractNavigatorFact(entries),
+        artifacts,
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+    );
+  }
   const output = validateRecordedDoctorOutput(sealed.decisiveFacts);
   const roleOutcome: Extract<LawfulDoctorRoleOutcome, { kind: "accepted" }> = {
     kind: "accepted",
@@ -3436,28 +3464,18 @@ async function settleLawfulMergerTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted);
   if (roleOutcome?.role !== "merger") {
+    // Residual incomplete: session errored candidate after ledger did not seal.
+    // Sole-final (0041) is ledger-owned — settlement does not re-judge calls.length.
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === undefined) continue;
-      const callMessage = entries[residual.callIndex]?.message;
-      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content)
-        ? callMessage.content.filter((part) => isRecord(part) && part.type === "toolCall")
-        : [];
       const attemptId = isRecord(residual.candidate)
         ? safelyRead(residual.candidate, "attemptId")
         : { readable: true as const, value: undefined };
-      // Mirror the execution boundary's established precedence: ADR 0041 sole-final,
-      // then ADR 0037 admitted-attempt identity, and only then output shape.
-      if (
-        calls.length !== 1 ||
-        calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME ||
-        !attemptId.readable ||
-        attemptId.value !== admitted.runId
-      ) {
-        continue;
-      }
+      // Admitted-attempt identity binding only (ADR 0037) — not sole-final cardinality.
+      if (!attemptId.readable || attemptId.value !== admitted.runId) continue;
       try {
         validateMergerOutput(residual.candidate, admitted.runId);
       } catch {
