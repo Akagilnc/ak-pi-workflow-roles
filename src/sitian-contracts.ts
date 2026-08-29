@@ -87,6 +87,13 @@ export type SitianReadResult = {
   readonly diagnostics: readonly SitianMalformedDiagnostic[];
 };
 
+/** Lift direct-cause fs errno onto a wrap error (no chain walk). */
+function attachDirectErrnoCode(error: Error, cause: unknown): void {
+  if (cause === null || typeof cause !== "object" || !("code" in cause)) return;
+  const code = (cause as { code?: unknown }).code;
+  if (typeof code === "string") (error as NodeJS.ErrnoException).code = code;
+}
+
 /** Typed infrastructure error for real ledger persistence / IO failures. */
 export class SitianInfrastructureError extends Error {
   readonly knownCause = "session" as const;
@@ -94,5 +101,6 @@ export class SitianInfrastructureError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "SitianInfrastructureError";
+    attachDirectErrnoCode(this, options?.cause);
   }
 }
