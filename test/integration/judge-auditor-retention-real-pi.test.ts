@@ -160,15 +160,19 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   if (address === null || typeof address === "string") throw new Error("test provider did not listen");
   await writeFile(extension, `
 import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { userInfo } from "node:os";
+import { join, resolve, sep } from "node:path";
 export default function (pi) {
   console.error("[ak-patch] normal activation banner");
   const agentDir = process.env.PI_CODING_AGENT_DIR;
   if (!agentDir) {
     throw new Error("PI_CODING_AGENT_DIR must be explicitly set");
   }
-  if (agentDir.includes(".pi/agent") && !agentDir.includes("tmp") && !agentDir.includes("ak-")) {
-    throw new Error("Refusing to write models.json to non-test agentDir: " + agentDir);
+  // passwd home, not process.env.HOME (tests override HOME).
+  const resolved = resolve(agentDir);
+  const machine = resolve(userInfo().homedir, ".pi", "agent");
+  if (resolved === machine || resolved.startsWith(machine + sep)) {
+    throw new Error("Refusing to write models.json to machine agentDir: " + agentDir);
   }
   mkdirSync(agentDir, { recursive: true });
   writeFileSync(join(agentDir, "models.json"), JSON.stringify({

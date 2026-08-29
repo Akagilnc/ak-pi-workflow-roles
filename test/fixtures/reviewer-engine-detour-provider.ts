@@ -79,8 +79,14 @@ export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Pr
   if (!agentDir) {
     throw new Error("reviewerEngineDetourProvider requires explicit PI_CODING_AGENT_DIR");
   }
-  if (agentDir.includes(".pi/agent") && !agentDir.includes("tmp") && !agentDir.includes("ak-")) {
-    throw new Error("Refusing to write models.json to non-test agentDir: " + agentDir);
+  // Compare against real machine agent dir via passwd home (not process.env.HOME,
+  // which tests override). No path-heuristic allow list.
+  const { userInfo } = await import("node:os");
+  const { resolve, sep } = await import("node:path");
+  const resolved = resolve(agentDir);
+  const machine = resolve(userInfo().homedir, ".pi", "agent");
+  if (resolved === machine || resolved.startsWith(machine + sep)) {
+    throw new Error("Refusing to write models.json to machine agentDir: " + agentDir);
   }
   const modelsPath = join(agentDir, "models.json");
     await writeFile(modelsPath, JSON.stringify({

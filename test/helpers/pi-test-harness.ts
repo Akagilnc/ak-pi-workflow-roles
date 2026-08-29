@@ -14,8 +14,8 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { tmpdir, userInfo } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -861,15 +861,18 @@ export function persistActivationSessionFile(input: {
 export function activationExtensionContext(input: {
   cwd: string;
   mode?: ExtensionContext["mode"];
-  home?: string;
+  /** Required hermetic home — no ambient/real HOME fallback. */
+  home: string;
   bookKey?: string;
   sessionDir?: string;
   sessionFile?: string | null;
   abort?: () => void;
 }): ExtensionContext {
-  const home = input.home ?? process.env.HOME;
+  // Explicit home only — never silently fall back to ambient/real HOME
+  // (2026-08-29 faux-leak: missing test HOME → real ~/.pi/agent poison).
+  const home = input.home;
   if (typeof home !== "string" || home.length === 0) {
-    throw new Error("activationExtensionContext requires home or process.env.HOME");
+    throw new Error("activationExtensionContext requires explicit home");
   }
   const bookKey = input.bookKey ?? activationBookKeyFor(input.cwd);
   let sessionFile: string | undefined;
@@ -1233,6 +1236,7 @@ export async function withInProcessPi<T>(
 ): Promise<T> {
   let mockServer: { baseUrl: string; close: () => Promise<void> } | undefined;
   if (options.faux !== undefined) {
+    assertWritableTestAgentDir(options.agentDir);
     mockServer = await createMockProviderServer(options.faux);
     const modelsPath = resolve(options.agentDir, "models.json");
     if (!existsSync(modelsPath)) {
@@ -1454,6 +1458,42 @@ export async function withInstitutionalProviderFixture<T>(
 }
 
 /**
+ * Real machine home via passwd/user profile — NOT process.env.HOME, which tests
+ * override. Used to refuse models.json writes that would poison the host agent.
+ */
+export function realMachineHome(): string {
+  return resolve(userInfo().homedir);
+}
+
+/**
+ * Real machine `~/.pi/agent`. Test fixtures must never write models.json here
+ * (2026-08-29 faux-leak incident: silent HOME fallback poisoned host codex).
+ */
+export function realMachineAgentDir(): string {
+  return resolve(realMachineHome(), ".pi", "agent");
+}
+
+/**
+ * Fail closed before any test models.json write: agentDir must be explicit and
+ * must not resolve to (or under) the machine agent dir. No path-heuristic allow
+ * list — compare against the real home only.
+ */
+export function assertWritableTestAgentDir(
+  agentDir: string | undefined | null,
+): asserts agentDir is string {
+  if (typeof agentDir !== "string" || agentDir.trim() === "") {
+    throw new Error(
+      "test agentDir must be explicitly provided (no silent HOME/agentDir fallback)",
+    );
+  }
+  const resolved = resolve(agentDir);
+  const machine = realMachineAgentDir();
+  if (resolved === machine || resolved.startsWith(machine + sep)) {
+    throw new Error(`Refusing to write models.json to machine agentDir: ${agentDir}`);
+  }
+}
+
+/**
  * Seed a specific agentDir's models.json from a faux provider over the real
  * OpenAI-completions HTTP path, then run. Unlike `withInstitutionalProviderFixture`
  * (which points PI_CODING_AGENT_DIR at a scratch temp dir), this writes the
@@ -1468,9 +1508,7 @@ export async function withAgentDirProviderFixture<T>(
   agentDir: string,
   run: () => Promise<T>,
 ): Promise<T> {
-  if (!agentDir || (agentDir.includes(".pi/agent") && !agentDir.includes("tmp") && !agentDir.includes("ak-") && !agentDir.includes("test"))) {
-    throw new Error("Refusing to write models.json to non-test agentDir: " + agentDir);
-  }
+  assertWritableTestAgentDir(agentDir);
   const mock = await createMockProviderServer(faux);
   try {
     const modelsPath = resolve(agentDir, "models.json");
