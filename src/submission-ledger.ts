@@ -1,8 +1,8 @@
-import { basename } from "node:path";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import { GatekeeperDecisionError } from "./gatekeeper-role.ts";
 import { AcceptedDetailsContractError } from "./package-contracts/terminating-tools.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
 import {
@@ -41,28 +41,19 @@ function isTypedCorrectableRejection(error: unknown): boolean {
 
 /**
  * Admitted run identity for the ledger subject.
- * Prefer AK_ROLE_RUN_DIR basename (public-CLI admitted.runId correlation);
- * otherwise session header / session-path segment. Never a shared "unbound" bucket.
+ * Prefer AK_ROLE_RUN_DIR via sole runDirectory→runId parser (public-CLI correlation);
+ * otherwise session header id. Never a shared "unbound" bucket.
+ * Session-path layout fallback omitted: bare Pi and public CLI both expose header id
+ * when a session exists; missing both is infrastructure, not a third guess.
  */
 function runIdentity(context: HostContext): string {
   const directory = process.env.AK_ROLE_RUN_DIR;
   if (typeof directory === "string" && directory.length > 0) {
-    const fromDir = basename(directory).split("@")[0];
-    if (fromDir !== undefined && fromDir.length > 0) return fromDir;
+    const fromDir = runIdFromRunDirectory(directory);
+    if (fromDir !== undefined) return fromDir;
   }
   const headerId = context.sessionManager.getHeader?.()?.id;
   if (typeof headerId === "string" && headerId.length > 0) return headerId;
-  const sessionFile = context.sessionManager.getSessionFile?.();
-  if (typeof sessionFile === "string" && sessionFile.length > 0) {
-    const normalized = sessionFile.replace(/\\/g, "/");
-    const segments = normalized.split("/");
-    const sessionIdx = segments.lastIndexOf("session");
-    if (sessionIdx > 0) {
-      const runSegment = segments[sessionIdx - 1];
-      const fromPath = runSegment?.split("@")[0];
-      if (fromPath !== undefined && fromPath.length > 0) return fromPath;
-    }
-  }
   throw new Error("submission ledger requires admitted run identity");
 }
 
