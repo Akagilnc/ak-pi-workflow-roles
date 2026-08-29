@@ -16031,55 +16031,127 @@ function describeErrorIdentity(error) {
   const message = typeof candidate?.message === "string" && candidate.message !== "" ? `: ${candidate.message}` : "";
   return `${name}${code}${message}`;
 }
+function errorCodeOf(error) {
+  return error.code;
+}
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCodeOf(error) !== "ESRCH";
+  }
+}
+async function autopsyWriterLock(lockPath) {
+  let content;
+  try {
+    content = await readFile5(lockPath, "utf8");
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return { verdict: "absent" };
+    return { verdict: "absent", readFailure: error };
+  }
+  const pid = Number.parseInt(content.trim(), 10);
+  if (!Number.isInteger(pid) || pid <= 0) return { verdict: "absent" };
+  return isProcessAlive(pid) ? { verdict: "alive", pid } : { verdict: "dead", pid };
+}
+function describeAutopsy(autopsy) {
+  switch (autopsy.verdict) {
+    case "alive":
+      return `live pid ${autopsy.pid}`;
+    case "dead":
+      return `dead pid ${autopsy.pid}`;
+    case "absent":
+      return autopsy.readFailure !== void 0 ? "unreadable lock" : "absent or unparseable holder";
+  }
+}
+async function reclaimStaleWriterLock(lockPath, runDirectory) {
+  const current = await autopsyWriterLock(lockPath);
+  if (current.verdict !== "dead") return;
+  try {
+    await unlink2(lockPath);
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return;
+    if (errorCodeOf(error) !== "EACCES") throw error;
+    await chmod(runDirectory, 493);
+    await unlink2(lockPath);
+  }
+}
+async function createWriterLease(lockPath, runDirectory, reportCleanupFailure) {
+  const handle = await open(lockPath, "wx");
+  try {
+    await handle.writeFile(`${process.pid}
+`, "utf8");
+  } catch (error) {
+    await handle.close().catch(() => void 0);
+    await unlink2(lockPath).catch(() => void 0);
+    throw error;
+  }
+  let released = false;
+  return {
+    lockPath,
+    async release() {
+      if (released) return;
+      released = true;
+      await handle.close().catch(() => void 0);
+      try {
+        await unlink2(lockPath);
+      } catch (error) {
+        if (errorCodeOf(error) === "EACCES") {
+          try {
+            await chmod(runDirectory, 493);
+            await unlink2(lockPath);
+          } catch (retryError) {
+            reportCleanupFailure(retryError);
+          }
+        } else {
+          reportCleanupFailure(error);
+        }
+      }
+    }
+  };
+}
 async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
   const reportCleanupFailure = (error) => {
     try {
       onCleanupFailure?.(
-        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join7(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+        `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join7(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
       );
     } catch {
     }
   };
   const lockPath = join7(runDirectory, WRITER_LOCK_FILE);
-  try {
-    const handle = await open(lockPath, "wx");
+  let lastAutopsy = { verdict: "absent" };
+  for (let round = 0; round < WRITER_LEASE_RECLAIM_ROUNDS; round += 1) {
     try {
-      await handle.writeFile(`${process.pid}
-`, "utf8");
+      return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
     } catch (error) {
-      await handle.close().catch(() => void 0);
-      await unlink2(lockPath).catch(() => void 0);
-      throw error;
-    }
-    let released = false;
-    return {
-      lockPath,
-      async release() {
-        if (released) return;
-        released = true;
-        await handle.close().catch(() => void 0);
-        try {
-          await unlink2(lockPath);
-        } catch (error) {
-          if (error.code === "EACCES") {
-            try {
-              await chmod(runDirectory, 493);
-              await unlink2(lockPath);
-            } catch (retryError) {
-              reportCleanupFailure(retryError);
-            }
-          } else {
-            reportCleanupFailure(error);
-          }
-        }
+      if (errorCodeOf(error) !== "EEXIST") throw error;
+      lastAutopsy = await autopsyWriterLock(lockPath);
+      if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== void 0) {
+        reportCleanupFailure(lastAutopsy.readFailure);
       }
-    };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-      throw new RunWriterLeaseHeldError();
+      if (lastAutopsy.verdict === "alive") {
+        throw new RunWriterLeaseHeldError(
+          `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`
+        );
+      }
+      if (lastAutopsy.verdict === "absent") {
+        throw new RunWriterLeaseHeldError(
+          lastAutopsy.readFailure !== void 0 ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place` : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`
+        );
+      }
+      try {
+        await reclaimStaleWriterLock(lockPath, runDirectory);
+      } catch (reclaimError) {
+        throw new RunWriterLeaseHeldError(
+          `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`
+        );
+      }
     }
-    throw error;
   }
+  throw new RunWriterLeaseHeldError(
+    `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaim rounds (last autopsy: ${describeAutopsy(lastAutopsy)})`
+  );
 }
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
@@ -16471,7 +16543,7 @@ async function peekRoleRunRole(home, runId) {
   const run = await readRoleRunState(runDirectory);
   return run?.role;
 }
-var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
+var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError, WRITER_LEASE_RECLAIM_ROUNDS;
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
@@ -16492,6 +16564,7 @@ var init_run_lifecycle = __esm({
         this.name = "RunWriterLeaseHeldError";
       }
     };
+    WRITER_LEASE_RECLAIM_ROUNDS = 3;
   }
 });
 
