@@ -15421,6 +15421,11 @@ var init_engine_detour = __esm({
 });
 
 // src/sitian-contracts.ts
+function attachDirectErrnoCode(error, cause) {
+  if (cause === null || typeof cause !== "object" || !("code" in cause)) return;
+  const code = cause.code;
+  if (typeof code === "string") error.code = code;
+}
 var SitianInfrastructureError;
 var init_sitian_contracts = __esm({
   "src/sitian-contracts.ts"() {
@@ -15430,6 +15435,7 @@ var init_sitian_contracts = __esm({
       constructor(message, options) {
         super(message, options);
         this.name = "SitianInfrastructureError";
+        attachDirectErrnoCode(this, options?.cause);
       }
     };
   }
