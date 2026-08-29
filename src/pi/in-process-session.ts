@@ -42,6 +42,7 @@ import type {
 import {
   createStreamIdleGuard,
   isStreamIdleTimeoutError,
+  StreamIdleTimeoutError,
 } from "../stream-idle-guard.ts";
 import {
   hasUpstreamErrorTestimony,
@@ -420,6 +421,7 @@ export async function openPiInstitutionalSession(
               ...(request ?? {}),
               ...(resolvedEnv === undefined ? {} : { env: resolvedEnv }),
               signal: streamSignal,
+              maxRetries: 0,
               onResponse: async (
                 response: { status: number; headers: Record<string, string> },
                 resModel: Model<Api>,
@@ -437,13 +439,14 @@ export async function openPiInstitutionalSession(
               ? childProvider.streamSimple(model, context, retriedRequest as any)
               : childProvider.stream(model, context, retriedRequest as any);
             let sawEvent = false;
+            const attemptEvents: any[] = [];
             const iterator = source[Symbol.asyncIterator]();
             while (true) {
               const next = await waitForStream(iterator.next(), idle.signal);
               if (next.done) break;
               sawEvent = true;
               idle.poke();
-              wrapped.push(enrichStreamEvent(next.value, observedHttpStatus) as any);
+              attemptEvents.push(enrichStreamEvent(next.value, observedHttpStatus));
             }
             const response = attachObservedHttpStatus(
               await waitForStream(source.result(), idle.signal),
@@ -455,10 +458,22 @@ export async function openPiInstitutionalSession(
             // consumers surface a real transport failure, never a projected
             // step-machine "error" response (ADR 0018 / #518 §3).
             if (response.stopReason === "error") {
-              streamFailureValue = new Error(
-                response.errorMessage ?? `${label} provider stream failed`,
-                { cause: response },
-              );
+              const errorMessage = response.errorMessage ?? `${label} provider stream failed`;
+              if (
+                options.idleRetry !== false
+                && isStreamIdleTimeoutError(errorMessage)
+                && attempt < DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES
+                && options.signal?.aborted !== true
+              ) {
+                continue;
+              }
+              const idleMatch = /stream idle timeout after (\d+)ms/i.exec(errorMessage);
+              if (idleMatch) {
+                streamFailureValue = new StreamIdleTimeoutError(Number(idleMatch[1]));
+              }
+            }
+            for (const ev of attemptEvents) {
+              wrapped.push(ev as any);
             }
             wrapped.end(response);
             return;
@@ -488,11 +503,15 @@ export async function openPiInstitutionalSession(
             ) {
               continue;
             }
+            const idleMatch = /stream idle timeout after (\d+)ms/i.exec(failure instanceof Error ? failure.message : String(failure));
+            const typedFailure = idleMatch && !(failure instanceof StreamIdleTimeoutError)
+              ? new StreamIdleTimeoutError(Number(idleMatch[1]))
+              : failure;
             // Hold the primary provider failure at the adapter boundary (ADR
             // 0018 / 失败诚实宪法). Consumers that surface transport failures
             // read this so the real cause is never masked by a projected
             // step-machine "error" response.
-            streamFailureValue = failure;
+            streamFailureValue = typedFailure;
             const projected = projectStructuredRemote(failure);
             const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
             const response = {
@@ -624,11 +643,7 @@ export async function openPiInstitutionalSession(
       agentDir: resolvedAgentDir,
       resourceLoader: loader,
       ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
-      ...(options.toolsAllowlist
-        ? { tools: options.toolsAllowlist as string[] }
-        : customTools.length > 0
-          ? { tools: customTools.map((t) => t.name) }
-          : {}),
+      ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
 
@@ -726,8 +741,14 @@ export async function openPiInstitutionalSession(
         if (closed) return;
         closed = true;
         listeners.clear();
-        unsubscribeSession();
-        session.dispose();
+        try {
+          unsubscribeSession();
+        } finally {
+          // spec-3: handle.close must always dispose the child session even when
+          // unsubscribing throws (the throwing unsubscribe is a cleanup failure the
+          // caller aggregates, never a reason to skip session teardown).
+          session.dispose();
+        }
 
         if (scratchDir !== undefined) {
           try {
