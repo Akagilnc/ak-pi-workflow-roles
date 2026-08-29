@@ -33,9 +33,12 @@ import {
 } from "../../src/navigator-attendance.ts";
 import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import {
+  CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE,
+  CoderSkillExpansionEvidenceMissingError,
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
+import type { RoleHost } from "../../src/host-contracts.ts";
 import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import {
   WorkerCommitReminderError,
@@ -1947,6 +1950,17 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     assert.deepEqual((await submitCompleted(harness, "accepted")).details, completed);
   }
 
+  const assertExpansionEvidenceMissing = async (
+    promise: Promise<unknown>,
+  ): Promise<void> => {
+    await assert.rejects(promise, (error: unknown) => {
+      assert.ok(error instanceof CoderSkillExpansionEvidenceMissingError);
+      assert.equal(error.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
+      assert.equal(error.result.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
+      return true;
+    });
+  };
+
   // M1.2 — one must-reject malformed expansion proves the completed-gate (law ③);
   // the full malformed spelling matrix lives in canonical-skill-binding tests.
   {
@@ -1956,9 +1970,65 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       { systemPrompt: "BASE", prompt: expandedTdd(request).replace(tddBody, "# Canonical TDD") },
       agentCtx,
     );
-    await assert.rejects(
-      submitCompleted(harness, "malformed-gate"),
-      /completed requires the Matt tdd skill to be expanded/i,
+    await assertExpansionEvidenceMissing(submitCompleted(harness, "malformed-gate"));
+  }
+
+  // M1.2b — host without capability declaration rejects completed even when prompt looks lawful.
+  {
+    const harness = extensionHarness(undefined, {
+      "ak-coder-task": "/materials/approved.md",
+      "ak-coder-phase": "apply",
+    });
+    const faux = fauxProvider({ provider: "coder-no-caps-gatekeeper", api: "coder-no-caps-gatekeeper" });
+    const model = faux.getModel();
+    const responses: AssistantMessage[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      responses.push(fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })));
+      responses.push(fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })));
+    }
+    faux.setResponses(responses);
+    await registerInstitutionalProviderFixture(faux);
+    const baseHost = createPiRoleHostAdapter(harness.pi as ExtensionAPI).host;
+    const hostWithoutCapabilities = new Proxy(baseHost, {
+      get(target, prop, receiver) {
+        if (prop === "capabilities") return undefined;
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as RoleHost;
+    const runtime = createCoderRoleRuntime(
+      hostWithoutCapabilities,
+      {
+        loadSoul: async () => "CODER LAW",
+        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+        loadCanonicalSkillBinding: async () => tddBinding(),
+      },
+      testHostActions(),
+    );
+    await runtime.activate();
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      agentCtx,
+    );
+    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    await assertExpansionEvidenceMissing(
+      withInstitutionalRunDir(parentInheritedSeats(model), () =>
+        tool.execute(
+          "no-caps",
+          completed,
+          undefined,
+          undefined,
+          Object.assign(toolCallContext([{ id: "no-caps", name: CODER_OUTPUT_TOOL_NAME }]), {
+            cwd: process.cwd(),
+            model,
+            modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider, {
+              matchProvider: false,
+            }),
+            thinkingLevel: "off",
+          }),
+        ),
+      ),
     );
   }
 
@@ -1974,10 +2044,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       { systemPrompt: "BASE", prompt: expandedTdd(request) },
       agentCtx,
     );
-    await assert.rejects(
-      submitCompleted(harness, "later"),
-      /completed requires the Matt tdd skill to be expanded/i,
-    );
+    await assertExpansionEvidenceMissing(submitCompleted(harness, "later"));
   }
 
   {
@@ -2066,6 +2133,63 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       );
     });
   }
+});
+
+test("coder missing skill-expansion evidence projects typed non-pass through role-runtime tool_result", async () => {
+  // Real envelope entry: coder output binds submission non-pass → tool_result projects durable details.
+  const harness = extensionHarness("coder", {
+    "ak-coder-task": "/materials/approved.md",
+    "ak-coder-phase": "apply",
+  });
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadCoderSoul: async () => "CODER LAW",
+    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
+    loadCanonicalSkillBinding: async () => tddBinding(),
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(harness.pi as ExtensionAPI);
+  await withActivationHome({ prefix: "ak-coder-expansion-tool-result-" }, async ({ home }) => {
+    const ctx = activationCtx(home);
+    await harness.handlers.get("session_start")?.({}, ctx);
+    const toolCallId = "coder-expansion-missing";
+    const expected = { code: CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE };
+    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    // No expansion arming: completed must bind typed reject before any accepted receipt.
+    await assert.rejects(
+      tool.execute(
+        toolCallId,
+        { status: "completed", report: "TDD evidence and self-check three are recorded here." },
+        undefined,
+        undefined,
+        toolCallContext([{ id: toolCallId, name: CODER_OUTPUT_TOOL_NAME }]),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof CoderSkillExpansionEvidenceMissingError);
+        assert.equal(error.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
+        assert.deepEqual(error.result, expected);
+        return true;
+      },
+    );
+    const projection = await harness.handlers.get("tool_result")?.({
+      toolName: CODER_OUTPUT_TOOL_NAME,
+      toolCallId,
+      isError: true,
+      content: [{ type: "text", text: "model-visible surface" }],
+      details: {},
+    }, ctx);
+    assert.deepEqual(projection, { details: expected, isError: true });
+    // Binding is single-consume; a second tool_result must not invent details or an accepted receipt.
+    const second = await harness.handlers.get("tool_result")?.({
+      toolName: CODER_OUTPUT_TOOL_NAME,
+      toolCallId,
+      isError: true,
+      content: [{ type: "text", text: "model-visible surface" }],
+      details: {},
+    }, ctx);
+    assert.equal(second, undefined);
+  });
 });
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
