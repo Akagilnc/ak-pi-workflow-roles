@@ -13,6 +13,8 @@ import {
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
+/** Typed correctable-rejection codes — settlement residual precedence without re-judging 0041. */
+export type CorrectableRejectionCode = "closed-batch" | "non-terminate" | "typed-bounce";
 export type SubmissionLedgerEvent =
   | { readonly type: "batchContext"; readonly attemptId: string; readonly batchId: string; readonly closed: boolean; readonly calls: readonly SubmissionCall[] }
   | { readonly type: "candidate"; readonly attemptId: string; readonly batchId: string; readonly toolCallId: string; readonly toolName: string; readonly sequence: number }
@@ -22,6 +24,7 @@ export type SubmissionLedgerEvent =
       readonly toolCallId: string;
       readonly outcome: SubmissionOutcomeKind;
       readonly diagnostic?: string;
+      readonly code?: CorrectableRejectionCode;
       /** Present for audit-escalation so settlement can project without JSONL rebuild. */
       readonly projection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
     }
@@ -125,6 +128,25 @@ export async function readAuditEscalationSubmission(
   return undefined;
 }
 
+export type LatestSubmissionOutcome = Extract<SubmissionLedgerEvent, { type: "outcome" }>;
+
+/** Latest non-final outcome on the run ledger (settlement residual precedence). */
+export async function readLatestSubmissionOutcome(
+  cwd: string,
+  runId: string,
+): Promise<LatestSubmissionOutcome | undefined> {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId);
+  for (let index = owned.length - 1; index >= 0; index -= 1) {
+    const record = owned[index];
+    if (record?.kind !== "outcome") continue;
+    const payload = record.payload as Partial<LatestSubmissionOutcome> | undefined;
+    if (payload?.type === "outcome" && typeof payload.outcome === "string") {
+      return payload as LatestSubmissionOutcome;
+    }
+  }
+  return undefined;
+}
+
 type LedgerState = { prior?: RecordPointer; sealed: boolean; sequence: number };
 
 async function restoreState(cwd: string, runId: string): Promise<LedgerState> {
@@ -178,23 +200,31 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
           append({ type: "candidate", attemptId, batchId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
           const matching = batch?.calls.filter((call) => call.id === toolCallId && call.name === tool.name) ?? [];
           if (batch?.batchClosed !== true || batch.calls.length !== 1 || matching.length !== 1) {
-            append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection" });
+            append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection", code: "closed-batch" });
             throw new Error("terminating output must be the sole matching call in a closed batch");
           }
           let result: HostToolResult<unknown>;
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            const outcome: SubmissionOutcomeKind = isTypedCorrectableRejection(error)
-              ? "correctable-rejection"
-              : "infrastructure";
-            append({
-              type: "outcome",
-              attemptId,
-              toolCallId,
-              outcome,
-              diagnostic: error instanceof Error ? error.message : String(error),
-            });
+            if (isTypedCorrectableRejection(error)) {
+              append({
+                type: "outcome",
+                attemptId,
+                toolCallId,
+                outcome: "correctable-rejection",
+                code: "typed-bounce",
+                diagnostic: error instanceof Error ? error.message : String(error),
+              });
+            } else {
+              append({
+                type: "outcome",
+                attemptId,
+                toolCallId,
+                outcome: "infrastructure",
+                diagnostic: error instanceof Error ? error.message : String(error),
+              });
+            }
             throw error;
           }
           if (isAuditEscalationProjection(result.details)) {
@@ -213,7 +243,7 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
             return result;
           }
           if (result.terminate !== true) {
-            append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection" });
+            append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection", code: "non-terminate" });
             return result;
           }
           const details = typeof result.details === "object" && result.details !== null ? result.details as Record<string, unknown> : {};

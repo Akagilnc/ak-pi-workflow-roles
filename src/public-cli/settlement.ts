@@ -14,6 +14,7 @@ import {
 import { sitianReport } from "../sitian-facade.ts";
 import {
   readAuditEscalationSubmission,
+  readLatestSubmissionOutcome,
   readSealedSubmission,
 } from "../submission-ledger.ts";
 
@@ -3460,8 +3461,13 @@ async function settleLawfulMergerTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted);
   if (roleOutcome?.role !== "merger") {
-    // Residual incomplete: session errored candidate after ledger did not seal.
-    // Sole-final (0041) is ledger-owned — settlement does not re-judge calls.length.
+    // Ledger owns 0041: closed-batch rejection is not residual-incomplete material.
+    const latestOutcome = await readLatestSubmissionOutcome(admitted.projectRoot, admitted.runId);
+    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "closed-batch") {
+      return undefined;
+    }
+    // Residual incomplete: shape/identity fail after closed-batch passed (ledger typed).
+    // Settlement does not re-judge calls.length.
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
