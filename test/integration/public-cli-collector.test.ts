@@ -66,8 +66,9 @@ test("typed groups travel from real output settlement into the report artifact",
             piRunner: async (args) => {
         assert.equal(args.some((arg) => arg.includes("collector-legs")), false);
         const sessionFile = args[args.indexOf("--session") + 1]!;
-        await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details: receipt() } })}\n`);
-        return { code: 0, timedOut: false, stderr: "", args: [...args] };
+        const details = receipt();
+        await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details } })}\n`);
+        return { code: 0, timedOut: false, stderr: "", args: [...args], sealedAcceptance: { role: "collector" as const, details } };
       },
           }),
     });

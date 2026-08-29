@@ -2,7 +2,6 @@
  * Shared test injection seam (#526): adapt legacy faux Pi-runner shape to RoleTurnHost.
  * Single helper — no dual-track piRunner on CliEnv.
  */
-import { join } from "node:path";
 import type {
   DurablePrincipalAuthority,
   RoleTurnHost,
@@ -14,7 +13,8 @@ import {
   createPiRoleTurnHost,
   type PiSpawnRunner,
 } from "../../src/pi/role-turn-host.ts";
-import { sealAcceptedSubmissionFromSession } from "./submission-ledger-fixture.ts";
+import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
+import { writeSealedSubmissionFixtureForSpawn } from "./submission-ledger-fixture.ts";
 
 /** Minimal alternative host: controls typed results without entering the Pi adapter. */
 export function createMinimalHost(
@@ -22,6 +22,13 @@ export function createMinimalHost(
 ): RoleTurnHost {
   return { executeTurn };
 }
+
+/** Optional durable sealed fact the faux runner already owns as typed details. */
+export type LegacyFauxSealedAcceptance = {
+  readonly role: TerminalRoleName;
+  readonly details: unknown;
+  readonly toolCallId?: string;
+};
 
 /** Legacy faux runner shape used by pre-#526 tests. */
 export type LegacyFauxPiRunner = (
@@ -38,6 +45,8 @@ export type LegacyFauxPiRunner = (
   args?: string[];
   piIdentity?: { executable: string; version: string };
   knownFailure?: RoleTurnKnownFailure;
+  /** When set, write the sealed settlement fixture from these typed details only. */
+  sealedAcceptance?: LegacyFauxSealedAcceptance;
 }>;
 
 /**
@@ -53,21 +62,15 @@ export function roleTurnHostFromLegacyPiRunner(options: {
 }): RoleTurnHost {
   const spawnRunner: PiSpawnRunner = async (args, spawnOptions) => {
     const result = await options.piRunner(args, spawnOptions);
-    const sessionIdx = args.indexOf("--session");
-    const sessionDirIdx = args.indexOf("--session-dir");
-    const sessionFile =
-      sessionIdx >= 0 && typeof args[sessionIdx + 1] === "string"
-        ? args[sessionIdx + 1]
-        : sessionDirIdx >= 0 && typeof args[sessionDirIdx + 1] === "string"
-          ? join(args[sessionDirIdx + 1]!, "session.jsonl")
-          : undefined;
-    const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
-    if (typeof sessionFile === "string" && typeof runDirectory === "string" && runDirectory.length > 0) {
-      await sealAcceptedSubmissionFromSession({
+    if (result.sealedAcceptance !== undefined) {
+      await writeSealedSubmissionFixtureForSpawn({
         cwd: spawnOptions.cwd,
-        runDirectory,
-        sessionFile,
-        ...(typeof spawnOptions.env.HOME === "string" ? { home: spawnOptions.env.HOME } : {}),
+        env: spawnOptions.env,
+        role: result.sealedAcceptance.role,
+        details: result.sealedAcceptance.details,
+        ...(result.sealedAcceptance.toolCallId === undefined
+          ? {}
+          : { toolCallId: result.sealedAcceptance.toolCallId }),
       });
     }
     const projected: RoleTurnResult = {
