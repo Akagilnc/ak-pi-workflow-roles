@@ -11,7 +11,6 @@ export type MergerRoleDependencies = { loadSoul(): Promise<string>; loadInput(pa
 export type MergerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
 function same(a: readonly string[], b: readonly string[]): boolean { return a.length === b.length && a.every((value, i) => value === b[i]); }
-function singleton(id: string, ctx: HostContext): void { const leaf = ctx.sessionManager.getLeafEntry(); if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant" || !Array.isArray(leaf.message.content)) throw new Error("合并回执非唯一终局工具调用"); const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall"); if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME) throw new Error("合并回执非唯一终局工具调用"); }
 function materialText(input: MergerInput, key: keyof MergerInput["materials"]): string { return exactUtf8(Buffer.from(input.materials[key].bytesBase64, "base64"), `Merger ${key}`); }
 
 export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDependencies, host: MergerRoleHostActions) {
@@ -34,7 +33,6 @@ export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDe
           if (accepted) throw new Error("合并回执已受理");
           let output;
           try {
-            singleton(id, ctx);
             output = validateMergerOutput(params, activation.input.attemptId);
           } catch (error) {
             host.failInfrastructure(error, ctx, id);

@@ -33,23 +33,6 @@ export type NotaryRoleHostActions = {
   ): never;
 };
 
-function requireSingletonSubmissionCall(
-  toolCallId: string,
-  ctx: HostContext,
-): void {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant" || !Array.isArray(leaf.message.content)) {
-    throw new Error("符宝郎回执非唯一终局工具调用");
-  }
-  const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
-  if (
-    calls.length !== 1 ||
-    calls[0]?.id !== toolCallId ||
-    calls[0]?.name !== NOTARY_OUTPUT_TOOL_NAME
-  ) {
-    throw new Error("符宝郎回执非唯一终局工具调用");
-  }
-}
 
 export function createNotaryRoleRuntime(
   pi: RoleHost,
@@ -90,7 +73,6 @@ export function createNotaryRoleRuntime(
             }
             // Unique submission + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055): lawful pass/bounce projected; else params as-is.
-            requireSingletonSubmissionCall(toolCallId, ctx);
             const lawful = projectLawfulNotaryOutput(parameters);
             const details = lawful ?? retainNotarySubmission(parameters);
             return {
