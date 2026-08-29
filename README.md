@@ -47,7 +47,7 @@ ak-role config set-auto-resume-limit 3
 
 `config set` stores the seat model default. For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. `config unset` clears only those officer overrides. `config set-engine` / `unset-engine` store or clear the persistent labor-engine name on callable roles (same seats as `--engine`; navigator refused — no independent activation). `config set-auto-resume-limit` stores the single-call auto-resume ceiling. Usage and refusal text are owned by `ak-role config` / `ak-role help config`.
 
-Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
+Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned. Province-grade (省部级) seats may dispatch proper role calls within their own single invocation, but the public CLI semantics are unchanged — an external caller still launches one chosen role per invocation and retains ordering, repetition, and stopping across CLI calls (ADR 0010 two-grade amendment). Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
 
 ### Gate submission gate
 
