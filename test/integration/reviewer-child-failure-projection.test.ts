@@ -10,6 +10,7 @@ import { AgentSession, SessionManager, type ExtensionContext } from "@earendil-w
 import { engineDetourFailureDiagnostic } from "../../src/engine-detour.ts";
 import { executeReviewerChild, projectSharedChildFailure } from "../../src/reviewer-child-executor.ts";
 import { executeEvidenceChild } from "../../src/evidence-child-executor.ts";
+import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 test("shared child classifications project without relabeling unrelated errors", () => {
@@ -83,7 +84,11 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
   AgentSession.prototype.subscribe = function (...args) {
     subscribes += 1;
     const unsubscribe = originalSubscribe.apply(this, args);
-    if (subscribes === 2) {
+    // Through the real provider entry the child session registers exactly one
+    // AgentSession subscription (the handle's listeners Set is separate); make
+    // that one's unsubscribe throw so handle.close's cleanup surfaces the
+    // AggregateError.
+    if (subscribes === 1) {
       return () => {
         unsubscribe();
         throw unsubscribeBoom;
@@ -97,16 +102,22 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
   };
   try {
     const faux = fauxProvider({ provider: "openai" });
+    // Through the real provider entry the evidence child resolves its seat from
+    // the child-local ModelRuntime and would need a scripted response to produce
+    // a report. The cleanup contract under test is exercised by letting the
+    // provider stream fail (no response queued → transport failure) so
+    // primaryFailure is set, then the throwing unsubscribe surfaces the
+    // AggregateError from runChildCleanup.
     await writeInstitutionalSeatTable(runDirectory, {
-      evidenceChild: seatSelection("openai", "gpt-4o"),
+      evidenceChild: seatSelection("openai", faux.getModel().id),
     });
     await assert.rejects(
-      () => executeEvidenceChild(
+      () => withInstitutionalProviderFixture(faux, () => executeEvidenceChild(
         cwd,
         "investigate",
         evidenceChildContext(cwd, faux),
         { runDirectory },
-      ),
+      )),
       (error: unknown) => {
         assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
         assert.equal(disposes, 1, "handle.close must still run after unsubscribe throws");

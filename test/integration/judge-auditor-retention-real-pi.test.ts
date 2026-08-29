@@ -31,7 +31,20 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   const handleRequest = async (request: IncomingMessage, response: ServerResponse) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as any;
+    let raw = Buffer.concat(chunks);
+    if (raw.length === 0) {
+      response.writeHead(200);
+      response.end();
+      return;
+    }
+    if (request.headers["content-encoding"] === "gzip" || (raw[0] === 0x1f && raw[1] === 0x8b)) {
+      const { gunzipSync } = await import("node:zlib");
+      raw = gunzipSync(raw);
+    } else if (request.headers["content-encoding"] === "zstd" || (raw[0] === 0x28 && raw[1] === 0xb5 && raw[2] === 0x2f && raw[3] === 0xfd)) {
+      const { zstdDecompressSync } = await import("node:zlib");
+      raw = (zstdDecompressSync as any)(raw);
+    }
+    const body = JSON.parse(raw.toString("utf8")) as any;
     requestCount += 1;
     const toolNames = (body.tools ?? []).map((tool: any) => tool.function?.name);
     // Judge draft province gate runs before auditor; pass so retention still hits auditor stop.
@@ -82,33 +95,42 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
       await rm(parentFile, { force: true });
       await mkdir(parentFile);
       let restored = false;
+      let watcher: import("node:fs").FSWatcher | undefined;
       restoreParent = async () => {
         if (restored) return;
         restored = true;
         if (restoreInterval !== undefined) clearInterval(restoreInterval);
+        try { watcher?.close(); } catch {}
         await rm(parentFile, { recursive: true, force: true });
         await writeFile(parentFile, parentBytes);
       };
-      restoreInterval = setInterval(() => {
-        void (async () => {
-          try {
-            const childDir = join(parentFile, "..", "auditor-roles");
-            const names = await (await import("node:fs/promises")).readdir(childDir);
-            for (const name of names) {
-              const text = await readFile(join(childDir, name), "utf8");
-              if (text.includes("ak_auditor_compliance_failure")) await restoreParent?.();
-            }
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return;
-            retainFailure(error);
-            try {
+      const checkAndRestore = async () => {
+        try {
+          const childDir = join(reportedParentDirectory, "auditor-roles");
+          const names = await (await import("node:fs/promises")).readdir(childDir);
+          for (const name of names) {
+            const text = await readFile(join(childDir, name), "utf8");
+            if (text.includes("ak_auditor_compliance_failure")) {
               await restoreParent?.();
-            } catch (restoreError) {
-              retainFailure(restoreError);
             }
           }
-        })();
-      }, 5);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return;
+          retainFailure(error);
+          try {
+            await restoreParent?.();
+          } catch (restoreError) {
+            retainFailure(restoreError);
+          }
+        }
+      };
+      try {
+        const { watch } = await import("node:fs");
+        watcher = watch(reportedParentDirectory, { recursive: true }, () => {
+          void checkAndRestore();
+        });
+      } catch {}
+      restoreInterval = setInterval(() => { void checkAndRestore(); }, 5);
       response.writeHead(500, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { message: "WebSocket error" } }));
       return;
@@ -131,9 +153,33 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("test provider did not listen");
   await writeFile(extension, `
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 export default function (pi) {
   console.error("[ak-patch] normal activation banner");
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (agentDir) {
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, "models.json"), JSON.stringify({
+      providers: {
+        "openai-codex": {
+          baseUrl: "http://127.0.0.1:${address.port}/v1",
+          apiKey: "test",
+          api: "openai-completions",
+          models: [{
+            id: "faux-1",
+            name: "faux-1",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 4096,
+            compat: { requiresToolResultName: true },
+          }],
+        },
+      },
+    }, null, 2), "utf8");
+  }
   pi.registerProvider("openai-codex", {
     name: "Retention tracer", baseUrl: "http://127.0.0.1:${address.port}/v1", apiKey: "test", api: "openai-completions",
     models: [{ id: "faux-1", name: "faux-1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096 }]

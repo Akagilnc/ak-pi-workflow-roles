@@ -15,18 +15,25 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 async function runCli(mode: "print" | "json") {
   return withHermeticHome(
     { prefix: "ak-audit-cli-" },
     async ({ home, agentDir }) => {
-      const sessionDirectory = resolve(
+      const runDir = resolve(
         home,
         ".ak-roles/books",
         resolveBookKeyFromGit(packageRoot),
-        "runs/audit-cli/session",
+        "runs/audit-cli",
       );
+      const sessionDirectory = resolve(runDir, "session");
       await mkdir(sessionDirectory, { recursive: true });
+      await writeInstitutionalSeatTable(runDir, {
+        gatekeeper: seatSelection("ak-audit-failure", "faux-1"),
+        notary: seatSelection("ak-audit-failure", "faux-1"),
+        auditor: seatSelection("ak-audit-failure", "faux-1"),
+      });
       const args = [
         "--no-extensions",
         "--no-skills",
@@ -67,16 +74,21 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
       const issueRoot = resolve(home, ".ak/work/issues/28");
       await mkdir(issueRoot, { recursive: true });
       // Role session under ledger book; Navigator subject still derives from issueRoot cwd.
-      const sessionDirectory = resolve(
+      const runDir = resolve(
         home,
         ".ak-roles",
         "books",
         basename(home),
         "runs",
         "judge-navigator",
-        "session",
       );
+      const sessionDirectory = resolve(runDir, "session");
       await mkdir(sessionDirectory, { recursive: true });
+      await writeInstitutionalSeatTable(runDir, {
+        gatekeeper: seatSelection("ak-audit-failure", "faux-1"),
+        notary: seatSelection("ak-audit-failure", "faux-1"),
+        auditor: seatSelection("ak-audit-failure", "faux-1"),
+      });
       // The hermetic activation ledger owns Navigator records beside role runs.
       await mkdir(
         resolve(home, ".ak-roles", "books", basename(home), "navigator"),

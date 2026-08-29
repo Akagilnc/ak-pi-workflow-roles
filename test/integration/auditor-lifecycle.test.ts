@@ -564,10 +564,16 @@ test("injected pending completion settles a same-turn evidence and decision batc
     let completions = 0;
     faux.setResponses([() => {
       completions += 1;
+      // Through the real provider entry a "pending" stop reason is not
+      // representable (the OpenAI-completions round-trip finalizes each turn with
+      // a real stop reason). The intended semantics — an injected completion that
+      // settles the same-turn evidence + decision batch exactly once — is
+      // faithfully expressed by an assistant message that issues the tool calls
+      // and stops for tool use.
       return fauxAssistantMessage([
         fauxToolCall("read", { path: "evidence.txt" }),
         fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-      ], { stopReason: "pending" });
+      ], { stopReason: "toolUse" });
     }]);
     const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
       tool,
