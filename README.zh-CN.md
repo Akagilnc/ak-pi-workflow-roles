@@ -23,9 +23,9 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。续跑细则（opaque message、调用者自决、一次性席位、escalate 标准链）以 `ak-role help resume` 与 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md) 为准。
+`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎仍为一次性，无 resume。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。
 
-大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限由 `ak-role config set-auto-resume-limit` 写入；lawful typed 终态立即停止。
+大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
 席位与官席配置：
 
