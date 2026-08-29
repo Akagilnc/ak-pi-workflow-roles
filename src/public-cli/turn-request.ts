@@ -7,6 +7,7 @@ import type {
   DurablePrincipal,
   MethodBinding,
   RoleTurnActivation,
+  RoleTurnModelConfig,
   RoleTurnRequest,
 } from "../host-contracts.ts";
 import type { SeatModelConfig } from "./config.ts";
@@ -28,6 +29,8 @@ export type AdmittedTurnInvocation = {
   repoRoot?: string;
   cwd?: string;
   runDirectory: string;
+  /** Effective model restored on resume; fallback when no CLI/env model is given. */
+  model?: RoleTurnModelConfig;
 };
 
 export function projectRoleTurnRequest(
@@ -40,10 +43,11 @@ export function projectRoleTurnRequest(
 ): RoleTurnRequest {
   const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
   if (cwd === undefined) throw new Error("admitted invocation missing working directory");
-  const effectiveModel =
-    options.continuation?.kind === "resume"
-      ? (admitted.model ?? options.model)
-      : (options.model ?? admitted.model);
+  if (admitted.principal === undefined) throw new Error("admitted invocation missing principal");
+  // Explicit CLI/env model wins on resume; admitted model is the fallback so a
+  // model-less resume restores the originally recorded effective model instead of
+  // silently dropping to the current env default.
+  const effectiveModel = options.model ?? admitted.model;
   return {
     principal: admitted.principal,
     activation: roleDetails.activation,

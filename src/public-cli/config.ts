@@ -86,7 +86,7 @@ export type InvocationModelOverride = {
   engine?: string;
 };
 
-const THINKING_LEVELS = new Set<PublicThinkingLevel>([
+export const THINKING_LEVELS = new Set<PublicThinkingLevel>([
   "off",
   "minimal",
   "low",

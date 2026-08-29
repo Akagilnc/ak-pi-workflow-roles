@@ -14,7 +14,7 @@ export const GATE_OFFICER_SEATS = [
 export function isGateOfficerSeat(value) {
     return GATE_OFFICER_SEATS.includes(value);
 }
-const THINKING_LEVELS = new Set([
+export const THINKING_LEVELS = new Set([
     "off",
     "minimal",
     "low",

@@ -16689,7 +16689,7 @@ async function loadResumableRunRecord(home, runId, authority) {
         model = {
           provider: rec.provider,
           model: rec.model,
-          ...typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}
+          ...typeof rec.thinking === "string" && THINKING_LEVELS.has(rec.thinking) ? { thinking: rec.thinking } : {}
         };
       }
       if (correlationId === void 0 || ticketNumber === void 0) {
@@ -16947,6 +16947,7 @@ var init_run_lifecycle = __esm({
     init_cli_errors();
     init_typed_provider_http();
     init_typed_provider_http();
+    init_config2();
     init_invocation();
     V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
     AUTO_RESUME_LIMIT = 2;
@@ -18101,7 +18102,7 @@ async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   const effectiveModel = typeof next.provider === "string" && typeof next.model === "string" ? {
     provider: next.provider,
     model: next.model,
-    ...typeof next.thinking === "string" ? { thinking: next.thinking } : {}
+    ...typeof next.thinking === "string" && THINKING_LEVELS.has(next.thinking) ? { thinking: next.thinking } : {}
   } : void 0;
   const home = homeFromRunDirectory(runDirectory);
   const config = await loadPublicCliConfig(home);
@@ -23858,7 +23859,8 @@ var init_settlement = __esm({
 function projectRoleTurnRequest(admitted, roleDetails, options) {
   const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
   if (cwd === void 0) throw new Error("admitted invocation missing working directory");
-  const effectiveModel = options.continuation?.kind === "resume" ? admitted.model ?? options.model : options.model ?? admitted.model;
+  if (admitted.principal === void 0) throw new Error("admitted invocation missing principal");
+  const effectiveModel = options.model ?? admitted.model;
   return {
     principal: admitted.principal,
     activation: roleDetails.activation,
@@ -24479,7 +24481,7 @@ async function runPostAdmissionManualResume(input) {
     admitted,
     env: {
       ...env,
-      ...admitted.model === void 0 ? {} : { model: admitted.model },
+      ...env.model === void 0 && admitted.model !== void 0 ? { model: admitted.model } : {},
       ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
     },
     io,
@@ -24657,7 +24659,7 @@ async function runPublicCoderResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...admitted.model === void 0 ? env.model === void 0 ? {} : { model: env.model } : { model: admitted.model },
+    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -25000,7 +25002,7 @@ async function runPublicFixerResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...admitted.model === void 0 ? env.model === void 0 ? {} : { model: env.model } : { model: admitted.model },
+    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -25199,7 +25201,7 @@ async function runPublicResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...admitted.model === void 0 ? env.model === void 0 ? {} : { model: env.model } : { model: admitted.model },
+    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -25491,7 +25493,7 @@ async function runPublicMergerResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...admitted.model === void 0 ? env.model === void 0 ? {} : { model: env.model } : { model: admitted.model },
+    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
@@ -25683,7 +25685,7 @@ async function runPublicReviewerResume(request, env, io) {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
-    ...admitted.model === void 0 ? env.model === void 0 ? {} : { model: env.model } : { model: admitted.model },
+    ...env.model === void 0 ? admitted.model === void 0 ? {} : { model: admitted.model } : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
     ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },

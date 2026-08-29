@@ -478,7 +478,7 @@ export async function runPostAdmissionManualResume<
     admitted,
     env: {
       ...env,
-      ...(admitted.model === undefined ? {} : { model: admitted.model }),
+      ...(env.model === undefined && admitted.model !== undefined ? { model: admitted.model } : {}),
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
     },
     io,
