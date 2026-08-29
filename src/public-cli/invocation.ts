@@ -114,6 +114,8 @@ export type AdmittedRoleInvocationBase = {
    * Absent when no attachment carries a valid contract field (unbound).
    */
   readonly ticketNumber?: number;
+  /** Effective model from invocation identity; restored on resume when no CLI model is given. */
+  readonly model?: InvocationEffectiveModel;
 };
 
 export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
@@ -303,6 +305,9 @@ function homeFromRunDirectory(runDirectory: string): string {
   if (altIdx !== -1) {
     const candidate = runDirectory.slice(0, altIdx);
     return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  if (typeof process.env.HOME === "string" && process.env.HOME.length > 0) {
+    return process.env.HOME;
   }
   throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
 }
