@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
@@ -288,7 +288,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
       admitted.runDirectory,
       join(home, ".ak-roles", "books", bookKey, "runs", "run-freeze-001@judge"),
     );
-    assert.equal(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
+    assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
     await access(admitted.admittedRequestPath);
     // Unbound admit writes no waiting.jsonl; when present it must never hold request content.
     const waitingPath = join(home, ".ak-roles", "books", bookKey, "waiting.jsonl");

@@ -102,7 +102,6 @@ import type {
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -125,7 +124,7 @@ function coordinatesFromAdmitted(
   authority: DurablePrincipalAuthority,
   admitted: { readonly principal: DurablePrincipal },
 ): DurablePrincipalCoordinates {
-  return decodePiDurablePrincipal(authority, admitted.principal);
+  return authority.decode(admitted.principal);
 }
 import {
   exitCodeForTerminalOutcome,

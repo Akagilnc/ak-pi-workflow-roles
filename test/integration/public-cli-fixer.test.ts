@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
@@ -194,7 +194,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       attachmentPaths: [],
       createRunId: () => "run-fixer-settle-001",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "diagnosing-bugs",
@@ -253,7 +253,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
         },
       }),
     ];
-    await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
 
     const entries = sessionLines.map((line) => JSON.parse(line));
     const extracted = extractFixerRoleOutcome(entries);
@@ -312,9 +312,9 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       attachmentPaths: [],
       createRunId: () => "run-fixer-settle-002",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, noDiag.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(noDiag.principal).sessionDirectory, { recursive: true });
     await writeFile(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, noDiag.principal).sessionFile,
+      piDurablePrincipalAuthority.decode(noDiag.principal).sessionFile,
       `${JSON.stringify({
         type: "message",
         message: {
@@ -639,8 +639,8 @@ async function settleFixerSession(
   admitted: Awaited<ReturnType<typeof admitFixerInvocation>>,
   details: unknown,
 ) {
-  await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
-  await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
+  await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
+  await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
   const material = await loadPackagedMethodSkillMaterial(
     packageRoot,
     "diagnosing-bugs",

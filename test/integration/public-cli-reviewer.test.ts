@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
@@ -369,7 +369,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       ],
       createRunId: () => "run-reviewer-settle-001",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "code-review",
@@ -424,7 +424,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       }),
     ];
     await writeFile(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
@@ -776,8 +776,8 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       createRunId: () => "run-cli-reviewer-resume-bad-refs",
     });
     // Durable session principal required before resume load.
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
-    await writeFile(join(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
+    await writeFile(join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(admitted.runDirectory, {
       httpStatus: 429,
