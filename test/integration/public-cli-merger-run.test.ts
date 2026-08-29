@@ -732,4 +732,3 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
     });
   }
 });
-
