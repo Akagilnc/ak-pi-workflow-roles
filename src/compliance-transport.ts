@@ -63,10 +63,14 @@ export type AuditorParentAttemptBinding = {
     readonly attemptEntryId?: string;
   };
 };
-import { sitianReport } from "./sitian-facade.ts";
+import { attachDirectErrnoCode, sitianReport } from "./sitian-facade.ts";
 
 export class ComplianceResponseRetentionError extends Error {
-  constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ComplianceResponseRetentionError";
+    attachDirectErrnoCode(this, options?.cause);
+  }
 }
 function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
   try {

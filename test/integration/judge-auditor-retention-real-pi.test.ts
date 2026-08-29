@@ -91,7 +91,16 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
         }
       }
       if (parentFile === undefined) throw new Error("reported parent session principal was not created");
+      // Production retain is Sitian under dirname(sessionParent)/auditor/records.jsonl.
+      // Binding may already have created auditor/; replace records.jsonl with a directory
+      // so retainComplianceResponse fails with EISDIR (legacy targeted session custom entry).
+      const sitianAuditorPath = join(reportedParentDirectory, "auditor");
+      const sitianRecordsPath = join(sitianAuditorPath, "records.jsonl");
+      await mkdir(sitianAuditorPath, { recursive: true });
+      await rm(sitianRecordsPath, { recursive: true, force: true });
+      await mkdir(sitianRecordsPath);
       const parentBytes = await readFile(parentFile);
+      // Also replace parent principal with a directory so any residual session write still EISDIR.
       await rm(parentFile, { force: true });
       await mkdir(parentFile);
       let restored = false;
@@ -103,6 +112,7 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
         try { watcher?.close(); } catch {}
         await rm(parentFile, { recursive: true, force: true });
         await writeFile(parentFile, parentBytes);
+        try { await rm(sitianRecordsPath, { recursive: true, force: true }); } catch {}
       };
       const checkAndRestore = async () => {
         try {

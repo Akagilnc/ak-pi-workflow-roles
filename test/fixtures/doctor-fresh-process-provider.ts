@@ -72,6 +72,5 @@ export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Prom
   pi.registerProvider(provider);
   pi.on("session_shutdown", () => {
     void seeded.close();
-    console.error(`DOCTOR_FRESH_PROVIDER_CALLS=${faux.state.callCount}`);
   });
 }
