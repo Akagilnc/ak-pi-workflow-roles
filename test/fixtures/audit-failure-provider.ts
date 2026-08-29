@@ -20,7 +20,7 @@ import {
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import { createMockProviderServer } from "../helpers/pi-test-harness.ts";
+import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 export default async function auditFailureProvider(pi: ExtensionAPI): Promise<void> {
   // #475 missing-subject public tracer: keep the live leaf for singleton execute,
@@ -63,41 +63,8 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     provider: "ak-audit-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
-  const mockServer = await createMockProviderServer(faux);
-  const agentDir = process.env.PI_CODING_AGENT_DIR;
-  if (!agentDir) {
-    throw new Error("auditFailureProvider requires explicit PI_CODING_AGENT_DIR");
-  }
-  // Compare against real machine agent dir via passwd home (not process.env.HOME,
-  // which tests override). No path-heuristic allow list.
-  const { userInfo } = await import("node:os");
-  const { resolve, sep } = await import("node:path");
-  const resolved = resolve(agentDir);
-  const machine = resolve(userInfo().homedir, ".pi", "agent");
-  if (resolved === machine || resolved.startsWith(machine + sep)) {
-    throw new Error("Refusing to write models.json to machine agentDir: " + agentDir);
-  }
-  const modelsPath = join(agentDir, "models.json");
-    await writeFile(modelsPath, JSON.stringify({
-      providers: {
-        [faux.provider.id]: {
-          baseUrl: mockServer.baseUrl,
-          api: "openai-completions",
-          apiKey: "test",
-          models: [{
-            id: faux.getModel().id,
-            name: faux.getModel().id,
-            api: "openai-completions",
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 128000,
-            maxTokens: 16384,
-            compat: { requiresToolResultName: true },
-          }],
-        },
-      },
-    }, null, 2), "utf8");
+  // Single authority: assertWritableTestAgentDir + models.json seed for child-local auth.
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
   if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
     // Header timeoutMs and body-idle both default to owner-final 183000ms but are distinct seams.
     // Idle arms first; the provider schedules timeoutMs second. Compress provider waits harder so the
@@ -295,9 +262,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     if (healthyNavigator && !observation) console.error(`AUDIT_FAILURE_PROCESS_RELEASE=${JSON.stringify({ at: new Date().toISOString() })}`);
   });
   pi.on("session_shutdown", async () => {
-    if (mockServer !== undefined) {
-      await mockServer.close();
-    }
+    await seeded.close();
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
     if (!healthyNavigator || observation) return;
     const root = process.env.AK_NAVIGATOR_ROOT;

@@ -14,8 +14,15 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir, userInfo } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import {
+  assertWritableTestAgentDir,
+  realMachineAgentDir,
+  realMachineHome,
+} from "./test-agent-dir-guard.ts";
+
+export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -1217,9 +1224,6 @@ export async function createMockProviderServer(
     }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  // Do not keep the test process alive solely for the mock listener; callers still
-  // own close() for orderly teardown (session_shutdown / finally).
-  server.unref();
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : 0;
   const baseUrl = `http://127.0.0.1:${port}/v1`;
@@ -1461,57 +1465,11 @@ export async function withInstitutionalProviderFixture<T>(
 }
 
 /**
- * Real machine home via passwd/user profile — NOT process.env.HOME, which tests
- * override. Used to refuse models.json writes that would poison the host agent.
- */
-export function realMachineHome(): string {
-  return resolve(userInfo().homedir);
-}
-
-/**
- * Real machine `~/.pi/agent`. Test fixtures must never write models.json here
- * (2026-08-29 faux-leak incident: silent HOME fallback poisoned host codex).
- */
-export function realMachineAgentDir(): string {
-  return resolve(realMachineHome(), ".pi", "agent");
-}
-
-/**
- * Fail closed before any test models.json write: agentDir must be explicit and
- * must not resolve to (or under) the machine agent dir. No path-heuristic allow
- * list — compare against the real home only.
- */
-export function assertWritableTestAgentDir(
-  agentDir: string | undefined | null,
-): asserts agentDir is string {
-  if (typeof agentDir !== "string" || agentDir.trim() === "") {
-    throw new Error(
-      "test agentDir must be explicitly provided (no silent HOME/agentDir fallback)",
-    );
-  }
-  const resolved = resolve(agentDir);
-  const machine = realMachineAgentDir();
-  if (resolved === machine || resolved.startsWith(machine + sep)) {
-    throw new Error(`Refusing to write models.json to machine agentDir: ${agentDir}`);
-  }
-}
-
-/**
- * Seed a specific agentDir's models.json from a faux provider over the real
- * OpenAI-completions HTTP path, then run. Unlike `withInstitutionalProviderFixture`
- * (which points PI_CODING_AGENT_DIR at a scratch temp dir), this writes the
- * registration directly into `agentDir` because the real public CLI subprocess
- * (role-turn-host) forces PI_CODING_AGENT_DIR = role agentDir, overriding the
- * ambient test env. Used by public-CLI tests whose child institutional sessions
- * (`openPiInstitutionalSession`) build their own ModelRuntime reading
- * `<PI_CODING_AGENT_DIR>/models.json`.
- */
-/**
  * Seed agentDir/models.json from a faux provider over the real OpenAI-completions
  * HTTP path. Institutional children (gatekeeper/auditor/evidence) resolve auth
  * from PI_CODING_AGENT_DIR/models.json after #518 S3 child-local ModelRuntime —
  * pi.registerProvider alone is not visible to the child. Returns a closer for
- * the mock server (call on session_shutdown).
+ * the mock server; callers must close (session_shutdown / finally).
  */
 export async function seedAgentDirModelsJsonFromFaux(
   faux: ReturnType<typeof fauxProvider>,
@@ -1520,46 +1478,56 @@ export async function seedAgentDirModelsJsonFromFaux(
 ): Promise<{ close: () => Promise<void> }> {
   assertWritableTestAgentDir(agentDir);
   const mock = await createMockProviderServer(faux);
-  const providerId = options?.providerId ?? faux.provider.id;
-  const modelsPath = resolve(agentDir, "models.json");
-  let existing: { providers?: Record<string, unknown> } = {};
   try {
-    existing = JSON.parse(await readFile(modelsPath, "utf8")) as typeof existing;
-  } catch {
-    // fresh file
-  }
-  await writeFile(
-    modelsPath,
-    JSON.stringify(
-      {
-        providers: {
-          ...(existing.providers ?? {}),
-          [providerId]: {
-            baseUrl: mock.baseUrl,
-            api: "openai-completions",
-            apiKey: "test",
-            models: [
-              {
-                id: faux.getModel().id,
-                name: faux.getModel().id,
-                api: "openai-completions",
-                reasoning: false,
-                input: ["text"],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                contextWindow: 128000,
-                maxTokens: 16384,
-                compat: { requiresToolResultName: true },
-              },
-            ],
+    const providerId = options?.providerId ?? faux.provider.id;
+    const modelsPath = resolve(agentDir, "models.json");
+    let existing: { providers?: Record<string, unknown> } = {};
+    try {
+      existing = JSON.parse(await readFile(modelsPath, "utf8")) as typeof existing;
+    } catch (error) {
+      // Only missing file is "fresh"; permission/I/O/parse errors keep their cause.
+      const code =
+        error !== null && typeof error === "object" && "code" in error
+          ? (error as { code?: unknown }).code
+          : undefined;
+      if (code !== "ENOENT") throw error;
+    }
+    await writeFile(
+      modelsPath,
+      JSON.stringify(
+        {
+          providers: {
+            ...(existing.providers ?? {}),
+            [providerId]: {
+              baseUrl: mock.baseUrl,
+              api: "openai-completions",
+              apiKey: "test",
+              models: [
+                {
+                  id: faux.getModel().id,
+                  name: faux.getModel().id,
+                  api: "openai-completions",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128000,
+                  maxTokens: 16384,
+                  compat: { requiresToolResultName: true },
+                },
+              ],
+            },
           },
         },
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-  return { close: mock.close };
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    return { close: mock.close };
+  } catch (error) {
+    await mock.close();
+    throw error;
+  }
 }
 
 export async function withAgentDirProviderFixture<T>(
