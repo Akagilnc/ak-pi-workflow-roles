@@ -934,7 +934,7 @@ export function createRoleRuntimeExtension(
         }
         failInfrastructure(error, ctx);
       },
-      bindGatekeeperNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
+      bindSubmissionNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
         pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
     };

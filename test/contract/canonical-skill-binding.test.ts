@@ -4,25 +4,13 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
-import { parseSkillBlock } from "@earendil-works/pi-coding-agent";
 import {
   loadCanonicalSkillBinding,
-  type AnyCanonicalSkillBinding,
 } from "../../src/canonical-skill-binding.ts";
+import type { HostSkillExpansionEvidence } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const originalHome = process.env.HOME;
-
-function withHostDeclaration(binding: AnyCanonicalSkillBinding) {
-  return Object.freeze({
-    ...binding,
-    captureExpansion(prompt: string, request: string) {
-      const parsed = parseSkillBlock(prompt);
-      const evidence = parsed == null ? undefined : { ...parsed, userMessage: parsed.userMessage ?? "" };
-      return binding.captureExpansion(evidence, request);
-    },
-  });
-}
 
 async function withHome<T>(run: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(resolve(tmpdir(), "ak-canonical-skill-"));
@@ -48,6 +36,15 @@ async function writeConfiguredSkill(
   return realpath(path);
 }
 
+function evidence(
+  name: string,
+  location: string,
+  content: string,
+  userMessage: string,
+): HostSkillExpansionEvidence {
+  return { name, location, content, userMessage };
+}
+
 test("canonical binding snapshots the configured Skill and accepts only its native pathname spellings", async () => {
   await withHome(async (home) => {
     const configuredDir = resolve(home, ".agents/skills/tdd");
@@ -70,7 +67,7 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     const configuredPath = resolve(configuredDir, "SKILL.md");
     await symlink(targetPath, configuredPath);
 
-    const binding = withHostDeclaration(await loadCanonicalSkillBinding("tdd"));
+    const binding = await loadCanonicalSkillBinding("tdd");
     const canonicalPath = await realpath(targetPath);
     const body = "# Fixture TDD\n\nRun one red-green slice.";
 
@@ -89,26 +86,23 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     const request = "Implement the approved slice.";
     const configuredContent = `References are relative to ${dirname(configuredPath)}.\n\n${body}`;
     const resolvedContent = `References are relative to ${dirname(canonicalPath)}.\n\n${body}`;
-    const configuredExpansion = `<skill name="tdd" location="${configuredPath}">\n${configuredContent}\n</skill>\n\n${request}`;
-    const resolvedExpansion = `<skill name="tdd" location="${canonicalPath}">\n${resolvedContent}\n</skill>\n\n${request}`;
+    const configuredEvidence = evidence("tdd", configuredPath, configuredContent, request);
+    const resolvedEvidence = evidence("tdd", canonicalPath, resolvedContent, request);
 
-    assert.deepEqual(binding.captureExpansion(configuredExpansion, request), {
+    assert.deepEqual(binding.captureExpansion(configuredEvidence, request), {
       name: "tdd",
       location: configuredPath,
       content: configuredContent,
       userMessage: request,
     });
-    assert.deepEqual(binding.captureExpansion(resolvedExpansion, request), {
+    assert.deepEqual(binding.captureExpansion(resolvedEvidence, request), {
       name: "tdd",
       location: canonicalPath,
       content: resolvedContent,
       userMessage: request,
     });
     assert.deepEqual(
-      binding.captureExpansion(
-        `<skill name="tdd" location="${configuredPath}">\n${configuredContent}\n</skill>`,
-        "",
-      ),
+      binding.captureExpansion(evidence("tdd", configuredPath, configuredContent, ""), ""),
       {
         name: "tdd",
         location: configuredPath,
@@ -118,48 +112,57 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     );
     assert.equal(
       binding.captureExpansion(
-        configuredExpansion.replace(configuredContent, resolvedContent),
+        evidence("tdd", configuredPath, resolvedContent, request),
         request,
       ),
       undefined,
     );
     assert.equal(
       binding.captureExpansion(
-        resolvedExpansion.replace(resolvedContent, configuredContent),
+        evidence("tdd", canonicalPath, configuredContent, request),
         request,
       ),
       undefined,
     );
 
     await writeFile(targetPath, raw.replace("Run one red-green slice.", "Changed after activation."));
-    const reloaded = withHostDeclaration(await loadCanonicalSkillBinding("tdd"));
+    const reloaded = await loadCanonicalSkillBinding("tdd");
     assert.notEqual(reloaded.snapshot, binding.snapshot);
     assert.equal(binding.snapshot.raw, raw);
     assert.match(reloaded.snapshot.body, /Changed after activation/);
 
-    // Only the complete native expansion proves capture (absorbed from the
-    // former dedicated expansion-proof test): evidence is frozen, freshly
-    // allocated per capture, and a closed matrix rejects partial/foreign shapes.
-    const evidence = binding.captureExpansion(configuredExpansion, request);
-    assert.ok(evidence);
-    assert.ok(Object.isFrozen(evidence));
-    assert.notEqual(binding.captureExpansion(configuredExpansion, request), evidence);
+    // Only complete typed evidence proves capture: frozen, freshly allocated, closed matrix.
+    const captured = binding.captureExpansion(configuredEvidence, request);
+    assert.ok(captured);
+    assert.ok(Object.isFrozen(captured));
+    assert.notEqual(binding.captureExpansion(configuredEvidence, request), captured);
 
-    const exact = resolvedExpansion;
-    const rejected = [
-      '<skill name="tdd" location="/copy/SKILL.md">',
-      `prose\n${exact}`,
-      `${exact}\nassistant prose`,
-      exact.replace('name="tdd"', 'name="code-review"'),
-      exact.replace(canonicalPath, "/alternate/tdd/SKILL.md"),
-      exact.replace(resolvedContent, body),
-      exact.replace(`References are relative to ${dirname(canonicalPath)}.\n\n`, ""),
-      exact.replace(`References are relative to ${dirname(canonicalPath)}.`, "References are relative elsewhere."),
-      exact.replace(request, "Review a different point."),
+    const rejected: HostSkillExpansionEvidence[] = [
+      evidence("tdd", "/copy/SKILL.md", resolvedContent, request),
+      evidence("code-review", canonicalPath, resolvedContent, request),
+      evidence("tdd", "/alternate/tdd/SKILL.md", resolvedContent, request),
+      evidence("tdd", canonicalPath, body, request),
+      evidence(
+        "tdd",
+        canonicalPath,
+        resolvedContent.replace(`References are relative to ${dirname(canonicalPath)}.\n\n`, ""),
+        request,
+      ),
+      evidence(
+        "tdd",
+        canonicalPath,
+        resolvedContent.replace(
+          `References are relative to ${dirname(canonicalPath)}.`,
+          "References are relative elsewhere.",
+        ),
+        request,
+      ),
+      evidence("tdd", canonicalPath, resolvedContent, "Review a different point."),
     ];
-    for (const prompt of rejected) {
-      assert.equal(binding.captureExpansion(prompt, request), undefined, prompt);
+    for (const row of rejected) {
+      assert.equal(binding.captureExpansion(row, request), undefined, JSON.stringify(row));
     }
+    assert.equal(binding.captureExpansion(undefined, request), undefined);
   });
 });
 

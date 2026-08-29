@@ -426,7 +426,7 @@ export function createCoderRoleRuntime(
               !expansionCaptured
             ) {
               const rejection = new CoderSkillExpansionEvidenceMissingError();
-              hostActions.bindGatekeeperNonPass(toolCallId, rejection.result);
+              hostActions.bindSubmissionNonPass(toolCallId, rejection.result);
               throw rejection;
             }
             assertAcceptableThroughHost(
