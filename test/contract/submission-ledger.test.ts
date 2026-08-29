@@ -32,13 +32,13 @@ test("pipeline ledger rejects a sibling batch and chains a later sealed retry wi
     const files = await readdir(`${f.root}/.ak-roles/books`, { recursive: true });
     const records: SitianRecord[] = [];
     for (const relative of files.filter((file) => file.endsWith(".jsonl"))) {
-      records.push(...(await readSitianRecords(`${f.root}/.ak-roles/books/${relative}`)).records.filter((record) => ["candidate", "outcome", "sealed"].includes(record.kind)));
+      records.push(...(await readSitianRecords(`${f.root}/.ak-roles/books/${relative}`)).records.filter((record) => ["batchContext", "candidate", "outcome", "sealed"].includes(record.kind)));
     }
     records.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
-    assert.deepEqual(records.map((record) => record.kind), ["candidate", "outcome", "candidate", "sealed"]);
+    assert.deepEqual(records.map((record) => record.kind), ["batchContext", "candidate", "outcome", "batchContext", "candidate", "sealed"]);
     assert.equal(records[0]?.priorEventId, undefined);
     for (let i = 1; i < records.length; i += 1) assert.equal(records[i]?.priorEventId, records[i - 1]?.identity);
-    assert.deepEqual(records.at(-1)?.subject, { runId: "run-ledger", attemptId: "run-ledger" });
+    assert.deepEqual(records.at(-1)?.subject, { runId: "run-ledger", attemptId: "run-ledger:initial" });
     assert.deepEqual(await readSealedSubmission(f.root, "run-ledger"), {
       kind: "accepted", role: "judge", status: "completed", decisiveFacts: { status: "completed" },
     });
