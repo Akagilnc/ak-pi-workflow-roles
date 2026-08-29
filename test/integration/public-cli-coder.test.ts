@@ -33,7 +33,7 @@ import {
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission, writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -330,11 +330,12 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
           const { sessionDirectory, sessionFile } =
             piDurablePrincipalAuthority.decode(request.principal);
           await mkdir(sessionDirectory, { recursive: true });
-          // No packaged toolResult leaf — only the pipeline ledger seals acceptance.
+          // No Pi acceptance leaf — alternate host walks production ledger → sealed → Terminal.
           await writeFile(sessionFile, "", "utf8");
-          await writeSealedSubmissionFixture({
+          await sealAcceptedSubmission({
             cwd: request.cwd,
             home,
+            runId: "run-coder-alternate-host",
             runDirectory: request.runDirectory,
             role: "coder",
             details: receipt,
