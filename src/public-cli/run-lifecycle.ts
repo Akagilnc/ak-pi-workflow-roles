@@ -405,11 +405,12 @@ type WriterLockAutopsy =
   | { verdict: "alive"; pid: number };
 
 /**
- * Holder autopsy for an existing writer.lock (#552). "absent" covers no file
- * and no parseable pid (the crash window between exclusive create and the pid
- * write leaves exactly that empty shape). A non-ENOENT read failure still
- * decides "absent" but rides along as readFailure so the true cause can land
- * in the cleanup sink instead of being laundered away.
+ * Holder autopsy for an existing writer.lock (#552). "absent" covers no file,
+ * no parseable pid (a live creator mid-acquisition reads as empty, and so does
+ * the crash-window leftover), and unreadable files — absent alone never
+ * authorizes reclaim; only a "dead" verdict does. A non-ENOENT read failure
+ * still decides "absent" but rides along as readFailure so the true cause can
+ * land in the cleanup sink instead of being laundered away.
  */
 async function autopsyWriterLock(lockPath: string): Promise<WriterLockAutopsy> {
   let content: string;
@@ -438,17 +439,16 @@ function describeAutopsy(autopsy: WriterLockAutopsy): string {
 }
 
 /**
- * Remove one autopsied stale lock, or leave it for the next round when the
- * re-read shows it changed hands. The unlink is guarded by that content
- * re-read — it fires only while the lock is still stale — so a concurrent
- * writer that re-locked between the autopsy and the unlink cannot have its
- * live lock stolen. Residual race: a writer can still re-lock between the
- * re-read and the unlink itself; POSIX offers no compare-and-delete, and this
- * narrows the window to a single syscall pair.
+ * Remove one lock whose re-read autopsy is still a verified-dead holder, or
+ * leave it for the next round otherwise. The pre-unlink re-read guard means a
+ * concurrent writer that re-locked between the autopsy and the unlink cannot
+ * have its live lock stolen. Residual race: a writer can still re-lock between
+ * the re-read and the unlink itself; POSIX offers no compare-and-delete, and
+ * this narrows the window to a single syscall pair.
  */
 async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): Promise<void> {
   const current = await autopsyWriterLock(lockPath);
-  if (current.verdict === "alive") return;
+  if (current.verdict !== "dead") return;
   try {
     await unlink(lockPath);
   } catch (error) {
@@ -507,12 +507,17 @@ const WRITER_LEASE_RECLAIM_ROUNDS = 3;
  * Acquire the one-writer lease for a Role run. Exclusive create — no second
  * writer; a concurrent acquire rejects without dispatch.
  *
- * A contested lock gets a holder autopsy before rejection (#552): a holder pid
- * that is dead — or absent, the crash window between exclusive create and the
- * pid write — means no writer is left to release the lock, so acquire reclaims
- * it and retries the create. A live holder rejects as RunWriterLeaseHeldError
- * naming the pid and path. A pid recycled by an unrelated process reads as
- * alive — that degrades to the same typed rejection, never worse than the
+ * A contested lock gets a holder autopsy before rejection (#552): only a
+ * verified-dead holder pid — parseable pid, signal-0 ESRCH, and still dead on
+ * the pre-unlink re-read — authorizes reclaim, because no writer is left to
+ * release the lock; acquire then retries the create. An empty, unparseable, or
+ * unreadable lock proves no dead holder (a live creator is mid-acquisition
+ * between the exclusive create and its pid write), so it rejects as
+ * RunWriterLeaseHeldError naming the path and the lock stays on disk — a
+ * crash-window empty lock blocking a resume is that refusal's known residue,
+ * not safely fixable by unlink here. A live holder rejects the same typed
+ * error naming the pid and path. A pid recycled by an unrelated process reads
+ * as alive — that degrades to the same typed rejection, never worse than the
  * pre-#552 behavior. Reclaim rounds are bounded by
  * WRITER_LEASE_RECLAIM_ROUNDS; a lock that stays contested (e.g. a reclaim
  * race repeatedly lost) surfaces the same typed error instead of spinning.
@@ -548,13 +553,24 @@ export async function acquireRunWriterLease(
       if (errorCodeOf(error) !== "EEXIST") throw error;
       lastAutopsy = await autopsyWriterLock(lockPath);
       if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== undefined) {
-        // 失败诚实: a lock we could not read is only reclaimable with the true
-        // read cause landed somewhere observable — never laundered into absent.
+        // 失败诚实: a lock we could not read must land its true read cause
+        // somewhere observable — recorded, but never treated as proof of death.
         reportCleanupFailure(lastAutopsy.readFailure);
       }
       if (lastAutopsy.verdict === "alive") {
         throw new RunWriterLeaseHeldError(
           `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`,
+        );
+      }
+      if (lastAutopsy.verdict === "absent") {
+        // #552 mechanical criterion: stale = holder pid verified dead. An
+        // empty lock (a live creator is mid-acquisition before its pid write)
+        // or an unreadable one proves no dead holder — unlinking here could
+        // steal a live writer's lock, so reject typed and leave the lock.
+        throw new RunWriterLeaseHeldError(
+          lastAutopsy.readFailure !== undefined
+            ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place`
+            : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`,
         );
       }
       try {

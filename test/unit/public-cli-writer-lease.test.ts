@@ -1,12 +1,16 @@
 /**
  * Issue #552 (owner 2026-08-29): a killed run leaves writer.lock behind with a
  * dead holder pid, and acquire rejected unconditionally — every kill→resume
- * chain forced the caller to hand-remove the lock. Contract now: acquire
- * performs a holder autopsy on EEXIST — a dead or absent holder pid (the
- * create-to-write crash window leaves an empty lock) is reclaimed and the
- * create retried; a live holder rejects as RunWriterLeaseHeldError naming the
- * pid and path. No caller-visible message-text coupling exists outside this
- * error type (call sites pattern-match instanceof only).
+ * chain forced the caller to hand-remove the lock. Contract (reclaim gate
+ * narrowed per the court ruling, judge run
+ * 01a04ce8-d356-7f10-a6b5-571a514b3054@judge): acquire performs a holder
+ * autopsy on EEXIST and reclaims ONLY a verified-dead holder pid — parseable
+ * pid, signal-0 ESRCH, still dead on the pre-unlink re-read. An empty lock (a
+ * live creator is mid-acquisition between exclusive create and its pid write)
+ * or an unparseable or unreadable one proves no dead holder: typed
+ * RunWriterLeaseHeldError naming the path, lock left in place. No
+ * caller-visible message-text coupling exists outside this error type (call
+ * sites pattern-match instanceof only).
  */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -56,25 +60,41 @@ test("reclaims a stale lock whose holder pid is dead and records the new writer"
   });
 });
 
-test("reclaims an empty lock left by the create-to-write crash window", async () => {
+test("rejects an empty lock without touching it — emptiness proves no dead holder", async () => {
   await withRunDirectory(async (dir) => {
-    await writeFile(join(dir, LOCK_NAME), "", "utf8");
+    const lockPath = join(dir, LOCK_NAME);
+    await writeFile(lockPath, "", "utf8");
 
-    const lease = await acquireRunWriterLease(dir);
-    try {
-      assert.equal(await readFile(join(dir, LOCK_NAME), "utf8"), `${process.pid}\n`);
-    } finally {
-      await lease.release();
-    }
+    await assert.rejects(
+      acquireRunWriterLease(dir),
+      (error: unknown) => {
+        assert.ok(error instanceof RunWriterLeaseHeldError, "expected RunWriterLeaseHeldError");
+        assert.ok(error.message.includes(lockPath), `message should name the lock path: ${error.message}`);
+        return true;
+      },
+    );
+    assert.equal(await readFile(lockPath, "utf8"), "", "empty lock must stay in place");
   });
 });
 
-test("reclaims an unparseable lock as holder-absent", async () => {
+test("rejects an unparseable lock without touching it", async () => {
   await withRunDirectory(async (dir) => {
-    await writeFile(join(dir, LOCK_NAME), "not-a-pid\n", "utf8");
+    const lockPath = join(dir, LOCK_NAME);
+    await writeFile(lockPath, "not-a-pid\n", "utf8");
 
-    const lease = await acquireRunWriterLease(dir);
-    await lease.release();
+    await assert.rejects(
+      acquireRunWriterLease(dir),
+      (error: unknown) => {
+        assert.ok(error instanceof RunWriterLeaseHeldError, "expected RunWriterLeaseHeldError");
+        assert.ok(error.message.includes(lockPath), `message should name the lock path: ${error.message}`);
+        return true;
+      },
+    );
+    assert.equal(
+      await readFile(lockPath, "utf8"),
+      "not-a-pid\n",
+      "unparseable lock must stay in place",
+    );
   });
 });
 
