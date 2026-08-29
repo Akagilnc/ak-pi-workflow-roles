@@ -14,10 +14,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** Per-process default temp HOME for this test run (Scope 1). */
+/** Per-process default temp HOME for this test run (Scope 1). Not exported. */
 let defaultTestHome;
 
-export function defaultIsolatedTestHome() {
+function defaultIsolatedTestHome() {
   if (defaultTestHome === undefined) {
     defaultTestHome = mkdtempSync(join(tmpdir(), "ak-roles-test-home-"));
   }

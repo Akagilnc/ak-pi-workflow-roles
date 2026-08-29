@@ -1,9 +1,12 @@
 /**
- * Owning seam for scripts/run-test-all.mjs — Issue #160 scheduling contract.
+ * Owning seam for scripts/run-test-all.mjs — Issue #160 scheduling contract
+ * plus #549 HOME redirect negative tracers on the real entry seams.
  * Observes the real runner entry (discovery, child argv, exit honesty) under
  * an isolated cwd/PATH child seam; does not touch production, grace, or Navigator.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -12,7 +15,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 
@@ -21,7 +24,23 @@ import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
+const PRELOAD = resolve(packageRoot, "scripts/test-process-env-preload.mjs");
 const THIS_CONTRACT_REL = "test/integration/run-test-all.test.ts";
+const HOST_HOME = userInfo().homedir;
+
+function sha256(bytes: Buffer | string): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function hostModelsPath(): string {
+  return join(HOST_HOME, ".pi", "agent", "models.json");
+}
+
+function readHostModelsHash(): string | null {
+  const path = hostModelsPath();
+  if (!existsSync(path)) return null;
+  return sha256(readFileSync(path));
+}
 
 /** Exact heavy set — independent expected literals, not runner import (#160; #319 Batch 4 R1 split). */
 const TICKET_HEAVYWEIGHT = [
@@ -55,6 +74,18 @@ setInterval(() => {}, 1000);
 const code = Number.isFinite(exits[n]) ? exits[n] : exits[exits.length - 1] ?? 0;
 process.exit(code);
 `;
+  // Optional #549 AC3 probe: write models.json + sentinel only via $HOME.
+  const homeProbe = `
+if (process.env.AK_549_HOME_PROBE_SENTINEL && n === 0) {
+  const { mkdirSync } = require("node:fs");
+  const { dirname, join } = require("node:path");
+  const home = process.env.HOME;
+  const modelsPath = join(home, ".pi", "agent", "models.json");
+  mkdirSync(dirname(modelsPath), { recursive: true });
+  writeFileSync(modelsPath, JSON.stringify({ providers: { probe: true } }) + "\\n");
+  writeFileSync(join(home, process.env.AK_549_HOME_PROBE_SENTINEL), "fixture-poison-sentinel");
+}
+`;
   const source = `#!${process.execPath}
 const { appendFileSync, readFileSync, writeFileSync, existsSync } = require("node:fs");
 const recordPath = process.env.AK_TEST_ALL_RECORD;
@@ -74,7 +105,7 @@ appendFileSync(
     xdgConfigHome: process.env.XDG_CONFIG_HOME,
   }) + "\\n",
 );
-${signalSelf}`;
+${homeProbe}${signalSelf}`;
   await writeFile(join(binDir, "node"), source, "utf8");
   await chmod(join(binDir, "node"), 0o755);
 }
@@ -131,12 +162,14 @@ async function runRunner(options: {
   binDir: string;
   recordPath: string;
   childExits?: string;
+  extraEnv?: NodeJS.ProcessEnv;
 }) {
   await writeFile(options.recordPath, "", "utf8");
   await writeFile(`${options.recordPath}.count`, "0", "utf8");
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...options.extraEnv,
     PATH: `${options.binDir}${delimiter}${process.env.PATH ?? ""}`,
     AK_TEST_ALL_RECORD: options.recordPath,
     AK_TEST_ALL_CHILD_EXITS: options.childExits ?? "0",
@@ -157,7 +190,7 @@ async function runRunner(options: {
   return { ...result, records: parseRecords(raw) };
 }
 
-test("package.json test:all is owned solely by scripts/run-test-all.mjs", async () => {
+test("package.json test entries wire HOME redirect preload or run-test-all owner", async () => {
   const pkg = JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8"),
   ) as { scripts: Record<string, string> };
@@ -167,13 +200,169 @@ test("package.json test:all is owned solely by scripts/run-test-all.mjs", async 
     "test:all must delegate only to the scheduling owner",
   );
   const preload = "--import ./scripts/test-process-env-preload.mjs";
-  assert.equal(
-    pkg.scripts["test:fast"],
-    `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`,
-  );
+  const bareUnitContract =
+    `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
+  assert.equal(pkg.scripts["test"], bareUnitContract);
+  assert.equal(pkg.scripts["test:fast"], bareUnitContract);
   assert.equal(
     pkg.scripts["test:integration"],
     `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts`,
+  );
+  assert.equal(
+    pkg.scripts["test:adjudication"],
+    `node --import tsx ${preload} --test test/adjudication/**/*.test.ts`,
+  );
+});
+
+/**
+ * AC3 (#549): real test:all child seam — fixture writes only via $HOME;
+ * host models.json hash unchanged; host sentinel absolute path must not exist.
+ */
+test("test:all child $HOME writes miss host models.json and host sentinel", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ak-549-test-all-home-"));
+  await withPrimaryAwareCleanup(
+    async () => {
+      const ordinary = ["test/unit/one.test.ts"];
+      const files = [...ordinary, ...TICKET_HEAVYWEIGHT];
+      await seedTierTree(workspace, files);
+
+      const binDir = join(workspace, "bin");
+      await writePathNodeShim(binDir);
+      const recordPath = join(workspace, "records.jsonl");
+      const sentinelName = `.ak-549-test-all-sentinel-${process.pid}-${Date.now()}`;
+      const beforeHash = readHostModelsHash();
+      const hostSentinel = join(HOST_HOME, sentinelName);
+
+      const result = await runRunner({
+        cwd: workspace,
+        binDir,
+        recordPath,
+        extraEnv: { AK_549_HOME_PROBE_SENTINEL: sentinelName },
+      });
+
+      assert.equal(
+        result.code,
+        0,
+        `stderr=${result.stderr}\nstdout=${result.stdout}`,
+      );
+      assert.ok(result.records[0]?.home, "child must receive HOME");
+      const childHome = result.records[0]!.home!;
+      assert.notEqual(childHome, HOST_HOME);
+
+      try {
+        assert.equal(
+          readHostModelsHash(),
+          beforeHash,
+          "host ~/.pi/agent/models.json hash must be unchanged",
+        );
+        assert.equal(
+          existsSync(hostSentinel),
+          false,
+          "host sentinel absolute path must not exist",
+        );
+        assert.equal(
+          readFileSync(join(childHome, sentinelName), "utf8"),
+          "fixture-poison-sentinel",
+        );
+        assert.equal(
+          existsSync(join(childHome, ".pi", "agent", "models.json")),
+          true,
+        );
+      } finally {
+        // One-shot write residue under the runner child HOME — always rm.
+        await rm(join(childHome, sentinelName), { force: true });
+        await rm(join(childHome, ".pi"), { recursive: true, force: true });
+      }
+    },
+    async () => {
+      await rm(workspace, { recursive: true, force: true });
+    },
+  );
+});
+
+/**
+ * AC4 (#549): bare preload entry write proof via process.env.HOME (not run-test-all).
+ * Independent of AC3; package.json wiring locked above as exact strings.
+ */
+test("bare preload entry: $HOME writes miss host models.json and host sentinel", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ak-549-bare-preload-"));
+  await withPrimaryAwareCleanup(
+    async () => {
+      const beforeHash = readHostModelsHash();
+      const sentinelName = `.ak-549-bare-sentinel-${process.pid}-${Date.now()}`;
+      const hostSentinel = join(HOST_HOME, sentinelName);
+      const probe = join(workspace, "home-redirect-probe.mjs");
+      await writeFile(
+        probe,
+        `import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
+import { dirname, join } from "node:path";
+
+const hostHome = userInfo().homedir;
+const home = process.env.HOME;
+assert.ok(home && home !== hostHome, "HOME must be redirected by preload");
+assert.equal(process.env.XDG_CONFIG_HOME, join(home, ".config"));
+assert.equal(process.env.PI_CODING_AGENT_DIR, undefined);
+
+const sentinelName = process.env.AK_549_SENTINEL_NAME;
+const hostSentinel = join(hostHome, sentinelName);
+const beforeHash = process.env.AK_549_BEFORE_HASH === "" ? null : process.env.AK_549_BEFORE_HASH;
+const hostModels = join(hostHome, ".pi", "agent", "models.json");
+
+const modelsPath = join(home, ".pi", "agent", "models.json");
+try {
+  mkdirSync(dirname(modelsPath), { recursive: true });
+  writeFileSync(modelsPath, JSON.stringify({ providers: { poison: true } }) + "\\n");
+  writeFileSync(join(home, sentinelName), "bare-fixture-poison");
+
+  assert.equal(existsSync(hostSentinel), false, "host sentinel must not exist");
+  const afterHash = existsSync(hostModels)
+    ? createHash("sha256").update(readFileSync(hostModels)).digest("hex")
+    : null;
+  assert.equal(afterHash, beforeHash);
+  assert.equal(readFileSync(join(home, sentinelName), "utf8"), "bare-fixture-poison");
+  console.log(JSON.stringify({ ok: true, home, hostHome }));
+} finally {
+  rmSync(join(home, sentinelName), { force: true });
+  rmSync(join(home, ".pi"), { recursive: true, force: true });
+}
+`,
+        "utf8",
+      );
+
+      const result = await runTestSubprocess(
+        process.execPath,
+        ["--import", PRELOAD, probe],
+        {
+          cwd: packageRoot,
+          env: {
+            ...process.env,
+            // Start from host HOME so the preload must do the redirect.
+            HOME: HOST_HOME,
+            AK_549_SENTINEL_NAME: sentinelName,
+            AK_549_BEFORE_HASH: beforeHash ?? "",
+          },
+          owner: "bare-preload-home-redirect",
+          timeoutMs: 15_000,
+        },
+      );
+      assert.equal(
+        result.code,
+        0,
+        `preload probe failed: stderr=${result.stderr}\nstdout=${result.stdout}`,
+      );
+      assert.equal(
+        existsSync(hostSentinel),
+        false,
+        "host sentinel absolute path must not exist",
+      );
+      assert.equal(readHostModelsHash(), beforeHash);
+    },
+    async () => {
+      await rm(workspace, { recursive: true, force: true });
+    },
   );
 });
 
