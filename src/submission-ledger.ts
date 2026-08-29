@@ -1,12 +1,12 @@
 import { basename } from "node:path";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
-import { sitianReport, type RecordPointer } from "./sitian-facade.ts";
+import { readSitianRecords, resolveSitianRecordPath, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 
 export type SubmissionLedgerEvent =
   | { readonly type: "candidate"; readonly attemptId: string; readonly toolCallId: string; readonly toolName: string; readonly batchClosed: boolean; readonly sequence: number }
   | { readonly type: "outcome"; readonly attemptId: string; readonly toolCallId: string; readonly outcome: "correctable-rejection" | "audit-escalation" | "infrastructure"; readonly reason?: string }
-  | { readonly type: "sealed"; readonly attemptId: string; readonly toolCallId: string; readonly accepted: unknown }
+  | { readonly type: "sealed"; readonly attemptId: string; readonly toolCallId: string; readonly accepted: unknown; readonly projection: { readonly kind: "accepted"; readonly role: string; readonly status?: string; readonly decisiveFacts: unknown } }
   | { readonly type: "post-seal-anomaly"; readonly attemptId: string; readonly toolCallId: string; readonly toolName: string };
 
 function identity(): { runId: string; attemptId: string } {
@@ -15,8 +15,22 @@ function identity(): { runId: string; attemptId: string } {
   return { runId, attemptId: runId };
 }
 
+export type SealedSubmissionProjection = Extract<SubmissionLedgerEvent, { type: "sealed" }>["projection"];
+
+/** Settlement read seam: typed sealed projection only, never host session JSONL. */
+export async function readSealedSubmission(cwd: string, runId: string): Promise<SealedSubmissionProjection | undefined> {
+  const recordFile = resolveSitianRecordPath({ level: "event", kind: "sealed", subject: { runId }, cwd }).recordFile;
+  const { records } = await readSitianRecords(recordFile);
+  const matches = records.filter((record) => {
+    if (record.kind !== "sealed" || typeof record.payload !== "object" || record.payload === null) return false;
+    return typeof record.subject === "object" && record.subject !== null && record.subject.runId === runId;
+  });
+  const payload = matches.at(-1)?.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
+  return payload?.type === "sealed" && payload.projection?.kind === "accepted" ? payload.projection : undefined;
+}
+
 /** Pipeline-owned sole-final state and durable projection. */
-export function createSubmissionLedgerHost(host: RoleHost, outputTools: ReadonlySet<string>): RoleHost {
+export function createSubmissionLedgerHost(host: RoleHost, outputTools: ReadonlyMap<string, string>): RoleHost {
   let prior: RecordPointer | undefined;
   let sealed = false;
   let sequence = 0;
@@ -24,7 +38,7 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
     const ids = identity();
     const pointer = sitianReport({
       level: "event",
-      kind: `submission-${event.type}`,
+      kind: event.type,
       subject: ids,
       ...(prior === undefined ? {} : { priorEventId: prior.identity }),
       payload: event,
@@ -37,7 +51,8 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
   return {
     ...host,
     registerTool(tool) {
-      if (!outputTools.has(tool.name)) return host.registerTool(tool);
+      const role = outputTools.get(tool.name);
+      if (role === undefined) return host.registerTool(tool);
       host.registerTool({
         ...tool,
         async execute(toolCallId, params, signal, update, context): Promise<HostToolResult<unknown>> {
@@ -68,7 +83,11 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
             append(context, { type: "outcome", attemptId: ids.attemptId, toolCallId, outcome: "correctable-rejection" });
             return result;
           }
-          append(context, { type: "sealed", attemptId: ids.attemptId, toolCallId, accepted: result.details });
+          const details = result.details as Record<string, unknown> | null;
+          const status = details !== null && typeof details === "object"
+            ? typeof details.status === "string" ? details.status : typeof details.judgeStatus === "string" ? details.judgeStatus : undefined
+            : undefined;
+          append(context, { type: "sealed", attemptId: ids.attemptId, toolCallId, accepted: result.details, projection: { kind: "accepted", role, ...(status === undefined ? {} : { status }), decisiveFacts: result.details } });
           sealed = true;
           return result;
         },
