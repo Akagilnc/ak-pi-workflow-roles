@@ -110,7 +110,7 @@ export function createPiRoleHostAdapter(
   const host: RoleHost = {
     capabilities: {
       skillExpansion(prompt) {
-        const parsed = parseSkillBlock(prompt) ?? parseSkillBlock(prompt.trimEnd());
+        const parsed = parseSkillBlock(prompt);
         if (parsed == null) return undefined;
         const userMessage = parsed.userMessage ?? "";
         return Object.freeze({

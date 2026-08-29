@@ -1,7 +1,7 @@
 /**
  * Canonical Skill binding built from package-owned method material.
- * Lives beside the method seam but may import Pi skill parsers — used by the
- * Internal role runtime, not the public ak-role bin bundle.
+ * Lives beside the method seam — used by the Internal role runtime, not the
+ * public ak-role bin bundle.
  */
 import { dirname } from "node:path";
 

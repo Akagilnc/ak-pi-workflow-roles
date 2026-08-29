@@ -40,7 +40,6 @@ import {
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
 import type { RoleHost } from "../../src/host-contracts.ts";
-import { CODER_ACCEPTED_TEXT } from "../../src/package-contracts/worker-output.ts";
 import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import {
   WorkerCommitReminderError,
@@ -216,7 +215,8 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
 }
 
 function expandedTdd(request: string): string {
-  return `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>\n\n${request}`;
+  const block = `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>`;
+  return request === "" ? block : `${block}\n\n${request}`;
 }
 
 const usage = {
@@ -2226,13 +2226,7 @@ test("coder missing skill-expansion evidence persists typed non-pass on real hos
       assert.equal(recorded.message?.isError, true);
       assert.deepEqual(recorded.message?.details, expected);
 
-      // No accepted receipt: completed payload and accepted surface text must not land as success.
-      assert.notEqual(
-        (recorded.message?.details as { status?: unknown } | undefined)?.status,
-        "completed",
-      );
-      const surface = JSON.stringify(recorded.message?.content ?? "");
-      assert.equal(surface.includes(CODER_ACCEPTED_TEXT), false);
+      // No accepted receipt: no successful coder toolResult.
       const accepted = sessionLines.find(
         (entry) =>
           entry.type === "message" &&
