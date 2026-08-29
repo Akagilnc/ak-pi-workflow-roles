@@ -1241,35 +1241,6 @@ export async function withInProcessPi<T>(
   options: InProcessPiOptions,
   scenario: (fixture: InProcessPiFixture) => Promise<T>,
 ): Promise<T> {
-  let mockServer: { baseUrl: string; close: () => Promise<void> } | undefined;
-  if (options.faux !== undefined) {
-    assertWritableTestAgentDir(options.agentDir);
-    mockServer = await createMockProviderServer(options.faux);
-    const modelsPath = resolve(options.agentDir, "models.json");
-    if (!existsSync(modelsPath)) {
-      await writeFile(modelsPath, JSON.stringify({
-        providers: {
-          [options.faux.provider.id]: {
-            baseUrl: mockServer.baseUrl,
-            api: "openai-completions",
-            apiKey: "offline",
-            models: [{
-              id: options.faux.getModel().id,
-              name: options.faux.getModel().id,
-              api: "openai-completions",
-              reasoning: false,
-              input: ["text"],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              contextWindow: 128000,
-              maxTokens: 16384,
-              compat: { requiresToolResultName: true },
-            }],
-          },
-        },
-      }, null, 2), "utf8");
-    }
-  }
-
   const model = options.model ?? options.faux.getModel();
   const provider = options.provider ?? {
     ...options.faux.provider,
@@ -1405,13 +1376,7 @@ export async function withInProcessPi<T>(
         });
       }
     } finally {
-      try {
-        session.dispose();
-      } finally {
-        if (mockServer !== undefined) {
-          await mockServer.close();
-        }
-      }
+      session.dispose();
     }
   }
 }
