@@ -45,18 +45,39 @@ async function firstDeadPid(): Promise<number> {
   return pid;
 }
 
-test("reclaims a stale lock whose holder pid is dead and records the new writer", async () => {
+test("reclaims a stale lock whose holder pid is dead, records the new writer, and declares the orphan-pi residual", async () => {
   await withRunDirectory(async (dir) => {
     const deadPid = await firstDeadPid();
-    await writeFile(join(dir, LOCK_NAME), `${deadPid}\n`, "utf8");
+    const lockPath = join(dir, LOCK_NAME);
+    await writeFile(lockPath, `${deadPid}\n`, "utf8");
 
-    const lease = await acquireRunWriterLease(dir);
+    const diagnostics: string[] = [];
+    const lease = await acquireRunWriterLease(dir, (diagnostic) =>
+      diagnostics.push(diagnostic),
+    );
     try {
-      assert.equal(await readFile(join(dir, LOCK_NAME), "utf8"), `${process.pid}\n`);
+      assert.equal(await readFile(lockPath, "utf8"), `${process.pid}\n`);
     } finally {
       await lease.release();
     }
-    await assert.rejects(readFile(join(dir, LOCK_NAME), "utf8"));
+    await assert.rejects(readFile(lockPath, "utf8"));
+    assert.equal(diagnostics.length, 1, `expected exactly one reclaim declaration: ${JSON.stringify(diagnostics)}`);
+    const declaration = diagnostics[0];
+    assert.ok(declaration !== undefined, "expected one reclaim declaration");
+    assert.match(declaration, new RegExp(`holder pid ${deadPid} verified dead`));
+    assert.ok(declaration.includes(lockPath), `declaration should name the lock path: ${declaration}`);
+    assert.match(declaration, /orphaned pi child/);
+  });
+});
+
+test("a clean first acquire emits no diagnostic", async () => {
+  await withRunDirectory(async (dir) => {
+    const diagnostics: string[] = [];
+    const lease = await acquireRunWriterLease(dir, (diagnostic) =>
+      diagnostics.push(diagnostic),
+    );
+    await lease.release();
+    assert.equal(diagnostics.length, 0);
   });
 });
 
