@@ -115,8 +115,8 @@ import {
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 
-async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<TerminalRoleOutcome | undefined> {
-  return await readSealedSubmission(admitted.projectRoot, admitted.runId) as TerminalRoleOutcome | undefined;
+async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" }> | undefined> {
+  return readSealedSubmission(admitted.projectRoot, admitted.runId);
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -2393,10 +2393,8 @@ export async function readLawfulJudgeRoleOutcome(
   admitted: AdmittedJudgeInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<LawfulJudgeRoleOutcome | undefined> {
-  const { sessionFile } = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(sessionFile);
-  if (entries === undefined) return undefined;
-  return await sealedLedgerOutcome(admitted) as LawfulJudgeRoleOutcome | undefined ?? extractJudgeRoleOutcome(entries);
+  const outcome = await sealedLedgerOutcome(admitted);
+  return outcome?.role === "judge" ? outcome : undefined;
 }
 
 /**
@@ -2431,13 +2429,10 @@ async function settleLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
+  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority);
+  if (roleOutcome === undefined) return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(coordinates.sessionFile);
-  if (entries === undefined) return undefined;
-  const roleOutcome = await sealedLedgerOutcome(admitted) as LawfulJudgeRoleOutcome | undefined ?? extractJudgeRoleOutcome(entries);
-  if (roleOutcome === undefined) {
-    return undefined;
-  }
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
   // Lawful outcome exists — artifact publication keeps original errno/name.
   const artifacts = await publishJudgeArtifacts(
