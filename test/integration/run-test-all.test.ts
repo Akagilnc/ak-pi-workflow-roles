@@ -36,6 +36,8 @@ const TICKET_HEAVYWEIGHT = [
 
 type ChildRecord = {
   argv: string[];
+  home?: string;
+  xdgConfigHome?: string;
 };
 
 async function writePathNodeShim(
@@ -65,7 +67,12 @@ const n = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) : 
 writeFileSync(counterPath, String(n + 1));
 appendFileSync(
   recordPath,
-  JSON.stringify({ argv: process.argv.slice(1), index: n }) + "\\n",
+  JSON.stringify({
+    argv: process.argv.slice(1),
+    index: n,
+    home: process.env.HOME,
+    xdgConfigHome: process.env.XDG_CONFIG_HOME,
+  }) + "\\n",
 );
 ${signalSelf}`;
   await writeFile(join(binDir, "node"), source, "utf8");
@@ -86,8 +93,18 @@ function parseRecords(raw: string): ChildRecord[] {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const parsed = JSON.parse(line) as { argv: string[]; index: number };
-      return { argv: parsed.argv };
+      const parsed = JSON.parse(line) as {
+        argv: string[];
+        index: number;
+        home?: string;
+        xdgConfigHome?: string;
+      };
+      const record: ChildRecord = { argv: parsed.argv };
+      if (typeof parsed.home === "string") record.home = parsed.home;
+      if (typeof parsed.xdgConfigHome === "string") {
+        record.xdgConfigHome = parsed.xdgConfigHome;
+      }
+      return record;
     });
 }
 
@@ -149,13 +166,14 @@ test("package.json test:all is owned solely by scripts/run-test-all.mjs", async 
     "node scripts/run-test-all.mjs",
     "test:all must delegate only to the scheduling owner",
   );
+  const preload = "--import ./scripts/test-process-env-preload.mjs";
   assert.equal(
     pkg.scripts["test:fast"],
-    "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
+    `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`,
   );
   assert.equal(
     pkg.scripts["test:integration"],
-    "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
+    `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts`,
   );
 });
 
@@ -186,6 +204,19 @@ test("runner partitions discovered universe into ordinary default-parallel then 
 
       const [ordinaryChild, heavyChild] = result.records;
       assert.ok(ordinaryChild && heavyChild);
+
+      // #549: isolatedTestProcessEnv() default HOME must leave the host home.
+      const { userInfo } = await import("node:os");
+      const hostHome = userInfo().homedir;
+      for (const child of [ordinaryChild, heavyChild]) {
+        assert.ok(child.home, "child must receive HOME");
+        assert.notEqual(child.home, hostHome, "child HOME must not be the host home");
+        assert.equal(
+          child.xdgConfigHome,
+          join(child.home!, ".config"),
+          "child XDG_CONFIG_HOME must sit under redirected HOME",
+        );
+      }
 
       assert.ok(
         ordinaryChild.argv.includes("--test"),
