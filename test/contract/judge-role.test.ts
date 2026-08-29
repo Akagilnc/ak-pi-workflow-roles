@@ -199,9 +199,11 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
     invocation(originalRequest) {
       return `/skill:tdd ${originalRequest}`;
     },
-    captureExpansion(prompt, originalRequest) {
-      const exact = `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>\n\n${originalRequest}`;
-      return prompt === exact
+    captureExpansion(evidence, originalRequest) {
+      return evidence?.name === "tdd"
+        && evidence.location === tddPath
+        && evidence.content === tddContent
+        && evidence.userMessage === originalRequest
         ? { name: "tdd", location: tddPath, content: tddContent, userMessage: originalRequest }
         : undefined;
     },

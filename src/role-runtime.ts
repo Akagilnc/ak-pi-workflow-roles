@@ -697,7 +697,10 @@ export function createRoleRuntimeExtension(
         if (!reviewerExpansionCaptured) {
           if (
             reviewerOriginalRequest === undefined
-            || activeReviewerParent.skillBinding.captureExpansion(event.prompt, reviewerOriginalRequest) === undefined
+            || activeReviewerParent.skillBinding.captureExpansion(
+              roleHost.capabilities?.skillExpansion(event.prompt),
+              reviewerOriginalRequest,
+            ) === undefined
           ) {
             failInfrastructure(
               new Error("Canonical code-review Skill expansion did not match the captured request"),
