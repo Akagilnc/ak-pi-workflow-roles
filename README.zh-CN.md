@@ -47,7 +47,7 @@ ak-role config set-auto-resume-limit 3
 
 `config set` 存席位模型默认。门下省官席（`gatekeeper`／`inspector`／`notary`）解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。`config unset` 只清这三官的覆盖。`config set-engine`／`unset-engine` 在可调用角色上写入或清除持久劳务引擎名（与 `--engine` 同轴；拒收 navigator——无独立 activation）。`config set-auto-resume-limit` 写入单次调用自动续跑上限。用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。
 
-回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
+回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者。省部级（province-grade）角色可在自己单次调用的内政之内派发正经角色调用，但公开 CLI 语义零变化——外部调用者仍一次启动其选中的一个角色，跨 CLI 调用的顺序、重复与停止仍全归外部调用者（ADR 0010 两品级窄修）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
 ### 门下省交卷闸
 
@@ -133,13 +133,14 @@ ak-role resume <runId> "<裁定>"
 | analyst | **太史** | 司天台分析席：只读司天记录、出高阶指标；确定性机制，非 LLM，可单独调用 | 已建（[ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
 | — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
 | gleaner-left | **左拾遗** | 合并前以无锚定冷眼审全幅合并候选，只上弹章、不封驳不裁决（风闻） | soul 已落＋[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案；机器席位待建 |
+| marshal | **尚书省** | 审→判→修 质量收敛环的省部级驱动角色：调用方递票号与 baseline，尚书省驱动御史台/大理寺/修内司滚到收敛（converged 唯庭可判）或 escalate 上呈，交回 typed 报告；不弹、不判、不修，只让链条转到收敛 | 已定名（#145）；席位待落地（#146） |
 | — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建 |
 | — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 留档，需要时另立票 |
 | — | **主簿** | 合并后勾稽销案：核实确已合上、清理残留、报到达 | 未建 |
 
 **merge 按钮归调用者**，没有任何角色握不可逆权限：通进司把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
 
-上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，大理寺、御史台、太医署各自都有一次。门下省交卷闸是完成侧挂钩，不是调用者必经编排链。
+上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，大理寺、御史台、太医署各自都有一次。门下省交卷闸是完成侧挂钩，不是调用者必经编排链。省部级角色的内部组合属于其单次调用的内政，公开 CLI 语义零变化——外部调用者仍一次启动其选中的一个角色，跨 CLI 调用的顺序、重复与停止仍全归外部调用者。
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 

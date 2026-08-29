@@ -2324,7 +2324,7 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       [sessionHeader("2026-08-05T09:00:00.000Z"), ...acceptedJudgeFinal("2026-08-05T09:05:00.000Z", { judgeStatus: "converged" }, 0.03, 30)],
       { mtime: new Date(nowMs - 10_200_000) },
     );
-    // #4 coder first, then judge converged → 刑部(判卷)
+    // #4 coder first, then judge converged → 尚书省(判卷)
     await writeRunSession(
       ledgerDir, 4, "coder-start@x",
       [sessionHeader("2026-08-05T08:00:00.000Z"), ...acceptedCoderFinal("2026-08-05T08:05:00.000Z", 0.01, 10)],
@@ -2347,7 +2347,7 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       [sessionHeader("2026-08-05T11:57:00.000Z"), assistantUsage("2026-08-05T11:57:30.000Z", 0.06, 60)],
       { invocationRole: "coder", mtime: new Date(nowMs - 60_000) },
     );
-    // #6 latest fixer accepted → 刑部
+    // #6 latest fixer accepted → 尚书省
     await writeRunSession(
       ledgerDir, 6, "fixer-done@x",
       [
@@ -2382,7 +2382,7 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       ],
       { mtime: new Date(nowMs - 3_600_000) },
     );
-    // #7 latest reviewer unaccepted watch → 刑部
+    // #7 latest reviewer unaccepted watch → 尚书省
     await writeRunSession(
       ledgerDir, 7, "review-watch@x",
       [sessionHeader("2026-08-05T11:40:00.000Z"), assistantUsage("2026-08-05T11:41:00.000Z", 0.08, 80)],
@@ -2400,7 +2400,7 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       [sessionHeader("2026-08-05T11:58:30.000Z"), assistantUsage("2026-08-05T11:58:50.000Z", 0.1, 100)],
       { invocationRole: "auditor", mtime: new Date(nowMs - 25_000) },
     );
-    // #14 marshal-driven run → 刑部列 (ADR 0053; correlation seat pending, station already maps)
+    // #14 marshal-driven run → 尚书省列 (ADR 0053; correlation seat pending, station already maps)
     await writeRunSession(
       ledgerDir, 14, "marshal-drive@x",
       [sessionHeader("2026-08-05T11:57:00.000Z"), assistantUsage("2026-08-05T11:57:30.000Z", 0.14, 140)],
@@ -2421,7 +2421,7 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       ],
       { mtime: new Date(nowMs - 600_000) },
     );
-    // #12 coder history then judge escalate → 刑部 with escalate overlay (原地换色不改归列)
+    // #12 coder history then judge escalate → 尚书省 with escalate overlay (原地换色不改归列)
     await writeRunSession(
       ledgerDir, 12, "coder-before@x",
       [sessionHeader("2026-08-05T08:30:00.000Z"), ...acceptedCoderFinal("2026-08-05T08:35:00.000Z", 0.01, 10)],
@@ -2516,13 +2516,13 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
     assert.equal(placementOf(html, "roles", 1), "done");
     assert.equal(placementOf(html, "roles", 2), "pending");
     assert.equal(placementOf(html, "roles", 3), "court", "judge without identified non-judge history → 大理寺(审票)");
-    assert.equal(placementOf(html, "roles", 4), "marshal", "latest judge + historical coder → 刑部(判卷)");
+    assert.equal(placementOf(html, "roles", 4), "marshal", "latest judge + historical coder → 尚书省(判卷)");
     assert.equal(placementOf(html, "roles", 5), "coder");
-    assert.equal(placementOf(html, "roles", 6), "marshal", "fixer latest → 刑部");
-    assert.equal(placementOf(html, "roles", 7), "marshal", "reviewer latest → 刑部");
+    assert.equal(placementOf(html, "roles", 6), "marshal", "fixer latest → 尚书省");
+    assert.equal(placementOf(html, "roles", 7), "marshal", "reviewer latest → 尚书省");
     assert.equal(placementOf(html, "roles", 8), "collector");
     assert.equal(placementOf(html, "roles", 10), "other:auditor", "known non-resident station forms its own column");
-    assert.equal(placementOf(html, "roles", 14), "marshal", "marshal-driven runs land in 刑部 (ADR 0053)");
+    assert.equal(placementOf(html, "roles", 14), "marshal", "marshal-driven runs land in 尚书省 (ADR 0053)");
     assert.equal(placementOf(html, "roles", 9), "unknown", "unknown latest station never forms a column");
     assert.equal(placementOf(html, "roles", 11), "court", "escalate overlay does not change placement (judge-only)");
     assert.equal(placementOf(html, "roles", 12), "marshal", "escalate overlay does not change placement (with coder history)");
@@ -3091,7 +3091,7 @@ test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown 
     );
     assert.equal(escalatedHistorical?.["data-result-status"], "escalate", "authentic escalate receipt stays visible in history");
 
-    // #104 — latest judge with coder/fixer/reviewer history → 刑部(判卷).
+    // #104 — latest judge with coder/fixer/reviewer history → 尚书省(判卷).
     assert.equal(placementOf(html, "roles", 104), "marshal");
     const t104 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "104");
     assert.equal(t104?.["data-current-state"], "accepted-awaiting");
@@ -3099,7 +3099,7 @@ test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown 
     // #140 — single judge court run → 大理寺(审票).
     assert.equal(placementOf(html, "roles", 140), "court");
 
-    // #127 — open child rides its own latest run (reviewer) → 刑部, independent card
+    // #127 — open child rides its own latest run (reviewer) → 尚书省, independent card
     // with the native family edge + 族徽章, not nested inside the family section.
     assert.equal(placementOf(html, "roles", 127), "marshal");
     const t127 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "127");
@@ -3139,7 +3139,7 @@ test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown 
     if (t127State.startsWith("unaccepted-")) {
       assert.ok(
         marshalOrder.indexOf("127") < marshalOrder.indexOf("104"),
-        "unaccepted #127 floats above accepted #104 in 刑部",
+        "unaccepted #127 floats above accepted #104 in 尚书省",
       );
     }
   } finally {
