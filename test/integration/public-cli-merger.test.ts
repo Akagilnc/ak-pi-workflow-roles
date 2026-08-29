@@ -37,7 +37,6 @@ import {
 import { RESUME_TRANSPORT_ENVELOPE, selectResumeContinuationPrompt } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractMergerMethodInvocations,
-  extractMergerRoleOutcome,
   settleMergerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";

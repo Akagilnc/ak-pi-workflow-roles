@@ -26,9 +26,13 @@ export async function withTempHome<T>(
   const home = await mkdtemp(
     join(tmpdir(), options.prefix ?? "ak-public-cli-fail-"),
   );
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }

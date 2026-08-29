@@ -19,7 +19,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 
-import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, CONCISE_DIAGNOSTIC_MAX_CHARS, exitCodeForTerminalOutcome, extractDoctorRoleOutcome, extractJudgeRoleOutcome, isChildDiagnosticFloodLine, isChildDiagnosticHelpFooterLine, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, CONCISE_DIAGNOSTIC_MAX_CHARS, exitCodeForTerminalOutcome, isChildDiagnosticFloodLine, isChildDiagnosticHelpFooterLine, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -120,6 +120,7 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
           );
           return {
             code: 0,
+            sealedAcceptance: { role: "judge" as const, details: { judgeStatus: "converged", note: "domain remains role-owned" } },
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -508,6 +509,16 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
           );
           return {
             code: 0,
+            sealedAcceptance: {
+              role: "judge" as const,
+              details: {
+                judgeStatus: "escalate",
+                decisionGate: {
+                  question: "Ship or hold?",
+                  options: ["ship", "hold"],
+                },
+              },
+            },
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -660,153 +671,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     assert.equal(stderr[0]!.includes("\n"), true);
   });
 });
-test("audit escalation requires the retained seat-bound response across all audited seats", () => {
-  const seats = {
-    judge: { output: JUDGE_OUTPUT_TOOL_NAME, audit: JUDGE_AUDIT_TOOL_NAME },
-    doctor: { output: DOCTOR_OUTPUT_TOOL_NAME, audit: DOCTOR_AUDIT_TOOL_NAME },
-  } as const;
-  const auditCandidate = {
-    status: "escalate",
-    conflicts: ["authority conflict"],
-    decisionGate: { question: "Who decides?", options: ["owner", "caller"] },
-  };
-  const extract = (role: (typeof AUDITOR_SOUL_ROLES)[number], entries: readonly unknown[]) => {
-    switch (role) {
-      case "judge": return extractJudgeRoleOutcome(entries as never);
-      case "doctor": return extractDoctorRoleOutcome(entries as never);
-    }
-  };
-  const outcomeKind = (value: unknown): unknown => {
-    if (!value || typeof value !== "object") return undefined;
-    return "outcome" in value
-      ? (value as { outcome?: { kind?: unknown } }).outcome?.kind
-      : (value as { kind?: unknown }).kind;
-  };
-  const hostileRows = {
-    judge: { source: "public", property: "conflicts" },
-    doctor: { source: "retained", property: "decisionGate" },
-  } as const;
-  for (const role of AUDITOR_SOUL_ROLES) {
-    const seat = seats[role];
-    const roleCallId = `${role}-role-call`;
-    const roleCall = {
-      type: "message",
-      message: {
-        role: "assistant",
-        content: [{ type: "toolCall", id: roleCallId, name: seat.output, arguments: { role } }],
-      },
-    };
-    const retained = {
-      type: "custom",
-      customType: "ak_compliance_response",
-      data: {
-        version: 1,
-        response: { content: [{ type: "toolCall", name: seat.audit, arguments: auditCandidate }] },
-      },
-    };
-    const projected = buildAuditEscalationResult(
-      { status: "escalate", conflicts: auditCandidate.conflicts, decisionGate: auditCandidate.decisionGate },
-      { role },
-    );
-    const details = JSON.parse(JSON.stringify(projected));
-    // Persisted/replayed details have no live object brand. The retained
-    // seat-bound response below, not Navigator shape recognition, owns this
-    // escalation's authenticity.
-    assert.notEqual(
-      publicNavigatorSettlement(role, null, {
-        toolName: seat.output,
-        isError: false,
-        details,
-      })?.kind,
-      "human_decision",
-      `${role}: persisted genuine projection must not impersonate live identity`,
-    );
-    const result = {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolCallId: roleCallId,
-        toolName: seat.output,
-        isError: false,
-        details,
-      },
-    };
-    const entries = [roleCall, retained, result];
-    const extracted = extract(role, entries);
-    assert.equal(outcomeKind(extracted), "audit_escalation", role);
-
-    // Two seat-bound audit decisions in the same interval remain ambiguous
-    // (multi-turn intermediates reuse the single shared fixture).
-    assert.equal(
-      outcomeKind(extract(role, [
-        roleCall,
-        ...multiTurnIntermediateRetained(`${role}-run`),
-        retained,
-        retained,
-        result,
-      ])),
-      undefined,
-      `${role}: duplicate seat-bound matches still fail closed`,
-    );
-
-    // One real-extractor, four-seat negative table covers both retained and
-    // public audit-owned accessors. Raw toolResult evidence remains in entries,
-    // but a hostile read cannot escape or produce any Receipt-shaped outcome.
-    const hostile = hostileRows[role];
-    const hostileCandidate = { ...auditCandidate };
-    const hostileDetails = { ...details };
-    Object.defineProperty(
-      hostile.source === "retained" ? hostileCandidate : hostileDetails,
-      hostile.property,
-      { enumerable: true, get: () => { throw new Error(`${role} hostile ${hostile.property}`); } },
-    );
-    const hostileRetained = {
-      ...retained,
-      data: { response: { content: [{ type: "toolCall", name: seat.audit, arguments: hostileCandidate }] } },
-    };
-    const hostileResult = {
-      ...result,
-      message: { ...result.message, details: hostileDetails },
-    };
-    let hostileOutcome: unknown;
-    assert.doesNotThrow(() => {
-      hostileOutcome = extract(role, [roleCall, hostileRetained, hostileResult]);
-    }, `${role}: hostile ${hostile.source} ${hostile.property}`);
-    assert.equal(outcomeKind(hostileOutcome), undefined, `${role}: hostile evidence must not settle`);
-    assert.equal(hostileResult.message.details, hostileDetails, `${role}: raw terminal remains observable`);
-
-    assert.notEqual(
-      publicNavigatorSettlement(role, null, {
-        toolName: seat.output,
-        isError: false,
-        details: { kind: AUDIT_ESCALATION_KIND, conflicts: ["forged"], auditDecisionGate: auditCandidate.decisionGate },
-      })?.kind,
-      "human_decision",
-      `${role}: persisted forged projection`,
-    );
-
-    // A copied kind is not enough: no retained evidence, pass evidence, wrong
-    // seat, missing role id, collision, and out-of-interval evidence all fail closed.
-    assert.equal(outcomeKind(extract(role, [result])), undefined, `${role}: smuggle`);
-    assert.equal(
-      outcomeKind(extract(role, [roleCall, { ...retained, data: { response: { content: [{ type: "toolCall", name: seat.audit, arguments: { status: "pass" } }] } } }, result])),
-      undefined,
-      `${role}: pass evidence`,
-    );
-    assert.equal(
-      outcomeKind(extract(role, [roleCall, { ...retained, data: { response: { content: [{ type: "toolCall", name: "wrong-seat-audit", arguments: auditCandidate }] } } }, result])),
-      undefined,
-      `${role}: wrong seat`,
-    );
-    assert.equal(
-      outcomeKind(extract(role, [{ ...roleCall, message: { ...roleCall.message, content: [{ ...roleCall.message.content[0], id: undefined }] } }, retained, result])),
-      undefined,
-      `${role}: missing id`,
-    );
-    assert.equal(outcomeKind(extract(role, [roleCall, retained, result, result])), undefined, `${role}: duplicate result`);
-    assert.equal(outcomeKind(extract(role, [retained, roleCall, result])), undefined, `${role}: outside interval`);
-  }
-});
 
 
 test("#419 failed attempt joins history and a later accepted attempt overwrites only pointer views", async () => {
@@ -838,12 +702,20 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
             return { code: 1, stderr: "fail\n", timedOut: false, args: [...args] };
           }
           const prior = await readFile(sessionFile, "utf8");
+          const details = { judgeStatus: "converged", note: "resumed ok" };
           await writeFile(
             sessionFile,
-            `${prior}${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { judgeStatus: "converged", note: "resumed ok" } } })}\n`,
+            `${prior}${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details } })}\n`,
             "utf8",
           );
-          return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
+          return {
+            code: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+            sealedAcceptance: { role: "judge" as const, details },
+          };
         },
           }),
       },
@@ -875,53 +747,6 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
   });
 });
 
-test("Judge settlement separates missing or unknown discriminators from known continue", () => {
-  const extract = (details: unknown) => extractJudgeRoleOutcome([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: JUDGE_OUTPUT_TOOL_NAME,
-        isError: false,
-        details,
-      },
-    },
-  ]);
-
-  const missingOrUnknown: unknown[] = [
-    undefined,
-    null,
-    1,
-    {},
-    { judgeStatus: "bogus" },
-    { judgeStatus: "accepted" },
-    Object.defineProperty({}, "judgeStatus", { get: () => { throw new Error("hostile status"); } }),
-  ];
-  for (const details of missingOrUnknown) {
-    assert.equal(extract(details), undefined);
-  }
-
-  const hostileOptional = Object.defineProperties(
-    { judgeStatus: "continue" },
-    {
-      fix: { get: () => { throw new Error("hostile fix"); } },
-      classes: { get: () => { throw new Error("hostile classes"); } },
-    },
-  );
-  const knownContinue: Array<{ details: unknown; facts: Record<string, unknown> }> = [
-    { details: { judgeStatus: "continue" }, facts: { judgeStatus: "continue" } },
-    { details: { judgeStatus: "continue", fix: null, classes: null }, facts: { judgeStatus: "continue" } },
-    { details: { judgeStatus: "continue", fix: { summary: "x" } }, facts: { judgeStatus: "continue", fixSummary: "x" } },
-    { details: { judgeStatus: "continue", classes: [] }, facts: { judgeStatus: "continue", classes: [], classCount: 0 } },
-    { details: hostileOptional, facts: { judgeStatus: "continue" } },
-  ];
-  for (const { details, facts } of knownContinue) {
-    const outcome = extract(details);
-    assert.equal(outcome?.kind, "accepted");
-    assert.equal(outcome?.status, "continue");
-    assert.deepEqual(outcome?.decisiveFacts, facts);
-  }
-});
 test("each controlled cause persists typed Error Artifact without manufacturing a Receipt", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
