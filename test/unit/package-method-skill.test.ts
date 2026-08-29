@@ -14,8 +14,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { parseSkillBlock } from "@earendil-works/pi-coding-agent";
-import type { AnyCanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import {
   gitBlobOid,
@@ -26,17 +24,6 @@ import { sha256Hex } from "../../src/sha256.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const originalHome = process.env.HOME;
-
-function withHostDeclaration(binding: AnyCanonicalSkillBinding) {
-  return {
-    ...binding,
-    captureExpansion(prompt: string, request: string) {
-      const parsed = parseSkillBlock(prompt);
-      const evidence = parsed == null ? undefined : { ...parsed, userMessage: parsed.userMessage ?? "" };
-      return binding.captureExpansion(evidence, request);
-    },
-  };
-}
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-empty-home-method-"));
@@ -168,9 +155,7 @@ test("packaged diagnosing-bugs loads adapted boundary method without external sk
 
 test("packaged tdd binding captures expansion against package skill path only", async () => {
   await withEmptyHome(async () => {
-    const binding = withHostDeclaration(
-      await loadPackagedCanonicalSkillBinding(packageRoot, "tdd"),
-    );
+    const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
     assert.equal(binding.name, "tdd");
     const request = "Implement the approved slice.";
     assert.equal(binding.invocation(request), `/skill:tdd ${request}`);
@@ -178,8 +163,7 @@ test("packaged tdd binding captures expansion against package skill path only", 
     // Use binding snapshot paths for exact expansion (realpath may differ by OS).
     const location = binding.snapshot.path;
     const expectedContent = `References are relative to ${binding.snapshot.baseDir}.\n\n${binding.snapshot.body}`;
-    const prompt = `<skill name="tdd" location="${location}">\n${expectedContent}\n</skill>\n\n${request}`;
-    assert.deepEqual(binding.captureExpansion(prompt, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "tdd", location, content: expectedContent, userMessage: request }, request), {
       name: "tdd",
       location,
       content: expectedContent,
@@ -189,8 +173,7 @@ test("packaged tdd binding captures expansion against package skill path only", 
     // Configured (non-realpath) package path spelling is also accepted.
     const configuredPath = resolvePackagedMethodSkillPath(packageRoot, "tdd");
     const configuredExpected = `References are relative to ${dirname(configuredPath)}.\n\n${binding.snapshot.body}`;
-    const configuredPrompt = `<skill name="tdd" location="${configuredPath}">\n${configuredExpected}\n</skill>\n\n${request}`;
-    assert.deepEqual(binding.captureExpansion(configuredPrompt, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "tdd", location: configuredPath, content: configuredExpected, userMessage: request }, request), {
       name: "tdd",
       location: configuredPath,
       content: configuredExpected,
@@ -198,8 +181,7 @@ test("packaged tdd binding captures expansion against package skill path only", 
     });
 
     // Ambient home path must not satisfy package binding.
-    const homeFake = `<skill name="tdd" location="/tmp/fake-home/.agents/skills/tdd/SKILL.md">\n${expectedContent}\n</skill>\n\n${request}`;
-    assert.equal(binding.captureExpansion(homeFake, request), undefined);
+    assert.equal(binding.captureExpansion({ name: "tdd", location: "/tmp/fake-home/.agents/skills/tdd/SKILL.md", content: expectedContent, userMessage: request }, request), undefined);
   });
 });
 
@@ -248,17 +230,14 @@ test("packaged code-review loads adapted two-axis method without Matt setup", as
 
 test("packaged code-review binding captures expansion against package skill path only", async () => {
   await withEmptyHome(async () => {
-    const binding = withHostDeclaration(
-      await loadPackagedCanonicalSkillBinding(packageRoot, "code-review"),
-    );
+    const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "code-review");
     assert.equal(binding.name, "code-review");
     const request = "Review the branch since main.";
     assert.equal(binding.invocation(request), `/skill:code-review ${request}`);
 
     const location = binding.snapshot.path;
     const expectedContent = `References are relative to ${binding.snapshot.baseDir}.\n\n${binding.snapshot.body}`;
-    const prompt = `<skill name="code-review" location="${location}">\n${expectedContent}\n</skill>\n\n${request}`;
-    assert.deepEqual(binding.captureExpansion(prompt, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "code-review", location, content: expectedContent, userMessage: request }, request), {
       name: "code-review",
       location,
       content: expectedContent,
@@ -270,16 +249,14 @@ test("packaged code-review binding captures expansion against package skill path
       "code-review",
     );
     const configuredExpected = `References are relative to ${dirname(configuredPath)}.\n\n${binding.snapshot.body}`;
-    const configuredPrompt = `<skill name="code-review" location="${configuredPath}">\n${configuredExpected}\n</skill>\n\n${request}`;
-    assert.deepEqual(binding.captureExpansion(configuredPrompt, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "code-review", location: configuredPath, content: configuredExpected, userMessage: request }, request), {
       name: "code-review",
       location: configuredPath,
       content: configuredExpected,
       userMessage: request,
     });
 
-    const homeFake = `<skill name="code-review" location="/tmp/fake-home/.agents/skills/code-review/SKILL.md">\n${expectedContent}\n</skill>\n\n${request}`;
-    assert.equal(binding.captureExpansion(homeFake, request), undefined);
+    assert.equal(binding.captureExpansion({ name: "code-review", location: "/tmp/fake-home/.agents/skills/code-review/SKILL.md", content: expectedContent, userMessage: request }, request), undefined);
   });
 });
 
