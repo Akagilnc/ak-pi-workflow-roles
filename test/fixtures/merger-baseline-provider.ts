@@ -17,11 +17,13 @@ export default function mergerBaselineProvider(pi: ExtensionAPI): void {
     tokenSize: { min: 1000, max: 1000 },
   });
   const attemptId = process.env.AK_MERGER_FIXTURE_ATTEMPT_ID ?? "run-merger-baseline-public";
+  // Residual cases are single-fault: sibling = sole-final only; sole/wrong-attempt = shape/identity only.
+  // Dual-fault (sibling + malformed) made schema reject before the ledger owned 0041.
   const output = {
     status: "completed",
     attemptId: residual === "wrong-attempt" ? "other-attempt" : attemptId,
     report: "Resolved the ordinary conflict.",
-    mergeCommitId: residual === undefined ? mergeCommitId : "malformed",
+    mergeCommitId: residual === "sole" || residual === "wrong-attempt" ? "malformed" : mergeCommitId,
   };
   faux.setResponses([
     fauxAssistantMessage(
