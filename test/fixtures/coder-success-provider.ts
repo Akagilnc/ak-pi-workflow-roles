@@ -22,7 +22,7 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
 } from "../../src/role-runtime.ts";
 
-export default function coderSuccessProvider(pi: ExtensionAPI): void {
+export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<void> {
   const faux = fauxProvider({
     api: "openai-completions",
     provider: "openai-codex",
@@ -122,7 +122,14 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
   pi.registerProvider("openai-codex", providerConfig);
   pi.registerProvider("ak-coder-offline", providerConfig);
 
+  // Institutional children resolve openai-codex via models.json (#518 S3).
+  const { seedAgentDirModelsJsonFromFaux } = await import("../helpers/pi-test-harness.ts");
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR, {
+    providerId: "openai-codex",
+  });
+
   pi.on("session_shutdown", () => {
     console.error(`CODER_SUCCESS_PROVIDER_CALLS=${faux.state.callCount}`);
+    void seeded.close();
   });
 }

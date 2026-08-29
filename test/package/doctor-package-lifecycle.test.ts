@@ -48,14 +48,24 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         );
         // Durable role session under the machine ledger book (ADR 0048); not under the consumer fixture.
         const bookKey = "consumer"; // cloneSharedColdInstall dest basename under home/consumer
-        const sessionDir = resolve(
+        const runDirectory = resolve(
           home,
           ".ak-roles",
           "books",
           bookKey,
           "runs",
           "doctor-fresh",
-          "session",
+        );
+        const sessionDir = resolve(runDirectory, "session");
+        // #518 S3: institutional consumers read seat selection from the run page.
+        // Direct-Pi doctor activation bypasses public-CLI admission, so seed the page.
+        const { writeInstitutionalSeatTable, parentInheritedSeats } = await import(
+          "../helpers/institutional-seat-table.ts"
+        );
+        await mkdir(runDirectory, { recursive: true });
+        await writeInstitutionalSeatTable(
+          runDirectory,
+          parentInheritedSeats({ provider: "ak-doctor-fresh", model: "faux-1", thinking: "off" }),
         );
         // Production activation requires a git cwd (ADR 0048); seed the consumer fixture.
         // With a git root present, Doctor case identity becomes repo-relative (stableRunsIdentity).
