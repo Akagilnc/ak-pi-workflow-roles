@@ -6,6 +6,20 @@
 import { userInfo } from "node:os";
 import { join, resolve, sep } from "node:path";
 
+export type TestAgentDirErrorCode =
+  | "AK_TEST_AGENT_DIR_REQUIRED"
+  | "AK_TEST_AGENT_DIR_MACHINE";
+
+export class TestAgentDirError extends Error {
+  readonly code: TestAgentDirErrorCode;
+
+  constructor(code: TestAgentDirErrorCode, message: string) {
+    super(message);
+    this.name = "TestAgentDirError";
+    this.code = code;
+  }
+}
+
 /** Real machine home via passwd/user profile — never process.env.HOME. */
 export function realMachineHome(): string {
   return resolve(userInfo().homedir);
@@ -24,13 +38,17 @@ export function assertWritableTestAgentDir(
   agentDir: string | undefined | null,
 ): asserts agentDir is string {
   if (typeof agentDir !== "string" || agentDir.trim() === "") {
-    throw new Error(
+    throw new TestAgentDirError(
+      "AK_TEST_AGENT_DIR_REQUIRED",
       "test agentDir must be explicitly provided (no silent HOME/agentDir fallback)",
     );
   }
   const resolved = resolve(agentDir);
   const machine = realMachineAgentDir();
   if (resolved === machine || resolved.startsWith(machine + sep)) {
-    throw new Error(`Refusing to write models.json to machine agentDir: ${agentDir}`);
+    throw new TestAgentDirError(
+      "AK_TEST_AGENT_DIR_MACHINE",
+      `Refusing to write models.json to machine agentDir: ${agentDir}`,
+    );
   }
 }
