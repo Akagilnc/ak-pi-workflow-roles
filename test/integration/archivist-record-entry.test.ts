@@ -3,7 +3,7 @@
  * Production-reachable shape: SessionManager.open(file, otherDir) ≡ pi --session-dir A --resume B.
  * Settlement reads join(dirname(sessionFile), "auditor-roles"); writer must land on the same path.
  * Subject tracer: subject→dir, same-subject continue, switch isolation, parentSession header.
- * #221 book-circle: books/A final .jsonl symlink → books/B legal session is refused before open.
+ * #221/#525 nest-circle: same-book cross-nest pointer and books/A→B final .jsonl symlink refused before open.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -94,6 +94,18 @@ test("createRecordSession nests by parent file and continues subject-keyed navig
       (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
     );
     await writeFile(join(dirA, "current-session.json"), "not-json");
+    assert.throws(
+      () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
+      (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    );
+    await writeFile(join(dirA, "current-session.json"), `${JSON.stringify({ sessionFile: firstFile })}\n`);
+
+    // Same-book cross-nest pointer: subject-a nest points at subject-b's legal file → refuse before open.
+    const peerB = createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-b", parent });
+    peerB.appendCustomEntry("principal", { run: "peer-b" });
+    peerB.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
+    const peerBFile = peerB.getSessionFile()!;
+    await writeFile(join(dirA, "current-session.json"), `${JSON.stringify({ sessionFile: peerBFile })}\n`);
     assert.throws(
       () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
       (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",

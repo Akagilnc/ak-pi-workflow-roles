@@ -5,7 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve, join, relative, sep } from "node:path";
+import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -79,44 +79,28 @@ export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
  * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
  * ensureRealDirectoryTree already owns the sessionDir chain; a final .jsonl symlink is
  * invisible to that directory walk, so this runs once before SessionManager.open.
- * Circle is the book physical root that owns sessionDir — not merely ledger home — so a
- * books/A nest cannot resume a final file whose realpath lands in books/B.
+ * Circle is the authorized nest (sessionDir) itself — lexical path and realpath must both
+ * stay inside it. Same-book cross-nest pointers and cross-book symlinks are refused alike.
  * realpath/stat failures stay typed ActivationLedgerError with original cause — never
  * wash through physicalPathIdentity's non-ENOENT lexical fallback.
  */
-function assertRecentFinalFileUnderLedgerHome(
-  ledgerHome: string,
+function assertRecentFinalFileUnderSessionDir(
   sessionDir: string,
   recentFile: string,
 ): void {
-  const absoluteHome = resolve(ledgerHome);
   const absoluteSessionDir = resolve(sessionDir);
   const absoluteFile = resolve(recentFile);
-  // sessionDir just passed ensureRealDirectoryTree: derive the owning book lexically.
-  const relToHome = relative(absoluteHome, absoluteSessionDir);
-  const segments = relToHome.split(sep);
-  if (
-    relToHome === ""
-    || isAbsolute(relToHome)
-    || relToHome === ".."
-    || relToHome.startsWith(`..${sep}`)
-    || segments[0] !== "books"
-    || segments[1] === undefined
-    || segments[1] === ""
-    || segments[1] === "."
-    || segments[1] === ".."
-  ) {
+  if (absoluteFile !== absoluteSessionDir && !pathContainedIn(absoluteSessionDir, absoluteFile)) {
     throw new ActivationLedgerError(
-      `archivist record sessionDir must be under a ledger book (${ledgerHome}): ${sessionDir}`,
+      `archivist record session must be under the authorized nest (${sessionDir}): ${recentFile}`,
     );
   }
-  const bookRoot = join(absoluteHome, "books", segments[1]);
-  let realBookRoot: string;
+  let realSessionDir: string;
   try {
-    realBookRoot = realpathSync(bookRoot);
+    realSessionDir = realpathSync(absoluteSessionDir);
   } catch (error) {
     throw new ActivationLedgerError(
-      `activation ledger book is not resolvable (${bookRoot}): ${errorText(error)}`,
+      `archivist record sessionDir is not resolvable (${absoluteSessionDir}): ${errorText(error)}`,
       { cause: error },
     );
   }
@@ -129,9 +113,9 @@ function assertRecentFinalFileUnderLedgerHome(
       { cause: error },
     );
   }
-  if (realFile !== realBookRoot && !pathContainedIn(realBookRoot, realFile)) {
+  if (realFile !== realSessionDir && !pathContainedIn(realSessionDir, realFile)) {
     throw new ActivationLedgerError(
-      `archivist record session must be under the ledger book (${bookRoot}): ${recentFile}`,
+      `archivist record session must be under the authorized nest (${sessionDir}): ${recentFile}`,
     );
   }
 }
@@ -191,7 +175,7 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     options.subject !== undefined || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest && nestAlreadyExists) {
     const recentFile = readCurrentSession(sessionDir);
-    assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile);
+    assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
     return SessionManager.open(recentFile, sessionDir, cwd);
   }
 
