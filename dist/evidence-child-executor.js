@@ -700,14 +700,14 @@ export async function executeAuditorChild(options) {
             catch (error) {
                 if (options.signal?.aborted)
                     throw options.signal.reason;
-                if (opened.streamFailure !== undefined)
+                if (retentionFailure === undefined && opened.streamFailure !== undefined)
                     throw opened.streamFailure;
                 if (retentionFailure === undefined)
                     throw error;
             }
             if (options.signal?.aborted)
                 throw options.signal.reason;
-            if (opened.streamFailure !== undefined)
+            if (retentionFailure === undefined && opened.streamFailure !== undefined)
                 throw opened.streamFailure;
             if (!decisionSubmitted && decisionToolFailure !== undefined)
                 throw decisionToolFailure;

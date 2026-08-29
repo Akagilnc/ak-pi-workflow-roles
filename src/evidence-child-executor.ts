@@ -805,11 +805,11 @@ export async function executeAuditorChild(
         }
       } catch (error) {
         if (options.signal?.aborted) throw options.signal.reason;
-        if (opened.streamFailure !== undefined) throw opened.streamFailure;
+        if (retentionFailure === undefined && opened.streamFailure !== undefined) throw opened.streamFailure;
         if (retentionFailure === undefined) throw error;
       }
       if (options.signal?.aborted) throw options.signal.reason;
-      if (opened.streamFailure !== undefined) throw opened.streamFailure;
+      if (retentionFailure === undefined && opened.streamFailure !== undefined) throw opened.streamFailure;
       if (!decisionSubmitted && decisionToolFailure !== undefined) throw decisionToolFailure;
       const relevantResponse = !decisionSubmitted
         ? boundaryResponse

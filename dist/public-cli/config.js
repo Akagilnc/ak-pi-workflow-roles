@@ -2,7 +2,6 @@
  * Persistent and effective per-seat model/thinking configuration for ak-role.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { assertLegalEngineName } from "../package-resources/engine-material.js";
 import { AUTOMATIC_CONFIGURABLE_SEATS, PUBLIC_CALLABLE_ROLES, PUBLIC_CONFIGURABLE_SEATS, isAutomaticConfigurableSeat, isPublicCallableRole, isPublicConfigurableSeat, publicStartupCandidates, } from "./registry.js";
@@ -24,10 +23,13 @@ const THINKING_LEVELS = new Set([
     "xhigh",
     "max",
 ]);
-export function publicCliConfigPath(home = process.env.HOME ?? homedir()) {
+export function publicCliConfigPath(home) {
+    if (typeof home !== "string" || home.trim() === "") {
+        throw new Error("home must be explicitly provided");
+    }
     return join(home, ".ak-roles", "public-cli.json");
 }
-export async function loadPublicCliConfig(home = process.env.HOME ?? homedir()) {
+export async function loadPublicCliConfig(home) {
     const path = publicCliConfigPath(home);
     try {
         const raw = await readFile(path, "utf8");
@@ -42,7 +44,7 @@ export async function loadPublicCliConfig(home = process.env.HOME ?? homedir()) 
         throw error;
     }
 }
-export async function savePublicCliConfig(config, home = process.env.HOME ?? homedir()) {
+export async function savePublicCliConfig(config, home) {
     const path = publicCliConfigPath(home);
     await mkdir(dirname(path), { recursive: true });
     const normalized = parsePublicCliConfig(config);

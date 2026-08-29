@@ -105,7 +105,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, join as join2, relative, resolve as resolve2, sep } from "node:path";
-function resolveActivationLedgerHome(home = homedir) {
+function resolveActivationLedgerHome(home = () => process.env.HOME ?? homedir()) {
   const processHome = home();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute2(processHome)) {
     throw new ActivationLedgerError(
@@ -14973,15 +14973,17 @@ var init_registry2 = __esm({
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir as homedir2 } from "node:os";
 import { dirname as dirname4, join as join5 } from "node:path";
 function isGateOfficerSeat(value) {
   return GATE_OFFICER_SEATS.includes(value);
 }
-function publicCliConfigPath(home = process.env.HOME ?? homedir2()) {
+function publicCliConfigPath(home) {
+  if (typeof home !== "string" || home.trim() === "") {
+    throw new Error("home must be explicitly provided");
+  }
   return join5(home, ".ak-roles", "public-cli.json");
 }
-async function loadPublicCliConfig(home = process.env.HOME ?? homedir2()) {
+async function loadPublicCliConfig(home) {
   const path = publicCliConfigPath(home);
   try {
     const raw = await readFile(path, "utf8");
@@ -14993,7 +14995,7 @@ async function loadPublicCliConfig(home = process.env.HOME ?? homedir2()) {
     throw error;
   }
 }
-async function savePublicCliConfig(config, home = process.env.HOME ?? homedir2()) {
+async function savePublicCliConfig(config, home) {
   const path = publicCliConfigPath(home);
   await mkdir(dirname4(path), { recursive: true });
   const normalized = parsePublicCliConfig(config);
@@ -18032,7 +18034,7 @@ function homeFromRunDirectory(runDirectory) {
     const candidate = runDirectory.slice(0, altIdx);
     return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
   }
-  return void 0;
+  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
 }
 async function writeRoleInvocationLedger(source, role, effectiveModel) {
   const identity = {
@@ -27887,7 +27889,7 @@ __export(cli_exports, {
   runAkRole: () => runAkRole
 });
 import { realpath as realpath6 } from "node:fs/promises";
-import { homedir as homedir3 } from "node:os";
+import { homedir as homedir2 } from "node:os";
 import { join as join24 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
@@ -27968,7 +27970,7 @@ function defaultIo() {
   };
 }
 function resolveHome(env) {
-  return env.home ?? process.env.HOME ?? homedir3();
+  return env.home ?? process.env.HOME ?? homedir2();
 }
 function resolveAgentDir(env, home) {
   return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join24(home, ".pi", "agent");

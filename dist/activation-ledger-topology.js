@@ -16,7 +16,7 @@ class ActivationLedgerError extends Error {
     this.name = "ActivationLedgerError";
   }
 }
-function resolveActivationLedgerHome(home = homedir) {
+function resolveActivationLedgerHome(home = () => process.env.HOME ?? homedir()) {
   const processHome = home();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
     throw new ActivationLedgerError(
