@@ -2331,7 +2331,7 @@ export async function readLawfulJudgeRoleOutcome(
   const sealed = await sealedLedgerOutcome(admitted);
   if (sealed?.role === "judge") {
     const details = sealed.decisiveFacts as Record<string, unknown>;
-    // sealed.status is the sole authority (written by statusFromAcceptedDetails).
+    // sealed.status is the sole authority (written by acceptedFacts at seal).
     return {
       kind: "accepted",
       role: "judge",
@@ -2442,7 +2442,7 @@ async function settleLawfulCoderTerminalResult(
   const roleOutcome: LawfulCoderRoleOutcome = {
     kind: "accepted",
     role: "coder",
-    status: output.status,
+    status: sealed.status,
     decisiveFacts: coderDecisiveFacts(output),
   };
   const navigator = extractNavigatorFact(entries);
@@ -2627,7 +2627,7 @@ async function settleLawfulFixerTerminalResult(
   const roleOutcome: LawfulFixerRoleOutcome = {
     kind: "accepted",
     role: "fixer",
-    status: output.status,
+    status: sealed.status,
     decisiveFacts: fixerDecisiveFacts(output),
   };
   const navigator = extractNavigatorFact(entries);
@@ -2739,8 +2739,8 @@ export async function publishCollectorArtifacts(
 export type LawfulCollectorRoleOutcome = {
   kind: "accepted";
   role: "collector";
-  /** Collector has no status leaf — synthesize a stable collected marker. */
-  status: "collected";
+  /** Collector has no status leaf — sealed projection carries acceptedFacts collected. */
+  status: string;
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
 async function settleLawfulCollectorTerminalResult(
@@ -2780,7 +2780,7 @@ async function settleLawfulCollectorTerminalResult(
   const accepted: LawfulCollectorRoleOutcome = {
     kind: "accepted",
     role: "collector",
-    status: "collected",
+    status: roleOutcome.status,
     decisiveFacts: collectorDecisiveFacts(receipt),
   };
   const navigator = extractNavigatorFact(entries);
@@ -2921,7 +2921,7 @@ async function settleLawfulDoctorTerminalResult(
   const roleOutcome: Extract<LawfulDoctorRoleOutcome, { kind: "accepted" }> = {
     kind: "accepted",
     role: "doctor",
-    status: output.status,
+    status: sealed.status,
     decisiveFacts: doctorDecisiveFacts(output),
   };
   // Bind completed receipt case identity to the admitted Issue evidence case.
@@ -3044,7 +3044,7 @@ async function settleLawfulNotaryTerminalResult(
   const accepted: LawfulNotaryRoleOutcome = {
     kind: "accepted",
     role: "notary",
-    status: String(output.status),
+    status: roleOutcome.status,
     decisiveFacts: notaryDecisiveFacts(output),
   };
   const navigator = extractNavigatorFact(entries);
@@ -3255,7 +3255,7 @@ async function settleLawfulReviewerTerminalResult(
   const roleOutcome: LawfulReviewerRoleOutcome = {
     kind: "accepted",
     role: "reviewer",
-    status: receipt.status,
+    status: sealed.status,
     decisiveFacts: reviewerDecisiveFacts(receipt),
   };
   const navigator = extractNavigatorFact(entries);
@@ -3499,7 +3499,7 @@ async function settleLawfulMergerTerminalResult(
   const accepted: LawfulMergerRoleOutcome = {
     kind: "accepted",
     role: "merger",
-    status: output.status,
+    status: roleOutcome.status,
     decisiveFacts: mergerDecisiveFacts(output),
   };
   const methodInvocations = extractMergerMethodInvocations(entries, {
