@@ -1065,6 +1065,151 @@ test("resume model override is temporary and does not rewrite persistent config"
   });
 });
 
+test("resume model precedence: explicit --model beats admitted.model; model-less resume restores admitted.model incl thinking", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const instruction = "resume model precedence probe";
+
+    async function admitResumable(runId: string) {
+      const { io } = captureIo();
+      const first = await runAkRole(
+        ["--model", "xai/grok-4.5:high", "judge", "--project", project, instruction],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              await mkdir(sessionDir, { recursive: true });
+              await observeTyped429ViaProductionHandler({
+                runDirectory: join(sessionDir, ".."),
+                provider: "xai",
+              });
+              await writeSessionProviderStop(sessionDir, {
+                provider: "xai",
+                errorMessage: "declined",
+              });
+              return {
+                code: 1,
+                stderr: "x\n",
+                timedOut: false,
+                args: [...args],
+              };
+            },
+          }),
+        },
+      );
+      assert.ok(first.terminal?.resume, "first admission must settle resumable");
+    }
+
+    // Run A: model-less resume must restore admitted.model including thinking.
+    {
+      const runId = "run-model-precedence-a";
+      await admitResumable(runId);
+      const { io } = captureIo();
+      let modelLessArgs: string[] | undefined;
+      const resumed = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            modelLessArgs = [...args];
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: { judgeStatus: "converged" },
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
+      });
+      assert.ok(modelLessArgs, "model-less resume must dispatch a Pi turn");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--provider") + 1], "xai");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--model") + 1], "grok-4.5");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--thinking") + 1], "high");
+      assert.equal(resumed.exitCode, 0);
+    }
+
+    // Run B: an explicit CLI --model on resume must beat admitted.model.
+    {
+      const runId = "run-model-precedence-b";
+      await admitResumable(runId);
+      const { io, stdout } = captureIo();
+      let explicitArgs: string[] | undefined;
+      const resumed = await runAkRole(
+        ["--model", "openai-codex/gpt-5.6-sol:off", "resume", runId],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              explicitArgs = [...args];
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              await writeFile(
+                join(sessionDir, "session.jsonl"),
+                `${JSON.stringify({
+                  type: "message",
+                  message: {
+                    role: "toolResult",
+                    toolName: JUDGE_OUTPUT_TOOL_NAME,
+                    isError: false,
+                    details: { judgeStatus: "converged" },
+                  },
+                })}\n`,
+                "utf8",
+              );
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+              };
+            },
+          }),
+        },
+      );
+      assert.ok(explicitArgs, "explicit-model resume must dispatch a Pi turn");
+      assert.equal(explicitArgs[explicitArgs.indexOf("--provider") + 1], "openai-codex");
+      assert.equal(explicitArgs[explicitArgs.indexOf("--model") + 1], "gpt-5.6-sol");
+      assert.equal(explicitArgs[explicitArgs.indexOf("--thinking") + 1], "off");
+      assert.equal(resumed.exitCode, 0);
+      assert.equal(stdout.join("").includes("xai/grok-4.5"), false);
+    }
+  });
+});
+
 test("unknown terminal and non-resumable ids reject without replay", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");

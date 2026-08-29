@@ -19,6 +19,7 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
+import { resolveResumeModel } from "./turn-request.ts";
 import {
   missingCredentialPreDispatchFailure,
   postRunMissingCredentialFailure,
@@ -463,6 +464,9 @@ export async function runPostAdmissionManualResume<
   terminal?: T;
 }> {
   const { admitted, env, io, request, adapters } = input;
+  // Single seam: explicit env model wins; otherwise restore admitted.model
+  // (including thinking) so a model-less manual resume reuses the recorded model.
+  const effectiveModel = resolveResumeModel(env.model, admitted.model);
   let lease: RunWriterLease;
   try {
     lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
@@ -478,7 +482,7 @@ export async function runPostAdmissionManualResume<
     admitted,
     env: {
       ...env,
-      ...(env.model === undefined && admitted.model !== undefined ? { model: admitted.model } : {}),
+      ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
       ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
     },
     io,

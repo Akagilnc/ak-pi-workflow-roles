@@ -248,6 +248,12 @@ type RoleEnvironmentOptions = {
   credentials?: CredentialProviders;
   seat: EffectiveSeat;
   config?: PublicCliConfig;
+  /**
+   * Resume must not inject seat startup/persistent defaults as env.model — those
+   * would mask admitted.model restoration (standards-2 second facet). Only an
+   * explicit invocation --model (source === "invocation") is forwarded.
+   */
+  resume?: boolean;
 };
 
 function createRoleEnvironment(
@@ -292,6 +298,13 @@ function createRoleEnvironment(
                     ? env.notaryTimeoutMs
                     : undefined;
 
+  // Initial runs take seat.selection from any source (invocation/persistent/startup).
+  // Resume only forwards an explicit CLI --model; otherwise env.model stays unset so
+  // resolveResumeModel can restore admitted.model (incl. thinking).
+  const injectModel =
+    options.seat.selection !== undefined &&
+    (options.resume !== true || options.seat.source === "invocation");
+
   return {
     home: options.home,
     principalAuthority: env.principalAuthority!,
@@ -306,7 +319,7 @@ function createRoleEnvironment(
     cwd: options.cwd,
     ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-    ...(options.seat.selection === undefined ? {} : { model: options.seat.selection }),
+    ...(injectModel ? { model: options.seat.selection } : {}),
     ...projectSeatEngine(options.seat),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
@@ -965,7 +978,16 @@ export async function runAkRole(
       if (resumeRole === "coder") {
         const result = await runPublicCoderResume(
           resumeRequest,
-          createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
+          createRoleEnvironment(env, {
+            role: "coder",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true,
+          }),
           io,
         );
         return {
@@ -976,7 +998,16 @@ export async function runAkRole(
       if (resumeRole === "fixer") {
         const result = await runPublicFixerResume(
           resumeRequest,
-          createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
+          createRoleEnvironment(env, {
+            role: "fixer",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true,
+          }),
           io,
         );
         return {
@@ -987,7 +1018,16 @@ export async function runAkRole(
       if (resumeRole === "reviewer") {
         const result = await runPublicReviewerResume(
           resumeRequest,
-          createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
+          createRoleEnvironment(env, {
+            role: "reviewer",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true,
+          }),
           io,
         );
         return {
@@ -998,7 +1038,16 @@ export async function runAkRole(
       if (resumeRole === "merger") {
         const result = await runPublicMergerResume(
           resumeRequest,
-          createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
+          createRoleEnvironment(env, {
+            role: "merger",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true,
+          }),
           io,
         );
         return {
@@ -1008,7 +1057,16 @@ export async function runAkRole(
       }
       const result = await runPublicResume(
         resumeRequest,
-        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
+        createRoleEnvironment(env, {
+          role: "judge",
+          home,
+          agentDir,
+          cwd,
+          credentials,
+          seat,
+          config,
+          resume: true,
+        }),
         io,
       );
       return {
