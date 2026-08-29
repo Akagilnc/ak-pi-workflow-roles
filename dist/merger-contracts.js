@@ -3,6 +3,7 @@ import { isFullGitObjectId } from "./git-object-id.js";
 import { exactUtf8 } from "./exact-utf8.js";
 import { sha256Hex } from "./sha256.js";
 import { openToolObjectFromUnion } from "./open-tool-schema.js";
+import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.js";
 const oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
 const materialSchema = Type.Object({ bytesBase64: Type.String(), sha256: Type.String() }, { additionalProperties: false });
 const checkSchema = Type.Object({ name: Type.String({ minLength: 1 }), argv: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
@@ -18,7 +19,7 @@ const mergerOutputVariants = Type.Union([
     Type.Object({ status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }), attemptId: Type.String({ minLength: 1, description: "已受理合并 attempt 身份" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), mergeCommitId: Type.String({ pattern: oidPattern, description: "已核验的完成合并 commit object ID" }) }, { additionalProperties: false }),
     Type.Object({ status: Type.Literal("escalate", { description: "escalate — 形状指引，非 schema 闸" }), attemptId: Type.String({ minLength: 1, description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ minLength: 1, description: "合并完成需升级的原因" }), report: Type.String({ minLength: 1, description: "如实结果报告" }) }, { additionalProperties: false }),
 ]);
-export const mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
+export const mergerOutputSchema = withInfrastructureFailureDeclaration(openToolObjectFromUnion(mergerOutputVariants));
 export const MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
 export const MERGER_ACCEPTED_TEXT = "合并回执已接受";
 const record = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
