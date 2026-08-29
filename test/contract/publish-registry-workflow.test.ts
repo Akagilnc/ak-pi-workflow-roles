@@ -106,7 +106,7 @@ function runStamp(options: {
       env: {
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         CHANNEL: options.channel,
-        GITHUB_REF_NAME: "feat/dogfood",
+        // Routing owns channel selection; stamp must not consult GITHUB_REF_NAME.
         GITHUB_STEP_SUMMARY: join(root, "summary.md"),
       },
       encoding: "utf8",
@@ -162,8 +162,8 @@ test("malicious CHANNEL is data to real npm and fails Invalid version without sh
   }
 });
 
-test("legal missing-version publish carries shortsha artifact identity", () => {
-  const channel = "dogfood";
+test("legal missing-version publish carries next shortsha artifact identity", () => {
+  const channel = "next";
   const shortSha = "abc1234";
   const result = runStamp({ channel, viewHit: false, shortSha });
   try {
@@ -179,8 +179,8 @@ test("legal missing-version publish carries shortsha artifact identity", () => {
   }
 });
 
-test("legal existing-version moves dist-tag only", () => {
-  const channel = "dogfood";
+test("legal existing-version moves next dist-tag only", () => {
+  const channel = "next";
   const shortSha = "def5678";
   const result = runStamp({ channel, viewHit: true, shortSha });
   try {
@@ -192,6 +192,20 @@ test("legal existing-version moves dist-tag only", () => {
     assert.equal(result.packageVersion, expectedVersion);
     assert.equal(result.publishTag, undefined);
     assert.equal(result.publishVersion, undefined);
+  } finally {
+    rmSync(result.root, { recursive: true, force: true });
+  }
+});
+
+test("latest channel publishes monotonic version without shortsha suffix", () => {
+  const result = runStamp({ channel: "latest", viewHit: false, shortSha: "abc1234" });
+  try {
+    const expected = "0.1.9";
+    assert.equal(result.status, 0);
+    assert.equal(result.npmPath, "publish");
+    assert.equal(result.publishVersion, expected);
+    assert.equal(result.publishTag, "latest");
+    assert.equal(result.packageVersion, expected);
   } finally {
     rmSync(result.root, { recursive: true, force: true });
   }

@@ -1,23 +1,21 @@
-# Publishes every main merge to the npm registry so `pi update --extensions`
-# (unversioned npm source) always pulls the latest build, and the registry
-# stays a fresh distribution channel. Auth is npm Trusted Publishing (OIDC):
-# no long-lived token — the registry trusts this repository + workflow file
-# via the package's Trusted Publisher configuration. The version is stamped
-# at publish time as 0.1.<commit-count> on main, or
-# 0.1.<commit-count>-<channel>.<shortsha> for branch prereleases — monotonic
-# per merge on main, unique per commit on channels, no write-back commit.
-# Requires npm CLI >= 11.5.1 (Node 24 bundles it).
+# Publishes after a successful CI push run so the npm registry stays a fresh
+# distribution channel. Auth is npm Trusted Publishing (OIDC): no long-lived
+# token — the registry trusts this repository + workflow file via the package's
+# Trusted Publisher configuration. The version is stamped at publish time as
+# 0.1.<commit-count> on main (dist-tag latest), or
+# 0.1.<commit-count>-next.<shortsha> on allowlisted non-main branches
+# (dist-tag next) — monotonic per merge on main, unique per commit on next,
+# no write-back commit. Requires npm CLI >= 11.5.1 (Node 24 bundles it).
+#
+# Trigger/order seam: only ci workflow_run completion. Routing reads
+# workflow_run.head_branch; checkout pins workflow_run.head_sha. Allowlist sole
+# source of truth is ci.yml push.branches (do not copy here). No workflow_dispatch.
 name: publish-registry
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: "npm dist-tag channel (latest on main; e.g. dogfood for branch prereleases)"
-        required: false
-        default: latest
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
 
 permissions:
   contents: read
@@ -25,11 +23,19 @@ permissions:
 
 jobs:
   publish:
+    # pull_request CI completions also fire workflow_run; bind event=push so only
+    # allowlisted branch pushes publish. Failure completions never publish.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Default GITHUB_SHA/REF point at the default branch under workflow_run;
+          # pin the CI head that actually went green.
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -39,6 +45,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Stamp version and publish (OIDC)
         env:
-          # Expression → env value only; shell reads $CHANNEL (never expands inputs into source).
-          CHANNEL: ${{ github.event.inputs.channel || 'latest' }}
+          # Expression → env value only; shell reads $CHANNEL (never expands into source).
+          # main → latest; every other push that reached this job (allowlisted by ci.yml) → next.
+          CHANNEL: ${{ github.event.workflow_run.head_branch == 'main' && 'latest' || 'next' }}
         run: bash scripts/publish-registry-stamp.sh
