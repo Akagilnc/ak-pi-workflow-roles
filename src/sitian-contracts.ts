@@ -88,7 +88,7 @@ export type SitianReadResult = {
 };
 
 /** Lift direct-cause fs errno onto a wrap error (no chain walk). */
-function attachDirectErrnoCode(error: Error, cause: unknown): void {
+export function attachDirectErrnoCode(error: Error, cause: unknown): void {
   if (cause === null || typeof cause !== "object" || !("code" in cause)) return;
   const code = (cause as { code?: unknown }).code;
   if (typeof code === "string") (error as NodeJS.ErrnoException).code = code;
