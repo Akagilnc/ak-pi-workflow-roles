@@ -16121,36 +16121,37 @@ async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
   };
   const lockPath = join7(runDirectory, WRITER_LOCK_FILE);
   let lastAutopsy = { verdict: "absent" };
-  for (let round = 0; round < WRITER_LEASE_RECLAIM_ROUNDS; round += 1) {
+  for (let reclaimsLeft = WRITER_LEASE_RECLAIM_ROUNDS; ; reclaimsLeft -= 1) {
     try {
       return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
     } catch (error) {
       if (errorCodeOf(error) !== "EEXIST") throw error;
-      lastAutopsy = await autopsyWriterLock(lockPath);
-      if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== void 0) {
-        reportCleanupFailure(lastAutopsy.readFailure);
-      }
-      if (lastAutopsy.verdict === "alive") {
-        throw new RunWriterLeaseHeldError(
-          `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`
-        );
-      }
-      if (lastAutopsy.verdict === "absent") {
-        throw new RunWriterLeaseHeldError(
-          lastAutopsy.readFailure !== void 0 ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place` : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`
-        );
-      }
-      try {
-        await reclaimStaleWriterLock(lockPath, runDirectory);
-      } catch (reclaimError) {
-        throw new RunWriterLeaseHeldError(
-          `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`
-        );
-      }
+    }
+    lastAutopsy = await autopsyWriterLock(lockPath);
+    if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== void 0) {
+      reportCleanupFailure(lastAutopsy.readFailure);
+    }
+    if (lastAutopsy.verdict === "alive") {
+      throw new RunWriterLeaseHeldError(
+        `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`
+      );
+    }
+    if (lastAutopsy.verdict === "absent") {
+      throw new RunWriterLeaseHeldError(
+        lastAutopsy.readFailure !== void 0 ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place` : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`
+      );
+    }
+    if (reclaimsLeft <= 0) break;
+    try {
+      await reclaimStaleWriterLock(lockPath, runDirectory);
+    } catch (reclaimError) {
+      throw new RunWriterLeaseHeldError(
+        `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`
+      );
     }
   }
   throw new RunWriterLeaseHeldError(
-    `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaim rounds (last autopsy: ${describeAutopsy(lastAutopsy)})`
+    `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`
   );
 }
 async function findRunDirectoryById(home, runId) {

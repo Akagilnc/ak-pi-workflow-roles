@@ -546,44 +546,48 @@ export async function acquireRunWriterLease(
   };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
   let lastAutopsy: WriterLockAutopsy = { verdict: "absent" };
-  for (let round = 0; round < WRITER_LEASE_RECLAIM_ROUNDS; round += 1) {
+  // The reclaim budget: every successful reclaim is immediately followed by a
+  // fresh create attempt, including the budget's last one (the previous shape
+  // exited after a final-round reclaim with the path already clear).
+  for (let reclaimsLeft = WRITER_LEASE_RECLAIM_ROUNDS; ; reclaimsLeft -= 1) {
     try {
       return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
     } catch (error) {
       if (errorCodeOf(error) !== "EEXIST") throw error;
-      lastAutopsy = await autopsyWriterLock(lockPath);
-      if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== undefined) {
-        // 失败诚实: a lock we could not read must land its true read cause
-        // somewhere observable — recorded, but never treated as proof of death.
-        reportCleanupFailure(lastAutopsy.readFailure);
-      }
-      if (lastAutopsy.verdict === "alive") {
-        throw new RunWriterLeaseHeldError(
-          `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`,
-        );
-      }
-      if (lastAutopsy.verdict === "absent") {
-        // #552 mechanical criterion: stale = holder pid verified dead. An
-        // empty lock (a live creator is mid-acquisition before its pid write)
-        // or an unreadable one proves no dead holder — unlinking here could
-        // steal a live writer's lock, so reject typed and leave the lock.
-        throw new RunWriterLeaseHeldError(
-          lastAutopsy.readFailure !== undefined
-            ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place`
-            : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`,
-        );
-      }
-      try {
-        await reclaimStaleWriterLock(lockPath, runDirectory);
-      } catch (reclaimError) {
-        throw new RunWriterLeaseHeldError(
-          `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
-        );
-      }
+    }
+    lastAutopsy = await autopsyWriterLock(lockPath);
+    if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== undefined) {
+      // 失败诚实: a lock we could not read must land its true read cause
+      // somewhere observable — recorded, but never treated as proof of death.
+      reportCleanupFailure(lastAutopsy.readFailure);
+    }
+    if (lastAutopsy.verdict === "alive") {
+      throw new RunWriterLeaseHeldError(
+        `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`,
+      );
+    }
+    if (lastAutopsy.verdict === "absent") {
+      // #552 mechanical criterion: stale = holder pid verified dead. An
+      // empty lock (a live creator is mid-acquisition before its pid write)
+      // or an unreadable one proves no dead holder — unlinking here could
+      // steal a live writer's lock, so reject typed and leave the lock.
+      throw new RunWriterLeaseHeldError(
+        lastAutopsy.readFailure !== undefined
+          ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place`
+          : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`,
+      );
+    }
+    if (reclaimsLeft <= 0) break;
+    try {
+      await reclaimStaleWriterLock(lockPath, runDirectory);
+    } catch (reclaimError) {
+      throw new RunWriterLeaseHeldError(
+        `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
+      );
     }
   }
   throw new RunWriterLeaseHeldError(
-    `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaim rounds (last autopsy: ${describeAutopsy(lastAutopsy)})`,
+    `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,
   );
 }
 
