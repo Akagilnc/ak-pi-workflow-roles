@@ -1503,38 +1503,72 @@ export function assertWritableTestAgentDir(
  * (`openPiInstitutionalSession`) build their own ModelRuntime reading
  * `<PI_CODING_AGENT_DIR>/models.json`.
  */
+/**
+ * Seed agentDir/models.json from a faux provider over the real OpenAI-completions
+ * HTTP path. Institutional children (gatekeeper/auditor/evidence) resolve auth
+ * from PI_CODING_AGENT_DIR/models.json after #518 S3 child-local ModelRuntime —
+ * pi.registerProvider alone is not visible to the child. Returns a closer for
+ * the mock server (call on session_shutdown).
+ */
+export async function seedAgentDirModelsJsonFromFaux(
+  faux: ReturnType<typeof fauxProvider>,
+  agentDir: string | undefined | null,
+  options?: { providerId?: string },
+): Promise<{ close: () => Promise<void> }> {
+  assertWritableTestAgentDir(agentDir);
+  const mock = await createMockProviderServer(faux);
+  const providerId = options?.providerId ?? faux.provider.id;
+  const modelsPath = resolve(agentDir, "models.json");
+  let existing: { providers?: Record<string, unknown> } = {};
+  try {
+    existing = JSON.parse(await readFile(modelsPath, "utf8")) as typeof existing;
+  } catch {
+    // fresh file
+  }
+  await writeFile(
+    modelsPath,
+    JSON.stringify(
+      {
+        providers: {
+          ...(existing.providers ?? {}),
+          [providerId]: {
+            baseUrl: mock.baseUrl,
+            api: "openai-completions",
+            apiKey: "test",
+            models: [
+              {
+                id: faux.getModel().id,
+                name: faux.getModel().id,
+                api: "openai-completions",
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 128000,
+                maxTokens: 16384,
+                compat: { requiresToolResultName: true },
+              },
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  return { close: mock.close };
+}
+
 export async function withAgentDirProviderFixture<T>(
   faux: ReturnType<typeof fauxProvider>,
   agentDir: string,
   run: () => Promise<T>,
 ): Promise<T> {
-  assertWritableTestAgentDir(agentDir);
-  const mock = await createMockProviderServer(faux);
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
   try {
-    const modelsPath = resolve(agentDir, "models.json");
-    await writeFile(modelsPath, JSON.stringify({
-      providers: {
-        [faux.provider.id]: {
-          baseUrl: mock.baseUrl,
-          api: "openai-completions",
-          apiKey: "test",
-          models: [{
-            id: faux.getModel().id,
-            name: faux.getModel().id,
-            api: "openai-completions",
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 128000,
-            maxTokens: 16384,
-            compat: { requiresToolResultName: true },
-          }],
-        },
-      },
-    }, null, 2), "utf8");
     return await run();
   } finally {
-    await mock.close();
+    await seeded.close();
   }
 }
 
