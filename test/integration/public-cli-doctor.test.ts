@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
@@ -42,9 +42,13 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-doctor-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -211,8 +215,8 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
       join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-001@doctor"),
     );
     assert.equal(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
-      join(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, "session.jsonl"),
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
+      join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"),
     );
 
     // Case path is the #78 issue runs locator — not a copied case packet.
@@ -446,6 +450,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           const patient = await loadDoctorCase(casePath);
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
+          const details = sampleCompletedDoctorOutput(patient.identity, findingObservation);
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -454,13 +459,14 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: sampleCompletedDoctorOutput(patient.identity, findingObservation),
+                details,
               },
             })}\n`,
             "utf8",
           );
           return {
             code: 0,
+            sealedAcceptance: { role: "doctor" as const, details },
             timedOut: false,
             stderr: "",
             args: [...args],
@@ -516,6 +522,13 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
             piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
+          const details = {
+            status: "refused",
+            reason: "Need retained sessions",
+            missingEvidence: [
+              { need: "session header", targetKeys: ["case"] },
+            ],
+          };
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -524,19 +537,14 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: {
-                  status: "refused",
-                  reason: "Need retained sessions",
-                  missingEvidence: [
-                    { need: "session header", targetKeys: ["case"] },
-                  ],
-                },
+                details,
               },
             })}\n`,
             "utf8",
           );
           return {
             code: 0,
+            sealedAcceptance: { role: "doctor" as const, details },
             timedOut: false,
             stderr: "",
             args: [...args],
@@ -708,8 +716,8 @@ test("doctor resume is rejected as one-shot", async () => {
         state: "resumable",
         bookKey: admit.bookKey,
         projectRoot: admit.projectRoot,
-        sessionDirectory: decodePiDurablePrincipal(piDurablePrincipalAuthority, admit.principal).sessionDirectory,
-        sessionFile: decodePiDurablePrincipal(piDurablePrincipalAuthority, admit.principal).sessionFile,
+        sessionDirectory: piDurablePrincipalAuthority.decode(admit.principal).sessionDirectory,
+        sessionFile: piDurablePrincipalAuthority.decode(admit.principal).sessionFile,
         runDirectory: admit.runDirectory,
         admittedRequestPath: admit.admittedRequestPath,
       })}\n`,

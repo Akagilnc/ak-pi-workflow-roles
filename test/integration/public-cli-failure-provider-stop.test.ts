@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107 session provider-stop 绑定与 #307 typed HTTP 观察家族。

@@ -2,7 +2,6 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 /**
  * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
  * States: admitted → running → resumable | terminal.
@@ -368,10 +367,7 @@ export async function markRunAdmitted(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<void> {
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(
-    authority,
-    admitted.principal,
-  );
+  const { sessionDirectory, sessionFile } = authority.decode(admitted.principal);
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
     role: admitted.role,

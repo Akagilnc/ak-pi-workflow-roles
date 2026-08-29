@@ -46,9 +46,13 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-notary-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -199,11 +203,21 @@ function scriptedNotarySession(
       `${sessionRows(toolArgs, options).map((row) => JSON.stringify(row)).join("\n")}\n`,
       "utf8",
     );
+    const lawful =
+      options.isError !== true &&
+      typeof toolArgs === "object" &&
+      toolArgs !== null &&
+      ("status" in toolArgs) &&
+      ((toolArgs as { status?: unknown }).status === "pass" ||
+        (toolArgs as { status?: unknown }).status === "bounce");
     return {
       code: 0,
       timedOut: false,
       stderr: "",
       args: [...extraArgs],
+      ...(lawful
+        ? { sealedAcceptance: { role: "notary" as const, details: toolArgs } }
+        : {}),
     };
   };
 }

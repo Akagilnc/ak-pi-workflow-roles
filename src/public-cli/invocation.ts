@@ -23,7 +23,6 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
-import { decodePiDurablePrincipal } from "../pi/durable-principal.ts";
 import { resolveTicketNumberFromAttachmentBodies } from "../ticket-frontmatter.ts";
 import {
   loadDoctorCase,
@@ -238,7 +237,7 @@ export function issueAdmissionPlacement(
   },
 ): AdmissionPlacement {
   const principal = authority.issue(request);
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const { sessionDirectory, sessionFile } = authority.decode(principal);
   const runDirectory = join(sessionDirectory, "..");
   const ledgerHome = resolveActivationLedgerHome(
     request.home === undefined ? undefined : () => request.home!,

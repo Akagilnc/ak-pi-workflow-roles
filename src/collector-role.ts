@@ -81,25 +81,6 @@ type CollectorActivation = {
 };
 
 /** Sole-final at the output execution seam (same shape as other terminating roles). */
-function assertSoleFinalCollectorOutput(
-  toolCallId: string,
-  ctx: HostContext,
-): void {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant" || !Array.isArray(leaf.message.content)) {
-    throw new Error("通进司回执非唯一终局工具调用");
-  }
-  const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
-  const call = calls[0];
-  if (
-    calls.length !== 1 ||
-    call === undefined ||
-    call.id !== toolCallId ||
-    call.name !== COLLECTOR_OUTPUT_TOOL
-  ) {
-    throw new Error("通进司回执非唯一终局工具调用");
-  }
-}
 
 function buildMethodContext(activation: CollectorActivation): string {
   return [
@@ -385,7 +366,6 @@ export function createCollectorRoleRuntime(
           throw new Error("通进司未激活");
         }
         try {
-          assertSoleFinalCollectorOutput(toolCallId, ctx);
           activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
           const receipt: CollectorReceipt = buildCollectorReceipt(
             activation.ledger,
