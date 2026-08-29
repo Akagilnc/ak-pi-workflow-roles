@@ -881,24 +881,6 @@ export async function executeAuditorChild(
           failure.knownCause = projected.hasTestimony ? "provider" : "unrecognized";
           const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
           const retentionCause = retentionError?.cause;
-          // Sitian (and similar) wrap native fs errors; surface the first errno code in the chain.
-          const errnoCodeFrom = (error: unknown): unknown => {
-            let current: unknown = error;
-            for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
-              if (
-                typeof current === "object"
-                && current !== null
-                && "code" in current
-                && (current as { code?: unknown }).code !== undefined
-              ) {
-                return (current as { code: unknown }).code;
-              }
-              current = current instanceof Error ? current.cause : undefined;
-            }
-            return undefined;
-          };
-          const retentionErrorCode = errnoCodeFrom(retentionError);
-          const retentionCauseCode = errnoCodeFrom(retentionCause);
           failure.details = {
             ...(diagnostic === undefined ? {} : { errorMessage: diagnostic }),
             ...(projected.hasTestimony && response.provider ? { provider: response.provider } : {}),
@@ -913,7 +895,9 @@ export async function executeAuditorChild(
             retentionFailure: {
               name: retentionError?.name ?? typeof retentionFailure,
               message: retentionError?.message ?? String(retentionFailure),
-              ...(retentionErrorCode === undefined ? {} : { code: retentionErrorCode }),
+              ...((retentionError as Error & { code?: unknown } | undefined)?.code !== undefined
+                ? { code: (retentionError as Error & { code?: unknown }).code }
+                : {}),
               ...(retentionCause === undefined
                 ? {}
                 : {
@@ -921,7 +905,9 @@ export async function executeAuditorChild(
                     ? {
                       name: retentionCause.name,
                       message: retentionCause.message,
-                      ...(retentionCauseCode === undefined ? {} : { code: retentionCauseCode }),
+                      ...((retentionCause as Error & { code?: unknown }).code === undefined
+                        ? {}
+                        : { code: (retentionCause as Error & { code?: unknown }).code }),
                     }
                     : retentionCause,
                 }),
