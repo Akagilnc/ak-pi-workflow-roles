@@ -2,11 +2,12 @@
  * Drive the production submission ledger producer for settlement tests.
  * Same createSubmissionLedgerHost path as role-runtime — not a parallel sitian write.
  */
-import { basename } from "node:path";
 import { Type } from "typebox";
+import { buildAuditEscalationResult, isAuditEscalationProjection } from "../../src/audit-escalation.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
+import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import {
   createSubmissionLedgerHost,
   readSealedSubmission,
@@ -83,14 +84,6 @@ async function driveLedgerProducer(input: {
   }
 }
 
-function runIdFromDirectory(runDirectory: string): string {
-  const runId = basename(runDirectory).split("@")[0];
-  if (runId === undefined || runId.length === 0) {
-    throw new Error("sealed submission requires admitted run identity from runDirectory");
-  }
-  return runId;
-}
-
 /** Seal an accepted projection through the production ledger host. */
 export async function sealAcceptedSubmission(input: {
   readonly cwd: string;
@@ -123,9 +116,13 @@ export async function sealAcceptedSubmissionForSpawn(input: {
 }): Promise<void> {
   const runDirectory = input.env.AK_ROLE_RUN_DIR;
   if (typeof runDirectory !== "string" || runDirectory.length === 0) return;
+  const runId = runIdFromRunDirectory(runDirectory);
+  if (runId === undefined) {
+    throw new Error("sealed submission requires admitted run identity from runDirectory");
+  }
   await sealAcceptedSubmission({
     cwd: input.cwd,
-    runId: runIdFromDirectory(runDirectory),
+    runId,
     runDirectory,
     role: input.role,
     details: input.details,
@@ -144,9 +141,6 @@ export async function recordAuditEscalationSubmission(input: {
   readonly toolCallId?: string;
   readonly runDirectory?: string;
 }): Promise<void> {
-  const { isAuditEscalationProjection, buildAuditEscalationResult } = await import(
-    "../../src/audit-escalation.ts"
-  );
   // Ensure details are live-registry projections so the ledger recognises them.
   let details = input.details;
   if (!isAuditEscalationProjection(details)) {

@@ -6,7 +6,9 @@ import test from "node:test";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
+import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
+import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { AcceptedDetailsContractError } from "../../src/package-contracts/terminating-tools.ts";
 import {
   createSubmissionLedgerHost,
@@ -14,7 +16,7 @@ import {
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
-import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { Type } from "typebox";
 
 function registerTool(root: string, execute: () => Promise<HostToolResult<unknown>> = async () => ({ content: [], details: { status: "completed" }, terminate: true })) {
@@ -157,8 +159,6 @@ test("eight packaged roles seal through the production ledger host", async () =>
     { role: "notary" as const, details: { status: "pass", findings: [] }, status: "pass" },
     { role: "collector" as const, details: { groups: [] }, status: "accepted" },
   ];
-  const { sealAcceptedSubmission } = await import("../helpers/submission-ledger-fixture.ts");
-  const { packagedRoleOutputTool } = await import("../../src/packaged-role-registry.ts");
   for (const row of rows) {
     await withLedgerFixture(async (f) => {
       process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-${row.role}@${row.role}`;

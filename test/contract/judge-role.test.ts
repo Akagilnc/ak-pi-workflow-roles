@@ -72,13 +72,23 @@ import { createMockProviderServer, packageRoot, withActivationHome, withInstitut
 // install registry in the shared helper, one page writer reused everywhere.
 const activeRunDirs: string[] = [];
 function installInstitutionalRunDir(seats: InstitutionalResolutionPage["seats"]): string {
-  const runDirectory = mkdtempSync(join(tmpdir(), "ak-judge-run-"));
+  // Publisher face is `<runId>@<role>` — sole runIdFromRunDirectory authority requires the @.
+  const book = mkdtempSync(join(tmpdir(), "ak-judge-book-"));
+  const runDirectory = join(book, `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@judge`);
+  mkdirSync(runDirectory, { recursive: true });
   // writeInstitutionalSeatTable writes synchronously (writeFileSync); the
   // resolved promise is fire-and-forget, so the page is on disk immediately.
   void writeInstitutionalSeatTable(runDirectory, seats);
   activeRunDirs.push(runDirectory);
   process.env.AK_ROLE_RUN_DIR = runDirectory;
   return runDirectory;
+}
+function disposeInstitutionalRunDir(runDirectory: string): void {
+  const index = activeRunDirs.indexOf(runDirectory);
+  if (index !== -1) activeRunDirs.splice(index, 1);
+  if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
+  // book parent is the temp mkdtemp that holds `<runId>@role`.
+  rmSync(dirname(runDirectory), { recursive: true, force: true });
 }
 async function withInstitutionalRunDir<T>(
   seats: InstitutionalResolutionPage["seats"],
@@ -88,10 +98,7 @@ async function withInstitutionalRunDir<T>(
   try {
     return await run();
   } finally {
-    const index = activeRunDirs.indexOf(runDirectory);
-    if (index !== -1) activeRunDirs.splice(index, 1);
-    if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
-    rmSync(runDirectory, { recursive: true, force: true });
+    disposeInstitutionalRunDir(runDirectory);
   }
 }
 // Parent agent process may inject AK_ROLE_RUN_DIR; isolate this file from that binding.
@@ -103,9 +110,7 @@ after(() => {
 });
 afterEach(() => {
   while (activeRunDirs.length > 0) {
-    const runDirectory = activeRunDirs.pop()!;
-    if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
-    rmSync(runDirectory, { recursive: true, force: true });
+    disposeInstitutionalRunDir(activeRunDirs[activeRunDirs.length - 1]!);
   }
   // Drop any leftover env binding between tests (owned dirs already popped above).
   delete process.env.AK_ROLE_RUN_DIR;
