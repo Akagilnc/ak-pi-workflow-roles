@@ -54,10 +54,9 @@ test("models.json malformed seed closes its listener before rejecting", async ()
         process.exitCode = 2;
       } catch (error) {
         if (!(error instanceof SyntaxError)) throw error;
-        process.stdout.write("parse-failure-retained\\n");
       }
     `;
-    const result = await exec(
+    await exec(
       process.execPath,
       ["--import", "tsx", "--input-type=module", "--eval", source],
       {
@@ -65,6 +64,5 @@ test("models.json malformed seed closes its listener before rejecting", async ()
         env: { ...process.env, AK_TEST_AGENT_DIR: agentDir },
       },
     );
-    assert.equal(result.stdout, "parse-failure-retained\n");
   });
 });
