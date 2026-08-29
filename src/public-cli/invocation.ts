@@ -292,7 +292,7 @@ function effectiveModelLedgerFields(
   };
 }
 
-function homeFromRunDirectory(runDirectory: string): string | undefined {
+function homeFromRunDirectory(runDirectory: string): string {
   const marker = `${sep}.ak-roles${sep}`;
   const idx = runDirectory.indexOf(marker);
   if (idx !== -1) {
@@ -304,7 +304,7 @@ function homeFromRunDirectory(runDirectory: string): string | undefined {
     const candidate = runDirectory.slice(0, altIdx);
     return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
   }
-  return undefined;
+  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
 }
 
 /**

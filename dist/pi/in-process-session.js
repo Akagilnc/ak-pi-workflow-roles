@@ -515,11 +515,15 @@ export async function openPiInstitutionalSession(options) {
         // 8. Event subscriptions
         const listeners = new Set();
         const accumulatedUsage = emptyUsage();
+        let lastEmittedAssistant;
         const unsubscribeSession = session.subscribe((event) => {
             if (event.type === "message_end") {
                 const msg = event.message;
-                if (msg.role === "assistant" && msg.usage) {
-                    addUsage(accumulatedUsage, msg.usage);
+                if (msg.role === "assistant") {
+                    lastEmittedAssistant = msg;
+                    if (msg.usage) {
+                        addUsage(accumulatedUsage, msg.usage);
+                    }
                 }
                 for (const listener of listeners) {
                     listener({
@@ -573,22 +577,40 @@ export async function openPiInstitutionalSession(options) {
                     abortSession();
                 else
                     options.signal?.addEventListener("abort", abortSession, { once: true });
+                let promptError;
                 try {
                     await session.prompt(text);
-                    const lastAssistant = [...session.messages]
-                        .reverse()
-                        .find((message) => message.role === "assistant");
-                    return {
-                        text: session.getLastAssistantText() ?? "",
-                        ...(lastAssistant?.stopReason === undefined ? {} : { stopReason: lastAssistant.stopReason }),
-                        ...(lastAssistant?.errorMessage === undefined ? {} : { errorMessage: lastAssistant.errorMessage }),
-                        usage: accumulatedUsage,
-                        messages: session.messages,
-                    };
+                }
+                catch (error) {
+                    promptError = error;
                 }
                 finally {
                     options.signal?.removeEventListener("abort", abortSession);
                 }
+                const lastAssistant = [...session.messages]
+                    .reverse()
+                    .find((message) => message.role === "assistant");
+                if (lastAssistant !== undefined && lastAssistant !== lastEmittedAssistant) {
+                    lastEmittedAssistant = lastAssistant;
+                    for (const listener of listeners) {
+                        listener({
+                            type: "message_end",
+                            role: lastAssistant.role,
+                            message: lastAssistant,
+                            ...(lastAssistant.usage === undefined ? {} : { usage: lastAssistant.usage }),
+                        });
+                    }
+                }
+                if (promptError !== undefined && lastAssistant === undefined) {
+                    throw promptError;
+                }
+                return {
+                    text: session.getLastAssistantText() ?? "",
+                    ...(lastAssistant?.stopReason === undefined ? {} : { stopReason: lastAssistant.stopReason }),
+                    ...(lastAssistant?.errorMessage === undefined ? {} : { errorMessage: lastAssistant.errorMessage }),
+                    usage: accumulatedUsage,
+                    messages: session.messages,
+                };
             },
             subscribe(listener) {
                 listeners.add(listener);

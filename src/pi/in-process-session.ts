@@ -658,11 +658,15 @@ export async function openPiInstitutionalSession(
     const listeners = new Set<(event: HostInstitutionalSessionEvent) => void>();
     const accumulatedUsage = emptyUsage();
 
+    let lastEmittedAssistant: AssistantMessage | undefined;
     const unsubscribeSession = session.subscribe((event) => {
       if (event.type === "message_end") {
         const msg = event.message as AssistantMessage;
-        if (msg.role === "assistant" && msg.usage) {
-          addUsage(accumulatedUsage, msg.usage);
+        if (msg.role === "assistant") {
+          lastEmittedAssistant = msg;
+          if (msg.usage) {
+            addUsage(accumulatedUsage, msg.usage);
+          }
         }
         for (const listener of listeners) {
           listener({
@@ -715,22 +719,42 @@ export async function openPiInstitutionalSession(
         if (options.signal?.aborted) abortSession();
         else options.signal?.addEventListener("abort", abortSession, { once: true });
 
+        let promptError: unknown;
         try {
           await session.prompt(text);
-          const lastAssistant = [...session.messages]
-            .reverse()
-            .find((message) => message.role === "assistant") as AssistantMessage | undefined;
-
-          return {
-            text: session.getLastAssistantText() ?? "",
-            ...(lastAssistant?.stopReason === undefined ? {} : { stopReason: lastAssistant.stopReason }),
-            ...(lastAssistant?.errorMessage === undefined ? {} : { errorMessage: lastAssistant.errorMessage }),
-            usage: accumulatedUsage as HostSessionUsage,
-            messages: session.messages,
-          };
+        } catch (error) {
+          promptError = error;
         } finally {
           options.signal?.removeEventListener("abort", abortSession);
         }
+
+        const lastAssistant = [...session.messages]
+          .reverse()
+          .find((message) => message.role === "assistant") as AssistantMessage | undefined;
+
+        if (lastAssistant !== undefined && lastAssistant !== lastEmittedAssistant) {
+          lastEmittedAssistant = lastAssistant;
+          for (const listener of listeners) {
+            listener({
+              type: "message_end",
+              role: lastAssistant.role,
+              message: lastAssistant,
+              ...(lastAssistant.usage === undefined ? {} : { usage: lastAssistant.usage as HostSessionUsage }),
+            });
+          }
+        }
+
+        if (promptError !== undefined && lastAssistant === undefined) {
+          throw promptError;
+        }
+
+        return {
+          text: session.getLastAssistantText() ?? "",
+          ...(lastAssistant?.stopReason === undefined ? {} : { stopReason: lastAssistant.stopReason }),
+          ...(lastAssistant?.errorMessage === undefined ? {} : { errorMessage: lastAssistant.errorMessage }),
+          usage: accumulatedUsage as HostSessionUsage,
+          messages: session.messages,
+        };
       },
 
       subscribe(listener: (event: HostInstitutionalSessionEvent) => void): () => void {

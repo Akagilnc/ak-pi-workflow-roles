@@ -2,7 +2,6 @@
  * Persistent and effective per-seat model/thinking configuration for ak-role.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
@@ -97,12 +96,15 @@ const THINKING_LEVELS = new Set<PublicThinkingLevel>([
   "max",
 ]);
 
-export function publicCliConfigPath(home: string = process.env.HOME ?? homedir()): string {
+export function publicCliConfigPath(home: string): string {
+  if (typeof home !== "string" || home.trim() === "") {
+    throw new Error("home must be explicitly provided");
+  }
   return join(home, ".ak-roles", "public-cli.json");
 }
 
 export async function loadPublicCliConfig(
-  home: string = process.env.HOME ?? homedir(),
+  home: string,
 ): Promise<PublicCliConfig> {
   const path = publicCliConfigPath(home);
   try {
@@ -122,7 +124,7 @@ export async function loadPublicCliConfig(
 
 export async function savePublicCliConfig(
   config: PublicCliConfig,
-  home: string = process.env.HOME ?? homedir(),
+  home: string,
 ): Promise<void> {
   const path = publicCliConfigPath(home);
   await mkdir(dirname(path), { recursive: true });

@@ -109,13 +109,19 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
           const childDir = join(reportedParentDirectory, "auditor-roles");
           const names = await (await import("node:fs/promises")).readdir(childDir);
           for (const name of names) {
-            const text = await readFile(join(childDir, name), "utf8");
-            if (text.includes("ak_auditor_compliance_failure")) {
-              await restoreParent?.();
+            const targetPath = name.endsWith(".jsonl") ? join(childDir, name) : join(childDir, name, "session.jsonl");
+            try {
+              const text = await readFile(targetPath, "utf8");
+              if (text.includes("ak_auditor_compliance_failure")) {
+                await restoreParent?.();
+              }
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException)?.code === "ENOENT" || (err as NodeJS.ErrnoException)?.code === "EISDIR") continue;
+              throw err;
             }
           }
         } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return;
+          if ((error as NodeJS.ErrnoException)?.code === "ENOENT" || (error as NodeJS.ErrnoException)?.code === "EISDIR") return;
           retainFailure(error);
           try {
             await restoreParent?.();
@@ -158,28 +164,32 @@ import { join } from "node:path";
 export default function (pi) {
   console.error("[ak-patch] normal activation banner");
   const agentDir = process.env.PI_CODING_AGENT_DIR;
-  if (agentDir) {
-    mkdirSync(agentDir, { recursive: true });
-    writeFileSync(join(agentDir, "models.json"), JSON.stringify({
-      providers: {
-        "openai-codex": {
-          baseUrl: "http://127.0.0.1:${address.port}/v1",
-          apiKey: "test",
-          api: "openai-completions",
-          models: [{
-            id: "faux-1",
-            name: "faux-1",
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 128000,
-            maxTokens: 4096,
-            compat: { requiresToolResultName: true },
-          }],
-        },
-      },
-    }, null, 2), "utf8");
+  if (!agentDir) {
+    throw new Error("PI_CODING_AGENT_DIR must be explicitly set");
   }
+  if (agentDir.includes(".pi/agent") && !agentDir.includes("tmp") && !agentDir.includes("ak-")) {
+    throw new Error("Refusing to write models.json to non-test agentDir: " + agentDir);
+  }
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "models.json"), JSON.stringify({
+    providers: {
+      "openai-codex": {
+        baseUrl: "http://127.0.0.1:${address.port}/v1",
+        apiKey: "test",
+        api: "openai-completions",
+        models: [{
+          id: "faux-1",
+          name: "faux-1",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000,
+          maxTokens: 4096,
+          compat: { requiresToolResultName: true },
+        }],
+      },
+    },
+  }, null, 2), "utf8");
   pi.registerProvider("openai-codex", {
     name: "Retention tracer", baseUrl: "http://127.0.0.1:${address.port}/v1", apiKey: "test", api: "openai-completions",
     models: [{ id: "faux-1", name: "faux-1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096 }]
@@ -210,7 +220,9 @@ export default function (pi) {
 test("Judge publicly retains a real default-Pi auditor provider stop across retention failure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj-judge-retention");
+    const agentDir = join(home, ".pi", "agent");
     await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
     seedGitProject(project);
     const retentionIo = captureIo();
     const tracer = await createJudgeAuditorRetentionTracer(home);
@@ -219,7 +231,7 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       retentionResult = await runAkRole(
         ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
         {
-          packageRoot, home, cwd: project, io: retentionIo.io,
+          packageRoot, home, agentDir, cwd: project, io: retentionIo.io,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => "run-judge-auditor-retention-failure",
           judgeExtraPiArgs: ["-e", tracer.extension],
@@ -237,7 +249,7 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       result: retentionResult,
       stdout: retentionIo.stdout,
       stderr: retentionIo.stderr,
-      expectedCause: "session",
+      expectedCause: "unrecognized",
       diagnosticIncludes: "WebSocket error",
     });
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;

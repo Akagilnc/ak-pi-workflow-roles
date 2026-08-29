@@ -1468,6 +1468,9 @@ export async function withAgentDirProviderFixture<T>(
   agentDir: string,
   run: () => Promise<T>,
 ): Promise<T> {
+  if (!agentDir || (agentDir.includes(".pi/agent") && !agentDir.includes("tmp") && !agentDir.includes("ak-") && !agentDir.includes("test"))) {
+    throw new Error("Refusing to write models.json to non-test agentDir: " + agentDir);
+  }
   const mock = await createMockProviderServer(faux);
   try {
     const modelsPath = resolve(agentDir, "models.json");

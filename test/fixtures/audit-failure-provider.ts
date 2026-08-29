@@ -65,8 +65,13 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
   });
   const mockServer = await createMockProviderServer(faux);
   const agentDir = process.env.PI_CODING_AGENT_DIR;
-  if (agentDir) {
-    const modelsPath = join(agentDir, "models.json");
+  if (!agentDir) {
+    throw new Error("auditFailureProvider requires explicit PI_CODING_AGENT_DIR");
+  }
+  if (agentDir.includes(".pi/agent") && !agentDir.includes("tmp") && !agentDir.includes("ak-")) {
+    throw new Error("Refusing to write models.json to non-test agentDir: " + agentDir);
+  }
+  const modelsPath = join(agentDir, "models.json");
     await writeFile(modelsPath, JSON.stringify({
       providers: {
         [faux.provider.id]: {
@@ -87,7 +92,6 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         },
       },
     }, null, 2), "utf8");
-  }
   if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
     // Header timeoutMs and body-idle both default to owner-final 183000ms but are distinct seams.
     // Idle arms first; the provider schedules timeoutMs second. Compress provider waits harder so the
