@@ -281,7 +281,9 @@ test(
         else process.env.HOME = previousHome;
       }
       assert.ok(retained.length >= 1, "retained auditor response must still land");
-      const retainedCall = retained[0].content?.find(
+      const retainedResponse = retained[0];
+      assert.ok(retainedResponse);
+      const retainedCall = retainedResponse.content?.find(
         (part: any) => part.type === "toolCall",
       );
       assert.deepEqual(retainedCall.arguments, {

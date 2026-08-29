@@ -1235,14 +1235,15 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
           snapshotIdentity: Object.freeze({ text: raw }),
         },
         invocation: (request: string) => `/skill:code-review ${request}`,
-        captureExpansion: (prompt: string, request: string) => {
-          if (prompt !== lawfulExpansion || request !== originalRequest) return undefined;
-          return Object.freeze({
-            name: "code-review" as const,
-            location: skillPath,
-            content: expectedContent,
-            userMessage: request,
-          });
+        captureExpansion: (evidence, request: string) => {
+          if (
+            evidence?.name !== "code-review"
+            || evidence.location !== skillPath
+            || evidence.content !== expectedContent
+            || evidence.userMessage !== originalRequest
+            || request !== originalRequest
+          ) return undefined;
+          return Object.freeze({ ...evidence, name: "code-review" as const });
         },
       };
     };

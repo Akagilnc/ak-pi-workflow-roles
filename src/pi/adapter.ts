@@ -1,8 +1,9 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  SessionManager,
-  ToolDefinition,
+import {
+  parseSkillBlock,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type SessionManager,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 import { requireGatekeeperPass, type GatekeeperNonPassResult, type GatekeeperSubject } from "../gatekeeper-role.ts";
@@ -70,7 +71,7 @@ function requirePiGatekeeperPass(options: {
       failInfrastructure(error, _context, toolCallId) {
         options.hostActions.failInfrastructure(error, options.context, toolCallId);
       },
-      bindGatekeeperNonPass: options.hostActions.bindGatekeeperNonPass,
+      bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
     },
     toolCallId: options.toolCallId,
   });
@@ -107,6 +108,19 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string } = {},
 ): PiRoleHostAdapter {
   const host: RoleHost = {
+    capabilities: {
+      skillExpansion(prompt) {
+        const parsed = parseSkillBlock(prompt);
+        if (parsed == null) return undefined;
+        const userMessage = parsed.userMessage ?? "";
+        return Object.freeze({
+          name: parsed.name,
+          location: parsed.location,
+          content: parsed.content,
+          userMessage,
+        });
+      },
+    },
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),
     registerTool: (tool) => pi.registerTool(toPiToolDefinition(
