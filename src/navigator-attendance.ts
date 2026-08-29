@@ -13,6 +13,11 @@ import {
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "./activation-ledger-topology.ts";
+import { sitianReport } from "./sitian-facade.ts";
 import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
@@ -1308,7 +1313,21 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         }
       },
       providerFailure: () => providerFailure,
-      appendEntry: (customType, data) => { opened.session.sessionManager.appendCustomEntry(customType, data); },
+      appendEntry: (customType, data) => {
+        opened.session.sessionManager.appendCustomEntry(customType, data);
+        try {
+          sitianReport({
+            level: "event",
+            kind: "attendance",
+            cwd: context.cwd,
+            sessionParent: opened.session.sessionManager.getSessionFile(),
+            payload: { customType, data },
+            source: "navigator-attendance",
+          });
+        } catch {
+          // best-effort persistence in attendance adapter
+        }
+      },
       entries: () => opened.session.sessionManager.getEntries(),
       setModel: async (next, thinkingLevel) => {
         let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;

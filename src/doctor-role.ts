@@ -4,10 +4,33 @@ import { ComplianceResponseRetentionError, type ComplianceDecision } from "./com
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "./dossier-resolution.ts";
 import { DOCTOR_ACCEPTED_AUDIT_NO_RECEIPT_TEXT, DOCTOR_ACCEPTED_TEXT, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_DESCRIPTION, DOCTOR_OUTPUT_TOOL_NAME, DoctorEvidenceStore, doctorEvidenceReadSchema, doctorSubmissionSchema, validateDoctorOutput, type DoctorCase } from "./doctor-contracts.ts";
 
+import { sitianReport } from "./sitian-facade.ts";
+
 export { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME };
 export const DOCTOR_CASE_FLAG = { name: "ak-doctor-case", definition: { description: "Retained .ak-roles/books/<book>/issues/<n>/runs directory", type: "string" as const } } as const;
 export type DoctorRoleDependencies = { loadSoul(): Promise<string>; loadCase(path: string): Promise<DoctorCase>; auditCompliance(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision> };
-function appendCandidate(ctx: HostContext, data: unknown): void { const append = ctx.sessionManager.appendCustomEntry; if (append === undefined) throw new ComplianceResponseRetentionError("太医署候选留存不可用"); try { append.call(ctx.sessionManager, DOCTOR_CANDIDATE_ENTRY_TYPE, data); } catch (error) { throw new ComplianceResponseRetentionError(`太医署候选留存失败: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); } }
+function appendCandidate(ctx: HostContext, data: unknown): void {
+  try {
+    sitianReport({
+      level: "event",
+      kind: "candidate",
+      cwd: ctx.cwd,
+      sessionParent: ctx.sessionManager.getSessionFile(),
+      payload: data,
+      source: "doctor-role",
+    });
+  } catch (error) {
+    throw new ComplianceResponseRetentionError(`太医署候选留存失败: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+  const append = ctx.sessionManager.appendCustomEntry;
+  if (typeof append === "function") {
+    try {
+      append.call(ctx.sessionManager, DOCTOR_CANDIDATE_ENTRY_TYPE, data);
+    } catch (error) {
+      throw new ComplianceResponseRetentionError(`太医署候选留存失败: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+  }
+}
 function singleton(toolCallId: string, ctx: HostContext) { const leaf = ctx.sessionManager.getLeafEntry(); if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant" || !Array.isArray(leaf.message.content)) throw new Error("太医署回执非唯一终局工具调用"); const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall"); if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== DOCTOR_OUTPUT_TOOL_NAME) throw new Error("太医署回执非唯一终局工具调用"); }
 export function createDoctorRoleRuntime(pi: RoleHost, dependencies: DoctorRoleDependencies, host: { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never }) {
   let activation: { soul: string; patient: DoctorCase; store: DoctorEvidenceStore } | undefined; let registered = false; pi.registerFlag(DOCTOR_CASE_FLAG.name, DOCTOR_CASE_FLAG.definition);
