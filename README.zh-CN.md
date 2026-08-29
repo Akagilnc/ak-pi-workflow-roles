@@ -11,7 +11,7 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
-更新用 `pi update npm:@akagilnc/pi-workflow-roles`——勿另起全局 `npm install -g`。查看能力：`ak-role roles`、`ak-role help <role>`；设席位模型默认：`ak-role config set <seat> <provider/model[:thinking]>`（可调用席位，以及自动出席的 `gatekeeper`／`inspector`／`navigator`）；清除门下省官钉：`ak-role config unset <gatekeeper|inspector|notary>`；设或清持久劳务引擎（可调用角色）：`ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`。
+更新用 `pi update npm:@akagilnc/pi-workflow-roles`——勿另起全局 `npm install -g`。查看能力：`ak-role roles`、`ak-role help <role>`；席位与官席配置见下方「读结果」。
 
 ## 读结果
 
@@ -23,13 +23,11 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎仍为一次性，无 resume。包绝不自动换 provider；临时换模型用全局旗标。
+`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。续跑细则（opaque message、调用者自决、一次性席位、escalate 标准链）以 `ak-role help resume` 与 [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md) 为准。
 
-大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
+大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限由 `ak-role config set-auto-resume-limit` 写入；lawful typed 终态立即停止。
 
-全局覆盖须在 opaque message 段之前：`ak-role --model <provider/model[:thinking]> resume <runId>` 或 `ak-role resume --model <provider/model[:thinking]> <runId>`。
-
-每次运行游奕使自动出席，建议随同一 Terminal 给出。配置：
+席位与官席配置：
 
 ```bash
 ak-role config set judge <provider/model[:thinking]>
@@ -45,63 +43,46 @@ ak-role config unset-engine judge
 ak-role config set-auto-resume-limit 3
 ```
 
-`config set` 存席位模型默认。门下省官席（`gatekeeper`／`inspector`／`notary`）解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。`config unset` 只清这三官的覆盖。`config set-engine`／`unset-engine` 在可调用角色上写入或清除持久劳务引擎名（与 `--engine` 同轴；拒收 navigator——无独立 activation）。`config set-auto-resume-limit` 写入单次调用自动续跑上限。用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。
+门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。
 
-回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者。省部级（province-grade）角色可在自己单次调用的内政之内派发正经角色调用，但公开 CLI 语义零变化——外部调用者仍一次启动其选中的一个角色，跨 CLI 调用的顺序、重复与停止仍全归外部调用者（ADR 0010 两品级窄修）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
+回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
-### 门下省交卷闸
-
-完成侧交卷时，包可能在本局结算前起门下省：`gatekeeper` 读受审物并派官（`inspector` 给事中或 `notary` 符宝郎）；既有审刑院挂钩仍在原位。闸在交卷 session 内运行；封驳＝当场重写重交，不是角色失败；最终回执即过闸产物。`planned`／`refused`／`unfinished` 不调省。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。闸史已投影进 typed 回执：可选 gate 段列出实际在场席位、每轮派官（officer 与逐字 reason）与各官报告（席位/判决/findings）；无闸调用时该段缺席。勿刮 session 散文当闸状态——读 typed 段。
-
-劳务引擎绕行进程无法启动、非零退出或未产生可用输出时，角色运行沿既有基础设施失败路径立即停止并保留可见真因；座席不继续顶班，也不产出 typed 回执。调用方 cancel 仍原样传播。见 [ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)。
+门下省交卷闸：完成侧交卷时包可在本局结算前起省（`gatekeeper` 派 `inspector`／`notary`），封驳＝当场重写重交，不是角色失败；`planned`／`refused`／`unfinished` 不调省；闸史读回执 typed gate 段，勿刮 session 散文。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。劳务引擎绕行失败沿既有基础设施故障路径停止、真因可见（[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)）。
 
 ## 调用百官
 
-公开 option 身份、别名、必填性与 mode 面以生成区 [公开 CLI 选项（生成）](#公开-cli-选项生成) 与 `ak-role help <command>` 为准——二者同源。下例只是用法速写，不是第二份旗标合同。指令对大理寺、通进司、太医署可省略；符宝郎零 prompt／附件；太史为确定性命令（见 help）。对将作监、修内司、御史台、校书郎必须非空。
+下例只是用法速写；option 身份、别名、必填性与 mode 面以 `ak-role help <command>` 为准，不另立第二份旗标合同。
 
 ```bash
-# 大理寺——审断所供材料；自行推断举证责任，无 burden 旗标
+# 大理寺——审断所供材料
 ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."
 
-# 将作监——营造新作；phase 默认 apply，或显式 plan
+# 将作监——营造新作
 ak-role coder plan "Propose the first implementation plan."
 ak-role coder apply --attach ./plan.md "Implement the approved slice."
-# apply 强制包内 TDD 方法；勿绑 home Skill 顶替
 
-# 御史台——固定目标双轴察举（Standards + Spec）
+# 御史台——固定目标双轴察举；completed ≠ 准行，findings 在 Terminal 里
 ak-role reviewer --base main "Review the branch."
-# --base 为必填并钉住 fixed point；御史台不接受 --attach
-# completed ≠ 准行——findings 在 Terminal 里
 
-# 通进司——GitHub PR 收证；仅 github.com，需 gh 已认证；一次性
+# 通进司——GitHub PR 收证；一次性
 ak-role collector --pr 42 --repo owner/repository
-ak-role collector --pr 42 --request-manifest ./requests.json
-# 无配置时仅观察；可选 request manifest 为 {requests:[{id,body}]}；repo 默认取 origin
 
-# 修内司——缮修所指 findings；phase 默认 apply，或显式 plan
+# 修内司——缮修所指 findings
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
-# --prerequisites 为 {id, requirement} JSON 数组；语法畸形退出 2
 
 # 太医署——单案诊断；一次性
 ak-role doctor --issue 115 "Diagnose this retained case."
-# --runs 须为项目相对的 .ak-roles/books/<book>/issues/<n>/runs 且匹配 --issue
 
-# 校书郎——雠校一个已在冲突的 merge（先用 Git ort 起动）
+# 校书郎——调和已在冲突的 merge（先用 Git ort 起动）
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
-# 遇新意图/权限问题交回调用者，不捏造 authority
 
-# 符宝郎——对一份留存 source run 做文书核验；零 prompt／附件；一次性
+# 符宝郎——文书核验一份留存 source run；一次性
 ak-role notary --source-run <runId@role|path>
 
-# 太史——确定性指标（cwd 候簿＝git common-dir）；裸调＝整簿
+# 太史——确定性指标；裸调＝整簿
 ak-role analyst
-ak-role analyst --ticket <N>
-ak-role analyst sweep --attach ./payload.md
-ak-role analyst --cohort \
-  --group-a-label A --group-a-issues 1,2 \
-  --group-b-label B --group-b-issues 3,4
 
-# escalate 后：把 owner 裁定喂回同一 session（标准链；细则见上方「读结果」resume 段）
+# escalate 后：把 owner 裁定喂回同一 session（标准链）
 ak-role resume <runId> "<裁定>"
 ```
 
@@ -148,95 +129,8 @@ ak-role resume <runId> "<裁定>"
 
 开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。
 
-<!-- BEGIN GENERATED: public-cli-options -->
-## 公开 CLI 选项（生成）
+## 规范指针
 
-本表由 `src/public-cli/option-definitions.ts` 生成；以 `ak-role help <command>` 为准。勿手改本区。
-
-### `global`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--model` | — | `provider/model` | 否 | 否 | option | — | 覆盖本调用有效席位模型（可置于子命令前或后）。 |
-| `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off\|minimal\|low\|medium\|high\|xhigh\|max。 |
-| `--engine` | — | `name` | 否 | 否 | option | — | 本调用可选劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。 |
-| `--help` | `-h` | — | 否 | 否 | option | — | 显示公开 CLI 帮助并退出。 |
-
-### `judge`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-
-### `coder`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-
-### `fixer`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-| `--prerequisites` | — | `path` | 否 | 否 | option | — | {id, requirement} 前置条件 JSON 数组路径。 |
-
-### `reviewer`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--base` | — | `revision` | 是 | 否 | option | — | 必填；钉住审查目标的 fixed-point revision。 |
-| `--authority-ref` | — | `ref` | 否 | 是 | option | — | 持久 authority 引用/URL（可重复；仅 ref，非内联散文）。 |
-
-### `collector`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-| `--pr` | — | `number` | 是 | 否 | option | — | 必填；正整数 GitHub PR 号。 |
-| `--repo` | — | `owner/repo` | 否 | 否 | option | — | GitHub owner/repo 覆盖（默认取 github.com origin）。 |
-| `--request-manifest` | — | `path` | 否 | 否 | option | — | 可选 request manifest JSON 路径（{requests:[{id,body}]}）。 |
-
-### `doctor`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-| `--issue` | — | `number` | 是 | 否 | option | — | 必填；留存病例的正整数 issue 号。 |
-| `--runs` | — | `path` | 否 | 否 | option | — | 可选项目相对 .ak-roles/books/<book>/issues/<n>/runs 覆盖，且须匹配 --issue。 |
-
-### `merger`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 已有进行中 ordinary merge 的项目根（默认 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-
-### `notary`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--source-run` | — | `runId@role\|path` | 是 | 否 | option | — | 必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。零 prompt/附件投影。 |
-
-### `analyst`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `sweep` | — | — | 否 | 否 | positional | modes=sweep | 可选 sweep 模式词元（至多一次；不得夹带其他 positional）。 |
-| `--ticket` | — | `number` | 否 | 否 | option | modes=issue | 票号；在 cwd 候簿（git common-dir）内按 invocation.ticketNumber 现取现算。裸调用=整簿。不依赖 library-index 自举。 |
-| `--attach` | — | `path` | 条件:sweep | 是 | option | modes=sweep; max=sweep:1 | sweep 模式附件路径；sweep 必填且恰一次；载荷为附件正文。 |
-| `--cohort` | — | — | 否 | 否 | option | modes=cohort | 选择 cohort 模式。 |
-| `--group-a-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort A 组标签（cohort 模式必填）。 |
-| `--group-a-issues` | — | `N\|book:N[,...]` | 条件:cohort | 否 | option | modes=cohort | cohort A 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \, / \\ 转义（cohort 模式必填）。 |
-| `--group-b-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort B 组标签（cohort 模式必填）。 |
-| `--group-b-issues` | — | `N\|book:N[,...]` | 条件:cohort | 否 | option | modes=cohort | cohort B 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \, / \\ 转义（cohort 模式必填）。 |
-<!-- END GENERATED: public-cli-options -->
+- 命令用法与拒绝文案：`ak-role help <command>`、`ak-role help config`（唯一权威）。
+- 决策与法理：`docs/adr/`（组合与顺序 ADR 0010、公开 CLI 面 ADR 0052、交卷闸 ADR 0066/0067/0070/0072、劳务引擎 ADR 0069/0071 等，未尽举）。
+- 术语表：[CONTEXT.md](CONTEXT.md)。编程契约：`src/package-contracts/` 导出。
