@@ -26,13 +26,15 @@ export async function withTempHome<T>(
   const home = await mkdtemp(
     join(tmpdir(), options.prefix ?? "ak-public-cli-fail-"),
   );
-  const priorHome = process.env.HOME;
+  // Pin HOME so in-process Sitian retain/read and ledger paths share the hermetic home
+  // (Pi child already receives HOME via role-turn-host; in-process auditors do not).
+  const previousHome = process.env.HOME;
   process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
-    if (priorHome === undefined) delete process.env.HOME;
-    else process.env.HOME = priorHome;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 }

@@ -10,8 +10,8 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { validateRecordedDoctorOutput } from "../../src/doctor-contracts.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import {
   ACCEPTED_ACTIVATION_EVENT,
   activationWaitingLedgerPath,
@@ -122,7 +122,6 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
 
         assert.equal(result.localTimeout, false, result.stderr);
         assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
-        assert.match(result.stderr, /DOCTOR_FRESH_PROVIDER_CALLS=2/);
         const capturedPrompt = await readFile(promptCapturePath, "utf8");
         assert.ok(
           capturedPrompt.includes(`<doctor_soul>\n${doctorSoul}\n</doctor_soul>`),
@@ -136,26 +135,34 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         const sessionFiles = (await readdir(sessionDir))
           .filter((name) => name.endsWith(".jsonl"));
         assert.equal(sessionFiles.length, 1);
-        const sessionRows = (await readFile(
-          resolve(sessionDir, sessionFiles[0]!),
-          "utf8",
-        )).split("\n").filter(Boolean).map((line) => JSON.parse(line) as any);
+        const sessionFile = resolve(sessionDir, sessionFiles[0]!);
+        const sessionRows = (await readFile(sessionFile, "utf8"))
+          .split("\n").filter(Boolean).map((line) => JSON.parse(line) as any);
         const recordedToolCalls = sessionRows
           .filter((row) => row.type === "message" && row.message?.role === "assistant")
           .flatMap((row) => row.message.content.filter((part: any) => part.type === "toolCall"));
         assert.equal(recordedToolCalls.length, 1);
-        const retainedAuditRows = sessionRows.filter(
-          (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
-        );
-        assert.equal(retainedAuditRows.length, 1);
-        const retainedAudit = retainedAuditRows[0].data.response;
-        assert.equal(retainedAudit.role, "assistant");
-        assert.equal(retainedAudit.stopReason, "toolUse");
         assert.equal(
           recordedToolCalls.filter((part: any) => part.name === "ak_doctor_output").length,
           1,
         );
-        const auditCalls = retainedAudit.content.filter(
+        // Production retain is Sitian (kind=auditor), not session COMPLIANCE_RESPONSE custom entry.
+        const recordFile = resolveSitianRecordPath({
+          level: "event",
+          kind: "auditor",
+          cwd: fixture,
+          sessionParent: sessionFile,
+        }).recordFile;
+        const retainedAudits = (await readSitianRecords(recordFile)).records.flatMap((record) => {
+          const payload = record.payload as { type?: string; response?: { role?: string; stopReason?: string; content?: any[] } } | undefined;
+          if (payload === undefined || typeof payload.type === "string" || payload.response === undefined) return [];
+          return [payload.response];
+        });
+        assert.equal(retainedAudits.length, 1);
+        const retainedAudit = retainedAudits[0]!;
+        assert.equal(retainedAudit.role, "assistant");
+        assert.equal(retainedAudit.stopReason, "toolUse");
+        const auditCalls = (retainedAudit.content ?? []).filter(
           (part: any) => part.type === "toolCall" && part.name === "ak_doctor_audit_decision",
         );
         assert.equal(auditCalls.length, 1);

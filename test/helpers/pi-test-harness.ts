@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
   cp,
@@ -1043,6 +1043,8 @@ export interface MockProviderServerObservers {
    * in the OpenAI-completions body). Lets tests assert which model the real child
    * resolved from its seat selection through the actual provider entry. */
   onModel?: (modelId: string, body: Record<string, unknown>) => void;
+  /** Observe each inbound child HTTP request. Headers prove models.json auth was consumed. */
+  onRequest?: (request: { headers: IncomingHttpHeaders }) => void;
 }
 
 export async function createMockProviderServer(
@@ -1051,6 +1053,7 @@ export async function createMockProviderServer(
 ): Promise<{ server: Server; baseUrl: string; close: () => Promise<void> }> {
   const server = createServer(async (req, res) => {
     try {
+      observers.onRequest?.({ headers: req.headers });
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
@@ -1439,10 +1442,10 @@ export async function withInstitutionalProviderFixture<T>(
 export async function seedAgentDirModelsJsonFromFaux(
   faux: ReturnType<typeof fauxProvider>,
   agentDir: string | undefined | null,
-  options?: { providerId?: string },
-): Promise<{ close: () => Promise<void> }> {
+  options?: { providerId?: string; observers?: MockProviderServerObservers },
+): Promise<{ close: () => Promise<void>; baseUrl: string }> {
   assertWritableTestAgentDir(agentDir);
-  const mock = await createMockProviderServer(faux);
+  const mock = await createMockProviderServer(faux, options?.observers ?? {});
   try {
     const providerId = options?.providerId ?? faux.provider.id;
     const modelsPath = resolve(agentDir, "models.json");
@@ -1488,7 +1491,7 @@ export async function seedAgentDirModelsJsonFromFaux(
       ),
       "utf8",
     );
-    return { close: mock.close };
+    return { close: mock.close, baseUrl: mock.baseUrl };
   } catch (error) {
     await mock.close();
     throw error;

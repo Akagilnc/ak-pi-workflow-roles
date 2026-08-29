@@ -4,8 +4,8 @@
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve, join, relative, sep } from "node:path";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -19,12 +19,42 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 
-// continueRecent always allocates a deferred sessionFile; this is the discovery result.
-const { findMostRecentSession } = await import(
-  new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href,
-) as {
-  findMostRecentSession: (sessionDir: string, cwd?: string) => string | null;
-};
+const CURRENT_SESSION_LEDGER = "current-session.json";
+
+type CurrentSessionRecord = { readonly sessionFile: string };
+
+function readCurrentSession(sessionDir: string): string {
+  const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
+  try {
+    const value: unknown = JSON.parse(readFileSync(ledger, "utf8"));
+    if (
+      typeof value !== "object"
+      || value === null
+      || typeof (value as CurrentSessionRecord).sessionFile !== "string"
+      || (value as CurrentSessionRecord).sessionFile.length === 0
+    ) {
+      throw new Error("sessionFile is missing");
+    }
+    return (value as CurrentSessionRecord).sessionFile;
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `archivist current-session ledger is unavailable or invalid (${ledger}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+function writeCurrentSession(sessionDir: string, sessionFile: string): void {
+  const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
+  try {
+    writeFileSync(ledger, `${JSON.stringify({ sessionFile })}\n`, { flag: "wx" });
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+}
 
 /** Parent session surface needed to link and (when already under home) nest the record. */
 export type RecordSessionParent = {
@@ -49,44 +79,28 @@ export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
  * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
  * ensureRealDirectoryTree already owns the sessionDir chain; a final .jsonl symlink is
  * invisible to that directory walk, so this runs once before SessionManager.open.
- * Circle is the book physical root that owns sessionDir — not merely ledger home — so a
- * books/A nest cannot resume a final file whose realpath lands in books/B.
+ * Circle is the authorized nest (sessionDir) itself — lexical path and realpath must both
+ * stay inside it. Same-book cross-nest pointers and cross-book symlinks are refused alike.
  * realpath/stat failures stay typed ActivationLedgerError with original cause — never
  * wash through physicalPathIdentity's non-ENOENT lexical fallback.
  */
-function assertRecentFinalFileUnderLedgerHome(
-  ledgerHome: string,
+function assertRecentFinalFileUnderSessionDir(
   sessionDir: string,
   recentFile: string,
 ): void {
-  const absoluteHome = resolve(ledgerHome);
   const absoluteSessionDir = resolve(sessionDir);
   const absoluteFile = resolve(recentFile);
-  // sessionDir just passed ensureRealDirectoryTree: derive the owning book lexically.
-  const relToHome = relative(absoluteHome, absoluteSessionDir);
-  const segments = relToHome.split(sep);
-  if (
-    relToHome === ""
-    || isAbsolute(relToHome)
-    || relToHome === ".."
-    || relToHome.startsWith(`..${sep}`)
-    || segments[0] !== "books"
-    || segments[1] === undefined
-    || segments[1] === ""
-    || segments[1] === "."
-    || segments[1] === ".."
-  ) {
+  if (absoluteFile !== absoluteSessionDir && !pathContainedIn(absoluteSessionDir, absoluteFile)) {
     throw new ActivationLedgerError(
-      `archivist record sessionDir must be under a ledger book (${ledgerHome}): ${sessionDir}`,
+      `archivist record session must be under the authorized nest (${sessionDir}): ${recentFile}`,
     );
   }
-  const bookRoot = join(absoluteHome, "books", segments[1]);
-  let realBookRoot: string;
+  let realSessionDir: string;
   try {
-    realBookRoot = realpathSync(bookRoot);
+    realSessionDir = realpathSync(absoluteSessionDir);
   } catch (error) {
     throw new ActivationLedgerError(
-      `activation ledger book is not resolvable (${bookRoot}): ${errorText(error)}`,
+      `archivist record sessionDir is not resolvable (${absoluteSessionDir}): ${errorText(error)}`,
       { cause: error },
     );
   }
@@ -99,9 +113,9 @@ function assertRecentFinalFileUnderLedgerHome(
       { cause: error },
     );
   }
-  if (realFile !== realBookRoot && !pathContainedIn(realBookRoot, realFile)) {
+  if (realFile !== realSessionDir && !pathContainedIn(realSessionDir, realFile)) {
     throw new ActivationLedgerError(
-      `archivist record session must be under the ledger book (${bookRoot}): ${recentFile}`,
+      `archivist record session must be under the authorized nest (${sessionDir}): ${recentFile}`,
     );
   }
 }
@@ -113,7 +127,7 @@ function assertRecentFinalFileUnderLedgerHome(
  * identity is checked once before SessionManager.open (directory walk cannot see a
  * trailing .jsonl symlink). New principals mint under the already-validated sessionDir
  * via destination-free SessionManager.create — no derived postcondition.
- * Resume via Pi findMostRecentSession is limited to subject-keyed identity and the
+ * Resume via the AK-owned current-session ledger is limited to subject-keyed identity and the
  * authorized worker-submission-gate durable path. Ordinary no-subject children
  * (evidence-children, auditor-roles, …) always mint a fresh session — never reopen
  * a sibling volume selected only by kind/cwd/mtime.
@@ -152,18 +166,17 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
     parentSession = parentFile;
   }
 
+  const nestAlreadyExists = existsSync(sessionDir);
   // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   // Subject-keyed nests continue by subject digest; gate durable resume is the only
   // authorized no-subject same-nest continuation. All other kinds mint fresh.
   const mayResumeSameNest =
     options.subject !== undefined || options.kind === WORKER_SUBMISSION_GATE_KIND;
-  if (mayResumeSameNest) {
-    const recentFile = findMostRecentSession(sessionDir, cwd);
-    if (recentFile !== null) {
-      assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile);
-      return SessionManager.open(recentFile, sessionDir, cwd);
-    }
+  if (mayResumeSameNest && nestAlreadyExists) {
+    const recentFile = readCurrentSession(sessionDir);
+    assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+    return SessionManager.open(recentFile, sessionDir, cwd);
   }
 
   const session = SessionManager.create(
@@ -183,6 +196,9 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
         // Rebind so subsequent appendCustomEntry uses O_APPEND (flushed=true).
         session.setSessionFile(file);
       }
+    }
+    if (mayResumeSameNest && file !== undefined) {
+      writeCurrentSession(sessionDir, file);
     }
   }
   return session;

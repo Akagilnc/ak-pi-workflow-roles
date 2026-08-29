@@ -66,6 +66,7 @@ import {
   withColdInstalledPackage,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
+import { writeInstitutionalSeatTable, parentInheritedSeats } from "../helpers/institutional-seat-table.ts";
 
 import {
   textOf,
@@ -82,16 +83,21 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
   await withActivationHome({ prefix: "ak-tool-observation-" }, async ({ home, agentDir }) => {
     const issueRoot = resolve(home, ".ak/work/issues/79");
     await mkdir(issueRoot, { recursive: true });
-    const sessionDirectory = resolve(
+    const runDirectory = resolve(
       home,
       ".ak-roles",
       "books",
       basename(home),
       "runs",
       "judge-tool-observation",
-      "session",
     );
+    const sessionDirectory = resolve(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
+    // #518 S3: direct-Pi judge activation reads seat selection from the run page.
+    await writeInstitutionalSeatTable(
+      runDirectory,
+      parentInheritedSeats({ provider: "ak-tool-observation-bash", model: "faux-1", thinking: "off" }),
+    );
     await writeFile(resolve(issueRoot, "authority.md"), "owner authority for tool observation\n", "utf8");
     await writeFile(
       resolve(agentDir, "navigator-model.json"),
