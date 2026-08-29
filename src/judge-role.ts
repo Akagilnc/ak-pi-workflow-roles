@@ -64,23 +64,6 @@ export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
 }
 
-function requireSingletonSubmissionCall(
-  toolCallId: string,
-  ctx: HostContext,
-): void {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant" || !Array.isArray(leaf.message.content)) {
-    throw new Error("大理寺回执非唯一终局工具调用");
-  }
-  const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
-  const call = calls[0];
-  if (
-    calls.length !== 1 || call === undefined || call.id !== toolCallId ||
-    call.name !== JUDGE_OUTPUT_TOOL_NAME
-  ) {
-    throw new Error("大理寺回执非唯一终局工具调用");
-  }
-}
 
 export function createJudgeRoleRuntime(
   pi: RoleHost,
@@ -104,7 +87,6 @@ export function createJudgeRoleRuntime(
           parameters: judgeVerdictSchema,
           async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
-            requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).

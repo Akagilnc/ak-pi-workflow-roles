@@ -4,7 +4,6 @@ import * as reviewerContracts from "../../src/package-contracts/reviewer-output.
 import { projectReviewerIntentToReceipt, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, validateRuntimeReviewerReceipt, type ReviewerIntent } from "../../src/package-contracts/reviewer-output.ts";
 // @ts-expect-error ReviewerOutput was a compatibility alias and is intentionally absent.
 import type { ReviewerOutput } from "../../src/package-contracts/reviewer-output.ts";
-import { extractReviewerRoleOutcome } from "../../src/public-cli/settlement.ts";
 import { assembleRuntimeReviewerReceipt } from "../../src/reviewer-settlement.ts";
 
 const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
@@ -191,22 +190,12 @@ test("parent axis amendment survives assembly without rewriting child reports", 
   // No second full aggregate report — only the seat-owned delta slot.
   assert.equal("aggregate" in assembled, false);
   assert.equal("report" in assembled, false);
-  validateRuntimeReviewerReceipt(assembled);
+  const receipt = validateRuntimeReviewerReceipt(assembled);
   // Public decisive facts: typed amendment axis presence only — no prose copy.
-  const extracted = extractReviewerRoleOutcome([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: REVIEWER_OUTPUT_TOOL_NAME,
-        content: [{ type: "text", text: "Reviewer report accepted" }],
-        details: assembled,
-        isError: false,
-      },
-    } as any,
-  ]);
-  assert.deepEqual(extracted?.outcome.decisiveFacts.amendmentAxes, ["standards"]);
-  assert.equal("amendments" in (extracted?.outcome.decisiveFacts ?? {}), false);
+  assert.deepEqual(
+    Object.keys(receipt.amendments ?? {}),
+    ["standards"],
+  );
 
   // Missing amendments and unknown extras never reject; only typed presence is retained.
   const bare = assembleFromSubmission({ status: "completed", presentation: true });

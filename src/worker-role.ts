@@ -173,26 +173,6 @@ export function validateWorkerOutput(
   return validateAcceptedWorkerDetails(output, "Coder") as CoderOutput;
 }
 
-function requireSingletonSubmissionCall(
-  toolCallId: string,
-  expectedToolName: string,
-  roleLabel: WorkerRoleLabel,
-  ctx: HostContext,
-): void {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  const seat = roleLabel === "Fixer" ? "修内司" : "将作监";
-  if (leaf?.type !== "message" || leaf.message === undefined || leaf.message.role !== "assistant" || !Array.isArray(leaf.message.content)) {
-    throw new Error(`${seat}回执非唯一终局工具调用`);
-  }
-  const calls = leaf.message.content.filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall");
-  const call = calls[0];
-  if (
-    calls.length !== 1 || call === undefined || call.id !== toolCallId ||
-    call.name !== expectedToolName
-  ) {
-    throw new Error(`${seat}回执非唯一终局工具调用`);
-  }
-}
 
 /** Reminder bounces stay typed rejects; IO/infrastructure keep identity via host failInfrastructure. */
 function assertAcceptableThroughHost(
@@ -283,12 +263,6 @@ export function createFixerRoleRuntime(
             if (packet === undefined || phase === undefined) {
               throw new Error("修内司修理包与阶段未装载");
             }
-            requireSingletonSubmissionCall(
-              toolCallId,
-              FIXER_OUTPUT_TOOL_NAME,
-              "Fixer",
-              ctx,
-            );
             const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
             assertAcceptableThroughHost(
               submissionGate,
@@ -414,12 +388,6 @@ export function createCoderRoleRuntime(
             if (task === undefined || phase === undefined) {
               throw new Error("将作监任务与阶段未装载");
             }
-            requireSingletonSubmissionCall(
-              toolCallId,
-              CODER_OUTPUT_TOOL_NAME,
-              "Coder",
-              ctx,
-            );
             const output = validateWorkerOutput(parameters, phase, "Coder");
             if (
               phase === "apply" && output.status === "completed" &&

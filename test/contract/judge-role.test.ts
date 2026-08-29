@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import test, { afterEach } from "node:test";
+import test, { after, afterEach } from "node:test";
 
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
 import {
@@ -76,13 +76,23 @@ import { createMockProviderServer, packageRoot, withActivationHome, withInProces
 // install registry in the shared helper, one page writer reused everywhere.
 const activeRunDirs: string[] = [];
 function installInstitutionalRunDir(seats: InstitutionalResolutionPage["seats"]): string {
-  const runDirectory = mkdtempSync(join(tmpdir(), "ak-judge-run-"));
+  // Publisher face is `<runId>@<role>` — sole runIdFromRunDirectory authority requires the @.
+  const book = mkdtempSync(join(tmpdir(), "ak-judge-book-"));
+  const runDirectory = join(book, `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@judge`);
+  mkdirSync(runDirectory, { recursive: true });
   // writeInstitutionalSeatTable writes synchronously (writeFileSync); the
   // resolved promise is fire-and-forget, so the page is on disk immediately.
   void writeInstitutionalSeatTable(runDirectory, seats);
   activeRunDirs.push(runDirectory);
   process.env.AK_ROLE_RUN_DIR = runDirectory;
   return runDirectory;
+}
+function disposeInstitutionalRunDir(runDirectory: string): void {
+  const index = activeRunDirs.indexOf(runDirectory);
+  if (index !== -1) activeRunDirs.splice(index, 1);
+  if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
+  // book parent is the temp mkdtemp that holds `<runId>@role`.
+  rmSync(dirname(runDirectory), { recursive: true, force: true });
 }
 async function withInstitutionalRunDir<T>(
   seats: InstitutionalResolutionPage["seats"],
@@ -92,18 +102,22 @@ async function withInstitutionalRunDir<T>(
   try {
     return await run();
   } finally {
-    const index = activeRunDirs.indexOf(runDirectory);
-    if (index !== -1) activeRunDirs.splice(index, 1);
-    if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
-    rmSync(runDirectory, { recursive: true, force: true });
+    disposeInstitutionalRunDir(runDirectory);
   }
 }
+// Parent agent process may inject AK_ROLE_RUN_DIR; isolate this file from that binding.
+const ambientRunDirAtLoad = process.env.AK_ROLE_RUN_DIR;
+delete process.env.AK_ROLE_RUN_DIR;
+after(() => {
+  if (ambientRunDirAtLoad === undefined) delete process.env.AK_ROLE_RUN_DIR;
+  else process.env.AK_ROLE_RUN_DIR = ambientRunDirAtLoad;
+});
 afterEach(() => {
   while (activeRunDirs.length > 0) {
-    const runDirectory = activeRunDirs.pop()!;
-    if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
-    rmSync(runDirectory, { recursive: true, force: true });
+    disposeInstitutionalRunDir(activeRunDirs[activeRunDirs.length - 1]!);
   }
+  // Drop any leftover env binding between tests (owned dirs already popped above).
+  delete process.env.AK_ROLE_RUN_DIR;
   // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
   // is restored to its original value after nested registrations.
   while (institutionalProviderCleanups.length > 0) {
@@ -313,8 +327,20 @@ function toolCallContext(
 async function withPassingGatekeeper(context: ExtensionContext): Promise<ExtensionContext> {
   const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
   const model = faux.getModel();
-  // Gatekeeper children read their seat from the institutional resolution page.
-  const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
+  // Reuse only a run dir this file installed (sole-final bounce→accept cycle).
+  // Never reuse ambient AK_ROLE_RUN_DIR from a parent agent process — that seals under a foreign run.
+  const existingRun = process.env.AK_ROLE_RUN_DIR;
+  const ownedExisting =
+    typeof existingRun === "string" &&
+    existingRun.length > 0 &&
+    activeRunDirs.includes(existingRun)
+      ? existingRun
+      : undefined;
+  const runDirectory =
+    ownedExisting ?? installInstitutionalRunDir(parentInheritedSeats(model));
+  if (ownedExisting !== undefined) {
+    void writeInstitutionalSeatTable(runDirectory, parentInheritedSeats(model));
+  }
   if (context.sessionManager !== undefined) {
     (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
   }
@@ -1284,42 +1310,31 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   let bounceGatekeeperProviderRequests = 0;
   const bounceContext = (id: string) => Object.assign(
     toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
-    { modelRegistry: { getProvider() { bounceGatekeeperProviderRequests += 1; } } },
+    { cwd: process.cwd(), modelRegistry: { getProvider() { bounceGatekeeperProviderRequests += 1; } } },
   );
+  const seatModel = fauxProvider({ provider: "unfinished-seats", api: "unfinished-seats" }).getModel();
   // Positive: no reason → bounce → same-run reasoned resubmit accepted through Gatekeeper.
-  await assert.rejects(
-    tool.execute("unfinished-bare", bare, undefined, undefined, bounceContext("unfinished-bare")),
-    (error: unknown) =>
-      error instanceof WorkerUnfinishedReasonReminderError &&
-      error.code === "worker_unfinished_reason_reminder",
-  );
-  assert.equal(bounceGatekeeperProviderRequests, 0);
-  assert.deepEqual(
-    (await tool.execute(
-      "unfinished-reasoned",
+  await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+    await assert.rejects(
+      tool.execute("unfinished-bare", bare, undefined, undefined, bounceContext("unfinished-bare")),
+      (error: unknown) =>
+        error instanceof WorkerUnfinishedReasonReminderError &&
+        error.code === "worker_unfinished_reason_reminder",
+    );
+    assert.equal(bounceGatekeeperProviderRequests, 0);
+    assert.deepEqual(
+      (await tool.execute(
+        "unfinished-reasoned",
+        reasoned,
+        undefined,
+        undefined,
+        await withPassingGatekeeper(toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }])),
+      )).details,
       reasoned,
-      undefined,
-      undefined,
-      await withPassingGatekeeper(toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }])),
-    )).details,
-    reasoned,
-  );
-  const { extractCoderRoleOutcome } = await import("../../src/public-cli/settlement.ts");
-  const projected = extractCoderRoleOutcome([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: CODER_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: reasoned,
-      },
-    },
-  ] as never);
-  assert.equal(projected?.outcome.decisiveFacts.reason, reasoned.reason);
-  assert.equal(projected?.outcome.decisiveFacts.remainingScope, reasoned.remainingScope);
-
+    );
+  });
   // Negative: continuous bare resubmits bounce at most twice, then accept through Gatekeeper (no loop).
+  // Fresh admitted run — prior seal must not cross run boundaries.
   const harness2 = extensionHarness("coder", {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -1338,25 +1353,27 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   const tool2 = harness2.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool2);
   bounceGatekeeperProviderRequests = 0;
-  await assert.rejects(
-    tool2.execute("u1", bare, undefined, undefined, bounceContext("u1")),
-    (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
-  );
-  await assert.rejects(
-    tool2.execute("u2", bare, undefined, undefined, bounceContext("u2")),
-    (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
-  );
-  assert.equal(bounceGatekeeperProviderRequests, 0);
-  assert.deepEqual(
-    (await tool2.execute(
-      "u3",
+  await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+    await assert.rejects(
+      tool2.execute("u1", bare, undefined, undefined, bounceContext("u1")),
+      (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
+    );
+    await assert.rejects(
+      tool2.execute("u2", bare, undefined, undefined, bounceContext("u2")),
+      (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
+    );
+    assert.equal(bounceGatekeeperProviderRequests, 0);
+    assert.deepEqual(
+      (await tool2.execute(
+        "u3",
+        bare,
+        undefined,
+        undefined,
+        await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }])),
+      )).details,
       bare,
-      undefined,
-      undefined,
-      await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }])),
-    )).details,
-    bare,
-  );
+    );
+  });
 });
 
 test("Gatekeeper non-pass projects structured details through role-runtime tool_result", async () => {
@@ -2275,11 +2292,16 @@ test("undeclared prerequisite submissions are rejected; declared references pass
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
+    const seatModel = fauxProvider({ provider: "prereq-seats", api: "prereq-seats" }).getModel();
     const candidate = (prerequisiteId: string) => ({ status: "refused" as const, report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId, evidence: "Choice absent." } }] });
-    await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }])), /Fixer output/);
-    const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }])));
-    assert.equal(Object.isFrozen(accepted.details), true);
-    assert.deepEqual(accepted.details, candidate("owner.choice"));
+    // Shape reject: session header supplies run identity (no shared unbound).
+    await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, Object.assign(toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() })), /Fixer output/);
+    // Each accepted sole-final needs its own admitted run — post-seal is terminal.
+    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+      const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }])));
+      assert.equal(Object.isFrozen(accepted.details), true);
+      assert.deepEqual(accepted.details, candidate("owner.choice"));
+    });
 
     const partial = {
       status: "partially_completed" as const,
@@ -2289,21 +2311,25 @@ test("undeclared prerequisite submissions are rejected; declared references pass
         { name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice", evidence: "Choice absent." } },
       ],
     };
-    await assert.rejects(
-      tool.execute("partial", partial, undefined, undefined, toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }])),
-      (error: unknown) =>
-        error instanceof WorkerCommitReminderError &&
-        error.code === "worker_commit_reminder",
-    );
-    const second = await tool.execute("partial2", partial, undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
-    assert.deepEqual(second.details, partial);
+    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+      await assert.rejects(
+        tool.execute("partial", partial, undefined, undefined, Object.assign(toolCallContext([{ id: "partial", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() })),
+        (error: unknown) =>
+          error instanceof WorkerCommitReminderError &&
+          error.code === "worker_commit_reminder",
+      );
+      const second = await tool.execute("partial2", partial, undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
+      assert.deepEqual(second.details, partial);
+    });
 
     const sharedCommit = "shared-commit";
     const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
     const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
-    const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }])));
-    assert.equal(shared.terminate, true);
-    assert.deepEqual(shared.details.classResults, [classA, classB]);
+    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+      const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }])));
+      assert.equal(shared.terminate, true);
+      assert.deepEqual(shared.details.classResults, [classA, classB]);
+    });
   });
 });
 test("declared plan refusal passes structure then Gatekeeper", async () => {
@@ -2381,64 +2407,6 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
   );
 });
 
-test("fixer output must be the sole call in its assistant batch", async () => {
-  const harness = extensionHarness("fixer", {
-    "ak-fix-packet": "/materials/fix.md",
-    "ak-fixer-phase": "apply",
-  });
-  createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadFixerSoul: async () => "FIXER LAW",
-    loadFixPacket: async () => emptyFixPacket,
-    transcriptFromContext: () => "record",
-    auditSoulCompliance: async () => ({ status: "pass" }),
-  })(harness.pi as ExtensionAPI);
-  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-    await harness.handlers.get("session_start")?.({}, activationCtx(home));
-    const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
-    assert.ok(tool);
-    const output = { status: "completed", report: "Repaired and verified.", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
-    const sibling = { id: "sibling", name: "read" };
-
-    for (const calls of [
-      [],
-      [{ id: "wrong-id", name: FIXER_OUTPUT_TOOL_NAME }],
-      [{ id: "fixer", name: CODER_OUTPUT_TOOL_NAME }],
-      [
-        { id: "fixer", name: FIXER_OUTPUT_TOOL_NAME },
-        { id: "fixer-2", name: FIXER_OUTPUT_TOOL_NAME },
-      ],
-      [{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }, sibling],
-      [sibling, { id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }],
-    ]) {
-      await assert.rejects(
-        tool.execute(
-          "fixer",
-          output,
-          undefined,
-          undefined,
-          toolCallContext(calls),
-        ),
-      );
-    }
-
-    await assert.rejects(
-      tool.execute("fixer", output, undefined, undefined, toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
-      (error: unknown) =>
-        error instanceof WorkerCommitReminderError &&
-        error.code === "worker_commit_reminder",
-    );
-    const accepted = await tool.execute(
-      "fixer",
-      output,
-      undefined,
-      undefined,
-      await withPassingGatekeeper(toolCallContext([{ id: "fixer", name: FIXER_OUTPUT_TOOL_NAME }])),
-    );
-    assert.deepEqual(accepted.details, output);
-    assert.equal(accepted.terminate, true);
-  });
-});
 
 test("fixer activation leaves its tool surface unchanged", async () => {
   const harness = extensionHarness(
@@ -2465,65 +2433,6 @@ test("fixer activation leaves its tool surface unchanged", async () => {
 });
 
 
-test("judge output must be the sole call in its assistant batch", async () => {
-  let auditCalls = 0;
-  const { tool } = await startJudge(async () => {
-    auditCalls += 1;
-    return { status: "pass" };
-  });
-  const verdict = { judgeStatus: "converged" };
-  const sibling = { id: "sibling", name: "read", arguments: { path: "README.md" } };
-
-  for (const calls of [
-    [],
-    [{ id: "wrong-id", arguments: verdict }],
-    [{ id: "judge", name: FIXER_OUTPUT_TOOL_NAME, arguments: verdict }],
-    [{ id: "judge", arguments: verdict }, sibling],
-    [sibling, { id: "judge", arguments: verdict }],
-  ]) {
-    await assert.rejects(
-      tool.execute(
-        "judge",
-        verdict,
-        undefined,
-        undefined,
-        toolCallContext(calls),
-      ),
-    );
-  }
-  for (const sessionManager of [
-    SessionManager.inMemory(),
-    (() => {
-      const manager = SessionManager.inMemory();
-      manager.appendMessage({
-        role: "user",
-        content: "not a leaf call",
-        timestamp: Date.now(),
-      });
-      return manager;
-    })(),
-  ]) {
-    await assert.rejects(
-      tool.execute(
-        "judge",
-        verdict,
-        undefined,
-        undefined,
-        { sessionManager, abort() {} } as unknown as ExtensionContext,
-      ),
-    );
-  }
-  assert.equal(auditCalls, 0);
-  const accepted = await tool.execute(
-    "judge",
-    verdict,
-    undefined,
-    undefined,
-    await withPassingGatekeeper(toolCallContext([{ id: "judge", name: JUDGE_OUTPUT_TOOL_NAME, arguments: verdict }])),
-  );
-  assert.deepEqual(accepted.details, verdict);
-  assert.equal(accepted.terminate, true);
-});
 
 test(
   "accepted role terminal races production 10s Navigator grace through role-runtime to Terminal",

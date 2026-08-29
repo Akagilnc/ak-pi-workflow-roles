@@ -1,5 +1,6 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -42,7 +43,6 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
-  extractReviewerRoleOutcome,
   formatTerminalResult,
   settleReviewerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -54,9 +54,13 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-reviewer-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -369,7 +373,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       ],
       createRunId: () => "run-reviewer-settle-001",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "code-review",
@@ -424,22 +428,21 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       }),
     ];
     await writeFile(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "reviewer",
+      details: receipt,
+      toolCallId: "r1",
+    });
 
     const entries = sessionLines.map((line) => JSON.parse(line));
-    const extracted = extractReviewerRoleOutcome(entries);
-    assert.equal(extracted?.outcome.role, "reviewer");
-    assert.equal(extracted?.outcome.kind, "accepted");
-    assert.equal(extracted?.outcome.status, "completed");
-    assert.deepEqual(extracted?.outcome.decisiveFacts.axes, ["standards", "spec"]);
-    assert.deepEqual(extracted?.outcome.decisiveFacts.reportAxes, ["standards", "spec"]);
-    assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
-    assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { rejectedReceipts?: Array<{ diagnosticAvailable?: unknown }> })
-      ?.rejectedReceipts?.[0]?.diagnosticAvailable, false);
-
     const invocations = extractReviewerMethodInvocations(entries, {
       allowedLocations: [material.skillPath, skillPath],
     });
@@ -613,6 +616,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details: receipt, toolCallId: "ok1" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -722,6 +726,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details: receipt, toolCallId: "ok1" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -776,8 +781,8 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       createRunId: () => "run-cli-reviewer-resume-bad-refs",
     });
     // Durable session principal required before resume load.
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
-    await writeFile(join(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
+    await writeFile(join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(admitted.runDirectory, {
       httpStatus: 429,
@@ -898,6 +903,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         );
         // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
         const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>`;
+        const details = lawfulReviewerReceipt(["standards"]);
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({
@@ -913,13 +919,14 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
               toolCallId: "rr1",
               toolName: REVIEWER_OUTPUT_TOOL_NAME,
               isError: false,
-              details: lawfulReviewerReceipt(["standards"]),
+              details,
             },
           })}\n`,
           "utf8",
         );
         return {
           code: 0,
+          sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "rr1" },
           stderr: "",
           timedOut: false,
           args: [...args],

@@ -26,6 +26,7 @@ import {
   assertPublicFailureSettlement,
   multiTurnIntermediateRetained,
 } from "../helpers/failure-settlement-kit.ts";
+import { recordAuditEscalationSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 test("public CLI multi-turn audit escalate covers audited seats", async () => {
   // #495 S6: reviewer-side auditor retired — seats follow AUDITOR_SOUL_ROLES (judge/doctor).
@@ -140,6 +141,24 @@ test("public CLI multi-turn audit escalate covers audited seats", async () => {
             `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
             "utf8",
           );
+          // Live audit-escalation must be ledger-recorded (settlement no longer rebuilds from JSONL).
+          if (
+            scene.toolResult.isError === false &&
+            scene.toolResult.details !== null &&
+            typeof scene.toolResult.details === "object" &&
+            (scene.toolResult.details as { kind?: unknown }).kind === AUDIT_ESCALATION_KIND
+          ) {
+            const runDirectory = join(dirname(sessionFile), "..");
+            await recordAuditEscalationSubmission({
+              cwd: project,
+              runId,
+              role: scene.role,
+              details: scene.toolResult.details,
+              home,
+              runDirectory,
+              toolCallId: roleCallId,
+            });
+          }
           return { code: 0, stderr: "", timedOut: false, args: [...args] };
         },
         }),
@@ -151,21 +170,23 @@ test("public CLI multi-turn audit escalate covers audited seats", async () => {
   // (a) Audited-seat multi-turn escalate via real public CLI.
   for (const role of AUDITOR_SOUL_ROLES) {
     const seat = seats[role];
-    const projected = JSON.parse(JSON.stringify(buildAuditEscalationResult(
+    // Keep live registry projection for ledger recognition; clone only for session bytes.
+    const liveProjected = buildAuditEscalationResult(
       {
         status: "escalate",
         conflicts: auditCandidate.conflicts,
         decisionGate: auditCandidate.decisionGate,
       },
       { role },
-    )));
+    );
+    const projected = JSON.parse(JSON.stringify(liveProjected));
     await runMultiTurnPublicCliScene({
       label: `${role}-escalate`,
       role,
       argv: seat.argv,
       roleCallArguments: { role },
       auditArguments: auditCandidate,
-      toolResult: { isError: false, details: projected },
+      toolResult: { isError: false, details: liveProjected },
     }, async ({ result, stdout, stderr }) => {
       assert.equal(result.exitCode, 0, `${role}: ${stderr.join("") || stdout.join("") || "nonzero"}`);
       assert.ok(result.terminal, `${role}: public CLI must settle a Terminal`);
@@ -263,8 +284,17 @@ test("public report publication failures retain typed errno identity", async () 
             await row.plant(runDir);
             await mkdir(sessionDir, { recursive: true });
             await row.seedSession(join(sessionDir, "session.jsonl"));
-            return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
-            return { code: 0, stdout: "", stderr: "", timedOut: false, args: [...args] };
+            return {
+              code: 0,
+              stdout: "",
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+              sealedAcceptance: {
+                role: "judge" as const,
+                details: { judgeStatus: "converged" },
+              },
+            };
           },
           }),
         },
@@ -657,6 +687,10 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
             stderr: "late host noise\n",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: {
+              role: "judge" as const,
+              details: { judgeStatus: "converged" },
+            },
           };
         },
         }),

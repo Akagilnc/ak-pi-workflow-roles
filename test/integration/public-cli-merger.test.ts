@@ -1,5 +1,6 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -36,7 +37,6 @@ import {
 import { RESUME_TRANSPORT_ENVELOPE, selectResumeContinuationPrompt } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractMergerMethodInvocations,
-  extractMergerRoleOutcome,
   settleMergerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -44,9 +44,13 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-merger-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -254,7 +258,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       attachmentPaths: [],
       createRunId: () => "run-merger-settle-001",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "resolving-merge-conflicts",
@@ -311,18 +315,18 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
         },
       }),
     ];
-    await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "merger",
+      details: receipt,
+      toolCallId: "m1",
+    });
 
     const entries = sessionLines.map((line) => JSON.parse(line));
-    const extracted = extractMergerRoleOutcome(entries);
-    assert.equal(extracted?.outcome.role, "merger");
-    assert.equal(extracted?.outcome.kind, "accepted");
-    assert.equal(extracted?.outcome.status, "completed");
-    assert.equal(
-      extracted?.outcome.decisiveFacts.mergeCommitId,
-      "a".repeat(40),
-    );
-
     const methodInvocations = extractMergerMethodInvocations(entries, {
       allowedLocations: [material.skillPath, configuredPath],
     });
@@ -395,7 +399,16 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     );
     assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
 
-    // escalate leaf is also a lawful accepted Terminal status.
+    // escalate leaf is also a lawful accepted Terminal status (own run ledger).
+    const escalateAdmitted = await admitMergerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
+      home,
+      cwd: project,
+      instruction: "Escalate the merge.",
+      attachmentPaths: [],
+      createRunId: () => "run-merger-settle-escalate",
+    });
+    const escalateReceiptBound = { ...escalateReceipt, attemptId: escalateAdmitted.runId };
     const escalateLines = [
       sessionLines[0]!,
       JSON.stringify({
@@ -407,7 +420,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
               type: "toolCall",
               id: "m2",
               name: MERGER_OUTPUT_TOOL_NAME,
-              arguments: escalateReceipt,
+              arguments: escalateReceiptBound,
             },
           ],
         },
@@ -419,16 +432,26 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
           toolCallId: "m2",
           toolName: MERGER_OUTPUT_TOOL_NAME,
           isError: false,
-          details: escalateReceipt,
+          details: escalateReceiptBound,
         },
       }),
     ];
+    await mkdir(piDurablePrincipalAuthority.decode(escalateAdmitted.principal).sessionDirectory, { recursive: true });
     await writeFile(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
+      piDurablePrincipalAuthority.decode(escalateAdmitted.principal).sessionFile,
       `${escalateLines.join("\n")}\n`,
       "utf8",
     );
-    const escalateTerminal = await settleMergerTerminalResult(admitted, piDurablePrincipalAuthority, {
+    await sealAcceptedSubmission({
+      runId: escalateAdmitted.runId,
+      cwd: project,
+      home,
+      runDirectory: escalateAdmitted.runDirectory,
+      role: "merger",
+      details: escalateReceiptBound,
+      toolCallId: "m2",
+    });
+    const escalateTerminal = await settleMergerTerminalResult(escalateAdmitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -582,6 +605,7 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -729,6 +753,7 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         return {
           code: 0,
+              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "r1" },
           stderr: "",
           timedOut: false,
           args: [...args],

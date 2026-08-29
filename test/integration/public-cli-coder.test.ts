@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -30,17 +30,21 @@ import {
   admitCoderInvocation,
 } from "../../src/public-cli/invocation.ts";
 import {
-  extractCoderRoleOutcome,
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-coder-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -205,7 +209,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       attachmentPaths: [],
       createRunId: () => "run-coder-settle-001",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
     const receipt = {
       status: "completed" as const,
@@ -240,17 +244,19 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       }),
     ];
     await writeFile(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
-
-    const extracted = extractCoderRoleOutcome(
-      sessionLines.map((line) => JSON.parse(line)),
-    );
-    assert.equal(extracted?.outcome.role, "coder");
-    assert.equal(extracted?.outcome.kind, "accepted");
-    assert.equal(extracted?.outcome.status, "completed");
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "coder",
+      details: receipt,
+      toolCallId: "c1",
+    });
 
     const terminal = await settleCoderTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
@@ -300,6 +306,51 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     // Evidence must not point at ambient home Skill discovery.
     const evidenceText = JSON.stringify(evidence);
     assert.equal(evidenceText.includes(".agents/skills"), false);
+  });
+});
+
+test("alternate host seals accepted Terminal without Pi acceptance leaf", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const receipt = {
+      status: "completed" as const,
+      report: "Alternate host sealed through production ledger producer.",
+    };
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(
+      ["coder", "--project", project, "Finish without a Pi session leaf."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-coder-alternate-host",
+        io,
+        roleTurnHost: createMinimalHost(async (request) => {
+          const { sessionDirectory, sessionFile } =
+            piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(sessionDirectory, { recursive: true });
+          // No Pi acceptance leaf — alternate host walks production ledger → sealed → Terminal.
+          await writeFile(sessionFile, "", "utf8");
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            home,
+            runId: "run-coder-alternate-host",
+            runDirectory: request.runDirectory,
+            role: "coder",
+            details: receipt,
+            toolCallId: "alt-1",
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0, stdout.join("") || "alternate host failed");
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal!.roleOutcome.role, "coder");
+    assert.equal(result.terminal!.roleOutcome.status, "completed");
   });
 });
 
@@ -376,6 +427,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "coder" as const, details: receipt, toolCallId: "p1" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -529,6 +581,10 @@ test("ak-role resume continues coder with preserved plan phase and exact session
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
+        const details = {
+                status: "planned",
+                report: "Resumed plan remains plan phase.",
+              };
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({
@@ -538,16 +594,14 @@ test("ak-role resume continues coder with preserved plan phase and exact session
               toolCallId: "r1",
               toolName: CODER_OUTPUT_TOOL_NAME,
               isError: false,
-              details: {
-                status: "planned",
-                report: "Resumed plan remains plan phase.",
-              },
+              details,
             },
           })}\n`,
           "utf8",
         );
         return {
           code: 0,
+          sealedAcceptance: { role: "coder" as const, details, toolCallId: "r1" },
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -624,6 +678,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "coder" as const, details: receipt, toolCallId: "bare1" },
               stderr: "",
               timedOut: false,
               args: [...args],

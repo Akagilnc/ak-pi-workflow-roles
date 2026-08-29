@@ -197,6 +197,8 @@ async function runJudgePublic(input: {
     readonly code: number;
     readonly stderr?: string;
   };
+  /** When set, seals via production submission ledger (accepted path). */
+  sealedAcceptance?: { readonly details: unknown };
 }): Promise<{ terminal: TerminalResult; exitCode: number; stdout: string[]; stderr: string[] }> {
   const { io, stdout, stderr } = captureIo();
   const result = await runAkRole(
@@ -220,6 +222,14 @@ async function runJudgePublic(input: {
           stderr: input.piResult?.stderr ?? "",
           timedOut: false,
           args: [...args],
+          ...(input.sealedAcceptance === undefined
+            ? {}
+            : {
+                sealedAcceptance: {
+                  role: "judge" as const,
+                  details: input.sealedAcceptance.details,
+                },
+              }),
         };
       },
           }),
@@ -247,6 +257,7 @@ test("public CLI projects normal gate dispatch + officer findings", async () => 
       home,
       project,
       runId: "run-gate-normal",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedGatePair(sessionDir, {
@@ -276,6 +287,7 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
       home,
       project,
       runId: "run-gate-no-reason",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedGatePair(sessionDir, {
@@ -306,6 +318,7 @@ test("public CLI omits gate when no auditor-roles gate ran", async () => {
       home,
       project,
       runId: "run-gate-no-gate",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
       },
@@ -329,6 +342,7 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
       home,
       project,
       runId: "run-gate-damaged",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         const auditorDir = join(sessionDir, "auditor-roles");

@@ -13,6 +13,8 @@ import {
   createPiRoleTurnHost,
   type PiSpawnRunner,
 } from "../../src/pi/role-turn-host.ts";
+import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
+import { sealAcceptedSubmissionForSpawn } from "./submission-ledger-fixture.ts";
 
 /** Minimal alternative host: controls typed results without entering the Pi adapter. */
 export function createMinimalHost(
@@ -20,6 +22,13 @@ export function createMinimalHost(
 ): RoleTurnHost {
   return { executeTurn };
 }
+
+/** Optional durable sealed fact the faux runner already owns as typed details. */
+export type LegacyFauxSealedAcceptance = {
+  readonly role: TerminalRoleName;
+  readonly details: unknown;
+  readonly toolCallId?: string;
+};
 
 /** Legacy faux runner shape used by pre-#526 tests. */
 export type LegacyFauxPiRunner = (
@@ -36,6 +45,8 @@ export type LegacyFauxPiRunner = (
   args?: string[];
   piIdentity?: { executable: string; version: string };
   knownFailure?: RoleTurnKnownFailure;
+  /** When set, write the sealed settlement fixture from these typed details only. */
+  sealedAcceptance?: LegacyFauxSealedAcceptance;
 }>;
 
 /**
@@ -51,6 +62,17 @@ export function roleTurnHostFromLegacyPiRunner(options: {
 }): RoleTurnHost {
   const spawnRunner: PiSpawnRunner = async (args, spawnOptions) => {
     const result = await options.piRunner(args, spawnOptions);
+    if (result.sealedAcceptance !== undefined) {
+      await sealAcceptedSubmissionForSpawn({
+        cwd: spawnOptions.cwd,
+        env: spawnOptions.env,
+        role: result.sealedAcceptance.role,
+        details: result.sealedAcceptance.details,
+        ...(result.sealedAcceptance.toolCallId === undefined
+          ? {}
+          : { toolCallId: result.sealedAcceptance.toolCallId }),
+      });
+    }
     const projected: RoleTurnResult = {
       code: result.code,
       stderr: result.stderr,

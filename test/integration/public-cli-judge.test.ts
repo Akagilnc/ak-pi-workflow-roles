@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
@@ -38,7 +38,6 @@ import {
   parseJudgeArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
-  extractJudgeRoleOutcome,
   extractNavigatorFact,
   NAVIGATOR_POST_ROLE_GRACE_MS,
   raceNavigatorGrace,
@@ -74,9 +73,13 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -178,15 +181,22 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
             piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
+          const details = {
+            judgeStatus: "escalate",
+            decisionGate: { question: "请二选一", options },
+          };
           await writeFile(
             join(sessionDir, "session.jsonl"),
-            sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, {
-              judgeStatus: "escalate",
-              decisionGate: { question: "请二选一", options },
-            }),
+            sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, details),
             "utf8",
           );
-          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+          return {
+            code: 0,
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+            sealedAcceptance: { role: "judge" as const, details },
+          };
         },
           }),
       },
@@ -288,7 +298,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
       admitted.runDirectory,
       join(home, ".ak-roles", "books", bookKey, "runs", "run-freeze-001@judge"),
     );
-    assert.equal(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
+    assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
     await access(admitted.admittedRequestPath);
     // Unbound admit writes no waiting.jsonl; when present it must never hold request content.
     const waitingPath = join(home, ".ak-roles", "books", bookKey, "waiting.jsonl");
@@ -862,162 +872,6 @@ test("withPhysicalAliasFixture removes root and rethrows original unlink error",
   await assertPathGone(aliasRoot);
 });
 
-test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
-  const entries = [
-    {
-      type: "custom",
-      customType: "ak-navigator-invocation",
-      data: {
-        invocationId: "019f8c2a-3333-7333-8333-333333333333",
-        role: "judge",
-        phase: null,
-        subjectKey: "/repo/.ak/work",
-      },
-    },
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: JUDGE_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: {
-          judgeStatus: "continue",
-          fix: { summary: "close the gate" },
-          classes: [{ name: "A", owner: "o", boundary: "b", disposition: "open" }],
-        },
-      },
-    },
-    {
-      type: "custom_message",
-      customType: "ak-navigator-attendance",
-      message: {
-        details: {
-          version: 1,
-          disposition: "recommendation",
-          invocationId: "019f8c2a-3333-7333-8333-333333333333",
-          role: "judge",
-          phase: null,
-          subjectKey: "/repo/.ak/work",
-          next: { role: "fixer", phase: "apply" },
-          reason: "typed next",
-          command: "Usage: pi --ak-role fixer --help",
-          route: [
-            { role: "judge", phase: null },
-            { role: "fixer", phase: "apply" },
-          ],
-        },
-      },
-    },
-  ];
-  const outcome = extractJudgeRoleOutcome(entries);
-  assert.equal(outcome?.kind, "accepted");
-  assert.equal(outcome?.status, "continue");
-  assert.equal(outcome?.decisiveFacts.fixSummary, "close the gate");
-
-  const navigator = extractNavigatorFact(entries);
-  assert.equal(navigator.disposition, "recommendation");
-  if (navigator.disposition === "recommendation") {
-    assert.equal(navigator.command, "ak-role fixer apply");
-    assert.equal(navigator.command.includes("pi --ak-role"), false);
-  }
-});
-
-test("settlement extractors keep newline/tab receipt facts on typed TerminalResult", () => {
-  const note = "ok\nartifact\tevidence\t/tmp/forged";
-  const fixSummary = "summary with\ttab and\nnewline";
-  const decisionQuestion = "Choose:\nA\tB";
-  const reason = "because\nthis\tpath";
-  const continueEntries = [
-    {
-      type: "custom",
-      customType: "ak-navigator-invocation",
-      data: {
-        invocationId: "019f8c2a-4444-7444-8444-444444444444",
-        role: "judge",
-        phase: null,
-        subjectKey: "/repo/.ak/work",
-      },
-    },
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: JUDGE_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: {
-          judgeStatus: "continue",
-          note,
-          fix: { summary: fixSummary },
-          classes: [{ name: "A", owner: "o", boundary: "b", disposition: "open" }],
-        },
-      },
-    },
-    {
-      type: "custom_message",
-      customType: "ak-navigator-attendance",
-      message: {
-        details: {
-          version: 1,
-          disposition: "recommendation",
-          invocationId: "019f8c2a-4444-7444-8444-444444444444",
-          role: "judge",
-          phase: null,
-          subjectKey: "/repo/.ak/work",
-          next: { role: "reviewer", phase: null },
-          reason,
-          command: "Usage: pi --ak-role reviewer --help",
-        },
-      },
-    },
-  ];
-  const continueOutcome = extractJudgeRoleOutcome(continueEntries);
-  assert.ok(continueOutcome);
-  assert.equal(continueOutcome.status, "continue");
-  assert.equal(continueOutcome.decisiveFacts.note, note);
-  assert.equal(continueOutcome.decisiveFacts.fixSummary, fixSummary);
-
-  const escalateEntries = [
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: JUDGE_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: {
-          judgeStatus: "escalate",
-          decisionGate: { question: decisionQuestion, options: ["A", "B"] },
-        },
-      },
-    },
-  ];
-  const escalateOutcome = extractJudgeRoleOutcome(escalateEntries);
-  assert.ok(escalateOutcome);
-  assert.equal(escalateOutcome.status, "escalate");
-  assert.equal(escalateOutcome.decisiveFacts.decisionQuestion, decisionQuestion);
-
-  const navigator = extractNavigatorFact(continueEntries);
-  assert.equal(navigator.disposition, "recommendation");
-  if (navigator.disposition === "recommendation") {
-    assert.equal(navigator.reason, reason);
-    assert.equal(navigator.command, "ak-role reviewer");
-  }
-  const terminal: TerminalResult = {
-    roleOutcome: continueOutcome,
-    navigator,
-    artifacts: [
-      { kind: "report", path: "/run/artifacts/report.json" },
-      { kind: "evidence", path: "/run/artifacts/evidence.json" },
-    ],
-    runId: "run-settle-encode",
-  };
-  // Typed artifact refs only — no rendered table/path presentation freeze (AC6).
-  assert.equal(terminal.artifacts.length, 2);
-  assert.equal(
-    terminal.artifacts.some((a) => a.path.includes("forged")),
-    false,
-  );
-});
-
 test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () => {
   assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
@@ -1203,6 +1057,23 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: {
+              role: "judge" as const,
+              details: {
+                judgeStatus: "converged",
+                note: "ok",
+                auditNoReceipt: {
+                  status: "no-receipt",
+                  terminalToolCalled: false,
+                  rejectedReceipts: [],
+                  deliveryTurns: 2,
+                  sessionCompletion: "settled-without-accepted-receipt",
+                  runPointer: "/audit/run",
+                  attemptPointer: "audit-attempt",
+                  acceptedReceipt: false,
+                },
+              },
+            },
           };
         },
           }),
@@ -1322,6 +1193,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
         prompt = String(args.at(-1));
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
+        const details = { judgeStatus: "converged" };
         await writeFile(
           join(sessionDir, "session.jsonl"),
           `${JSON.stringify({
@@ -1330,7 +1202,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
               role: "toolResult",
               toolName: JUDGE_OUTPUT_TOOL_NAME,
               isError: false,
-              details: { judgeStatus: "converged" },
+              details,
             },
           })}\n`,
           "utf8",
@@ -1340,6 +1212,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
           stderr: "",
           timedOut: false,
           args: [...args],
+          sealedAcceptance: { role: "judge" as const, details },
         };
       },
           }),

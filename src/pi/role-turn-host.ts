@@ -25,7 +25,6 @@ import type {
 } from "../host-contracts.ts";
 import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
-import { decodePiDurablePrincipal } from "./durable-principal.ts";
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -144,10 +143,7 @@ export function buildPiTurnExtraArgs(
   authority: DurablePrincipalAuthority,
   extraPiArgs: readonly string[] = [],
 ): string[] {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(
-    authority,
-    request.principal,
-  );
+  const { sessionFile, sessionDirectory } = authority.decode(request.principal);
   const prompt =
     request.continuation.kind === "initial" || request.continuation.kind === "resume"
       ? request.continuation.prompt
@@ -430,7 +426,7 @@ export async function appendPiSessionCustomEntry(
   customType: string,
   data: unknown,
 ): Promise<void> {
-  const { sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const { sessionFile } = authority.decode(principal);
   const text = await readFile(sessionFile, "utf8");
   let parentId: string | null = null;
   for (const line of text.trim().split("\n").filter(Boolean)) {

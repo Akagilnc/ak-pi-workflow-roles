@@ -13,6 +13,7 @@ import {
 } from "../../src/collector-role.ts";
 import type { CollectorClock } from "../../src/collector-evidence.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { createFakeGitHubTransport, samplePull, sampleUser } from "../helpers/fake-github-transport.ts";
 import { withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 
@@ -84,25 +85,21 @@ test("ak-role Collector rejects output that is not the sole final call", async (
   await withActivationHome({ prefix: "ak-collector-sole-final-" }, async ({ agentDir, home }) => {
     const transport = createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] });
     const faux = fauxProvider({ api: "collector-sole-final", provider: "collector-sole-final", tokenSize: { min: 1000, max: 1000 } });
-    let completions = 0;
-    const respond = (message: ReturnType<typeof fauxAssistantMessage>) => () => {
-      completions += 1;
-      return message;
-    };
     faux.setResponses([
-      respond(fauxAssistantMessage([fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "observe" }), fauxToolCall(COLLECTOR_OUTPUT_TOOL, {}, { id: "output" })], { stopReason: "toolUse" })),
-      respond(fauxAssistantMessage("done")),
-      respond(fauxAssistantMessage("still no receipt")),
+      fauxAssistantMessage([fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "observe" }), fauxToolCall(COLLECTOR_OUTPUT_TOOL, {}, { id: "output" })], { stopReason: "toolUse" }),
+      fauxAssistantMessage("done"),
+      fauxAssistantMessage("still no receipt"),
     ]);
     await withInProcessPi({ activationLedgerSession: true, cwd: home, agentDir, faux, modelsPath: null, extensionFactories: [createRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: clock, transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }) })], noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin", flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1" } }, async ({ session, sessionManager }) => {
       await session.prompt("start");
       const entries = sessionManager.getEntries() as any[];
       const output = entries.find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL);
+      // Typed terminal: non-sole-final rejected; no sealed projection.
       assert.equal(output?.message.isError, true, "the original non-sole-final output remains rejected");
       assert.equal(process.exitCode, undefined, "package-owned delivery must not enter Collector's later-input failure path");
-      assert.equal(completions, 3, "the lifecycle consumes the rejection turn and one bounded delivery turn");
-      assert.equal(entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-receipt-delivery-request").length, 1,
-        "the rejected receipt plus one request consume the shared two-turn budget");
+      const headerId = sessionManager.getHeader?.()?.id;
+      const sealed = headerId === undefined ? undefined : await readSealedSubmission(home, headerId);
+      assert.equal(sealed, undefined, "non-sole-final must not produce a sealed submission projection");
     });
   });
 });

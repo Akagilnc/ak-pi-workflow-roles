@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
 import { buildFixerTurnRequest } from "../../src/public-cli/fixer-run.ts";
 import { admitFixerInvocation, buildFixerTransportPrompt } from "../../src/public-cli/invocation.ts";
@@ -45,7 +45,7 @@ test("Fixer production activation args reach the real Pi loader for both optiona
             ),
           },
         }),
-        sessionFile: decodePiDurablePrincipal(piDurablePrincipalAuthority, applyAdmitted.principal).sessionFile,
+        sessionFile: piDurablePrincipalAuthority.decode(applyAdmitted.principal).sessionFile,
       },
       {
         name: "resume-apply",
@@ -58,7 +58,7 @@ test("Fixer production activation args reach the real Pi loader for both optiona
             prompt: selectResumeContinuationPrompt(),
           },
         }),
-        sessionFile: decodePiDurablePrincipal(piDurablePrincipalAuthority, applyAdmitted.principal).sessionFile,
+        sessionFile: piDurablePrincipalAuthority.decode(applyAdmitted.principal).sessionFile,
       },
     ];
     for (const row of rows) {

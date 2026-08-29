@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
@@ -36,7 +36,6 @@ import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts
 import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
 import {
   extractFixerMethodInvocations,
-  extractFixerRoleOutcome,
   settleFixerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
@@ -49,13 +48,18 @@ import {
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fixer-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -194,7 +198,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       attachmentPaths: [],
       createRunId: () => "run-fixer-settle-001",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "diagnosing-bugs",
@@ -253,12 +257,18 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
         },
       }),
     ];
-    await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "fixer",
+      details: receipt,
+      toolCallId: "f1",
+    });
 
     const entries = sessionLines.map((line) => JSON.parse(line));
-    const extracted = extractFixerRoleOutcome(entries);
-    assert.equal(extracted?.outcome.role, "fixer");
-    assert.equal(extracted?.outcome.status, "completed");
     const invocations = extractFixerMethodInvocations(entries, {
       allowedLocations: [configuredPath, material.skillPath],
     });
@@ -312,9 +322,9 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       attachmentPaths: [],
       createRunId: () => "run-fixer-settle-002",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, noDiag.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(noDiag.principal).sessionDirectory, { recursive: true });
     await writeFile(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, noDiag.principal).sessionFile,
+      piDurablePrincipalAuthority.decode(noDiag.principal).sessionFile,
       `${JSON.stringify({
         type: "message",
         message: {
@@ -327,6 +337,15 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       })}\n`,
       "utf8",
     );
+    await sealAcceptedSubmission({
+      runId: noDiag.runId,
+      cwd: project,
+      home,
+      runDirectory: noDiag.runDirectory,
+      role: "fixer",
+      details: receipt,
+      toolCallId: "f2",
+    });
     const terminalNoDiag = await settleFixerTerminalResult(noDiag, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
@@ -436,6 +455,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "fixer" as const, details: receipt, toolCallId: "p1" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -603,6 +623,10 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         );
         return {
           code: 0,
+          sealedAcceptance: { role: "fixer" as const, details: {
+                status: "planned",
+                report: "Resumed plan remains plan phase.",
+              }, toolCallId: "r1" },
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -639,8 +663,17 @@ async function settleFixerSession(
   admitted: Awaited<ReturnType<typeof admitFixerInvocation>>,
   details: unknown,
 ) {
-  await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
-  await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
+  await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
+  await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
+  await sealAcceptedSubmission({
+    runId: admitted.runId,
+    cwd: admitted.projectRoot,
+    ...(process.env.HOME === undefined ? {} : { home: process.env.HOME }),
+    runDirectory: admitted.runDirectory,
+    role: "fixer",
+    details,
+    toolCallId: "f-out",
+  });
   const material = await loadPackagedMethodSkillMaterial(
     packageRoot,
     "diagnosing-bugs",
@@ -758,6 +791,7 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "fixer" as const, details: receipt, toolCallId: "f-out" },
           };
         },
           }),
@@ -826,106 +860,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         options: ["owner", "caller"],
       },
     };
-
-    // extract path: each lawful status keeps typed meaning on the shared face.
-    const unfinishedExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: unfinishedReceipt,
-        },
-      },
-    ]);
-    assert.ok(unfinishedExtracted);
-    assert.equal(unfinishedExtracted.outcome.kind, "accepted");
-    assert.equal(unfinishedExtracted.outcome.status, "unfinished");
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.fixerStatus,
-      "unfinished",
-    );
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.remainingScope,
-      unfinishedReceipt.remainingScope,
-    );
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.reason,
-      unfinishedReceipt.reason,
-    );
-    assert.equal(unfinishedExtracted.outcome.decisiveFacts.classResultCount, 1);
-
-    const refusedExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: applyRefusedReceipt,
-        },
-      },
-    ]);
-    assert.ok(refusedExtracted);
-    assert.equal(refusedExtracted.outcome.kind, "accepted");
-    assert.equal(refusedExtracted.outcome.status, "refused");
-    assert.equal(refusedExtracted.outcome.decisiveFacts.fixerStatus, "refused");
-    assert.deepEqual(
-      refusedExtracted.outcome.decisiveFacts.classDispositions,
-      [{ name: "PolicyCase", disposition: "refused" }],
-    );
-    assert.deepEqual(
-      refusedExtracted.outcome.decisiveFacts.blockerCauses,
-      ["authority_violation"],
-    );
-
-    const partialExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: partialReceipt,
-        },
-      },
-    ]);
-    assert.ok(partialExtracted);
-    assert.equal(partialExtracted.outcome.kind, "accepted");
-    assert.equal(partialExtracted.outcome.status, "partially_completed");
-    assert.equal(
-      partialExtracted.outcome.decisiveFacts.fixerStatus,
-      "partially_completed",
-    );
-    assert.equal(partialExtracted.outcome.decisiveFacts.classResultCount, 2);
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.classDispositions,
-      [{ name: "ParserCase", disposition: "completed" }, { name: "TransportCase", disposition: "refused" }],
-    );
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.blockerCauses,
-      ["prerequisite_unmet"],
-    );
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.prerequisiteIds,
-      ["repository.ready"],
-    );
-
-    const escalationExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: escalation,
-        },
-      },
-    ]);
-    // A role-authored kind is not an audit identity without the retained,
-    // seat-bound compliance response.
-    assert.equal(escalationExtracted, undefined);
 
     // settle + runAkRole production path for each lawful status → exit 0.
     const cases: Array<{
@@ -1017,6 +951,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "fixer" as const, details: row.details, toolCallId: "f-out" },
           };
         },
           }),
