@@ -237,7 +237,7 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       result: retentionResult,
       stdout: retentionIo.stdout,
       stderr: retentionIo.stderr,
-      expectedCause: "unrecognized",
+      expectedCause: "session",
       diagnosticIncludes: "WebSocket error",
     });
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
