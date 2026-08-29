@@ -72,7 +72,7 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
       { stopReason: "toolUse" },
     );
   };
-  faux.setResponses([respond, respond, respond, respond, respond]);
+  faux.setResponses(Array.from({ length: 20 }, () => respond));
 
   const model = faux.getModel();
   const providerConfig = {

@@ -155,7 +155,7 @@ test(
         );
         await writeFile(
           resolve(piAgentDir, "auth.json"),
-          JSON.stringify({ "openai-codex": { type: "oauth", access: "test" } }) + "\n",
+          JSON.stringify({ "openai-codex": { type: "api_key", key: "test" } }) + "\n",
           "utf8",
         );
         const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
