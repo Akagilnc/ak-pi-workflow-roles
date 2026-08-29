@@ -52,6 +52,17 @@ import {
 
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 
+/** Recover a typed idle timeout from a thrown error or an error-stop message. */
+function streamIdleTimeoutFromUnknown(value: unknown): StreamIdleTimeoutError | undefined {
+  if (isStreamIdleTimeoutError(value)) return value;
+  const message = value instanceof Error ? value.message : typeof value === "string" ? value : undefined;
+  if (message === undefined) return undefined;
+  const match = /stream idle timeout after (\d+)ms/i.exec(message);
+  return match !== null && match[1] !== undefined
+    ? new StreamIdleTimeoutError(Number(match[1]))
+    : undefined;
+}
+
 // ── Legacy openInProcessAgentSession (preserved for Navigator B) ───────────
 
 type OpenInProcessAgentSessionBase = {
@@ -459,18 +470,16 @@ export async function openPiInstitutionalSession(
             // step-machine "error" response (ADR 0018 / #518 §3).
             if (response.stopReason === "error") {
               const errorMessage = response.errorMessage ?? `${label} provider stream failed`;
+              const idleFailure = streamIdleTimeoutFromUnknown(errorMessage);
               if (
                 options.idleRetry !== false
-                && isStreamIdleTimeoutError(errorMessage)
+                && idleFailure !== undefined
                 && attempt < DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES
                 && options.signal?.aborted !== true
               ) {
                 continue;
               }
-              const idleMatch = /stream idle timeout after (\d+)ms/i.exec(errorMessage);
-              if (idleMatch) {
-                streamFailureValue = new StreamIdleTimeoutError(Number(idleMatch[1]));
-              }
+              streamFailureValue = idleFailure ?? new Error(errorMessage, { cause: response });
             }
             for (const ev of attemptEvents) {
               wrapped.push(ev as any);
@@ -495,18 +504,16 @@ export async function openPiInstitutionalSession(
               return;
             }
             const failure = isStreamIdleTimeoutError(idle.signal.reason) ? idle.signal.reason : error;
+            const idleFailure = streamIdleTimeoutFromUnknown(failure);
             if (
               options.idleRetry !== false
-              && isStreamIdleTimeoutError(failure)
+              && idleFailure !== undefined
               && attempt < DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES
               && options.signal?.aborted !== true
             ) {
               continue;
             }
-            const idleMatch = /stream idle timeout after (\d+)ms/i.exec(failure instanceof Error ? failure.message : String(failure));
-            const typedFailure = idleMatch && !(failure instanceof StreamIdleTimeoutError)
-              ? new StreamIdleTimeoutError(Number(idleMatch[1]))
-              : failure;
+            const typedFailure = idleFailure ?? failure;
             // Hold the primary provider failure at the adapter boundary (ADR
             // 0018 / 失败诚实宪法). Consumers that surface transport failures
             // read this so the real cause is never masked by a projected
