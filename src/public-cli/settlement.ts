@@ -2330,16 +2330,12 @@ export async function readLawfulJudgeRoleOutcome(
   const sealed = await sealedLedgerOutcome(admitted);
   if (sealed?.role === "judge") {
     const details = sealed.decisiveFacts as Record<string, unknown>;
-    const judgeStatus = typeof details.judgeStatus === "string"
-      ? details.judgeStatus
-      : typeof details.status === "string"
-        ? details.status
-        : sealed.status;
+    // sealed.status is the sole authority (written by statusFromAcceptedDetails).
     return {
       kind: "accepted",
       role: "judge",
-      status: judgeStatus,
-      decisiveFacts: judgeDecisiveFacts(details, judgeStatus),
+      status: sealed.status,
+      decisiveFacts: judgeDecisiveFacts(details, sealed.status),
     };
   }
   // Non-final: consume ledger audit-escalation projection (no JSONL accepted rebuild).

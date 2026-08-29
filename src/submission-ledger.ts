@@ -149,11 +149,12 @@ async function restoreState(cwd: string, runId: string): Promise<LedgerState> {
   };
 }
 
-function statusFromDetails(details: unknown, fallback: string): string {
+/** Single authority for sealed.status — judgeStatus (role-specific) then status then fallback. */
+export function statusFromAcceptedDetails(details: unknown, fallback: string): string {
   if (typeof details !== "object" || details === null) return fallback;
   const record = details as Record<string, unknown>;
-  if (typeof record.status === "string") return record.status;
   if (typeof record.judgeStatus === "string") return record.judgeStatus;
+  if (typeof record.status === "string") return record.status;
   return fallback;
 }
 
@@ -225,7 +226,7 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
             return result;
           }
           const details = typeof result.details === "object" && result.details !== null ? result.details as Record<string, unknown> : {};
-          const status = statusFromDetails(details, "accepted");
+          const status = statusFromAcceptedDetails(details, "accepted");
           const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role, status, decisiveFacts: details };
           try {
             append({ type: "sealed", attemptId, toolCallId, accepted: result.details, projection });
