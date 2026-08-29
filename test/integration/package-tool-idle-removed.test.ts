@@ -33,6 +33,7 @@ import {
   waitForEventLoopCondition,
   withActivationHome,
   withInProcessPi,
+  withInstitutionalProviderFixture,
 } from "../helpers/pi-test-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
@@ -204,7 +205,7 @@ test(
           tokenSize: { min: 1000, max: 1000 },
         });
         const auditSoulCompliance = createPiJudgeAuditor();
-        await withInProcessPi({
+        await withInstitutionalProviderFixture(faux, () => withInProcessPi({
           activationLedgerSession: true,
           cwd: home,
           agentDir,
@@ -273,15 +274,17 @@ test(
           faux.setResponses(Array.from({ length: 12 }, () => respond));
 
           const promptDone = session.prompt("adjudicate with silent compliance child");
+          let earlySettlement: unknown;
           void promptDone.then(
-            () => undefined,
-            () => undefined,
+            () => { earlySettlement = new Error("judge prompt settled before entering compliance child stream"); },
+            (error) => { earlySettlement = error; },
           );
 
           await waitForEventLoopCondition(
-            () => complianceStreamAttempts >= 1,
+            () => complianceStreamAttempts >= 1 || earlySettlement !== undefined,
             { label: "judge submission entered real compliance child stream once" },
           );
+          if (earlySettlement !== undefined) throw earlySettlement;
 
           t.mock.timers.tick(DEFAULT_STREAM_IDLE_TIMEOUT_MS);
           await waitForEventLoopCondition(
@@ -321,7 +324,7 @@ test(
           assert.match(text, /stream idle timeout/i);
           assert.doesNotMatch(text, /PackageOwnedToolIdleTimeoutError/);
           assert.doesNotMatch(text, /package-owned tool idle timeout/i);
-        });
+        }));
       });
     } finally {
       process.exitCode = originalExitCode;

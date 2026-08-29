@@ -18,7 +18,6 @@ import {
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
 } from "../../src/evidence-child-executor.ts";
 import {
-  COMPLIANCE_RESPONSE_ENTRY_TYPE,
   ComplianceCandidateUnreadableError,
   createComplianceDecisionTool,
   runComplianceAudit,
@@ -28,6 +27,7 @@ import {
   isStreamIdleTimeoutError,
 } from "../../src/stream-idle-guard.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
@@ -404,10 +404,16 @@ test("auditor exhaustion preserves a typed no-receipt leg and its measured usage
       assert.equal(decision.acceptedReceipt, false);
       assert.equal(decision.deliveryTurns, 2);
       assert.equal(decision.terminalToolCalled, false);
-      const retainedUsages = [...sessionManager.getEntries()].flatMap((entry) =>
-        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE
-          ? [(entry as { data?: { response?: { usage?: typeof usages[number] } } }).data?.response?.usage]
-          : []).filter((usage): usage is typeof usages[number] => usage !== undefined);
+      const recordFile = resolveSitianRecordPath({
+        level: "event",
+        kind: "auditor",
+        cwd,
+        sessionParent: sessionManager.getSessionFile(),
+      }).recordFile;
+      const retainedUsages = (await readSitianRecords(recordFile)).records.flatMap((record) => {
+        const payload = record.payload as { response?: { usage?: typeof usages[number] } } | undefined;
+        return payload?.response?.usage === undefined ? [] : [payload.response.usage];
+      });
       assert.equal(retainedUsages.length, 3);
       assert.notDeepEqual(retainedUsages[0], retainedUsages[1], "the tracer observes distinct turn usage");
       const expected = retainedUsages.reduce((total, usage) => ({
