@@ -143,3 +143,60 @@ test("createRecordSession nests by parent file and continues subject-keyed navig
     assert.equal((await readFile(firstFile, "utf8")).match(/\"principal\"/g)?.length, 2);
   });
 });
+
+test("Sitian facade: three levels, with/without usage, and raw pointer can open canonical volume", async () => {
+  await withHermeticHome({ prefix: "ak-sitian-three-levels-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+
+    const { sitianReport, readSitianRecords } = await import("../../src/sitian-facade.ts");
+
+    // Case 1: run-summary with usage
+    const summaryPtr = sitianReport({
+      level: "run-summary",
+      kind: "settlement-summary",
+      cwd: project,
+      subject: { runId: "r-sum-1", attemptId: "att-1" },
+      payload: { status: "completed" },
+      usage: { promptTokens: 42, completionTokens: 18, totalTokens: 60 },
+    });
+    assert.equal(summaryPtr.level, "run-summary");
+    const summaryRead = await readSitianRecords(summaryPtr.recordFile);
+    assert.equal(summaryRead.records.length, 1);
+    assert.equal(summaryRead.records[0]!.usage?.totalTokens, 60);
+
+    // Case 2: event without usage, with raw reference
+    const rawFile = join(home, "raw-session.jsonl");
+    await writeFile(rawFile, '{"type":"session"}\n', "utf8");
+    const eventPtr = sitianReport({
+      level: "event",
+      kind: "gate",
+      cwd: project,
+      subject: { runId: "r-evt-1" },
+      payload: { reminder: true },
+      raw: { sessionFile: rawFile, entryId: "entry-99" },
+    });
+    assert.equal(eventPtr.level, "event");
+    const eventRead = await readSitianRecords(eventPtr.recordFile);
+    assert.equal(eventRead.records.length, 1);
+    assert.equal(eventRead.records[0]!.usage, undefined);
+    assert.equal(eventRead.records[0]!.raw?.sessionFile, rawFile);
+    assert.equal(eventRead.records[0]!.raw?.entryId, "entry-99");
+
+    // Case 3: protocol-snapshot without usage, without raw reference
+    const snapPtr = sitianReport({
+      level: "protocol-snapshot",
+      kind: "auditor-roles",
+      cwd: project,
+      subject: "snap-sub-1",
+      payload: { state: "initialized" },
+    });
+    assert.equal(snapPtr.level, "protocol-snapshot");
+    const snapRead = await readSitianRecords(snapPtr.recordFile);
+    assert.equal(snapRead.records.length, 1);
+    assert.equal(snapRead.records[0]!.level, "protocol-snapshot");
+    assert.equal(snapRead.records[0]!.raw, undefined);
+    assert.equal(snapRead.records[0]!.usage, undefined);
+  });
+});

@@ -9,6 +9,7 @@ import {
   type RecordSessionParent,
   WORKER_SUBMISSION_GATE_KIND,
 } from "./archivist-record-entry.ts";
+import { sitianReport } from "./sitian-facade.ts";
 
 export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
@@ -275,6 +276,18 @@ export function createWorkerSubmissionGate(): {
         version: 1,
         head: baseline,
       });
+      sitianReport({
+        level: "event",
+        kind: "gate",
+        cwd,
+        ...(parent?.getSessionFile() ? { sessionParent: parent.getSessionFile() } : {}),
+        payload: {
+          type: WORKER_COMMIT_BASELINE_ENTRY_TYPE,
+          version: 1,
+          head: baseline,
+        },
+        source: "worker-submission-gates",
+      });
     },
     assertAcceptable(status, details) {
       if (status === "unfinished" && !unfinishedReasonPresent(details)) {
@@ -291,6 +304,16 @@ export function createWorkerSubmissionGate(): {
       if (!headMoved && !reminded) {
         reminded = true;
         record?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
+        sitianReport({
+          level: "event",
+          kind: "gate",
+          cwd: root,
+          payload: {
+            type: WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
+            version: 1,
+          },
+          source: "worker-submission-gates",
+        });
         throw new WorkerCommitReminderError();
       }
       reminded = true;
@@ -307,6 +330,16 @@ export function createWorkerSubmissionGate(): {
       }
       prefixReminded = true;
       record?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
+      sitianReport({
+        level: "event",
+        kind: "gate",
+        cwd: root,
+        payload: {
+          type: WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
+          version: 1,
+        },
+        source: "worker-submission-gates",
+      });
       throw new WorkerPrefixReminderError();
     },
   };
