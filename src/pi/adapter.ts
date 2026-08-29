@@ -38,6 +38,18 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
       setSessionFile: (path) => sessionManager.setSessionFile(path),
       appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
     },
+    ...(() => {
+      const leaf = context.sessionManager?.getLeafEntry();
+      if (leaf?.type !== "message" || leaf.message?.role !== "assistant" || !Array.isArray(leaf.message.content)) return {};
+      return {
+        terminationBatch: {
+          batchClosed: true as const,
+          calls: leaf.message.content
+            .filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall")
+            .map((part) => ({ id: part.id, name: part.name })),
+        },
+      };
+    })(),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     ...(context.ui === undefined ? {} : { ui: { notify: (message, type) => context.ui.notify(message, type) } }),
     ...(transcriptFromContext === undefined ? {} : { transcript: () => transcriptFromContext(context) }),

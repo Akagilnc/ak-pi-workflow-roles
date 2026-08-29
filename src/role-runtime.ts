@@ -9,6 +9,7 @@ import { recordReviewerDispatchRejectionSync } from "./public-cli/reviewer-dispa
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "./pi/adapter.ts";
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
+import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import {
@@ -611,7 +612,10 @@ export function createRoleRuntimeExtension(
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
     const piHostAdapter = injectedPiHostAdapter ?? createPiRoleHostAdapter(pi);
-    const roleHost = piHostAdapter.host;
+    const roleHost = createSubmissionLedgerHost(
+      piHostAdapter.host,
+      new Set<string>(PACKAGED_ROLE_REGISTRY.map(({ outputTool }) => outputTool)),
+    );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {
