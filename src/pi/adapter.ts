@@ -71,7 +71,7 @@ function requirePiGatekeeperPass(options: {
       failInfrastructure(error, _context, toolCallId) {
         options.hostActions.failInfrastructure(error, options.context, toolCallId);
       },
-      bindGatekeeperNonPass: options.hostActions.bindGatekeeperNonPass,
+      bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
     },
     toolCallId: options.toolCallId,
   });

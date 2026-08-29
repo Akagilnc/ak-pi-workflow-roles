@@ -235,7 +235,7 @@ export type HostSubmissionNonPass =
 export type HostGatekeeperActions = {
   failInfrastructure(error: unknown, context: HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge for any structured submission non-pass. */
-  bindGatekeeperNonPass(toolCallId: string, result: HostSubmissionNonPass): void;
+  bindSubmissionNonPass(toolCallId: string, result: HostSubmissionNonPass): void;
 };
 
 export type HostSkillExpansionEvidence = Readonly<{
