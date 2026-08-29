@@ -1,5 +1,5 @@
 /**
- * #342 — typed option true source → help / README / parsers.
+ * #342 — typed option true source → help / parsers.
  *
  * Contract → shortest tracer:
  * 1. table → helpDocument structured equivalence (one per-command tracer)
@@ -8,8 +8,7 @@
  * 4. rejected spellings bidirectional (surfaces + parser refuse)
  * 5. analyst conditional contracts → parseAnalystArgv pos/neg matrix
  * 6. public dashed options admitted (forward scan)
- * 7. README EN/ZH generated regions zero-diff
- * 8. installed-bin loud smoke (non-empty only)
+ * 7. installed-bin loud smoke (non-empty only)
  *
  * Absent on purpose: PUBLIC_ROLE_ARGV/optionsForOwner/projectOwnerOptions
  * identity mirrors, hand-rebuilt projection mirrors, synthetic helper tests

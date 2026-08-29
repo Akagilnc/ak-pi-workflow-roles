@@ -23,9 +23,9 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId> [message]` reopens that run's exact Pi session. The model resolves from the **current seat configuration**; pass `--model` explicitly when identity matters (#552 ruling). Resume semantics (opaque message, caller-owned decision, one-shot seats, standard escalate chain) are owned by `ak-role help resume` and [ADR 0052](docs/adr/0052-public-cli-is-the-only-supported-external-role-interface.md).
+`ak-role resume <runId> [message]` reopens that run's exact Pi session. Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same session continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, and Notary remain one-shot. The model resolves from the **current seat configuration**; pass `--model` explicitly when identity matters (#552 ruling).
 
-Judge, coder, fixer, reviewer, and merger retry a non-lawful LLM call in place (same `runId` and session) up to the ceiling written by `ak-role config set-auto-resume-limit`; lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately.
+Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
 Seat and Gate-officer configuration:
 
