@@ -36,6 +36,7 @@ async function firstDeadPid(): Promise<number> {
   const child = spawn("sleep", ["30"]);
   const pid = child.pid;
   assert.ok(typeof pid === "number" && pid > 0, "spawn failed to produce a pid");
+  child.kill("SIGKILL");
   await new Promise<void>((resolve) => child.once("close", () => resolve()));
   return pid;
 }
