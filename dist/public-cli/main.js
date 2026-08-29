@@ -16678,25 +16678,32 @@ async function loadResumableRunRecord(home, runId, authority) {
       { cause: error }
     );
   }
-  if (correlationId === void 0 || ticketNumber === void 0) {
-    try {
-      const invocationRaw = JSON.parse(
-        await readFile6(join8(run.runDirectory, "invocation.json"), "utf8")
-      );
-      if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
-        const fromInvocation = parsePersistedTicketIdentity(
-          invocationRaw
-        );
+  let model;
+  try {
+    const invocationRaw = JSON.parse(
+      await readFile6(join8(run.runDirectory, "invocation.json"), "utf8")
+    );
+    if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
+      const rec = invocationRaw;
+      if (typeof rec.provider === "string" && typeof rec.model === "string") {
+        model = {
+          provider: rec.provider,
+          model: rec.model,
+          ...typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}
+        };
+      }
+      if (correlationId === void 0 || ticketNumber === void 0) {
+        const fromInvocation = parsePersistedTicketIdentity(rec);
         if (correlationId === void 0) correlationId = fromInvocation.correlationId;
         if (ticketNumber === void 0) ticketNumber = fromInvocation.ticketNumber;
       }
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw new CliUsageError(
-          `role run invocation identity is unreadable: ${runId}`,
-          { cause: error }
-        );
-      }
+    }
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw new CliUsageError(
+        `role run invocation identity is unreadable: ${runId}`,
+        { cause: error }
+      );
     }
   }
   return {
@@ -16717,7 +16724,8 @@ async function loadResumableRunRecord(home, runId, authority) {
       ...mergerInputPath === void 0 ? {} : { mergerInputPath },
       ...derived === void 0 ? {} : { derived },
       ...correlationId === void 0 ? {} : { correlationId },
-      ...ticketNumber === void 0 ? {} : { ticketNumber }
+      ...ticketNumber === void 0 ? {} : { ticketNumber },
+      ...model === void 0 ? {} : { model }
     }
   };
 }
@@ -16739,6 +16747,7 @@ async function loadResumableJudgeRun(home, runId, authority) {
     runDirectory: loaded.run.runDirectory,
     principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16784,6 +16793,7 @@ async function loadResumableCoderRun(home, runId, authority) {
     principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16832,6 +16842,7 @@ async function loadResumableFixerRun(home, runId, authority) {
     packetPath,
     ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
     prerequisites,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16866,6 +16877,7 @@ async function loadResumableReviewerRun(home, runId, authority) {
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16911,6 +16923,7 @@ async function loadResumableMergerRun(home, runId, authority) {
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -18033,6 +18046,9 @@ function homeFromRunDirectory(runDirectory) {
   if (altIdx !== -1) {
     const candidate = runDirectory.slice(0, altIdx);
     return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  if (typeof process.env.HOME === "string" && process.env.HOME.length > 0) {
+    return process.env.HOME;
   }
   throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
 }
@@ -23842,13 +23858,13 @@ var init_settlement = __esm({
 function projectRoleTurnRequest(admitted, roleDetails, options) {
   const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
   if (cwd === void 0) throw new Error("admitted invocation missing working directory");
-  if (admitted.principal === void 0) throw new Error("admitted invocation missing principal");
+  const effectiveModel = options.continuation?.kind === "resume" ? admitted.model ?? options.model : options.model ?? admitted.model;
   return {
     principal: admitted.principal,
     activation: roleDetails.activation,
     methods: roleDetails.methods ?? [],
     continuation: options.continuation,
-    ...options.model === void 0 ? {} : { model: options.model },
+    ...effectiveModel === void 0 ? {} : { model: effectiveModel },
     ...options.engine === void 0 ? {} : { engine: options.engine },
     cwd,
     home: options.home,
@@ -24463,6 +24479,7 @@ async function runPostAdmissionManualResume(input) {
     admitted,
     env: {
       ...env,
+      ...admitted.model === void 0 ? {} : { model: admitted.model },
       ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
     },
     io,

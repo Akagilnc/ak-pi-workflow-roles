@@ -796,35 +796,42 @@ async function loadResumableRunRecord(
       { cause: error },
     );
   }
-  if (correlationId === undefined || ticketNumber === undefined) {
-    try {
-      const invocationRaw: unknown = JSON.parse(
-        await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
-      );
-      if (
-        invocationRaw !== null &&
-        typeof invocationRaw === "object" &&
-        !Array.isArray(invocationRaw)
-      ) {
-        const fromInvocation = parsePersistedTicketIdentity(
-          invocationRaw as Record<string, unknown>,
-        );
+  let model: InvocationEffectiveModel | undefined;
+  try {
+    const invocationRaw: unknown = JSON.parse(
+      await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
+    );
+    if (
+      invocationRaw !== null &&
+      typeof invocationRaw === "object" &&
+      !Array.isArray(invocationRaw)
+    ) {
+      const rec = invocationRaw as Record<string, unknown>;
+      if (typeof rec.provider === "string" && typeof rec.model === "string") {
+        model = {
+          provider: rec.provider,
+          model: rec.model,
+          ...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
+        };
+      }
+      if (correlationId === undefined || ticketNumber === undefined) {
+        const fromInvocation = parsePersistedTicketIdentity(rec);
         if (correlationId === undefined) correlationId = fromInvocation.correlationId;
         if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
       }
-    } catch (error) {
-      if (
-        !(
-          error instanceof Error &&
-          "code" in error &&
-          (error as { code?: unknown }).code === "ENOENT"
-        )
-      ) {
-        throw new CliUsageError(
-          `role run invocation identity is unreadable: ${runId}`,
-          { cause: error },
-        );
-      }
+    }
+  } catch (error) {
+    if (
+      !(
+        error instanceof Error &&
+        "code" in error &&
+        (error as { code?: unknown }).code === "ENOENT"
+      )
+    ) {
+      throw new CliUsageError(
+        `role run invocation identity is unreadable: ${runId}`,
+        { cause: error },
+      );
     }
   }
   return {
@@ -846,6 +853,7 @@ async function loadResumableRunRecord(
       ...(derived === undefined ? {} : { derived }),
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
+      ...(model === undefined ? {} : { model }),
     },
   };
 }
@@ -901,6 +909,7 @@ export async function loadResumableJudgeRun(
     runDirectory: loaded.run.runDirectory,
     principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -955,6 +964,7 @@ export async function loadResumableCoderRun(
     principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -1014,6 +1024,7 @@ export async function loadResumableFixerRun(
       ? {}
       : { prerequisitesPath: loaded.admittedFields.prerequisitesPath }),
     prerequisites,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -1061,6 +1072,7 @@ export async function loadResumableReviewerRun(
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -1121,6 +1133,7 @@ export async function loadResumableMergerRun(
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {

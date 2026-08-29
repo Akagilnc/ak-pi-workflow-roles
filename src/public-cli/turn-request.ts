@@ -40,13 +40,16 @@ export function projectRoleTurnRequest(
 ): RoleTurnRequest {
   const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
   if (cwd === undefined) throw new Error("admitted invocation missing working directory");
-  if (admitted.principal === undefined) throw new Error("admitted invocation missing principal");
+  const effectiveModel =
+    options.continuation?.kind === "resume"
+      ? (admitted.model ?? options.model)
+      : (options.model ?? admitted.model);
   return {
     principal: admitted.principal,
     activation: roleDetails.activation,
     methods: roleDetails.methods ?? [],
     continuation: options.continuation,
-    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
     ...(options.engine === undefined ? {} : { engine: options.engine }),
     cwd,
     home: options.home,
