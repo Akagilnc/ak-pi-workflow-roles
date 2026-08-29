@@ -11,6 +11,11 @@ import {
   mintNavigatorInvocationId
 } from "./navigator-invocation-identity.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome
+} from "./activation-ledger-topology.js";
+import { sitianReport } from "./sitian-facade.js";
 import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
@@ -996,6 +1001,17 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       providerFailure: () => providerFailure,
       appendEntry: (customType, data) => {
         opened.session.sessionManager.appendCustomEntry(customType, data);
+        try {
+          sitianReport({
+            level: "event",
+            kind: "attendance",
+            cwd: context.cwd,
+            sessionParent: opened.session.sessionManager.getSessionFile(),
+            payload: { customType, data },
+            source: "navigator-attendance"
+          });
+        } catch {
+        }
       },
       entries: () => opened.session.sessionManager.getEntries(),
       setModel: async (next, thinkingLevel) => {

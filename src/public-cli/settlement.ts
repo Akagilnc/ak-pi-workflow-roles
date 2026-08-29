@@ -11,7 +11,7 @@ import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
-import { sitianReport } from "../sitian-facade.ts";
+import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 import {
   readAuditEscalationSubmission,
   readLatestSubmissionOutcome,
@@ -40,6 +40,8 @@ import {
   readComplianceCandidate,
   type ComplianceDecision,
 } from "../compliance-transport.ts";
+// COMPLIANCE_RESPONSE_ENTRY_TYPE remains for boundRetainedAuditResponse (call/result
+// interval binding on historical session bytes). Provider-stop retain authority is Sitian.
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -668,8 +670,9 @@ export function extractSessionProviderStop(
   entries: readonly SessionEntry[],
 ): SessionProviderStop | undefined {
   // A resumed dispatch appends a typed top-level user turn to the same session.
-  // Retained audit state from an older attempt must not replace the newer attempt's
-  // native provider stop. Sessions without a user turn are the initial attempt.
+  // Older attempt native stops must not replace the newer attempt's stop.
+  // Sessions without a user turn are the initial attempt.
+  // Auditor retained responses live in Sitian (kind=auditor); see readSessionProviderStop.
   let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
@@ -679,17 +682,6 @@ export function extractSessionProviderStop(
     }
   }
 
-  // The shared auditor is a nested model turn. Within the current attempt its
-  // retained typed response is authoritative when failInfrastructure subsequently
-  // aborts the parent turn.
-  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
-    const response = isRecord(entry.data) && isRecord(entry.data.response) ? entry.data.response : undefined;
-    const stop = sessionProviderStopFromAssistant(response);
-    if (stop !== undefined) return stop;
-    break;
-  }
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -701,10 +693,46 @@ export function extractSessionProviderStop(
   return undefined;
 }
 
-/** Read the bound session principal and extract a typed provider-stop, if any. */
+/**
+ * Latest Sitian-retained auditor response stop for this parent session principal.
+ * Writer: retainComplianceResponse → sitianReport(kind=auditor, payload={version,response}).
+ * Payload stopReason is preserved as retained — aborted stays aborted; no 500/error wash here.
+ */
+async function readSitianRetainedAuditorProviderStop(
+  sessionFile: string,
+): Promise<SessionProviderStop | undefined> {
+  try {
+    const { recordFile } = resolveSitianRecordPath({
+      level: "event",
+      kind: "auditor",
+      sessionParent: sessionFile,
+      // Path is driven by sessionParent when under ledger home; cwd is a fallback only.
+      cwd: dirname(sessionFile),
+    });
+    const { records } = await readSitianRecords(recordFile);
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const payload = records[i]?.payload;
+      if (!isRecord(payload) || !isRecord(payload.response)) continue;
+      // Lifecycle events carry `type` (binding / compliance_failure); retain does not.
+      if (typeof payload.type === "string") continue;
+      const stop = sessionProviderStopFromAssistant(payload.response as SessionMessage);
+      if (stop !== undefined) return stop;
+      // Latest retain exists but is not a provider-stop — do not scan older retains
+      // (mirrors former session COMPLIANCE_RESPONSE preference break).
+      break;
+    }
+  } catch {
+    // Missing volume or unreadable path is absence, not a settlement failure.
+  }
+  return undefined;
+}
+
+/** Read retained auditor stop (Sitian) then native session assistant stop, if any. */
 export async function readSessionProviderStop(
   sessionFile: string,
 ): Promise<SessionProviderStop | undefined> {
+  const retained = await readSitianRetainedAuditorProviderStop(sessionFile);
+  if (retained !== undefined) return retained;
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);

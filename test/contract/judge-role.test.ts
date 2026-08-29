@@ -1,7 +1,8 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import test, { after, afterEach } from "node:test";
@@ -33,9 +34,12 @@ import {
 } from "../../src/navigator-attendance.ts";
 import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import {
+  CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE,
+  CoderSkillExpansionEvidenceMissingError,
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
+import type { RoleHost } from "../../src/host-contracts.ts";
 import { FixerPacketValidationError } from "../../src/package-contracts/fixer-packet.ts";
 import {
   WorkerCommitReminderError,
@@ -64,7 +68,7 @@ import {
   writeInstitutionalSeatTable,
 } from "../helpers/institutional-seat-table.ts";
 import type { InstitutionalResolutionPage } from "../../src/institutional-resolution.ts";
-import { createMockProviderServer, packageRoot, withActivationHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { createMockProviderServer, packageRoot, withActivationHome, withInProcessPi, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
 // tool.execute seam carries no explicit runDirectory option), so this local
@@ -213,9 +217,11 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
     invocation(originalRequest) {
       return `/skill:tdd ${originalRequest}`;
     },
-    captureExpansion(prompt, originalRequest) {
-      const exact = `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>\n\n${originalRequest}`;
-      return prompt === exact
+    captureExpansion(evidence, originalRequest) {
+      return evidence?.name === "tdd"
+        && evidence.location === tddPath
+        && evidence.content === tddContent
+        && evidence.userMessage === originalRequest
         ? { name: "tdd", location: tddPath, content: tddContent, userMessage: originalRequest }
         : undefined;
     },
@@ -223,7 +229,8 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
 }
 
 function expandedTdd(request: string): string {
-  return `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>\n\n${request}`;
+  const block = `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>`;
+  return request === "" ? block : `${block}\n\n${request}`;
 }
 
 const usage = {
@@ -283,7 +290,7 @@ function testHostActions(
 ): HostGatekeeperActions {
   return {
     failInfrastructure(error) { fail(error); },
-    bindGatekeeperNonPass() {},
+    bindSubmissionNonPass() {},
   };
 }
 
@@ -1962,6 +1969,17 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     assert.deepEqual((await submitCompleted(harness, "accepted")).details, completed);
   }
 
+  const assertExpansionEvidenceMissing = async (
+    promise: Promise<unknown>,
+  ): Promise<void> => {
+    await assert.rejects(promise, (error: unknown) => {
+      assert.ok(error instanceof CoderSkillExpansionEvidenceMissingError);
+      assert.equal(error.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
+      assert.equal(error.result.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
+      return true;
+    });
+  };
+
   // M1.2 — one must-reject malformed expansion proves the completed-gate (law ③);
   // the full malformed spelling matrix lives in canonical-skill-binding tests.
   {
@@ -1971,9 +1989,65 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       { systemPrompt: "BASE", prompt: expandedTdd(request).replace(tddBody, "# Canonical TDD") },
       agentCtx,
     );
-    await assert.rejects(
-      submitCompleted(harness, "malformed-gate"),
-      /completed requires the Matt tdd skill to be expanded/i,
+    await assertExpansionEvidenceMissing(submitCompleted(harness, "malformed-gate"));
+  }
+
+  // M1.2b — host without capability declaration rejects completed even when prompt looks lawful.
+  {
+    const harness = extensionHarness(undefined, {
+      "ak-coder-task": "/materials/approved.md",
+      "ak-coder-phase": "apply",
+    });
+    const faux = fauxProvider({ provider: "coder-no-caps-gatekeeper", api: "coder-no-caps-gatekeeper" });
+    const model = faux.getModel();
+    const responses: AssistantMessage[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      responses.push(fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })));
+      responses.push(fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })));
+    }
+    faux.setResponses(responses);
+    await registerInstitutionalProviderFixture(faux);
+    const baseHost = createPiRoleHostAdapter(harness.pi as ExtensionAPI).host;
+    const hostWithoutCapabilities = new Proxy(baseHost, {
+      get(target, prop, receiver) {
+        if (prop === "capabilities") return undefined;
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as RoleHost;
+    const runtime = createCoderRoleRuntime(
+      hostWithoutCapabilities,
+      {
+        loadSoul: async () => "CODER LAW",
+        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+        loadCanonicalSkillBinding: async () => tddBinding(),
+      },
+      testHostActions(),
+    );
+    await runtime.activate();
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      agentCtx,
+    );
+    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    await assertExpansionEvidenceMissing(
+      withInstitutionalRunDir(parentInheritedSeats(model), () =>
+        tool.execute(
+          "no-caps",
+          completed,
+          undefined,
+          undefined,
+          Object.assign(toolCallContext([{ id: "no-caps", name: CODER_OUTPUT_TOOL_NAME }]), {
+            cwd: process.cwd(),
+            model,
+            modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider, {
+              matchProvider: false,
+            }),
+            thinkingLevel: "off",
+          }),
+        ),
+      ),
     );
   }
 
@@ -1989,10 +2063,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       { systemPrompt: "BASE", prompt: expandedTdd(request) },
       agentCtx,
     );
-    await assert.rejects(
-      submitCompleted(harness, "later"),
-      /completed requires the Matt tdd skill to be expanded/i,
-    );
+    await assertExpansionEvidenceMissing(submitCompleted(harness, "later"));
   }
 
   {
@@ -2081,6 +2152,108 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       );
     });
   }
+});
+
+test("coder missing skill-expansion evidence persists typed non-pass on real host session", async () => {
+  // Lowest reachable real ExtensionRunner path: session.prompt → tool execute → durable session file.
+  await withActivationHome({ prefix: "ak-coder-expansion-durable-" }, async ({ home, agentDir }) => {
+    const work = resolve(home, "work");
+    await mkdir(work, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: work, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "coder-expansion@test.local"], { cwd: work, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Coder Expansion"], { cwd: work, stdio: "ignore" });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work, stdio: "ignore" });
+
+    const taskPath = resolve(home, "approved-task.md");
+    await writeFile(taskPath, "# Approved task\n\nImplement the first vertical slice.\n");
+    const toolCallId = "coder-expansion-missing";
+    const completed = {
+      status: "completed" as const,
+      report: "TDD evidence and self-check three are recorded here.",
+    };
+    const expected = { code: CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE };
+    const faux = fauxProvider({
+      api: "ak-coder-expansion-durable",
+      provider: "ak-coder-expansion-durable",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+
+    await withInProcessPi({
+      activationLedgerSession: true,
+      cwd: work,
+      agentDir,
+      faux,
+      noExtensions: true,
+      noTools: "builtin",
+      // noSkills default true: host skill expansion yields no matching evidence.
+      systemPrompt: "CODER EXPANSION DURABLE",
+      mode: "print",
+      flags: {
+        "ak-role": "coder",
+        "ak-coder-phase": "apply",
+        "ak-coder-task": taskPath,
+      },
+      extensionFactories: [
+        createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "JUDGE LAW",
+          loadCoderSoul: async () => "CODER LAW",
+          loadCoderTask: async (path) => readFile(path, "utf8"),
+          loadCanonicalSkillBinding: async () => tddBinding(),
+          transcriptFromContext: () => "",
+          auditSoulCompliance: async () => ({ status: "pass" }),
+        }),
+      ],
+    }, async ({ session, sessionManager }) => {
+      faux.setResponses([
+        fauxAssistantMessage(
+          fauxToolCall(CODER_OUTPUT_TOOL_NAME, completed, { id: toolCallId }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("coder expansion durable idle"),
+      ]);
+      await session.prompt("Implement the approved slice without host expansion evidence.");
+
+      const sessionFile = sessionManager.getSessionFile();
+      assert.ok(sessionFile, "activation session must materialize a durable session file");
+      const sessionLines = (await readFile(sessionFile, "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          message?: {
+            role?: string;
+            toolName?: string;
+            toolCallId?: string;
+            isError?: boolean;
+            details?: unknown;
+            content?: unknown;
+          };
+        });
+
+      const toolResults = sessionLines.filter(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message?.role === "toolResult" &&
+          entry.message.toolName === CODER_OUTPUT_TOOL_NAME,
+      );
+      assert.equal(toolResults.length, 1, "exactly one coder output toolResult must be recorded");
+      const recorded = toolResults[0]!;
+      assert.equal(recorded.message?.toolCallId, toolCallId);
+      assert.equal(recorded.message?.isError, true);
+      assert.deepEqual(recorded.message?.details, expected);
+
+      // No accepted receipt: no successful coder toolResult.
+      const accepted = sessionLines.find(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message?.role === "toolResult" &&
+          entry.message.toolName === CODER_OUTPUT_TOOL_NAME &&
+          entry.message.isError === false,
+      );
+      assert.equal(accepted, undefined);
+    });
+  });
 });
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {

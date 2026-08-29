@@ -58,25 +58,30 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
-        const entries: unknown[] = [];
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sessionDir, { recursive: true });
+        const sessionFile = join(sessionDir, "session.jsonl");
         const faux = fauxProvider({ provider: "openai-codex" });
         faux.setResponses(Array.from({ length: 3 }, () =>
           fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" }),
         ));
+        // Production retain writes Sitian (kind=auditor) under sessionParent — not session custom entries.
         await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
           tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
           systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
           runDirectory: join(project, "run"),
           context: {
             cwd: project, model: faux.getModel(), thinkingLevel: "off",
-            sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data }); return "entry"; } },
+            sessionManager: {
+              getSessionFile() { return sessionFile; },
+              getSessionDir() { return sessionDir; },
+            },
           } as unknown as ExtensionContext,
         })));
-        entries.push({ type: "message", message: { role: "assistant", stopReason: "aborted" } });
-        assert.equal(extractSessionProviderStop(entries as never)?.errorMessage, '500: {"message":"WebSocket error"}');
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        await mkdir(sessionDir, { recursive: true });
-        await writeFile(join(sessionDir, "session.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+        const retainedStop = await readSessionProviderStop(sessionFile);
+        assert.equal(retainedStop?.errorMessage, '500: {"message":"WebSocket error"}');
+        // Parent framing only — retained stop lives in Sitian; native aborted must not outrank it.
+        await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "aborted" } })}\n`);
         return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
       },
           }),
@@ -826,7 +831,7 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
     await writeInstitutionalSeatTable(runDirectory, {
       auditor: seatSelection("xai", "faux-1"),
     });
-    // Real SessionManager principal — production retain writes the target session JSON.
+    // Real SessionManager principal — production Sitian retain owns the auditor stop bytes.
     const sessionManager = SessionManager.create(project, sessionDirectory);
     const sessionFile = sessionManager.getSessionFile();
     assert.ok(sessionFile);
@@ -842,6 +847,7 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
     } as any]);
     // Real auditor projector entry: return aborted stop without HTTP/diagnostics testimony.
     // Config provider/model and local-looking body/code/errno are not upstream testimony.
+    // Reader preserves Sitian payload stopReason as retained (no aborted→error wash here).
     await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
       tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
       systemPrompt: "Audit.",
@@ -860,9 +866,9 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
         sessionManager,
       } as unknown as ExtensionContext,
     })));
-    // Production retain already holds the aborted stop; flush parent session to disk.
+    // Production Sitian retain already holds the stop; flush parent session principal to disk.
     flushRetainedParentSession(sessionManager);
-    // Disk session carries the retained aborted stop (not piRunner-synthesized JSON).
+    // Sitian retained stop is authoritative (not the parent aborted framing message).
     const diskStop = await readSessionProviderStop(sessionFile);
     assert.equal(diskStop?.stopReason, "error");
     assert.equal(diskStop?.errorMessage, '500: {"message":"stream aborted mid-token"}');
@@ -902,7 +908,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     await writeInstitutionalSeatTable(runDirectory, {
       auditor: seatSelection("openai-codex", "faux-1"),
     });
-    // Real SessionManager principal — production ak_compliance_response retain owns the bytes.
+    // Real SessionManager principal — production Sitian retain (kind=auditor) owns the bytes.
     const sessionManager = SessionManager.create(project, sessionDirectory);
     const sessionFile = sessionManager.getSessionFile();
     assert.ok(sessionFile);
@@ -920,7 +926,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
       },
     ]);
     // Real evidence-child/auditor projector seam: throw structured remote diagnostics
-    // through adapter provider stream → projectStructuredRemote → ak_compliance_response retain.
+    // through adapter provider stream → projectStructuredRemote → Sitian retain.
     // Target session JSON is never hand-written by piRunner.
     await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
       tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
@@ -1123,10 +1129,9 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
 });
 /**
  * SessionManager defers first durable write until an assistant message exists.
- * After production ak_compliance_response retain (custom entry only), append the
- * realistic parent-aborted framing so the already-held retain bytes flush to disk.
- * Does not invent the evidence stop — extractSessionProviderStop prefers the
- * retained compliance response over this framing message.
+ * After production Sitian retain, append realistic parent-aborted framing so the
+ * parent session principal exists on disk. Does not invent the evidence stop —
+ * readSessionProviderStop prefers Sitian retained auditor response over this framing.
  */
 function flushRetainedParentSession(sessionManager: SessionManager): void {
   sessionManager.appendMessage({
