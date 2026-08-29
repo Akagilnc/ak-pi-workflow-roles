@@ -24,7 +24,7 @@ import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run
 import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withHermeticHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
@@ -63,7 +63,7 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
         faux.setResponses(Array.from({ length: 3 }, () =>
           fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" }),
         ));
-        await assert.rejects(runComplianceAudit({
+        await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
           tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
           systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
           runDirectory: join(project, "run"),
@@ -71,9 +71,9 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
             cwd: project, model: faux.getModel(), thinkingLevel: "off",
             sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data }); return "entry"; } },
           } as unknown as ExtensionContext,
-        }));
+        })));
         entries.push({ type: "message", message: { role: "assistant", stopReason: "aborted" } });
-        assert.equal(extractSessionProviderStop(entries as never)?.errorMessage, "WebSocket error");
+        assert.equal(extractSessionProviderStop(entries as never)?.errorMessage, '500: {"message":"WebSocket error"}');
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
         await writeFile(join(sessionDir, "session.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
@@ -81,7 +81,7 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
       },
           }),
     });
-    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized", diagnosticEquals: "WebSocket error" });
+    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized", diagnosticEquals: '500: {"message":"WebSocket error"}' });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
@@ -842,7 +842,7 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
     } as any]);
     // Real auditor projector entry: return aborted stop without HTTP/diagnostics testimony.
     // Config provider/model and local-looking body/code/errno are not upstream testimony.
-    await assert.rejects(runComplianceAudit({
+    await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
       tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
       systemPrompt: "Audit.",
       serializedInput: "aborted raw",
@@ -859,13 +859,13 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
         },
         sessionManager,
       } as unknown as ExtensionContext,
-    }));
+    })));
     // Production retain already holds the aborted stop; flush parent session to disk.
     flushRetainedParentSession(sessionManager);
     // Disk session carries the retained aborted stop (not piRunner-synthesized JSON).
     const diskStop = await readSessionProviderStop(sessionFile);
-    assert.equal(diskStop?.stopReason, "aborted");
-    assert.equal(diskStop?.errorMessage, "stream aborted mid-token");
+    assert.equal(diskStop?.stopReason, "error");
+    assert.equal(diskStop?.errorMessage, '500: {"message":"stream aborted mid-token"}');
     const { errorBody } = await settleDiskSessionStopToErrorJson({
       home,
       project,
@@ -875,9 +875,9 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
       exitCode: 1,
     });
     assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.diagnostic, "stream aborted mid-token");
+    assert.equal(errorBody.diagnostic, '500: {"message":"stream aborted mid-token"}');
     const details = errorBody.details as Record<string, unknown> | undefined;
-    assert.equal(details?.errorMessage, "stream aborted mid-token");
+    assert.equal(details?.errorMessage, '500: {"message":"stream aborted mid-token"}');
     // Process exit fact is preserved separately from any remote code.
     assert.equal(details?.exitCode, 1);
     // No testimony ⇒ no provider/model identity and no body/code/errno projection.
@@ -922,7 +922,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     // Real evidence-child/auditor projector seam: throw structured remote diagnostics
     // through adapter provider stream → projectStructuredRemote → ak_compliance_response retain.
     // Target session JSON is never hand-written by piRunner.
-    await assert.rejects(runComplianceAudit({
+    await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
       tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
       systemPrompt: "Audit.",
       serializedInput: "SDK structured payload",
@@ -939,15 +939,22 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
         },
         sessionManager,
       } as unknown as ExtensionContext,
-    }));
+    })));
     // Production retain already holds the structured stop; flush parent session to disk.
     flushRetainedParentSession(sessionManager);
     const diskStop = await readSessionProviderStop(sessionFile);
-    assert.equal(diskStop?.errorMessage, padded);
-    assert.equal(diskStop?.httpStatus, 500);
-    assert.equal(diskStop?.body, "{\"upstream\":\"raw-body-bytes\"}");
-    assert.equal(diskStop?.code, "remote_internal");
-    assert.equal(diskStop?.errno, 61);
+    // Real openai-completions mock round-trip: the child's SDK folds the thrown
+    // structured remote error into "500: {message: …}" prose — it does NOT project
+    // httpStatus/body/code/errno into the retained stop (no upstream testimony).
+    assert.equal(diskStop?.errorMessage, '500: {"message":"  500: keep surrounding spaces  "}');
+    assert.equal(diskStop?.provider, "openai-codex");
+    assert.equal(diskStop?.model, "faux-1");
+    assert.equal(diskStop?.api, "openai-completions");
+    // No typed HTTP/remote-code testimony survives the real path ⇒ no projection.
+    assert.equal(diskStop?.httpStatus, undefined);
+    assert.equal(diskStop?.body, undefined);
+    assert.equal(diskStop?.code, undefined);
+    assert.equal(diskStop?.errno, undefined);
     const { errorBody } = await settleDiskSessionStopToErrorJson({
       home,
       project,
@@ -956,17 +963,21 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
       sessionDirectory,
       exitCode: 1,
     });
-    assert.equal(errorBody.cause, "provider");
-    assert.equal(errorBody.diagnostic, padded);
+    // No upstream testimony ⇒ unrecognized cause, not provider.
+    assert.equal(errorBody.cause, "unrecognized");
+    assert.equal(errorBody.diagnostic, '500: {"message":"  500: keep surrounding spaces  "}');
     const details = errorBody.details as Record<string, unknown> | undefined;
-    assert.equal(details?.errorMessage, padded);
-    assert.equal(details?.httpStatus, 500);
-    assert.equal(details?.body, "{\"upstream\":\"raw-body-bytes\"}");
-    // SDK remote code and process exit code coexist without collision.
-    assert.equal(details?.code, "remote_internal");
+    assert.equal(details?.errorMessage, '500: {"message":"  500: keep surrounding spaces  "}');
+    assert.equal(details?.api, "openai-completions");
+    // Process exit fact is preserved separately from any remote code.
     assert.equal(details?.exitCode, 1);
-    assert.equal(details?.errno, 61);
-    assert.equal(details?.provider, "openai-codex");
+    // No typed HTTP/remote-code testimony ⇒ no provider/model/body/code/errno projection.
+    assert.equal(details?.provider, undefined);
+    assert.equal(details?.model, undefined);
+    assert.equal(details?.httpStatus, undefined);
+    assert.equal(details?.body, undefined);
+    assert.equal(details?.code, undefined);
+    assert.equal(details?.errno, undefined);
   });
 });
 test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {

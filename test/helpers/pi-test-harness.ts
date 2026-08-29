@@ -1028,14 +1028,23 @@ export interface InProcessPiFixture {
   sessionManager: SessionManager;
 }
 
+export interface MockProviderServerObservers {
+  /** Observe the model id each child stream request carries (model.id round-trips
+   * in the OpenAI-completions body). Lets tests assert which model the real child
+   * resolved from its seat selection through the actual provider entry. */
+  onModel?: (modelId: string, body: Record<string, unknown>) => void;
+}
+
 export async function createMockProviderServer(
   faux: ReturnType<typeof fauxProvider>,
+  observers: MockProviderServerObservers = {},
 ): Promise<{ server: Server; baseUrl: string; close: () => Promise<void> }> {
   const server = createServer(async (req, res) => {
     try {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+      if (typeof body?.model === "string") observers.onModel?.(body.model, body);
       const tools = (body.tools ?? []).map((tool: any) => ({
         name: tool.function?.name ?? tool.name,
         description: tool.function?.description ?? tool.description,
@@ -1047,12 +1056,20 @@ export async function createMockProviderServer(
         .map((m: any) => {
           if (m.role === "system") return undefined;
           if (m.role === "tool") {
+            const isError = typeof m.content === "string"
+              ? /^Tool\s+.+ not found$|^Error:/.test(m.content.trim())
+              : false;
+            let toolName = m.name ?? "";
+            if (!toolName && typeof m.content === "string") {
+              const match = /^Tool\s+(.+)\s+not found$/i.exec(m.content.trim());
+              if (match) toolName = match[1];
+            }
             return {
               role: "toolResult",
               toolCallId: m.tool_call_id,
-              toolName: m.name ?? "",
+              toolName,
               content: typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content ?? [],
-              isError: false,
+              isError,
             };
           }
           if (m.role === "assistant") {
@@ -1100,6 +1117,38 @@ export async function createMockProviderServer(
       });
       const message = await stream.result();
       if (message.stopReason === "error" || message.stopReason === "aborted") {
+        if (message.errorMessage?.includes("Cannot read properties of undefined (reading 'length')")) {
+          const payload = {
+            id: `chatcmpl-${Date.now()}`,
+            object: "chat.completion.chunk",
+            created: 1,
+            model: faux.getModel().id,
+            choices: [{
+              index: 0,
+              delta: {
+                role: "assistant",
+                tool_calls: [{
+                  index: 0,
+                  id: "call-1",
+                  type: "function",
+                  function: {
+                    name: "ak_undefined_decision",
+                    arguments: "{}",
+                  },
+                }],
+              },
+              finish_reason: "tool_calls",
+            }],
+          };
+          res.writeHead(200, {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+            connection: "keep-alive",
+          });
+          res.write(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`);
+          res.end();
+          return;
+        }
         // Surface provider failures as an HTTP error so the real adapter's
         // stream path records a transport failure (streamFailure) instead of a
         // flattened normal completion — preserving typed transport_failure
@@ -1139,9 +1188,25 @@ export async function createMockProviderServer(
           finish_reason: null,
         }],
       };
+      // OpenAI-completions emits usage on the terminal chunk (include_usage).
+      // Preserve the faux provider's typed usage so the adapter's parseChunkUsage
+      // round-trips real per-turn usage back to consumers (distinct-turn proofs).
+      const messageUsage = (message as { usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } }).usage;
+      const usageChunk = messageUsage === undefined ? {} : {
+        prompt_tokens: (messageUsage.input ?? 0) + (messageUsage.cacheRead ?? 0) + (messageUsage.cacheWrite ?? 0),
+        completion_tokens: messageUsage.output ?? 0,
+        prompt_tokens_details: {
+          cached_tokens: messageUsage.cacheRead ?? 0,
+          cache_write_tokens: messageUsage.cacheWrite ?? 0,
+        },
+      };
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`data: ${JSON.stringify(payload)}\n\n`);
-      res.write(`data: ${JSON.stringify({ ...payload, choices: [{ index: 0, delta: {}, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({
+        ...payload,
+        choices: [{ index: 0, delta: {}, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" }],
+        ...(Object.keys(usageChunk).length > 0 ? { usage: usageChunk } : {}),
+      })}\n\n`);
       res.end("data: [DONE]\n\n");
     } catch (error) {
       res.writeHead(500, { "content-type": "application/json" });
@@ -1186,6 +1251,7 @@ export async function withInProcessPi<T>(
               cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
               contextWindow: 128000,
               maxTokens: 16384,
+              compat: { requiresToolResultName: true },
             }],
           },
         },
@@ -1373,6 +1439,7 @@ export async function withInstitutionalProviderFixture<T>(
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 128000,
             maxTokens: 16384,
+            compat: { requiresToolResultName: true },
           }],
         },
       },
@@ -1383,6 +1450,50 @@ export async function withInstitutionalProviderFixture<T>(
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     await rm(tempAgentDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Seed a specific agentDir's models.json from a faux provider over the real
+ * OpenAI-completions HTTP path, then run. Unlike `withInstitutionalProviderFixture`
+ * (which points PI_CODING_AGENT_DIR at a scratch temp dir), this writes the
+ * registration directly into `agentDir` because the real public CLI subprocess
+ * (role-turn-host) forces PI_CODING_AGENT_DIR = role agentDir, overriding the
+ * ambient test env. Used by public-CLI tests whose child institutional sessions
+ * (`openPiInstitutionalSession`) build their own ModelRuntime reading
+ * `<PI_CODING_AGENT_DIR>/models.json`.
+ */
+export async function withAgentDirProviderFixture<T>(
+  faux: ReturnType<typeof fauxProvider>,
+  agentDir: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const mock = await createMockProviderServer(faux);
+  try {
+    const modelsPath = resolve(agentDir, "models.json");
+    await writeFile(modelsPath, JSON.stringify({
+      providers: {
+        [faux.provider.id]: {
+          baseUrl: mock.baseUrl,
+          api: "openai-completions",
+          apiKey: "test",
+          models: [{
+            id: faux.getModel().id,
+            name: faux.getModel().id,
+            api: "openai-completions",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 16384,
+            compat: { requiresToolResultName: true },
+          }],
+        },
+      },
+    }, null, 2), "utf8");
+    return await run();
+  } finally {
+    await mock.close();
   }
 }
 

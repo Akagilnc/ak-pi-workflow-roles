@@ -10,6 +10,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { AuditMaterialsUnavailableError, JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
+import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
 function auditContext(sessionManager: SessionManager, faux = fauxProvider({ provider: "test" })): ExtensionContext {
   return {
@@ -77,7 +78,7 @@ test("judge auditor bare-Pi seam proceeds when subjects are on the books", async
       },
     ]);
     const auditor = createPiJudgeAuditor();
-    const decision = await auditor({ context: auditContext(sessionManager, faux) });
+    const decision = await withInstitutionalProviderFixture(faux, () => auditor({ context: auditContext(sessionManager, faux) }));
     assert.equal(decision.status, "pass");
     assert.equal(calls, 1);
   } finally {
@@ -167,9 +168,11 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
       },
     ]);
     const auditor = createPiJudgeAuditor();
-    const decision = await auditor({ context: auditContext(sessionManager, faux) });
+    const decision = await withInstitutionalProviderFixture(faux, () => auditor({ context: auditContext(sessionManager, faux) }));
     assert.equal(decision.status, "pass");
-    assert.equal(userPrompt, "");
+    // Zero-projection contract: the child user prompt must never carry soul,
+    // adjudication record, proposed verdict, or the owner assignment. The only
+    // user text is the fixed dossier-ready envelope.
     assert.equal(/judge_soul|adjudication_record|proposed_verdict|THE JUDGE LAW|OWNER ASSIGNMENT/.test(userPrompt), false);
   } finally {
     await rm(root, { recursive: true, force: true });

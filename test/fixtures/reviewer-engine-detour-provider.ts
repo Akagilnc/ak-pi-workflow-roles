@@ -4,6 +4,9 @@
  * per axis, then emit the existing axis report text from detour stdout.
  * Parent still submits typed ak_reviewer_output. Zero production hooks.
  */
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -18,6 +21,7 @@ import {
   ENGINE_DETOUR_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
+import { createMockProviderServer } from "../helpers/pi-test-harness.ts";
 
 const CANNED_LABOR = "canned-reviewer-engine-labor-378";
 
@@ -64,11 +68,39 @@ function detourAlreadyCalled(context: Context): boolean {
   );
 }
 
-export default function reviewerEngineDetourProvider(pi: ExtensionAPI): void {
+export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Promise<void> {
   const faux = fauxProvider({
     api: "ak-reviewer-engine-detour",
     provider: "ak-reviewer-engine-detour",
     tokenSize: { min: 1000, max: 1000 },
+  });
+  const mockServer = await createMockProviderServer(faux);
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (agentDir) {
+    const modelsPath = join(agentDir, "models.json");
+    await writeFile(modelsPath, JSON.stringify({
+      providers: {
+        [faux.provider.id]: {
+          baseUrl: mockServer.baseUrl,
+          api: "openai-completions",
+          apiKey: "test",
+          models: [{
+            id: faux.getModel().id,
+            name: faux.getModel().id,
+            api: "openai-completions",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 16384,
+            compat: { requiresToolResultName: true },
+          }],
+        },
+      },
+    }, null, 2), "utf8");
+  }
+  pi.on("session_shutdown", async () => {
+    await mockServer.close();
   });
   const axisSeen = new Set<string>();
   const response = (context: Context) => {

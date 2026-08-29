@@ -13,13 +13,24 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { ENGINE_DETOUR_TOOL_NAME } from "../../src/role-runtime.ts";
+import {
+  ENGINE_DETOUR_TOOL_NAME,
+  JUDGE_OUTPUT_TOOL_NAME,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+} from "../../src/role-runtime.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
+import {
+  GATEKEEPER_OUTPUT_TOOL,
+  NOTARY_OUTPUT_TOOL,
+} from "../../src/gatekeeper-role.ts";
+import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   packageRoot,
   piCli,
   runPiSubprocess,
+  withAgentDirProviderFixture,
 } from "../helpers/pi-test-harness.ts";
 
 function seedGitProject(root: string): void {
@@ -76,7 +87,89 @@ async function runJudgeWithEngine(input: {
   if (input.engine !== undefined) {
     argv.splice(1, 0, "--engine", input.engine);
   }
-  const result = await runAkRole(argv, {
+  // Child institutional sessions (gatekeeper province → notary officer →
+  // judge compliance audit) build their own ModelRuntime that reads
+  // `<PI_CODING_AGENT_DIR>/models.json` (= role agentDir in the pi subprocess).
+  // Register the fixture provider there over a mock SSE server so the real
+  // child path resolves `ak-engine-detour/faux-1` (#518).
+  const faux = fauxProvider({
+    api: "ak-engine-detour",
+    provider: "ak-engine-detour",
+    tokenSize: { min: 1000, max: 1000 },
+  });
+  // The real pi subprocess resolves the fixture provider through models.json for
+  // BOTH the parent session and the institutional children (#518), so the mock
+  // must serve the full scripted flow (navigator → gatekeeper → notary → soul →
+  // detour → judge output), not just the child seats.
+  const childResponse = (context: any) => {
+    const names = context.tools?.map((tool: any) => tool.name) ?? [];
+    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(NOTARY_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+      return fauxAssistantMessage(
+        fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+          candidates: [{
+            id: "engine-detour-route",
+            matches: { role: "judge", phase: null, kind: "accepted" },
+            route: [{ role: "judge", phase: null }],
+            next: { role: "judge", phase: null },
+            reason: "engine detour fixture navigator",
+            command: "Usage: pi --ak-role judge --help",
+          }],
+        }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+      return fauxAssistantMessage(
+        fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+          status: "pass",
+          violations: [],
+          conflicts: [],
+          decisionGate: null,
+        }),
+        { stopReason: "toolUse" },
+      );
+    }
+    const msgs = context.messages ?? [];
+    const lastMsg = msgs[msgs.length - 1];
+    if (names.includes(ENGINE_DETOUR_TOOL_NAME) && lastMsg?.role === "user") {
+      return fauxAssistantMessage(
+        fauxToolCall(
+          ENGINE_DETOUR_TOOL_NAME,
+          { argv: ["kimi", "--fixture-detour"] },
+          { id: `engine-detour-${msgs.length}` },
+        ),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
+      return fauxAssistantMessage(
+        fauxToolCall(
+          JUDGE_OUTPUT_TOOL_NAME,
+          { judgeStatus: "converged" },
+          { id: "engine-detour-judge-out" },
+        ),
+        { stopReason: "toolUse" },
+      );
+    }
+    return fauxAssistantMessage("engine detour fixture idle");
+  };
+  faux.setResponses(
+    Array.from({ length: 24 }, () => childResponse),
+  );
+  return withAgentDirProviderFixture(faux, agentDir, async () => {
+    const result = await runAkRole(argv, {
     packageRoot,
     home: input.home,
     agentDir,
@@ -115,13 +208,14 @@ async function runJudgeWithEngine(input: {
     },
             extraPiArgs: ["-e", providerPath],
           }),
+    });
+    return {
+      exitCode: result.exitCode,
+      terminal: result.terminal,
+      stdout,
+      stderr,
+    };
   });
-  return {
-    exitCode: result.exitCode,
-    terminal: result.terminal,
-    stdout,
-    stderr,
-  };
 }
 
 test(

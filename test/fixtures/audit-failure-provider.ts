@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -20,8 +20,9 @@ import {
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { createMockProviderServer } from "../helpers/pi-test-harness.ts";
 
-export default function auditFailureProvider(pi: ExtensionAPI): void {
+export default async function auditFailureProvider(pi: ExtensionAPI): Promise<void> {
   // #475 missing-subject public tracer: keep the live leaf for singleton execute,
   // but hide candidate toolCalls from getEntries so audit materials fail closed.
   if (process.env.AK_AUDIT_MISSING_SUBJECT === "1") {
@@ -62,6 +63,31 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     provider: "ak-audit-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const mockServer = await createMockProviderServer(faux);
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (agentDir) {
+    const modelsPath = join(agentDir, "models.json");
+    await writeFile(modelsPath, JSON.stringify({
+      providers: {
+        [faux.provider.id]: {
+          baseUrl: mockServer.baseUrl,
+          api: "openai-completions",
+          apiKey: "test",
+          models: [{
+            id: faux.getModel().id,
+            name: faux.getModel().id,
+            api: "openai-completions",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 16384,
+            compat: { requiresToolResultName: true },
+          }],
+        },
+      },
+    }, null, 2), "utf8");
+  }
   if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
     // Header timeoutMs and body-idle both default to owner-final 183000ms but are distinct seams.
     // Idle arms first; the provider schedules timeoutMs second. Compress provider waits harder so the
@@ -259,6 +285,9 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (healthyNavigator && !observation) console.error(`AUDIT_FAILURE_PROCESS_RELEASE=${JSON.stringify({ at: new Date().toISOString() })}`);
   });
   pi.on("session_shutdown", async () => {
+    if (mockServer !== undefined) {
+      await mockServer.close();
+    }
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
     if (!healthyNavigator || observation) return;
     const root = process.env.AK_NAVIGATOR_ROOT;
