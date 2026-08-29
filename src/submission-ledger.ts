@@ -1,7 +1,12 @@
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import { GatekeeperDecisionError } from "./gatekeeper-role.ts";
-import { AcceptedDetailsContractError } from "./package-contracts/terminating-tools.ts";
+import {
+  AcceptedDetailsContractError,
+  acceptedFacts,
+  isTerminatingToolName,
+  type AcceptedDetails,
+} from "./package-contracts/terminating-tools.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
@@ -57,7 +62,7 @@ function runIdentity(context: HostContext): string {
   }
   const headerId = context.sessionManager.getHeader?.()?.id;
   if (typeof headerId === "string" && headerId.length > 0) return headerId;
-  throw new Error("submission ledger requires admitted run identity");
+  throw new Error("提交账需要已受理的 run 身份");
 }
 
 function attemptIdentity(context: HostContext, runId: string): string {
@@ -162,15 +167,6 @@ async function restoreState(cwd: string, runId: string): Promise<LedgerState> {
   };
 }
 
-/** Single authority for sealed.status — judgeStatus (role-specific) then status then fallback. */
-export function statusFromAcceptedDetails(details: unknown, fallback: string): string {
-  if (typeof details !== "object" || details === null) return fallback;
-  const record = details as Record<string, unknown>;
-  if (typeof record.judgeStatus === "string") return record.judgeStatus;
-  if (typeof record.status === "string") return record.status;
-  return fallback;
-}
-
 /** Pipeline-owned sole-final state and durable projection. */
 export function createSubmissionLedgerHost(host: RoleHost, outputTools: ReadonlyMap<string, TerminalRoleName>): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
@@ -192,7 +188,7 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
           };
           if (state.sealed) {
             append({ type: "post-seal-anomaly", attemptId, toolCallId, toolName: tool.name });
-            throw new Error("submission ledger is already sealed");
+            throw new Error("提交账已封账");
           }
           const batch = context.terminationBatch;
           const batchId = `${attemptId}:${toolCallId}`;
@@ -201,7 +197,7 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
           const matching = batch?.calls.filter((call) => call.id === toolCallId && call.name === tool.name) ?? [];
           if (batch?.batchClosed !== true || batch.calls.length !== 1 || matching.length !== 1) {
             append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection", code: "closed-batch" });
-            throw new Error("terminating output must be the sole matching call in a closed batch");
+            throw new Error("回执非唯一终局工具调用");
           }
           let result: HostToolResult<unknown>;
           try {
@@ -247,7 +243,16 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
             return result;
           }
           const details = typeof result.details === "object" && result.details !== null ? result.details as Record<string, unknown> : {};
-          const status = statusFromAcceptedDetails(details, "accepted");
+          // sealed.status sole authority = acceptedFacts (Collector → collected); no parallel mapper.
+          if (!isTerminatingToolName(tool.name)) {
+            append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: `non-terminating tool ${tool.name}` });
+            throw new Error("提交账只受理终止工具");
+          }
+          const status = acceptedFacts(tool.name, details as AcceptedDetails).status;
+          if (typeof status !== "string" || status.length === 0) {
+            append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: "acceptedFacts missing status" });
+            throw new Error("提交账封账缺少 acceptedFacts.status");
+          }
           const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role, status, decisiveFacts: details };
           try {
             append({ type: "sealed", attemptId, toolCallId, accepted: result.details, projection });
