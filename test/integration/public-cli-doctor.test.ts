@@ -450,6 +450,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           const patient = await loadDoctorCase(casePath);
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
+          const details = sampleCompletedDoctorOutput(patient.identity, findingObservation);
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -458,13 +459,14 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: sampleCompletedDoctorOutput(patient.identity, findingObservation),
+                details,
               },
             })}\n`,
             "utf8",
           );
           return {
             code: 0,
+            sealedAcceptance: { role: "doctor" as const, details },
             timedOut: false,
             stderr: "",
             args: [...args],
@@ -520,6 +522,13 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
             piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
+          const details = {
+            status: "refused",
+            reason: "Need retained sessions",
+            missingEvidence: [
+              { need: "session header", targetKeys: ["case"] },
+            ],
+          };
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -528,19 +537,14 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: {
-                  status: "refused",
-                  reason: "Need retained sessions",
-                  missingEvidence: [
-                    { need: "session header", targetKeys: ["case"] },
-                  ],
-                },
+                details,
               },
             })}\n`,
             "utf8",
           );
           return {
             code: 0,
+            sealedAcceptance: { role: "doctor" as const, details },
             timedOut: false,
             stderr: "",
             args: [...args],

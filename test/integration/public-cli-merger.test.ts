@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -317,12 +317,11 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       }),
     ];
     await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
-    await sealAcceptedSubmission({
+    await writeSealedSubmissionFixture({
       cwd: project,
       home,
       runDirectory: admitted.runDirectory,
       role: "merger",
-      toolName: MERGER_OUTPUT_TOOL_NAME,
       details: receipt,
       toolCallId: "m1",
     });
@@ -443,12 +442,11 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       `${escalateLines.join("\n")}\n`,
       "utf8",
     );
-    await sealAcceptedSubmission({
+    await writeSealedSubmissionFixture({
       cwd: project,
       home,
       runDirectory: escalateAdmitted.runDirectory,
       role: "merger",
-      toolName: MERGER_OUTPUT_TOOL_NAME,
       details: escalateReceiptBound,
       toolCallId: "m2",
     });
@@ -606,6 +604,7 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -753,6 +752,7 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         return {
           code: 0,
+              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "r1" },
           stderr: "",
           timedOut: false,
           args: [...args],

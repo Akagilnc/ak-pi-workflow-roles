@@ -33,7 +33,7 @@ import {
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -248,12 +248,11 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
-    await sealAcceptedSubmission({
+    await writeSealedSubmissionFixture({
       cwd: project,
       home,
       runDirectory: admitted.runDirectory,
       role: "coder",
-      toolName: CODER_OUTPUT_TOOL_NAME,
       details: receipt,
       toolCallId: "c1",
     });
@@ -333,12 +332,11 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
           await mkdir(sessionDirectory, { recursive: true });
           // No packaged toolResult leaf — only the pipeline ledger seals acceptance.
           await writeFile(sessionFile, "", "utf8");
-          await sealAcceptedSubmission({
+          await writeSealedSubmissionFixture({
             cwd: request.cwd,
             home,
             runDirectory: request.runDirectory,
             role: "coder",
-            toolName: CODER_OUTPUT_TOOL_NAME,
             details: receipt,
             toolCallId: "alt-1",
           });
@@ -427,6 +425,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "coder" as const, details: receipt, toolCallId: "p1" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -580,6 +579,10 @@ test("ak-role resume continues coder with preserved plan phase and exact session
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
+        const details = {
+                status: "planned",
+                report: "Resumed plan remains plan phase.",
+              };
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({
@@ -589,16 +592,14 @@ test("ak-role resume continues coder with preserved plan phase and exact session
               toolCallId: "r1",
               toolName: CODER_OUTPUT_TOOL_NAME,
               isError: false,
-              details: {
-                status: "planned",
-                report: "Resumed plan remains plan phase.",
-              },
+              details,
             },
           })}\n`,
           "utf8",
         );
         return {
           code: 0,
+          sealedAcceptance: { role: "coder" as const, details, toolCallId: "r1" },
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -675,6 +676,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "coder" as const, details: receipt, toolCallId: "bare1" },
               stderr: "",
               timedOut: false,
               args: [...args],

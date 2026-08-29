@@ -182,15 +182,22 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
             piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
+          const details = {
+            judgeStatus: "escalate",
+            decisionGate: { question: "请二选一", options },
+          };
           await writeFile(
             join(sessionDir, "session.jsonl"),
-            sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, {
-              judgeStatus: "escalate",
-              decisionGate: { question: "请二选一", options },
-            }),
+            sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, details),
             "utf8",
           );
-          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+          return {
+            code: 0,
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+            sealedAcceptance: { role: "judge" as const, details },
+          };
         },
           }),
       },
@@ -1207,6 +1214,23 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: {
+              role: "judge" as const,
+              details: {
+                judgeStatus: "converged",
+                note: "ok",
+                auditNoReceipt: {
+                  status: "no-receipt",
+                  terminalToolCalled: false,
+                  rejectedReceipts: [],
+                  deliveryTurns: 2,
+                  sessionCompletion: "settled-without-accepted-receipt",
+                  runPointer: "/audit/run",
+                  attemptPointer: "audit-attempt",
+                  acceptedReceipt: false,
+                },
+              },
+            },
           };
         },
           }),
@@ -1326,6 +1350,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
         prompt = String(args.at(-1));
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
+        const details = { judgeStatus: "converged" };
         await writeFile(
           join(sessionDir, "session.jsonl"),
           `${JSON.stringify({
@@ -1334,7 +1359,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
               role: "toolResult",
               toolName: JUDGE_OUTPUT_TOOL_NAME,
               isError: false,
-              details: { judgeStatus: "converged" },
+              details,
             },
           })}\n`,
           "utf8",
@@ -1344,6 +1369,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
           stderr: "",
           timedOut: false,
           args: [...args],
+          sealedAcceptance: { role: "judge" as const, details },
         };
       },
           }),

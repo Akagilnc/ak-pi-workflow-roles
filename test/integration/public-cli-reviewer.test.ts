@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -433,12 +433,11 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
-    await sealAcceptedSubmission({
+    await writeSealedSubmissionFixture({
       cwd: project,
       home,
       runDirectory: admitted.runDirectory,
       role: "reviewer",
-      toolName: REVIEWER_OUTPUT_TOOL_NAME,
       details: receipt,
       toolCallId: "r1",
     });
@@ -617,6 +616,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details: receipt, toolCallId: "ok1" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -726,6 +726,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details: receipt, toolCallId: "ok1" },
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -902,6 +903,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         );
         // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
         const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>`;
+        const details = lawfulReviewerReceipt(["standards"]);
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({
@@ -917,13 +919,14 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
               toolCallId: "rr1",
               toolName: REVIEWER_OUTPUT_TOOL_NAME,
               isError: false,
-              details: lawfulReviewerReceipt(["standards"]),
+              details,
             },
           })}\n`,
           "utf8",
         );
         return {
           code: 0,
+          sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "rr1" },
           stderr: "",
           timedOut: false,
           args: [...args],
