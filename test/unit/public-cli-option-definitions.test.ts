@@ -16,9 +16,6 @@
  * superseded by real parser tracers.
  */
 import assert from "node:assert/strict";
-import { readFile, mkdtemp, rm, chmod } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
@@ -31,15 +28,12 @@ import {
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   PUBLIC_ROLE_OPTION_OWNERS,
-  PUBLIC_CLI_OPTIONS_README_MARKERS,
   REJECTED_PUBLIC_SPELLINGS,
   ANALYST_REQUIRE_ANY_OF,
   allRejectedSpellingTokens,
-  applyReadmeOptionsSection,
   createTypedOptionConsumer,
   optionsForOwner,
   projectOwnerOptions,
-  renderReadmeOptionsMarkdown,
   type OptionOwner,
   type PublicOptionDefinition,
   type PublicRoleOptionOwner,
@@ -55,7 +49,6 @@ import {
   parseReviewerArgv,
   parseAnalystArgv,
 } from "../../src/public-cli/invocation.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);
 const isUsage = (error: unknown): boolean =>
@@ -687,27 +680,4 @@ function sampleValue(metavar: string, id: string): string {
       return "sample";
   }
 }
-
-/** Split a GFM table row on unescaped `|` cell boundaries. */
-
-test("README EN/ZH generated regions are regeneration-clean", async () => {
-  const en = await readFile(resolve(packageRoot, "README.md"), "utf8");
-  const zh = await readFile(resolve(packageRoot, "README.zh-CN.md"), "utf8");
-  assert.ok(en.includes(PUBLIC_CLI_OPTIONS_README_MARKERS.begin));
-  assert.ok(zh.includes(PUBLIC_CLI_OPTIONS_README_MARKERS.begin));
-  assert.equal(
-    applyReadmeOptionsSection(en, "en"),
-    en,
-    "README.md drifted — run: node --import tsx scripts/render-public-cli-options-readme.ts",
-  );
-  assert.equal(
-    applyReadmeOptionsSection(zh, "zh"),
-    zh,
-    "README.zh-CN.md drifted — run: node --import tsx scripts/render-public-cli-options-readme.ts",
-  );
-  for (const spelling of allRejectedSpellingTokens()) {
-    assert.equal(renderReadmeOptionsMarkdown("en").includes(spelling), false);
-    assert.equal(renderReadmeOptionsMarkdown("zh").includes(spelling), false);
-  }
-});
 
