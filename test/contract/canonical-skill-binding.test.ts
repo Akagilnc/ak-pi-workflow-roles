@@ -4,10 +4,25 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
-import { loadCanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
+import { parseSkillBlock } from "@earendil-works/pi-coding-agent";
+import {
+  loadCanonicalSkillBinding,
+  type AnyCanonicalSkillBinding,
+} from "../../src/canonical-skill-binding.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const originalHome = process.env.HOME;
+
+function withHostDeclaration(binding: AnyCanonicalSkillBinding) {
+  return Object.freeze({
+    ...binding,
+    captureExpansion(prompt: string, request: string) {
+      const parsed = parseSkillBlock(prompt);
+      const evidence = parsed == null ? undefined : { ...parsed, userMessage: parsed.userMessage ?? "" };
+      return binding.captureExpansion(evidence, request);
+    },
+  });
+}
 
 async function withHome<T>(run: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(resolve(tmpdir(), "ak-canonical-skill-"));
@@ -55,7 +70,7 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     const configuredPath = resolve(configuredDir, "SKILL.md");
     await symlink(targetPath, configuredPath);
 
-    const binding = await loadCanonicalSkillBinding("tdd");
+    const binding = withHostDeclaration(await loadCanonicalSkillBinding("tdd"));
     const canonicalPath = await realpath(targetPath);
     const body = "# Fixture TDD\n\nRun one red-green slice.";
 
@@ -117,7 +132,7 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     );
 
     await writeFile(targetPath, raw.replace("Run one red-green slice.", "Changed after activation."));
-    const reloaded = await loadCanonicalSkillBinding("tdd");
+    const reloaded = withHostDeclaration(await loadCanonicalSkillBinding("tdd"));
     assert.notEqual(reloaded.snapshot, binding.snapshot);
     assert.equal(binding.snapshot.raw, raw);
     assert.match(reloaded.snapshot.body, /Changed after activation/);

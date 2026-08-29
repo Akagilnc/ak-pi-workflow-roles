@@ -466,7 +466,7 @@ export function createCoderRoleRuntime(
               expansionPending = false;
               if (originalRequest !== undefined) {
                 expansionCaptured = binding.captureExpansion(
-                  event.prompt,
+                  pi.capabilities?.skillExpansion(event.prompt),
                   originalRequest,
                 ) !== undefined;
               }

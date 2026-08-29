@@ -230,8 +230,21 @@ type HostGatekeeperSubject = { readonly kind: "worker_completion" | "judge_draft
 type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" } & Record<string, unknown>;
 export type HostGatekeeperActions = { failInfrastructure(error: unknown, context: HostContext, toolCallId?: string): never; bindGatekeeperNonPass(toolCallId: string, result: HostGatekeeperNonPass): void };
 
+export type HostSkillExpansionEvidence = Readonly<{
+  name: string;
+  location: string;
+  content: string;
+  userMessage: string;
+}>;
+
+/** Host capability declaration (contract verb ④). */
+export type HostCapabilityDeclaration = Readonly<{
+  skillExpansion(prompt: string): HostSkillExpansionEvidence | undefined;
+}>;
+
 /** The activation surface consumed by package role factories. */
 export interface RoleHost {
+  readonly capabilities?: HostCapabilityDeclaration;
   registerFlag(name: string, definition: { description: string; type: "boolean" | "string"; default?: boolean | string }): void;
   getFlag(name: string): boolean | string | undefined;
   registerTool<S extends TSchema, D = unknown>(tool: HostToolDefinition<S, D>): void;

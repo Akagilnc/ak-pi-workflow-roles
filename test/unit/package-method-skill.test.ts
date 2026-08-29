@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { parseSkillBlock } from "@earendil-works/pi-coding-agent";
+import type { AnyCanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import {
   gitBlobOid,
@@ -24,6 +26,17 @@ import { sha256Hex } from "../../src/sha256.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const originalHome = process.env.HOME;
+
+function withHostDeclaration(binding: AnyCanonicalSkillBinding) {
+  return {
+    ...binding,
+    captureExpansion(prompt: string, request: string) {
+      const parsed = parseSkillBlock(prompt);
+      const evidence = parsed == null ? undefined : { ...parsed, userMessage: parsed.userMessage ?? "" };
+      return binding.captureExpansion(evidence, request);
+    },
+  };
+}
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-empty-home-method-"));
@@ -155,7 +168,9 @@ test("packaged diagnosing-bugs loads adapted boundary method without external sk
 
 test("packaged tdd binding captures expansion against package skill path only", async () => {
   await withEmptyHome(async () => {
-    const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
+    const binding = withHostDeclaration(
+      await loadPackagedCanonicalSkillBinding(packageRoot, "tdd"),
+    );
     assert.equal(binding.name, "tdd");
     const request = "Implement the approved slice.";
     assert.equal(binding.invocation(request), `/skill:tdd ${request}`);
@@ -233,9 +248,8 @@ test("packaged code-review loads adapted two-axis method without Matt setup", as
 
 test("packaged code-review binding captures expansion against package skill path only", async () => {
   await withEmptyHome(async () => {
-    const binding = await loadPackagedCanonicalSkillBinding(
-      packageRoot,
-      "code-review",
+    const binding = withHostDeclaration(
+      await loadPackagedCanonicalSkillBinding(packageRoot, "code-review"),
     );
     assert.equal(binding.name, "code-review");
     const request = "Review the branch since main.";
