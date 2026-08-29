@@ -83,10 +83,22 @@ test("createRecordSession nests by parent file and continues subject-keyed navig
     first.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
     const firstFile = first.getSessionFile()!;
 
-    // same subject continues the same session
+    // same subject continues the same session through the AK-owned pointer ledger
     const continued = createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent });
     assert.equal(continued.getSessionFile(), firstFile);
     continued.appendCustomEntry("principal", { run: 2 });
+
+    await rm(join(dirA, "current-session.json"));
+    assert.throws(
+      () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
+      (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    );
+    await writeFile(join(dirA, "current-session.json"), "not-json");
+    assert.throws(
+      () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
+      (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    );
+    await writeFile(join(dirA, "current-session.json"), `${JSON.stringify({ sessionFile: firstFile })}\n`);
 
     // Cross-book final-file symlink: books/A nest points at a legal books/B session → refuse before open.
     const foreignDir = join(machineLedgerHome(home), "books", "foreign", "navigator", "peer");
