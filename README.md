@@ -13,6 +13,22 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 
 Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; set per-seat model defaults with `ak-role config set <seat> <provider/model[:thinking]>` (callable seats plus automatic `gatekeeper` / `inspector` / `navigator`); clear a Gate officer override with `ak-role config unset <gatekeeper|inspector|notary>`; set or clear a persistent labor engine (callable roles) with `ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`.
 
+### Test channel (`next`)
+
+Family / dogfood installs use the same package under dist-tag `next`, on a dedicated `HOME` so the test surface never shares AK config, ledger, book, or `PI_CODING_AGENT_DIR` with the host install. Do not mount or copy host credentials into the test home; do not use a book/worktree as a stand-in for install isolation. No second global npm.
+
+```bash
+export HOME=/path/to/test-home          # dedicated test HOME
+export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+export PATH="$PI_CODING_AGENT_DIR/npm/node_modules/.bin:$PATH"
+```
+
+- **First install of next**: `pi install npm:@akagilnc/pi-workflow-roles@next` → `ak-role roles` runs; installed version looks like `0.1.<count>-next.<shortsha>`.
+- **Advance to a newer next**: `pi update npm:@akagilnc/pi-workflow-roles@next` → `<shortsha>` becomes the new CI `head_sha` prefix (7 chars).
+- **Same-version reinstall / restore**: rerun the first-install command → idempotent; version unchanged (stamp path that only moves the dist-tag when the version is already on the registry).
+
+Publish routing (Actions, not local stamp): successful `ci` push on `main` → `latest`; successful `ci` push on an allowlisted non-main branch (see `.github/workflows/ci.yml` `push.branches`) → `next`. PR completions and failed CI never publish.
+
 ## Reading results
 
 `ak-role` is the only supported way to call the package. Every run writes its complete Terminal result to stdout—read or redirect it there, never scrape Pi session files:

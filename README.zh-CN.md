@@ -13,6 +13,22 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 
 更新用 `pi update npm:@akagilnc/pi-workflow-roles`——勿另起全局 `npm install -g`。查看能力：`ak-role roles`、`ak-role help <role>`；设席位模型默认：`ak-role config set <seat> <provider/model[:thinking]>`（可调用席位，以及自动出席的 `gatekeeper`／`inspector`／`navigator`）；清除门下省官钉：`ak-role config unset <gatekeeper|inspector|notary>`；设或清持久劳务引擎（可调用角色）：`ak-role config set-engine <seat> <name>` / `ak-role config unset-engine <seat>`。
 
+### 测试通道（`next`）
+
+家族／dogfood 安装面复用同一包，经 dist-tag `next` 取得；测试面自有 `HOME`，其下的 AK config／ledger／book 与 `PI_CODING_AGENT_DIR` 一并独立，不与宿主已装包共享。测试面不挂载、不复制宿主凭据；不以 book／worktree 冒充安装隔离。不装第二份全局 npm。
+
+```bash
+export HOME=/path/to/test-home          # 测试面自有 HOME
+export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+export PATH="$PI_CODING_AGENT_DIR/npm/node_modules/.bin:$PATH"
+```
+
+- **首次装 next**：`pi install npm:@akagilnc/pi-workflow-roles@next` → `ak-role roles` 可跑；装到的版本形如 `0.1.<count>-next.<shortsha>`。
+- **推进到新 next**：`pi update npm:@akagilnc/pi-workflow-roles@next` → 版本号里的 `<shortsha>` 变为新 CI `head_sha` 的前 7 位。
+- **同版本重装／恢复**：重跑首次安装命令 → 幂等，版本不变（对应 stamp「版本已在 registry 则只移 dist-tag」路径）。
+
+发布路由（Actions 真入口，非本地 stamp）：`ci` 在 `main` 上成功 push → `latest`；`ci` 在 allowlist 非 main 分支上成功 push（见 `.github/workflows/ci.yml` 的 `push.branches`）→ `next`。PR completion 与失败 CI 不发布。
+
 ## 读结果
 
 `ak-role` 是唯一受支持的调用方式。每次运行的完整 Terminal 结果写在 stdout——从那里读或正常重定向，不要刮 Pi session 文件：
