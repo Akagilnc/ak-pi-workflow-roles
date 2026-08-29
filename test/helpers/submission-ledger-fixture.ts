@@ -18,19 +18,17 @@ function toolNameForRole(role: TerminalRoleName): string {
   return toolName;
 }
 
-/** Seal an accepted projection through the production ledger host. */
-export async function sealAcceptedSubmission(input: {
+/** Shared producer core — one pipeline, callers only supply details + options. */
+async function driveLedgerProducer(input: {
   readonly cwd: string;
   readonly runId: string;
   readonly role: TerminalRoleName;
   readonly details: unknown;
   readonly home?: string;
-  readonly toolCallId?: string;
+  readonly toolCallId: string;
   readonly runDirectory?: string;
 }): Promise<void> {
-  if (await readSealedSubmission(input.cwd, input.runId) !== undefined) return;
   const toolName = toolNameForRole(input.role);
-  const toolCallId = input.toolCallId ?? "seal-1";
   let registered: HostToolDefinition | undefined;
   const host = {
     registerTool(tool: HostToolDefinition) {
@@ -52,7 +50,7 @@ export async function sealAcceptedSubmission(input: {
     input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
   try {
     await registered.execute(
-      toolCallId,
+      input.toolCallId,
       {},
       undefined,
       undefined,
@@ -70,7 +68,7 @@ export async function sealAcceptedSubmission(input: {
         },
         terminationBatch: {
           batchClosed: true,
-          calls: [{ id: toolCallId, name: toolName }],
+          calls: [{ id: input.toolCallId, name: toolName }],
         },
         abort() {},
       } as HostContext,
@@ -85,32 +83,38 @@ export async function sealAcceptedSubmission(input: {
   }
 }
 
-/** @deprecated name kept for call-site migration — routes through production ledger host. */
-export async function writeSealedSubmissionFixture(input: {
+function runIdFromDirectory(runDirectory: string): string {
+  const runId = basename(runDirectory).split("@")[0];
+  if (runId === undefined || runId.length === 0) {
+    throw new Error("sealed submission requires admitted run identity from runDirectory");
+  }
+  return runId;
+}
+
+/** Seal an accepted projection through the production ledger host. */
+export async function sealAcceptedSubmission(input: {
   readonly cwd: string;
-  readonly runDirectory: string;
+  readonly runId: string;
   readonly role: TerminalRoleName;
   readonly details: unknown;
   readonly home?: string;
   readonly toolCallId?: string;
+  readonly runDirectory?: string;
 }): Promise<void> {
-  const runId = basename(input.runDirectory).split("@")[0];
-  if (runId === undefined || runId.length === 0) {
-    throw new Error("sealed submission requires admitted run identity from runDirectory");
-  }
-  await sealAcceptedSubmission({
+  if (await readSealedSubmission(input.cwd, input.runId) !== undefined) return;
+  await driveLedgerProducer({
     cwd: input.cwd,
-    runId,
+    runId: input.runId,
     role: input.role,
     details: input.details,
-    runDirectory: input.runDirectory,
+    toolCallId: input.toolCallId ?? "seal-1",
     ...(input.home === undefined ? {} : { home: input.home }),
-    ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
+    ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
   });
 }
 
 /** Spawn-env convenience for public-cli faux runners that already own typed details. */
-export async function writeSealedSubmissionFixtureForSpawn(input: {
+export async function sealAcceptedSubmissionForSpawn(input: {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly role: TerminalRoleName;
@@ -119,8 +123,9 @@ export async function writeSealedSubmissionFixtureForSpawn(input: {
 }): Promise<void> {
   const runDirectory = input.env.AK_ROLE_RUN_DIR;
   if (typeof runDirectory !== "string" || runDirectory.length === 0) return;
-  await writeSealedSubmissionFixture({
+  await sealAcceptedSubmission({
     cwd: input.cwd,
+    runId: runIdFromDirectory(runDirectory),
     runDirectory,
     role: input.role,
     details: input.details,
@@ -159,58 +164,13 @@ export async function recordAuditEscalationSubmission(input: {
       details,
     );
   }
-  const toolName = toolNameForRole(input.role);
-  const toolCallId = input.toolCallId ?? "escalate-1";
-  let registered: HostToolDefinition | undefined;
-  const host = {
-    registerTool(tool: HostToolDefinition) {
-      registered = tool;
-    },
-  } as RoleHost;
-  createSubmissionLedgerHost(host, new Map([[toolName, input.role]])).registerTool({
-    name: toolName,
-    label: "output",
-    description: "",
-    parameters: Type.Object({}),
-    execute: async () => ({ content: [], details, terminate: true }),
+  await driveLedgerProducer({
+    cwd: input.cwd,
+    runId: input.runId,
+    role: input.role,
+    details,
+    toolCallId: input.toolCallId ?? "escalate-1",
+    ...(input.home === undefined ? {} : { home: input.home }),
+    ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
   });
-  if (registered === undefined) throw new Error("submission ledger host did not register output tool");
-  const priorHome = process.env.HOME;
-  const priorRun = process.env.AK_ROLE_RUN_DIR;
-  if (input.home !== undefined) process.env.HOME = input.home;
-  process.env.AK_ROLE_RUN_DIR =
-    input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
-  try {
-    await registered.execute(
-      toolCallId,
-      {},
-      undefined,
-      undefined,
-      {
-        cwd: input.cwd,
-        mode: "json",
-        model: undefined,
-        sessionManager: {
-          getHeader: () => ({ type: "session", id: `${input.runId}:attempt` }),
-          getLeafId: () => null,
-          getLeafEntry: () => undefined,
-          getEntries: () => [],
-          getSessionDir: () => "",
-          getSessionFile: () => undefined,
-        },
-        terminationBatch: {
-          batchClosed: true,
-          calls: [{ id: toolCallId, name: toolName }],
-        },
-        abort() {},
-      } as HostContext,
-    );
-  } finally {
-    if (input.home !== undefined) {
-      if (priorHome === undefined) delete process.env.HOME;
-      else process.env.HOME = priorHome;
-    }
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = priorRun;
-  }
 }

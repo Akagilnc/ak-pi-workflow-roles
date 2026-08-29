@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -432,7 +432,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
-    await writeSealedSubmissionFixture({
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
       cwd: project,
       home,
       runDirectory: admitted.runDirectory,

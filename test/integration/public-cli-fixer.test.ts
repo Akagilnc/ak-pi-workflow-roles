@@ -48,7 +48,7 @@ import {
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
-import { writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -258,7 +258,8 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       }),
     ];
     await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
-    await writeSealedSubmissionFixture({
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
       cwd: project,
       home,
       runDirectory: admitted.runDirectory,
@@ -336,7 +337,8 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       })}\n`,
       "utf8",
     );
-    await writeSealedSubmissionFixture({
+    await sealAcceptedSubmission({
+      runId: noDiag.runId,
       cwd: project,
       home,
       runDirectory: noDiag.runDirectory,
@@ -663,7 +665,8 @@ async function settleFixerSession(
 ) {
   await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
   await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
-  await writeSealedSubmissionFixture({
+  await sealAcceptedSubmission({
+    runId: admitted.runId,
     cwd: admitted.projectRoot,
     ...(process.env.HOME === undefined ? {} : { home: process.env.HOME }),
     runDirectory: admitted.runDirectory,

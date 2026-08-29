@@ -14,7 +14,7 @@ import {
   type PiSpawnRunner,
 } from "../../src/pi/role-turn-host.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { writeSealedSubmissionFixtureForSpawn } from "./submission-ledger-fixture.ts";
+import { sealAcceptedSubmissionForSpawn } from "./submission-ledger-fixture.ts";
 
 /** Minimal alternative host: controls typed results without entering the Pi adapter. */
 export function createMinimalHost(
@@ -63,7 +63,7 @@ export function roleTurnHostFromLegacyPiRunner(options: {
   const spawnRunner: PiSpawnRunner = async (args, spawnOptions) => {
     const result = await options.piRunner(args, spawnOptions);
     if (result.sealedAcceptance !== undefined) {
-      await writeSealedSubmissionFixtureForSpawn({
+      await sealAcceptedSubmissionForSpawn({
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         role: result.sealedAcceptance.role,

@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -316,7 +316,8 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       }),
     ];
     await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
-    await writeSealedSubmissionFixture({
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
       cwd: project,
       home,
       runDirectory: admitted.runDirectory,
@@ -441,7 +442,8 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       `${escalateLines.join("\n")}\n`,
       "utf8",
     );
-    await writeSealedSubmissionFixture({
+    await sealAcceptedSubmission({
+      runId: escalateAdmitted.runId,
       cwd: project,
       home,
       runDirectory: escalateAdmitted.runDirectory,

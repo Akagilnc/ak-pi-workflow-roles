@@ -33,7 +33,7 @@ import {
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { sealAcceptedSubmission, writeSealedSubmissionFixture } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -248,7 +248,8 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
-    await writeSealedSubmissionFixture({
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
       cwd: project,
       home,
       runDirectory: admitted.runDirectory,
