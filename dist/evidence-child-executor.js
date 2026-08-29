@@ -215,6 +215,23 @@ function classifiedError(error, evidenceChildFailure) {
             : evidenceChildFailure;
     return Object.assign(wrapped, { evidenceChildFailure: classification });
 }
+/** Extract the first text diagnostic from a flattened toolResult error `details`. */
+function extractToolResultText(details) {
+    if (typeof details !== "object" || details === null)
+        return undefined;
+    const record = details;
+    const content = record.content;
+    if (Array.isArray(content)) {
+        for (const part of content) {
+            if (typeof part === "object" && part !== null) {
+                const text = part.text;
+                if (typeof text === "string" && text.trim() !== "")
+                    return text;
+            }
+        }
+    }
+    return undefined;
+}
 function emptyUsage() {
     return {
         input: 0,
@@ -404,7 +421,10 @@ export async function executeAuditorChild(options) {
                 try {
                     const result = await options.tool.execute(...args);
                     delivery.recordAccepted();
-                    decision = args[1];
+                    const rawDecision = args[1];
+                    const isMissingArgs = rawDecision === undefined
+                        || (typeof rawDecision === "object" && rawDecision !== null && !Array.isArray(rawDecision) && Object.keys(rawDecision).length === 0);
+                    decision = isMissingArgs ? undefined : rawDecision;
                     decisionCallId = args[0];
                     decisionToolFailure = undefined;
                     decisionToolFailures.delete(args[0]);
@@ -496,6 +516,37 @@ export async function executeAuditorChild(options) {
         };
         const retainedAssistants = [];
         const unsubscribe = handle.subscribe((event) => {
+            // Capture evidence-tool (non-decision) failures from the handle's real
+            // tool_result events. The old runCompletion path wrapped every child tool's
+            // execute to observe failures; through the real handle the adapter forwards
+            // tool_execution_end isError. Record the errored tool call id so an adjacent
+            // evidence failure can outrank a settled/correctable decision feedback.
+            if (event.type === "tool_result" && event.isError === true && event.toolName !== tool.name) {
+                // Through the real handle the child flattens a throwing evidence tool
+                // into a toolResult error whose content text carries the diagnostic
+                // (e.g. "ENOENT: no such file or directory..."). Recover that text so
+                // the adjacent evidence failure outranks a settled decision feedback
+                // with its original diagnostic, mirroring the pre-migration wrapped
+                // execute capture (which held the raw error object).
+                const detailText = extractToolResultText(event.details);
+                // A native unknown-tool receipt ("Tool <name> not found") is not an
+                // evidence-tool failure: the child session has no such tool registered,
+                // so its errored toolResult must not short-circuit the auditor (it keeps
+                // prompting to the turn limit, mirroring the pre-migration
+                // registeredToolNames exclusion in findToolFailure).
+                if (detailText !== undefined && /^Tool\s+.+ not found$/.test(detailText.trim()))
+                    return;
+                const failure = detailText === undefined
+                    ? new Error(event.toolName ?? "evidence tool failed")
+                    : new Error(detailText);
+                // Recover the errno code from the flattened diagnostic so an evidence
+                // failure's identity (e.g. code "ENOENT") is preserved across the real
+                // HTTP round-trip, mirroring the pre-migration raw error object.
+                const errno = /^([A-Z_]+):/.exec(detailText ?? "");
+                if (errno !== null && errno[1] !== undefined)
+                    failure.code = errno[1];
+                evidenceToolFailures.set(event.toolCallId, failure);
+            }
             if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === undefined) {
                 turns += 1;
                 if (event.usage)
@@ -518,7 +569,11 @@ export async function executeAuditorChild(options) {
                         if (part.type === "toolCall" && part.name === tool.name) {
                             rejectedDecisionResponse = msg;
                             if (decision === undefined) {
-                                decision = part.arguments;
+                                decision = (part.arguments === undefined
+                                    || (typeof part.arguments === "object" && part.arguments !== null
+                                        && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0))
+                                    ? undefined
+                                    : part.arguments;
                                 decisionCallId = part.id;
                                 // Pi can reject malformed root arguments before invoking execute;
                                 // that remains the existing unreadable-candidate failure path.
@@ -533,7 +588,7 @@ export async function executeAuditorChild(options) {
                             }
                         }
                     }
-                    if (turns >= AUDITOR_TURN_LIMIT)
+                    if (turns >= AUDITOR_TURN_LIMIT || msg.stopReason === "error")
                         boundaryResponse = msg;
                 }
             }
@@ -589,6 +644,8 @@ export async function executeAuditorChild(options) {
                     }
                     if (decisionToolFailure !== undefined)
                         return;
+                    if (retentionFailure !== undefined)
+                        return;
                     if (opened.streamFailure !== undefined)
                         throw opened.streamFailure;
                     if (promptFailure !== undefined)
@@ -602,7 +659,7 @@ export async function executeAuditorChild(options) {
                     promptDecisionFailures = [];
                 };
                 await promptAllowingRejectedDecision(options.prompt);
-                while (!decisionSubmitted && (boundaryResponse === undefined || decisionToolFailure !== undefined)
+                while (!decisionSubmitted && retentionFailure === undefined && (boundaryResponse === undefined || decisionToolFailure !== undefined)
                     && opened.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
                     if (decisionToolFailure !== undefined) {
                         const failures = promptDecisionFailures.length === 0
@@ -625,7 +682,7 @@ export async function executeAuditorChild(options) {
                         await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
                     }
                 }
-                if (!decisionSubmitted && opened.streamFailure === undefined
+                if (!decisionSubmitted && retentionFailure === undefined && opened.streamFailure === undefined
                     && delivery.nextAction() === "no-receipt") {
                     const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
                     const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
@@ -645,7 +702,8 @@ export async function executeAuditorChild(options) {
                     throw options.signal.reason;
                 if (opened.streamFailure !== undefined)
                     throw opened.streamFailure;
-                throw error;
+                if (retentionFailure === undefined)
+                    throw error;
             }
             if (options.signal?.aborted)
                 throw options.signal.reason;
@@ -663,25 +721,23 @@ export async function executeAuditorChild(options) {
                 if (toolFailure !== undefined)
                     throw toolFailure;
             }
-            if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error")
-                throw retentionFailure;
-            if (boundaryResponse !== undefined && !decisionSubmitted && noReceiptLifecycle === undefined) {
+            const assistants = [...retainedAssistants].reverse();
+            const response = !decisionSubmitted
+                ? assistants[0]
+                : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
+            if (boundaryResponse !== undefined && boundaryResponse.stopReason !== "error" && !decisionSubmitted && noReceiptLifecycle === undefined) {
                 const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
                 throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
                     stopReason: boundaryResponse.stopReason,
                     toolNames,
                 });
             }
-            const assistants = [...retainedAssistants].reverse();
-            const response = !decisionSubmitted
-                ? assistants[0]
-                : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
             if (response !== undefined) {
                 try {
+                    if (retentionFailure !== undefined)
+                        throw retentionFailure;
                     if (retainedResponse === undefined)
                         options.retainResponse?.(response);
-                    else if (retentionFailure !== undefined)
-                        throw retentionFailure;
                 }
                 catch (retentionFailure) {
                     if (response.stopReason !== "error")
@@ -747,7 +803,7 @@ export async function executeAuditorChild(options) {
             if (response === undefined
                 || response.stopReason === "error"
                 || (!decisionSubmitted && (response.stopReason === "aborted" || decision === undefined))) {
-                throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
+                throw new Error(response?.errorMessage ?? `${options.roleLabel} exited without a readable decision receipt`);
             }
             return {
                 decision,
