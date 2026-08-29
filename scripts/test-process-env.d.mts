@@ -1,5 +1,3 @@
-export function defaultIsolatedTestHome(): string;
-
 export function isolatedTestProcessEnv(options?: {
   env?: NodeJS.ProcessEnv;
   home?: string;
