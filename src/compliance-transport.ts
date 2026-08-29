@@ -63,18 +63,13 @@ export type AuditorParentAttemptBinding = {
     readonly attemptEntryId?: string;
   };
 };
-import { sitianReport } from "./sitian-facade.ts";
+import { attachDirectErrnoCode, sitianReport } from "./sitian-facade.ts";
 
 export class ComplianceResponseRetentionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ComplianceResponseRetentionError";
-    // Surface direct-cause errno (Sitian wrap / native fs) on this error — no chain walk.
-    const cause = options?.cause;
-    if (cause !== null && cause !== undefined && typeof cause === "object" && "code" in cause) {
-      const code = (cause as { code?: unknown }).code;
-      if (typeof code === "string") (this as NodeJS.ErrnoException).code = code;
-    }
+    attachDirectErrnoCode(this, options?.cause);
   }
 }
 function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
