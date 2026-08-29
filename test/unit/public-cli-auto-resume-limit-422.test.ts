@@ -8,7 +8,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
  * runAkRole(config set-auto-resume-limit) / runWithAutoResumeLoop(injected limit).
  */
 import assert from "node:assert/strict";
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

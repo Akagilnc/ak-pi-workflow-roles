@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
@@ -211,8 +211,8 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
       join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-001@doctor"),
     );
     assert.equal(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
-      join(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, "session.jsonl"),
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
+      join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"),
     );
 
     // Case path is the #78 issue runs locator — not a copied case packet.
@@ -708,8 +708,8 @@ test("doctor resume is rejected as one-shot", async () => {
         state: "resumable",
         bookKey: admit.bookKey,
         projectRoot: admit.projectRoot,
-        sessionDirectory: decodePiDurablePrincipal(piDurablePrincipalAuthority, admit.principal).sessionDirectory,
-        sessionFile: decodePiDurablePrincipal(piDurablePrincipalAuthority, admit.principal).sessionFile,
+        sessionDirectory: piDurablePrincipalAuthority.decode(admit.principal).sessionDirectory,
+        sessionFile: piDurablePrincipalAuthority.decode(admit.principal).sessionFile,
         runDirectory: admit.runDirectory,
         admittedRequestPath: admit.admittedRequestPath,
       })}\n`,

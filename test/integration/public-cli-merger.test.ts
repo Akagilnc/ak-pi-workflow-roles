@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
@@ -254,7 +254,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       attachmentPaths: [],
       createRunId: () => "run-merger-settle-001",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "resolving-merge-conflicts",
@@ -311,7 +311,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
         },
       }),
     ];
-    await writeFile(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
 
     const entries = sessionLines.map((line) => JSON.parse(line));
     const extracted = extractMergerRoleOutcome(entries);
@@ -424,7 +424,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       }),
     ];
     await writeFile(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
       `${escalateLines.join("\n")}\n`,
       "utf8",
     );

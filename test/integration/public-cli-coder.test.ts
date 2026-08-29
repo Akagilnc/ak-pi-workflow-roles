@@ -1,4 +1,4 @@
-import { piDurablePrincipalAuthority, decodePiDurablePrincipal } from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -205,7 +205,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       attachmentPaths: [],
       createRunId: () => "run-coder-settle-001",
     });
-    await mkdir(decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
     const receipt = {
       status: "completed" as const,
@@ -240,7 +240,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       }),
     ];
     await writeFile(
-      decodePiDurablePrincipal(piDurablePrincipalAuthority, admitted.principal).sessionFile,
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
