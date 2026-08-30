@@ -658,18 +658,54 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
+    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
+      const attendance = navigatorAttendance;
+      if (settlement === undefined || attendance === undefined) return;
+      const workContext = navigatorWorkContext;
+      const pending = (async () => {
+        if (settlement.kind !== "accepted") {
+          await attendance.settle(settlement);
+          return;
+        }
+        const settlePromise = attendance.settle(settlement);
+        const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
+        if (raced.status !== "timeout") return;
+        if (pendingNavigatorPresentation === undefined) {
+          const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
+          const report: NavigatorReport = {
+            disposition: "unavailable",
+            unavailableReason: "Navigator exceeded post-role delivery grace",
+            unavailableSource: "unknown",
+            unavailableCause: "unknown",
+            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
+          };
+          const event: NavigatorEvent = {
+            version: 1,
+            disposition: "unavailable",
+            invocationId: "post-role-grace-timeout",
+            role: settlement.role,
+            phase: settlement.phase,
+            subjectKey: workContext?.subjectKey ?? "",
+            unavailableReason: "Navigator exceeded post-role delivery grace",
+            unavailableSource: "unknown",
+            unavailableCause: "unknown",
+            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
+          };
+          pendingNavigatorPresentation = { event, report };
+        }
+        attendance.dispose();
+        void settlePromise.catch(() => undefined);
+      })();
+      pendingNavigatorSettlement = pending;
+      await pending;
+    };
     projectClosedSubmission = async (projection) => {
       receiptDelivery.recordAccepted();
-      const settlement = publicNavigatorSettlement(
+      await settleNavigatorProjection(publicNavigatorSettlement(
         projection.role,
         navigatorPhase(roleHost, projection.role),
         { toolName: navigatorOutputTool(projection.role)!, details: projection.decisiveFacts },
-      );
-      if (settlement !== undefined && navigatorAttendance !== undefined) {
-        const pending = navigatorAttendance.settle(settlement);
-        pendingNavigatorSettlement = pending;
-        await pending;
-      }
+      ));
     };
     roleHost.on("input", (event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
@@ -777,52 +813,7 @@ export function createRoleRuntimeExtension(
       const settlement = isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure"
         ? publicNavigatorSettlement(role, navigatorPhase(roleHost, role), classified)
         : undefined;
-      if (settlement !== undefined) {
-        const attendance = navigatorAttendance;
-        if (attendance !== undefined) {
-          const workContext = navigatorWorkContext;
-          const pending = (async () => {
-          // Accepted role terminal starts the post-role Navigator grace (#101/#106).
-          if (settlement.kind !== "accepted") {
-            await attendance.settle(settlement);
-            // Emission stays on agent_settled (normal completion) or session_shutdown
-            // flush (abort/infrastructure teardown that skips agent_settled).
-            return;
-          }
-          const settlePromise = attendance.settle(settlement);
-          const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
-          if (raced.status === "timeout") {
-            if (pendingNavigatorPresentation === undefined) {
-              const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
-              const report: NavigatorReport = {
-                disposition: "unavailable",
-                unavailableReason: "Navigator exceeded post-role delivery grace",
-                unavailableSource: "unknown",
-                unavailableCause: "unknown",
-                ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
-              };
-              const navigatorEvent: NavigatorEvent = {
-                version: 1,
-                disposition: "unavailable",
-                invocationId: "post-role-grace-timeout",
-                role,
-                phase: navigatorPhase(roleHost, role),
-                subjectKey: workContext?.subjectKey ?? "",
-                unavailableReason: "Navigator exceeded post-role delivery grace",
-                unavailableSource: "unknown",
-                unavailableCause: "unknown",
-                ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
-              };
-              pendingNavigatorPresentation = { event: navigatorEvent, report };
-            }
-            attendance.dispose();
-            void settlePromise.catch(() => undefined);
-          }
-        })();
-          pendingNavigatorSettlement = pending;
-          await pending;
-        }
-      }
+      await settleNavigatorProjection(settlement);
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
