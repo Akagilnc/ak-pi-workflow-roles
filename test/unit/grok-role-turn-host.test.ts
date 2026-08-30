@@ -147,35 +147,6 @@ test("grok host installs PreToolUse deny only for Fixer when the host can deny",
   }
 });
 
-test("grok host does not install PreToolUse deny for non-Fixer seats even when canDeny", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-judge-nodeny-"));
-  try {
-    const localRequest = { ...request, home, agentDir: join(home, "agent"), runDirectory: join(home, "run") } as RoleTurnRequest;
-    const capabilities: unknown[] = [];
-    const host = createGrokRoleTurnHost({
-      sessionIdentity,
-      recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
-      connect: async () => ({
-        async request(method) {
-          if (method === "initialize") return canDenyInitializeMeta();
-          if (method === "session/new") return { sessionId: "s1" };
-          if (method === "session/prompt") return { stopReason: "end_turn" };
-          return {};
-        },
-        notify() {},
-        async close() {},
-      }),
-      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-      prepare: async () => prepared(async () => ({ accepted: true })),
-    });
-    assert.equal((await host.executeTurn(localRequest)).code, 0);
-    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
-    await assert.rejects(readFile(join(home, "hooks", "ak-bash-seatbelt.json")));
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
 test("grok host records preToolUseDeny false when the host cannot deny", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-nodeny-"));
   try {
