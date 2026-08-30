@@ -13,10 +13,11 @@ const request = {
 
 test("grok host closes an accepted ACP turn through the typed round boundary", async () => {
   const calls: Array<[string, unknown]> = [];
+  const capabilities: unknown[] = [];
   const connection: GrokAcpConnection = {
     async request(method, params) {
       calls.push([method, params]);
-      if (method === "initialize") return { agentCapabilities: { loadSession: true }, _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } } };
+      if (method === "initialize") return { agentCapabilities: { loadSession: true }, _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] }, "x.ai/hooks": { blockingEvents: ["pre_tool_use"], decisions: ["deny"] } } };
       if (method === "session/new") return { sessionId: "s1" };
       if (method === "session/prompt") return { stopReason: "end_turn" };
       if (method === "session/close") return {};
@@ -28,6 +29,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   const host = createGrokRoleTurnHost({
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
     prepare: async () => ({
       mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }],
       systemPrompt: "law",
@@ -37,6 +39,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
 
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
   assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/close"]);
+  assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
   assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
 });
 
