@@ -163,6 +163,36 @@ test("grok refusal is a typed failure and never closes the session as accepted",
   assert.equal(calls.includes("session/close"), false);
 });
 
+test("grok host delivers a typed rejection and resubmits in the same ACP session", async () => {
+  const prompts: unknown[] = [];
+  let rounds = 0;
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method, params) {
+        if (method === "session/new") return { sessionId: "retry-session" };
+        if (method === "session/prompt") { prompts.push(params); return { stopReason: "end_turn" }; }
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => ({
+      mcpServers: [{}], systemPrompt: "law",
+      closeRound: async () => ++rounds === 1
+        ? { accepted: false, retry: { code: "non-sole-round", toolCallIds: ["bad"] } }
+        : { accepted: true },
+    }),
+  });
+
+  assert.equal((await host.executeTurn(request)).code, 0);
+  assert.equal(prompts.length, 2);
+  assert.equal((prompts[0] as { sessionId: string }).sessionId, "retry-session");
+  assert.equal((prompts[1] as { sessionId: string }).sessionId, "retry-session");
+});
+
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
   const connection: GrokAcpConnection = {
     async request(method) {

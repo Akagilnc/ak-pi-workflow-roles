@@ -248,10 +248,15 @@ export async function prepareGrokRoleEnvelope(options: {
       }
       calls.length = 0;
       if (closure !== undefined) return { accepted: true as const };
-      const failure: RoleTurnKnownFailure = rejection === undefined
-        ? { cause: "output", identity: { name: "MissingSubmission", code: "round-ended-without-submission" } }
-        : { cause: "output", identity: { name: "SubmissionRejected", code: rejection.code }, details: { toolCallIds: rejection.toolCallIds } };
-      rejection = undefined;
+      if (rejection !== undefined) {
+        const retry = { code: rejection.code, toolCallIds: rejection.toolCallIds };
+        rejection = undefined;
+        return { accepted: false as const, retry };
+      }
+      const failure: RoleTurnKnownFailure = {
+        cause: "output",
+        identity: { name: "MissingSubmission", code: "round-ended-without-submission" },
+      };
       return { accepted: false as const, failure };
     },
     dispose,

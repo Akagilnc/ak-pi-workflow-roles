@@ -26,6 +26,7 @@ export type GrokPreparedTurn = Readonly<{
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
   closeRound(input: { readonly sessionId: string; readonly promptResult: Readonly<Record<string, unknown>> }): Promise<
     | { readonly accepted: true }
+    | { readonly accepted: false; readonly retry: { readonly code: string; readonly toolCallIds: readonly string[] } }
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
   dispose?(): Promise<void>;
@@ -239,23 +240,30 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             return failure("session", "GrokAcpSessionFailure", "session-id-missing");
           }
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
-          const result = await connection.request("session/prompt", {
-            sessionId,
-            prompt: [{ type: "text", text: continuation.prompt }],
-          });
-          if (result.stopReason === "refusal") {
-            return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
+          let prompt = continuation.prompt;
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            const result = await connection.request("session/prompt", {
+              sessionId,
+              prompt: [{ type: "text", text: prompt }],
+            });
+            if (result.stopReason === "refusal") {
+              return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
+            }
+            // session/prompt resolution is ACP's typed round boundary. At this point
+            // the shared ledger has seen every MCP execute in the round.
+            const closure = await prepared.closeRound({ sessionId, promptResult: result });
+            if (closure.accepted) {
+              // Wait for ACP's typed close acknowledgement before tearing down the
+              // process; Stop hooks and fire-and-forget cancellation are not closure.
+              await connection.request("session/close", { sessionId });
+              return { code: 0, stderr: "", timedOut: false };
+            }
+            if ("failure" in closure) {
+              return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+            }
+            prompt = `The prior terminal submission was rejected (${closure.retry.code}). Resubmit it as the sole terminal tool call. Rejected call ids: ${closure.retry.toolCallIds.join(", ") || "none"}.`;
           }
-          // session/prompt resolution is ACP's typed round boundary. At this point
-          // the shared ledger has seen every MCP execute in the round.
-          const closure = await prepared.closeRound({ sessionId, promptResult: result });
-          if (!closure.accepted) {
-            return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
-          }
-          // Wait for ACP's typed close acknowledgement before tearing down the
-          // process; Stop hooks and fire-and-forget cancellation are not closure.
-          await connection.request("session/close", { sessionId });
-          return { code: 0, stderr: "", timedOut: false };
+          return failure("output", "GrokAcpRoundLimit", "round-retry-limit", { sessionId });
         } finally {
           await connection.close();
           await prepared.dispose?.();
