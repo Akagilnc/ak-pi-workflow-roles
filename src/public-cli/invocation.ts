@@ -591,6 +591,14 @@ export function requireAuthorityRef(value: string | undefined): string {
  * Spellings from PUBLIC_OPTION_TABLE.judge; rejects burden family (#342).
  */
 export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
+  // Judge owns burden inference — rejected spellings checked per-token.
+  for (const token of args) {
+    if (isRejectedPublicSpelling("judge", token)) {
+      throw new CliUsageError(
+        "judge does not accept a public burden selector; Judge infers its own burden",
+      );
+    }
+  }
   return parseInstructionArgv(args, "judge");
 }
 
