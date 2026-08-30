@@ -8,7 +8,7 @@ import test from "node:test";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
+import { prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
 
 async function listThroughMcp(server: {
   command: string;
@@ -34,6 +34,26 @@ async function listThroughMcp(server: {
     child.kill("SIGTERM");
   }
 }
+
+test("Grok projection maps all eight public activations onto the shared envelope", () => {
+  const activations: RoleTurnRequest["activation"][] = [
+    { role: "judge" },
+    { role: "fixer", phase: "apply", packetPath: "/fix", prerequisitesPath: "/prereqs" },
+    { role: "coder", phase: "plan", taskPath: "/task" },
+    { role: "reviewer", baseRevision: "base", authorityRefs: ["issue:1"], ticketNumber: 1 },
+    { role: "collector", repo: "owner/repo", pr: "2", requestManifestPath: "/manifest" },
+    { role: "doctor", casePath: "/case" },
+    { role: "merger", inputPath: "/merge" },
+    { role: "notary", sourceRun: "/source" },
+  ];
+  for (const activation of activations) {
+    const flags = projectGrokActivationFlags({ activation } as RoleTurnRequest);
+    assert.equal(flags.get("ak-role"), activation.role);
+  }
+  assert.equal(projectGrokActivationFlags({ activation: activations[1]! } as RoleTurnRequest).get("ak-fixer-prerequisites"), "/prereqs");
+  assert.equal(projectGrokActivationFlags({ activation: activations[3]! } as RoleTurnRequest).get("ak-review-authority-refs"), JSON.stringify(["issue:1"]));
+  assert.equal(projectGrokActivationFlags({ activation: activations[4]! } as RoleTurnRequest).get("ak-collector-request-manifest"), "/manifest");
+});
 
 test("Grok MCP projection activates shared Judge materials and all active AK tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-"));
