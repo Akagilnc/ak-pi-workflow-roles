@@ -42,8 +42,6 @@ export {
 };
 export type { WorkerOutput };
 
-
-
 const coderOutputVariants = Type.Union([
   Type.Object({
     status: stringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
