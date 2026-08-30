@@ -46,7 +46,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
 
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
   assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/close"]);
-  assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
+  assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
   assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
 });
 

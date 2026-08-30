@@ -177,14 +177,12 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           });
           const initializeMeta = initialized._meta as {
             modelState?: { availableModels?: unknown };
-            "x.ai/hooks"?: { blockingEvents?: unknown; decisions?: unknown };
           } | undefined;
-          const hooks = initializeMeta?.["x.ai/hooks"];
+          // Grok's handshake declares hook protocol support, not an installed AK
+          // PreToolUse policy. Do not claim a seatbelt until the adapter owns one.
           await config.recordCapabilities(request, {
             nativeToolNarrowing: false,
-            preToolUseDeny:
-              Array.isArray(hooks?.blockingEvents) && hooks.blockingEvents.includes("pre_tool_use") &&
-              Array.isArray(hooks.decisions) && hooks.decisions.includes("deny"),
+            preToolUseDeny: false,
           });
           const modelState = initializeMeta?.modelState;
           const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
