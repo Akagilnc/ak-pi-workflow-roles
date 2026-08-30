@@ -40,10 +40,12 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { createNotaryRoleRuntime } from "./notary-role.ts";
 import {
+  COUNTERSIGN_ACCEPTED_TEXT,
   COUNTERSIGN_TOOL_SPEC,
+  submitCountersignVerdict,
   type CountersignRuntimeDependencies,
+  type CountersignHostActions,
 } from "./countersign-role.ts";
-import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 /**
  * 共享注册信封（ADR 0018 / #572 判词送修 3）：activate、tool 注册、
@@ -58,7 +60,7 @@ function createFiledOfficerRuntime(
     acceptedText: string;
     soulTag: string;
     extraBindings?: (soul: string) => Record<string, unknown>;
-    submit?(parameters: unknown, toolCallId: string, ctx: ExtensionContext, hostActions: { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never }): AgentToolResult<unknown>;
+    submit(parameters: unknown, toolCallId: string, ctx: ExtensionContext, hostActions: { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never }): AgentToolResult<unknown>;
   },
   dependencies: { loadSoul(): Promise<string> },
   hostActions: { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never },
@@ -80,21 +82,7 @@ function createFiledOfficerRuntime(
           parameters: spec.tool.parameters as never,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
-            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
-            const leaf = ctx.sessionManager.getLeafEntry();
-            if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-              throw new Error(`${spec.role}回执非唯一终局工具调用`);
-            }
-            const calls = leaf.message.content.filter((p) => p.type === "toolCall");
-            if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== spec.tool.name) {
-              throw new Error(`${spec.role}回执非唯一终局工具调用`);
-            }
-            if (spec.submit !== undefined) return spec.submit(parameters, toolCallId, ctx, hostActions);
-            return {
-              content: [{ type: "text" as const, text: spec.acceptedText }],
-              details: parameters,
-              terminate: true as const,
-            };
+            return spec.submit(parameters, toolCallId, ctx, hostActions);
           },
         });
         pi.on("before_agent_start", (event) => {
@@ -127,7 +115,7 @@ export function createCountersignRoleRuntime(
       tool: COUNTERSIGN_TOOL_SPEC,
       acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
       soulTag: "countersign",
-  
+      submit: (parameters, toolCallId, ctx) => submitCountersignVerdict(parameters, toolCallId, ctx, hostActions),
     },
     dependencies,
     hostActions,
