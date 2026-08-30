@@ -1,8 +1,4 @@
-import { createHash } from "node:crypto";
-import { basename, join, resolve } from "node:path";
-
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
-import { activationBookDirectory, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import { resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
@@ -18,7 +14,7 @@ import {
   type AcceptedDetails,
 } from "./package-contracts/terminating-tools.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
-import { readSitianRecords, sitianReport, type RecordPointer } from "./sitian-facade.ts";
+import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
@@ -97,24 +93,16 @@ function isAuditEscalationTerminalProjection(
 export type SealedSubmissionProjection = Extract<SubmissionLedgerEvent, { type: "sealed" }>["projection"];
 export type AuditEscalationSubmissionProjection = Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
 
-function submissionBookKey(cwd: string): string {
-  try {
-    return resolveBookKeyFromGit(cwd);
-  } catch {
-    return basename(resolve(cwd)) || "default";
-  }
-}
-
 function submissionRecordFile(cwd: string, runId: string, home?: string): string {
   const ledgerHome = resolveActivationLedgerHome(
     home === undefined ? undefined : () => home,
   );
-  const bookDirectory = activationBookDirectory(ledgerHome, submissionBookKey(cwd));
-  const subject = createHash("sha256")
-    .update(runId)
-    .digest("hex")
-    .slice(0, 32);
-  return join(bookDirectory, "submission-ledger", subject, "records.jsonl");
+  return resolveSitianRecordPathInLedger({
+    level: "event",
+    kind: "candidate",
+    subject: { runId },
+    cwd,
+  }, ledgerHome).recordFile;
 }
 
 async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: string) {
