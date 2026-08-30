@@ -141,8 +141,8 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
     "doctor",
     "merger",
     "notary",
-    "gatekeeper",
     "inspector",
+    "gatekeeper",
     "navigator",
   ]);
   assert.equal(seats.includes("auditor" as never), false);
@@ -297,6 +297,15 @@ test("#453 clear notary model keeps engine; unset-engine drops residual row", as
 });
 
 // #453: engine-only residual ownership is notary-only at the persist boundary.
+test("clearing inspector model preserves its direct-call engine", () => {
+  let config = setPersistentSeatConfig({ seats: {} }, "inspector", {
+    provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium",
+  });
+  config = setPersistentSeatEngine(config, "inspector", "cursor");
+  const cleared = clearPersistentSeatConfig(config, "inspector");
+  assert.deepEqual(cleared.seats.inspector, { engine: "cursor" });
+});
+
 test("#453 non-notary engine-only residual is rejected on persist boundary", async () => {
   await withTempHome(async (home) => {
     await assert.rejects(

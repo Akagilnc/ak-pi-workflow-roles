@@ -111,6 +111,10 @@ export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
   readonly role: "judge";
 };
 
+export type AdmittedInspectorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "inspector";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -189,6 +193,7 @@ export type AdmittedMergerInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
+  | AdmittedInspectorInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -376,6 +381,8 @@ export type ParseJudgeArgvResult = {
   attachmentPaths: string[];
   project?: string;
 };
+
+export type ParseInspectorArgvResult = ParseJudgeArgvResult;
 
 export type ParseCoderArgvResult = {
   phase: CoderPhase;
@@ -581,6 +588,34 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
   };
+}
+
+/** Parse the standard opaque instruction + frozen attachments Inspector face. */
+export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+  const options = createTypedOptionConsumer(roleOptions("inspector"));
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      positional.push(...tokens);
+      break;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== undefined) {
+      if (taken.def.id === "attach") attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+      else if (taken.def.id === "project") project = requireOptionPath(taken.def.canonical, taken.value);
+      else throw new CliUsageError(`unknown inspector option: ${taken.def.canonical}`);
+      continue;
+    }
+    const token = tokens.shift()!;
+    if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown inspector option: ${token}`);
+    positional.push(token);
+  }
+  options.assertRequired();
+  return { instruction: positional.join(" "), attachmentPaths, ...(project === undefined ? {} : { project }) };
 }
 
 /**
@@ -831,6 +866,44 @@ export async function admitJudgeInvocation(
     admittedRequestPath,
     ...ticketFields,
   };
+}
+
+export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions;
+
+export async function admitInspectorInvocation(
+  options: AdmitInspectorInvocationOptions,
+): Promise<AdmittedInspectorInvocation> {
+  if (options.project !== undefined) requireOptionPath("--project", options.project);
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "inspector", home: options.home });
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(options.attachmentPaths, attachmentsDirectory);
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const instruction = options.instruction;
+  const admitted = {
+    role: "inspector" as const, runId, bookKey, projectRoot, runDirectory, sessionDirectory, sessionFile,
+    ...ticketFields, instruction, instructionEmpty: instruction.trim() === "",
+    attachments: attachments.map((a) => ({ ...a })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  return { ...admitted, attachments, admittedRequestPath };
+}
+
+export function buildInspectorTransportPrompt(
+  admitted: AdmittedInspectorInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
+  if (admitted.attachments.length > 0) {
+    lines.push("", "已受理附件（冻结快照路径）：", ...admitted.attachments.map((attachment) => `- ${attachment.frozenPath}`));
+  }
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /** Build the Pi prompt transport for an admitted Judge request. */
