@@ -191,13 +191,19 @@ test("structured inspect classifies builtin, AK, and private sources by provenan
       { name: "private", source: { type: "user", path: "/home/.grok/skills/private/SKILL.md" } },
       { name: "disabled", disabled: true, source: { type: "user", path: "/home/disabled" } },
     ],
+    agents: [{ name: "private-agent", source: { type: "user", path: "/home/.grok/agents/private.md" } }],
     plugins: [{ name: "private-plugin", enabled: true, path: "/home/plugin" }],
+    mcpServers: [{ name: "private-mcp", source: { type: "user", path: "/home/.grok/mcp.json" } }],
+    hooks: [
+      { name: "private-hook", source: { type: "user", path: "/home/.grok/hooks.json" } },
+      { name: "disabled-hook", compatibilityStatus: "disabled", source: { type: "user", path: "/home/.grok/hooks.json" } },
+    ],
     projectInstructions: [
       { path: "/pkg/CLAUDE.md", scope: "project" },
       { path: "/home/.claude/CLAUDE.md", scope: "global", disabled: true },
     ],
   }, "/pkg"), {
-    privateActive: ["plugins:private-plugin", "skills:private"],
+    privateActive: ["agents:private-agent", "hooks:private-hook", "mcpServers:private-mcp", "plugins:private-plugin", "skills:private"],
     akActive: ["projectInstructions:/pkg/CLAUDE.md", "skills:ak-method"],
   });
 });
