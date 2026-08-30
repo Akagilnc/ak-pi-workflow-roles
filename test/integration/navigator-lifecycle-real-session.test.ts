@@ -688,7 +688,9 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
 test("healthy Navigator preparation survives mid-turn agent_settled for later accepted terminal", async () => {
   const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+  const { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } = await import("../../src/role-runtime.ts");
+  const { createSubmissionLedgerHost } = await import("../../src/submission-ledger.ts");
+  const { Type } = await import("typebox");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
   const { JUDGE_OUTPUT_TOOL_NAME } = await import("../../src/package-contracts/judge-output.ts");
 
@@ -717,6 +719,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     };
 
     let settleCount = 0;
+    let activeAttendance: ReturnType<typeof createNavigatorAttendance> | undefined;
     let prepareCount = 0;
     let releasePrep!: () => void;
     const prepGate = new Promise<void>((resolve) => { releasePrep = resolve; });
@@ -772,6 +775,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
             await options.onEvent(event, report);
           },
         });
+        activeAttendance = nav;
         const originalPrepare = nav.prepare.bind(nav);
         const originalSettle = nav.settle.bind(nav);
         return {
@@ -807,13 +811,46 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    await emit("tool_result", {
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      toolCallId: "accepted-1",
-      isError: false,
-      content: [{ type: "text", text: "Judge verdict accepted" }],
-      details: { judgeStatus: "converged" },
-    }, ctx);
+    let outputTool: { execute: (...args: any[]) => Promise<any> } | undefined;
+    const closureHandlers = new Map<string, (...args: any[]) => unknown>();
+    const closureHost = {
+      registerTool(tool: { execute: (...args: any[]) => Promise<any> }) { outputTool = tool; },
+      on(name: string, handler: (...args: any[]) => unknown) { closureHandlers.set(name, handler); },
+    } as never;
+    const ledger = createSubmissionLedgerHost(
+      closureHost,
+      new Map([[JUDGE_OUTPUT_TOOL_NAME, "judge"]]),
+      (error) => { throw error; },
+      async (projection, context) => projectClosedSubmissionLifecycle(
+        projection,
+        context,
+        null,
+        () => undefined,
+        async (settlement) => {
+          if (settlement !== undefined) {
+            settleCount += 1;
+            await activeAttendance!.settle(settlement);
+          }
+        },
+      ),
+    );
+    ledger.registerTool({
+      name: JUDGE_OUTPUT_TOOL_NAME,
+      label: "output",
+      description: "",
+      parameters: Type.Object({}),
+      execute: async () => ({ content: [], details: { judgeStatus: "converged" }, terminate: true }),
+    });
+    await closureHandlers.get("tool_execution_start")!(
+      { toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "accepted-1" },
+      ctx,
+    );
+    assert.ok(outputTool);
+    await outputTool.execute("accepted-1", {}, undefined, undefined, ctx);
+    await closureHandlers.get("turn_end")!(
+      { turnIndex: 0, calls: [{ toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "accepted-1" }] },
+      ctx,
+    );
     await emit("agent_settled", {}, ctx);
 
     assert.equal(settlesAfterMidTurn, 0, "mid-turn agent_settled must not settle Navigator");
