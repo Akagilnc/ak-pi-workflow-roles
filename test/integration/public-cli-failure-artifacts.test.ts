@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { formatFailureStderrDiagnostic } from "../../src/public-cli/settlement.ts";
@@ -19,6 +20,49 @@ import {
 } from "../helpers/failure-settlement-kit.ts";
 
 // #107 公开入口——Error Artifact 耐久性与 provider 身份家族（#420 整改拆分第二片）。
+
+test("public Inspector projects accepted and malformed receipts through Terminal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    for (const candidate of [
+      { status: "pass", findings: [] },
+      { status: "unknown", findings: "unaltered" },
+    ]) {
+      const result = await runAkRole(["inspector", "--project", project, "review"], {
+        packageRoot, home, cwd: project,
+        createRunId: () => `run-inspector-${candidate.status}`,
+        io: captureIo().io,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await mkdir(dirname(sessionFile), { recursive: true });
+          const id = `inspector-${candidate.status}`;
+          await writeFile(sessionFile, [
+            { type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: INSPECTOR_OUTPUT_TOOL_NAME, arguments: candidate }] } },
+            { type: "message", message: { role: "toolResult", toolCallId: id, toolName: INSPECTOR_OUTPUT_TOOL_NAME, isError: false, details: candidate, content: [{ type: "text", text: "accepted" }] } },
+          ].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        },
+      });
+
+      if (candidate.status === "pass") {
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+        assert.equal(result.terminal?.roleOutcome.status, "pass");
+      } else {
+        assert.equal(result.exitCode, 1);
+        assert.equal(result.terminal?.roleOutcome.kind, "failure");
+        assert.equal(result.terminal?.roleOutcome.decisiveFacts.cause, "output");
+        assert.deepEqual(
+          (result.terminal?.roleOutcome.decisiveFacts.secondaryEvidence as { candidate?: unknown })?.candidate,
+          candidate,
+        );
+      }
+    }
+  });
+});
 
 // Error Artifact durable-fallback depth matrix (#420 整改并一)：单碰撞与耗尽三名
 // 同根「发布碰撞 → 耐久回退保原因」，收成一条两深度场景案。
