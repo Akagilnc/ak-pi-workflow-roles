@@ -632,27 +632,15 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
 
-  const root = await mkdtemp(join(tmpdir(), "navigator-admitted-attendance-"));
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
     const prose = "Admitted instruction prose observed by Navigator attendance.";
     await withActivationHome({ prefix: "ak-nav-admitted-" }, async ({ home }) => {
       const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-admitted");
       await mkdir(join(runDir, "session"), { recursive: true });
-      await writeFile(
-        join(runDir, "admitted-request.json"),
-        JSON.stringify({
-          role: "judge",
-          instruction: prose,
-          instructionEmpty: false,
-          attachments: [],
-        }),
-        "utf8",
-      );
       process.env.AK_ROLE_RUN_DIR = runDir;
       let observed: { subject?: string; authority?: string; subjectKey?: string } | undefined;
       const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-      const appendedEntries: Array<{ customType: string; data?: unknown }> = [];
       const pi = {
         registerFlag() {},
         getFlag(name: string) {
@@ -667,9 +655,7 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
         },
         setActiveTools() {},
         getActiveTools() { return []; },
-        appendEntry(customType: string, data?: unknown) {
-          appendedEntries.push({ customType, data });
-        },
+        appendEntry() {},
       };
 
       const envelopeHost: RoleEnvelopeHost = {
@@ -683,7 +669,7 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
         loadJudgeSoul: async () => "JUDGE LAW",
         auditSoulCompliance: async () => ({ status: "pass" }),
         loadNavigatorWorkContext: async () => ({
-          subjectKey: `${runDir}/admitted-request.json`,
+          subjectKey: `${runDir}/work`,
           subject: prose,
           authority: prose,
           subjectProvenance: "role_input",
@@ -722,7 +708,6 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
   } finally {
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    await rm(root, { recursive: true, force: true });
   }
 });
 
