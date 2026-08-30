@@ -210,6 +210,14 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       const structured = (reply.result as { structuredContent?: Record<string, unknown> })?.structuredContent;
       assert.equal(structured?.code, "coder_skill_expansion_evidence_missing");
       assert.equal((reply.result as { isError?: boolean })?.isError, true);
+      // Real envelope closeRound must surface the same correctable rejection as retry
+      // so executeTurn can re-prompt in the same ACP session (P3 sole-final bounce).
+      const closure = await prepared.closeRound();
+      assert.equal(closure.accepted, false);
+      assert.ok("retry" in closure, "correctable non-pass must not fall to MissingSubmission");
+      assert.equal(closure.retry.code, "coder_skill_expansion_evidence_missing");
+      assert.equal(closure.retry.toolCallIds.length, 1);
+      assert.equal(typeof closure.retry.toolCallIds[0], "string");
     } finally {
       await prepared.dispose?.();
     }

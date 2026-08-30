@@ -214,6 +214,43 @@ export async function prepareGrokRoleEnvelope(options: {
 
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
+  /** Correctable non-pass must arm the existing rejection state so closeRound returns retry. */
+  function rememberProjectedRejection(details: unknown, toolCallId: string): void {
+    if (typeof details !== "object" || details === null) return;
+    const record = details as Record<string, unknown>;
+    if (record.cause === "infrastructure") return;
+    const code = typeof record.code === "string" && record.code.length > 0
+      ? record.code
+      : record.status === "bounce" || record.status === "no_receipt"
+        ? record.status
+        : undefined;
+    if (code === undefined) return;
+    rejection = { code, toolCallIds: [toolCallId] };
+  }
+  async function projectToolResult(
+    toolCallId: string,
+    toolName: string,
+    initial: {
+      content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
+      details: unknown;
+      isError: boolean;
+    },
+  ): Promise<typeof initial> {
+    let projected = initial;
+    for (const value of await emit("tool_result", { toolCallId, toolName, ...projected })) {
+      if (typeof value !== "object" || value === null) continue;
+      projected = {
+        content: "content" in value && Array.isArray(value.content)
+          ? value.content as typeof projected.content
+          : projected.content,
+        details: "details" in value ? value.details : projected.details,
+        isError: "isError" in value && value.isError === true,
+      };
+    }
+    if (projected.isError) rememberProjectedRejection(projected.details, toolCallId);
+    await emit("tool_execution_end", { toolCallId, toolName, isError: projected.isError });
+    return projected;
+  }
   function reply(socket: Socket, id: number, result?: unknown, error?: unknown): void {
     const rpcError = error instanceof Error
       ? { code: "ak-relay-failure", name: error.name, message: error.message }
@@ -254,35 +291,21 @@ export async function prepareGrokRoleEnvelope(options: {
             if (blocked) throw new Error(`AK tool blocked: ${name}`);
             try {
               const result = await tool.execute(toolCallId, (params?.arguments ?? {}) as never, undefined, undefined, context);
-              let projected: { content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>; details: unknown; isError: boolean } = { content: result.content, details: result.details, isError: false };
-              for (const value of await emit("tool_result", { toolCallId, toolName: name, ...projected })) {
-                if (typeof value !== "object" || value === null) continue;
-                projected = {
-                  content: "content" in value && Array.isArray(value.content) ? value.content as typeof projected.content : projected.content,
-                  details: "details" in value ? value.details : projected.details,
-                  isError: "isError" in value && value.isError === true,
-                };
-              }
-              await emit("tool_execution_end", { toolCallId, toolName: name, isError: projected.isError });
+              const projected = await projectToolResult(toolCallId, name, {
+                content: result.content,
+                details: result.details,
+                isError: false,
+              });
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
               // The shared envelope's tool_result handler is the sole classifier:
               // it projects either the structured submission non-pass (correctable
               // rejection) or the typed infrastructure fact onto the reply.
-              let projected: { content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>; details: unknown; isError: boolean } = {
+              const projected = await projectToolResult(toolCallId, name, {
                 content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
                 details: { cause: "infrastructure" as const, code: "ak-tool-execution-failed" },
                 isError: true,
-              };
-              for (const value of await emit("tool_result", { toolCallId, toolName: name, ...projected })) {
-                if (typeof value !== "object" || value === null) continue;
-                projected = {
-                  content: "content" in value && Array.isArray(value.content) ? value.content as typeof projected.content : projected.content,
-                  details: "details" in value ? value.details : projected.details,
-                  isError: "isError" in value && value.isError === true,
-                };
-              }
-              await emit("tool_execution_end", { toolCallId, toolName: name, isError: projected.isError });
+              });
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             }
           } catch (error) { reply(socket, rpc.id, undefined, error); }

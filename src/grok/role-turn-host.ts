@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
+import { installGrokPreToolUseDeny } from "./bash-seatbelt.ts";
 
 /** ACP v1 surface used by the Grok adapter. Protocol details stay in this module. */
 export interface GrokAcpConnection {
@@ -52,7 +53,6 @@ export type GrokRoleTurnHostConfig = Readonly<{
   inspect(request: RoleTurnRequest): Promise<GrokControlledInspection>;
   prepare(request: RoleTurnRequest): Promise<GrokPreparedTurn>;
   recordCapabilities(request: RoleTurnRequest, declaration: GrokCapabilityDeclaration): void | Promise<void>;
-  installPreToolUseDeny?(request: RoleTurnRequest): void | Promise<void>;
 }>;
 
 function failure(cause: "activation" | "session" | "output", name: string, code: string, details?: Readonly<Record<string, unknown>>): RoleTurnResult {
@@ -222,8 +222,14 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             && hookCapability.blockingEvents.includes("pre_tool_use")
             && Array.isArray(hookCapability.decisions)
             && hookCapability.decisions.includes("deny");
-          const preToolUseDeny = canDeny && config.installPreToolUseDeny !== undefined;
-          if (preToolUseDeny) await config.installPreToolUseDeny?.(request);
+          // Capability alone is not an installed seatbelt. Hang the belt in the
+          // controlled home only when the host can honor deny; never claim true
+          // for a no-op callback or missing install.
+          let preToolUseDeny = false;
+          if (canDeny) {
+            await installGrokPreToolUseDeny(request.home);
+            preToolUseDeny = true;
+          }
           await config.recordCapabilities(request, { nativeToolNarrowing: false, preToolUseDeny });
           const modelState = initializeMeta?.modelState;
           const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
