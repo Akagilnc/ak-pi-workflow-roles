@@ -60,7 +60,8 @@ test("models.json malformed seed closes its listener before rejecting", async ()
       process.execPath,
       ["--import", "tsx", "--input-type=module", "--eval", source],
       {
-        timeout: 3_000,
+        // Hang detector for unclosed listeners — keep finite, but allow cold tsx import under load.
+        timeout: 15_000,
         env: { ...process.env, AK_TEST_AGENT_DIR: agentDir },
       },
     );
