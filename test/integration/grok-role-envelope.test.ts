@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -10,8 +10,8 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
-import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
-import { prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
+import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
@@ -112,6 +112,15 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Grok Skill expansion evidence aligns with the packaged canonical binding", async () => {
+  const tddPath = resolvePackagedMethodSkillPath(packageRoot, "tdd");
+  const raw = await readFile(tddPath, "utf8");
+  const methodSkills = new Map([["tdd", { path: tddPath, body: stripSkillFrontmatter(raw).trim() }]]);
+  const evidence = buildGrokSkillExpansion(methodSkills, "/skill:tdd decide");
+  const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
+  assert.notEqual(binding.captureExpansion(evidence, "decide"), undefined);
 });
 
 test("Grok MCP projection expands the canonical Coder tdd Skill from typed methods", async () => {

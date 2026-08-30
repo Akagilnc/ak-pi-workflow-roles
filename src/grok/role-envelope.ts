@@ -33,10 +33,27 @@ type RpcRequest = { readonly id: number; readonly token: string; readonly method
 type ToolCallParams = { readonly name?: unknown; readonly arguments?: unknown };
 
 /** Parse the canonical Skill invocation produced by the shared input transform. */
-function parseCanonicalSkillInvocation(prompt: string): { readonly name: string; readonly userMessage: string } | undefined {
+export function parseCanonicalSkillInvocation(prompt: string): { readonly name: string; readonly userMessage: string } | undefined {
   const match = /^\/skill:([A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/s.exec(prompt.trim());
   if (match === null) return undefined;
   return { name: match[1]!, userMessage: (match[2] ?? "").trim() };
+}
+
+/** Build host-side Skill expansion evidence from pre-read RoleTurnRequest.methods. */
+export function buildGrokSkillExpansion(
+  methodSkills: ReadonlyMap<string, { readonly path: string; readonly body: string }>,
+  prompt: string,
+): HostSkillExpansionEvidence | undefined {
+  const parsed = parseCanonicalSkillInvocation(prompt);
+  if (parsed === undefined) return undefined;
+  const method = methodSkills.get(parsed.name);
+  if (method === undefined) return undefined;
+  return Object.freeze({
+    name: parsed.name,
+    location: method.path,
+    content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
+    userMessage: parsed.userMessage,
+  });
 }
 
 export function projectGrokActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
@@ -150,16 +167,7 @@ export async function prepareGrokRoleEnvelope(options: {
     deliverSubmissionRejection(value) { rejection = value; },
     capabilities: {
       skillExpansion(prompt): HostSkillExpansionEvidence | undefined {
-        const parsed = parseCanonicalSkillInvocation(prompt);
-        if (parsed === undefined) return undefined;
-        const method = methodSkills.get(parsed.name);
-        if (method === undefined) return undefined;
-        return Object.freeze({
-          name: parsed.name,
-          location: method.path,
-          content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
-          userMessage: parsed.userMessage,
-        });
+        return buildGrokSkillExpansion(methodSkills, prompt);
       },
     },
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
