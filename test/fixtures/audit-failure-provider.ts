@@ -291,12 +291,18 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
       .map((entry) => ({ toolCallId: entry.message.toolCallId, toolName: entry.message.toolName, isError: entry.message.isError === true, details: entry.message.details ?? {}, usage: entry.message.usage }));
     const failedOutput = roleResults.find((entry) => entry.toolCallId === "fatal-judge");
     const failedOutputEntry = [...rolePersisted].find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolCallId === "fatal-judge");
+    // #575 sole-final barrier: execute projects only a pending-round-closure candidate;
+    // the audited decisive facts (judgeStatus + auditNoReceipt) arrive on the typed closure.
+    const closureEntry = [...rolePersisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+    const closureDetails = typeof closureEntry?.data === "object" && closureEntry.data !== null
+      ? (closureEntry.data as { details?: unknown }).details ?? {}
+      : {};
     const drainedBeforeSettlement = navigatorCompletedAt !== "" && typeof settlement?.timestamp === "string" && Date.parse(navigatorCompletedAt) <= Date.parse(settlement.timestamp);
     console.error(`AUDIT_FAILURE_EVIDENCE=${JSON.stringify({
       providerCalls: faux.state.callCount,
       navigatorCalls,
       navigator: { startedAt: navigatorStartedAt, completedAt: navigatorCompletedAt, preparedAt: prepared?.timestamp ?? "", settledAt: settlement?.timestamp ?? "", settlementKind: settlement?.data?.kind ?? "", inputReleasedAt, releaseAfterDrain: drainedBeforeSettlement },
-      role: { failedOutput, failedOutputAt: failedOutputEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME },
+      role: { failedOutput, failedOutputAt: failedOutputEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME, closureDetails },
     })}`);
   });
 }
