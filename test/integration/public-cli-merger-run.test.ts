@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -248,6 +248,7 @@ function hostNeutralTypedTurn(options: {
   turns?: readonly (readonly { id: string; kind: "output" | "sibling" }[])[];
   onRejection?: (rejection: unknown) => void;
   postSealAction?: boolean;
+  stopAfterCandidate?: "end" | "failure";
 }): RoleTurnHost {
   return {
     async executeTurn(request) {
@@ -294,7 +295,27 @@ function hostNeutralTypedTurn(options: {
             await handlers.get("tool_execution_start")!(call, context);
           }
           for (const { id, kind } of turn) {
-            if (kind === "output") await registered!.execute(id, {}, undefined, undefined, context);
+            if (kind === "output") {
+              const result = await registered!.execute(id, {}, undefined, undefined, context) as {
+                content: unknown;
+                details: unknown;
+              };
+              await appendFile(coordinates.sessionFile, `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: id,
+                  toolName: outputTool,
+                  isError: false,
+                  content: result.content,
+                  details: result.details,
+                },
+              })}\n`, "utf8");
+            }
+          }
+          if (options.stopAfterCandidate !== undefined) {
+            if (options.stopAfterCandidate === "failure") throw new Error("host failed after output candidate");
+            return { code: 0, stderr: "", timedOut: false };
           }
           await handlers.get("turn_end")!({ turnIndex, calls }, context);
         }
@@ -390,7 +411,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
       diagnosis: "new product decision",
       report: "both authorized intents cannot coexist",
     }),
-    sessionLines: async ({ details }) => {
+    sessionLines: async () => {
       const material = await loadPackagedMethodSkillMaterial(
         packageRoot,
         "resolving-merge-conflicts",
@@ -400,16 +421,6 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
         JSON.stringify({
           type: "message",
           message: { role: "user", content: [{ type: "text", text: expansion }] },
-        }),
-        JSON.stringify({
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolCallId: "t1",
-            toolName: MERGER_OUTPUT_TOOL_NAME,
-            isError: false,
-            details,
-          },
         }),
       ];
     },
@@ -507,7 +518,7 @@ test("host-neutral typed turns reject non-sole output and accept same-session re
 
 test("public-cli shared entry covers post-seal, no-receipt, and infrastructure", { timeout: 120_000 }, async () => {
   await withSharedHome(async (home, project) => {
-    // no-receipt: host ends without sealing
+    // no-receipt: output candidate exists, but the host ends without typed closure
     {
       const { io } = captureIo();
       const result = await runAkRole(
@@ -523,7 +534,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
             role: "judge",
             runId: "run-table-no-receipt",
             details: { judgeStatus: "converged" },
-            turns: [],
+            stopAfterCandidate: "end",
           }),
         },
       );
@@ -538,7 +549,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       assert.equal(await readSealedSubmission(project, "run-table-no-receipt"), undefined);
     }
 
-    // infrastructure: host known failure / throw path
+    // infrastructure: output candidate exists, then the host fails before typed closure
     {
       const { io } = captureIo();
       const result = await runAkRole(
@@ -550,8 +561,11 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           createRunId: () => "run-table-infrastructure",
           credentials: { "openai-codex": true, xai: false },
           io,
-          roleTurnHost: createMinimalHost(async () => {
-            throw new Error("typed seam unavailable");
+          roleTurnHost: hostNeutralTypedTurn({
+            role: "coder",
+            runId: "run-table-infrastructure",
+            details: { status: "completed", report: "candidate before failure" },
+            stopAfterCandidate: "failure",
           }),
         },
       );

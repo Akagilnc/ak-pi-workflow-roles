@@ -396,6 +396,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     const roleSessionEntries: Array<{ type: string; customType?: string; data?: unknown; message?: unknown }> = [];
     let attendanceInvocationId: string | undefined;
     let settleEvent: { invocationId?: string; disposition?: string } | undefined;
+    let activeNavigator: ReturnType<typeof createNavigatorAttendance> | undefined;
     const modelSettingPath = join(home, "navigator-model.json");
     await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }));
 
@@ -474,6 +475,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
             await options.onEvent(event, report);
           },
         });
+        activeNavigator = nav;
         return nav;
       },
     })(pi as never);
@@ -546,28 +548,31 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    await handlers.get("tool_result")?.({
+    const closure = {
       toolName: JUDGE_OUTPUT_TOOL_NAME,
-      toolCallId: "judge-out",
       isError: false,
-      content: [{ type: "text", text: "Judge verdict accepted" }],
       details: { judgeStatus: "converged" },
-    }, ctx);
-    // Persist packaged role terminal onto the admitted session (completes the invocation).
-    sessionManager.appendMessage({
-      role: "toolResult",
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      toolCallId: "judge-out",
-      isError: false,
-      content: [{ type: "text", text: "Judge verdict accepted" }],
-      timestamp: Date.now(),
-      details: { judgeStatus: "converged" },
-    } as never);
+    };
+    const { projectClosedSubmissionLifecycle } = await import("../../src/role-runtime.ts");
+    await projectClosedSubmissionLifecycle(
+      { role: "judge", decisiveFacts: closure.details } as never,
+      ctx as never,
+      null,
+      () => {},
+      async (settlement) => {
+        if (settlement !== undefined) await activeNavigator!.settle(settlement);
+      },
+    );
     await handlers.get("agent_settled")?.({}, ctx);
 
     assert.ok(settleEvent);
     assert.equal(settleEvent?.invocationId, markerId);
     assert.equal(settleEvent?.disposition, "recommendation");
+    const closureNavigator = extractNavigatorFact([
+      ...sessionManager.getEntries(),
+      ...roleSessionEntries.filter((entry) => entry.type === "custom_message"),
+    ] as never);
+    assert.equal(closureNavigator.disposition, "recommendation", "public Navigator consumes the same typed closure as restart");
 
     // Same session after accepted role terminal is a new invocation → fresh principal.
     await handlers.get("session_start")?.({}, ctx);
