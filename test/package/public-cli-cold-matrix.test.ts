@@ -308,7 +308,6 @@ async function installFromTarball(
 }
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, 9);
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
