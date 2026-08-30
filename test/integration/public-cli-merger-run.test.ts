@@ -15,6 +15,7 @@ import test from "node:test";
 
 test.after(() => { process.exitCode = undefined; });
 
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { GATEKEEPER_OUTPUT_TOOL, INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
@@ -734,7 +735,7 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
       flags: (home: string) => ({ "ak-role": "judge" }),
       outputArgs: { judgeStatus: "converged" },
       extension: () =>
-        createRoleRuntimeExtension({
+        createPiRoleRuntimeExtension({
           loadJudgeSoul: async () => "# Judge\nDecide.",
           transcriptFromContext: () => "",
           auditSoulCompliance: async () => ({ status: "pass" }),
@@ -750,7 +751,7 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
       }),
       outputArgs: { status: "planned", report: "plan only" },
       extension: () =>
-        createRoleRuntimeExtension({
+        createPiRoleRuntimeExtension({
           loadJudgeSoul: async () => "judge",
           loadFixerSoul: async () => "# Fixer\nPlan.",
           loadFixPacket: async () => "# Repair instructions\n",

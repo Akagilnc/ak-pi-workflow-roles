@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
 import { sha256Hex } from "../../src/sha256.ts";
@@ -121,7 +122,7 @@ test("role extension binds Merger Git state to session cwd while preserving inje
       const roots: string[] = [];
       const states: object[] = [];
       const state = { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } };
-      createRoleRuntimeExtension({
+      createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "unused", transcriptFromContext: () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
         loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input,
         createMergerGitState(root) { roots.push(root); const created = { ...state }; states.push(created); return created; },
