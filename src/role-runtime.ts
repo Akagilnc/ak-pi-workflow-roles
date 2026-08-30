@@ -615,15 +615,37 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };
 }
 
+export async function projectClosedSubmissionLifecycle(
+  projection: import("./submission-ledger.ts").ClosedSubmissionProjection,
+  context: HostContext,
+  phase: NavigatorPhase,
+  recordAccepted: () => void,
+  settle: (settlement: NavigatorSettlement | undefined) => Promise<void>,
+): Promise<void> {
+  recordAccepted();
+  const closure = {
+    toolName: navigatorOutputTool(projection.role)!,
+    isError: false,
+    details: projection.decisiveFacts,
+  };
+  context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
+  await settle(publicNavigatorSettlement(projection.role, phase, closure));
+}
+
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
   injectedPiHostAdapter?: PiRoleHostAdapter,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
     const piHostAdapter = injectedPiHostAdapter ?? createPiRoleHostAdapter(pi);
+    let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection, context: HostContext) => Promise<void> = async () => {
+      throw new Error("角色终局投射接缝尚未初始化");
+    };
     const roleHost = createSubmissionLedgerHost(
       piHostAdapter.host,
       new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
+      failInfrastructure,
+      async (projection, context) => projectClosedSubmission(projection, context),
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
@@ -653,6 +675,54 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
+    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
+      const attendance = navigatorAttendance;
+      if (settlement === undefined || attendance === undefined) return;
+      const workContext = navigatorWorkContext;
+      const pending = (async () => {
+        if (settlement.kind !== "accepted") {
+          await attendance.settle(settlement);
+          return;
+        }
+        const settlePromise = attendance.settle(settlement);
+        const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
+        if (raced.status !== "timeout") return;
+        if (pendingNavigatorPresentation === undefined) {
+          const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
+          const report: NavigatorReport = {
+            disposition: "unavailable",
+            unavailableReason: "Navigator exceeded post-role delivery grace",
+            unavailableSource: "unknown",
+            unavailableCause: "unknown",
+            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
+          };
+          const event: NavigatorEvent = {
+            version: 1,
+            disposition: "unavailable",
+            invocationId: "post-role-grace-timeout",
+            role: settlement.role,
+            phase: settlement.phase,
+            subjectKey: workContext?.subjectKey ?? "",
+            unavailableReason: "Navigator exceeded post-role delivery grace",
+            unavailableSource: "unknown",
+            unavailableCause: "unknown",
+            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
+          };
+          pendingNavigatorPresentation = { event, report };
+        }
+        attendance.dispose();
+        void settlePromise.catch(() => undefined);
+      })();
+      pendingNavigatorSettlement = pending;
+      await pending;
+    };
+    projectClosedSubmission = async (projection, context) => projectClosedSubmissionLifecycle(
+      projection,
+      context,
+      navigatorPhase(roleHost, projection.role),
+      () => receiptDelivery.recordAccepted(),
+      settleNavigatorProjection,
+    );
     roleHost.on("input", (event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
@@ -747,8 +817,6 @@ export function createRoleRuntimeExtension(
       const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
       if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
-      } else if (outputClassification?.kind === "accepted") {
-        receiptDelivery.recordAccepted();
       } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
         const reason = (event.content ?? [])
           .map((part) => part.type === "text" && "text" in part ? part.text : "")
@@ -756,57 +824,12 @@ export function createRoleRuntimeExtension(
           .trim() || "terminating tool rejected";
         receiptDelivery.recordRejected(reason);
       }
-      const settlement = publicNavigatorSettlement(
-        role,
-        navigatorPhase(roleHost, role),
-        classified,
-      );
-      if (settlement !== undefined) {
-        const attendance = navigatorAttendance;
-        if (attendance !== undefined) {
-          const workContext = navigatorWorkContext;
-          const pending = (async () => {
-          // Accepted role terminal starts the post-role Navigator grace (#101/#106).
-          if (settlement.kind !== "accepted") {
-            await attendance.settle(settlement);
-            // Emission stays on agent_settled (normal completion) or session_shutdown
-            // flush (abort/infrastructure teardown that skips agent_settled).
-            return;
-          }
-          const settlePromise = attendance.settle(settlement);
-          const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
-          if (raced.status === "timeout") {
-            if (pendingNavigatorPresentation === undefined) {
-              const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
-              const report: NavigatorReport = {
-                disposition: "unavailable",
-                unavailableReason: "Navigator exceeded post-role delivery grace",
-                unavailableSource: "unknown",
-                unavailableCause: "unknown",
-                ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
-              };
-              const navigatorEvent: NavigatorEvent = {
-                version: 1,
-                disposition: "unavailable",
-                invocationId: "post-role-grace-timeout",
-                role,
-                phase: navigatorPhase(roleHost, role),
-                subjectKey: workContext?.subjectKey ?? "",
-                unavailableReason: "Navigator exceeded post-role delivery grace",
-                unavailableSource: "unknown",
-                unavailableCause: "unknown",
-                ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
-              };
-              pendingNavigatorPresentation = { event: navigatorEvent, report };
-            }
-            attendance.dispose();
-            void settlePromise.catch(() => undefined);
-          }
-        })();
-          pendingNavigatorSettlement = pending;
-          await pending;
-        }
-      }
+      // Accepted/human terminal projection belongs exclusively to typed ledger
+      // closure. tool_result retains only infrastructure settlement.
+      const settlement = isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure"
+        ? publicNavigatorSettlement(role, navigatorPhase(roleHost, role), classified)
+        : undefined;
+      await settleNavigatorProjection(settlement);
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {

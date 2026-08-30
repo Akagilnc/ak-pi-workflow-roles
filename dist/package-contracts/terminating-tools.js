@@ -6,6 +6,7 @@ import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollect
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, } from "./reviewer-output.js";
 import { isAuditEscalationResult } from "../audit-escalation.js";
+import { CorrectableSubmissionError } from "../submission-correctable-error.js";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput } from "../notary-contracts.js";
@@ -44,7 +45,8 @@ export function acceptedTextFor(toolName) {
             return NOTARY_ACCEPTED_TEXT;
     }
 }
-export class AcceptedDetailsContractError extends Error {
+export class AcceptedDetailsContractError extends CorrectableSubmissionError {
+    code = "accepted_details_contract";
     constructor(message, options) {
         super(message, options);
         this.name = "AcceptedDetailsContractError";

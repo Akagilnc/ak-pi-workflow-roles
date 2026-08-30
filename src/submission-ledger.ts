@@ -8,22 +8,23 @@ import {
   WorkerUnfinishedReasonReminderError,
 } from "./submission-errors.ts";
 import {
-  AcceptedDetailsContractError,
   acceptedFacts,
   isTerminatingToolName,
   type AcceptedDetails,
+  type TerminatingToolName,
 } from "./package-contracts/terminating-tools.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
+import { isCorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
 /** Typed correctable-rejection codes — settlement residual precedence without re-judging 0041. */
-export type CorrectableRejectionCode = "closed-batch" | "non-terminate" | "typed-bounce";
+export type CorrectableRejectionCode = "non-sole-round" | "non-terminate" | "typed-bounce";
 export type SubmissionLedgerEvent =
-  | { readonly type: "batchContext"; readonly attemptId: string; readonly batchId: string; readonly closed: boolean; readonly calls: readonly SubmissionCall[] }
-  | { readonly type: "candidate"; readonly attemptId: string; readonly batchId: string; readonly toolCallId: string; readonly toolName: string; readonly sequence: number }
+  | { readonly type: "roundContext"; readonly attemptId: string; readonly calls: readonly SubmissionCall[] }
+  | { readonly type: "candidate"; readonly attemptId: string; readonly toolCallId: string; readonly toolName: string; readonly sequence: number }
   | {
       readonly type: "outcome";
       readonly attemptId: string;
@@ -36,17 +37,6 @@ export type SubmissionLedgerEvent =
     }
   | { readonly type: "sealed"; readonly attemptId: string; readonly toolCallId: string; readonly accepted: unknown; readonly projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> }
   | { readonly type: "post-seal-anomaly"; readonly attemptId: string; readonly toolCallId: string; readonly toolName: string };
-
-/** Typed bounce anchors owned by existing gates — never prose-classified. */
-function isTypedCorrectableRejection(error: unknown): boolean {
-  return (
-    error instanceof GatekeeperDecisionError ||
-    error instanceof WorkerUnfinishedReasonReminderError ||
-    error instanceof WorkerCommitReminderError ||
-    error instanceof WorkerPrefixReminderError ||
-    error instanceof AcceptedDetailsContractError
-  );
-}
 
 /**
  * Admitted run identity for the ledger subject.
@@ -92,6 +82,7 @@ function isAuditEscalationTerminalProjection(
 
 export type SealedSubmissionProjection = Extract<SubmissionLedgerEvent, { type: "sealed" }>["projection"];
 export type AuditEscalationSubmissionProjection = Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
+export type ClosedSubmissionProjection = SealedSubmissionProjection | AuditEscalationSubmissionProjection;
 
 function submissionRecordFile(cwd: string, runId: string, home?: string): string {
   const ledgerHome = resolveActivationLedgerHome(
@@ -123,6 +114,7 @@ export async function readSealedSubmission(
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
+    if (record?.kind === "post-seal-anomaly") return undefined;
     if (record?.kind !== "sealed") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
     if (payload?.type === "sealed" && isAcceptedProjection(payload.projection)) return payload.projection;
@@ -183,8 +175,80 @@ async function restoreState(cwd: string, runId: string): Promise<LedgerState> {
 }
 
 /** Pipeline-owned sole-final state and durable projection. */
-export function createSubmissionLedgerHost(host: RoleHost, outputTools: ReadonlyMap<string, TerminalRoleName>): RoleHost {
+export function createSubmissionLedgerHost(
+  host: RoleHost,
+  outputTools: ReadonlyMap<string, TerminalRoleName>,
+  failInfrastructure: (error: unknown, context: HostContext) => never = (error) => { throw error; },
+  projectClosure: (projection: ClosedSubmissionProjection, context: HostContext) => void | Promise<void> = () => undefined,
+): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
+  type PendingCandidate = { toolCallId: string; toolName: TerminatingToolName; role: TerminalRoleName; result: HostToolResult<unknown>; context: HostContext; auditProjection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> };
+  const rounds = new Map<string, PendingCandidate[]>();
+  const stateFor = (context: HostContext, runId: string) => states.get(runId) ?? (() => {
+    const pending = restoreState(context.cwd, runId);
+    states.set(runId, pending);
+    return pending;
+  })();
+  const appendFor = (state: LedgerState, context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
+    const pointer = sitianReport({ level: "event", kind: event.type, subject: { runId, attemptId }, ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }), payload: event, source: "role-runtime", cwd: context.cwd });
+    state.prior = pointer;
+    return pointer;
+  };
+
+  host.on("tool_execution_start", async ({ toolCallId, toolName }, context) => {
+    try {
+      const runId = runIdentity(context);
+      const attemptId = attemptIdentity(context, runId);
+      const state = await stateFor(context, runId);
+      if (state.sealed) appendFor(state, context, runId, attemptId, { type: "post-seal-anomaly", attemptId, toolCallId, toolName });
+    } catch (error) {
+      failInfrastructure(error, context);
+    }
+  });
+  host.on("turn_end", async (event, context) => {
+    try {
+      const runId = runIdentity(context);
+      const attemptId = attemptIdentity(context, runId);
+      const candidates = rounds.get(attemptId);
+      if (candidates === undefined) return;
+      rounds.delete(attemptId);
+      const state = await stateFor(context, runId);
+      const calls = event.calls.map(({ toolCallId: id, toolName: name }) => ({ id, name }));
+      appendFor(state, context, runId, attemptId, { type: "roundContext", attemptId, calls });
+      const sole = calls.length === 1 && candidates.length === 1 && calls[0]?.id === candidates[0]?.toolCallId;
+      if (!sole) {
+        for (const candidate of candidates) appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "correctable-rejection", code: "non-sole-round" });
+        if (host.deliverSubmissionRejection === undefined) {
+          throw new Error("宿主未提供模型可见的交卷封驳接缝");
+        }
+        context.abort();
+        await host.deliverSubmissionRejection({
+          kind: "correctable-rejection",
+          code: "non-sole-round",
+          toolCallIds: candidates.map(({ toolCallId }) => toolCallId),
+        });
+        return;
+      }
+      const candidate = candidates[0]!;
+      if (candidate.auditProjection !== undefined) {
+        appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "audit-escalation", projection: candidate.auditProjection });
+        await projectClosure(candidate.auditProjection, context);
+        context.abort();
+        return;
+      }
+      const details = typeof candidate.result.details === "object" && candidate.result.details !== null ? candidate.result.details as Record<string, unknown> : {};
+      const status = acceptedFacts(candidate.toolName, details as AcceptedDetails).status;
+      if (typeof status !== "string" || status.length === 0) throw new Error("提交账封账缺少 acceptedFacts.status");
+      const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role: candidate.role, status, decisiveFacts: details };
+      appendFor(state, candidate.context, runId, attemptId, { type: "sealed", attemptId, toolCallId: candidate.toolCallId, accepted: candidate.result.details, projection });
+      state.sealed = true;
+      await projectClosure(projection, context);
+      context.abort();
+    } catch (error) {
+      failInfrastructure(error, context);
+    }
+  });
+
   return {
     ...host,
     registerTool(tool) {
@@ -195,30 +259,21 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
         async execute(toolCallId, params, signal, update, context): Promise<HostToolResult<unknown>> {
           const runId = runIdentity(context);
           const attemptId = attemptIdentity(context, runId);
-          const state = await (states.get(runId) ?? (() => { const pending = restoreState(context.cwd, runId); states.set(runId, pending); return pending; })());
-          const append = (event: SubmissionLedgerEvent): RecordPointer => {
-            const pointer = sitianReport({ level: "event", kind: event.type, subject: { runId, attemptId }, ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }), payload: event, source: "role-runtime", cwd: context.cwd });
-            state.prior = pointer;
-            return pointer;
-          };
-          if (state.sealed) {
-            append({ type: "post-seal-anomaly", attemptId, toolCallId, toolName: tool.name });
-            throw new Error("提交账已封账");
-          }
-          const batch = context.terminationBatch;
-          const batchId = `${attemptId}:${toolCallId}`;
-          append({ type: "batchContext", attemptId, batchId, closed: batch?.batchClosed === true, calls: batch?.calls ?? [] });
-          append({ type: "candidate", attemptId, batchId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
-          const matching = batch?.calls.filter((call) => call.id === toolCallId && call.name === tool.name) ?? [];
-          if (batch?.batchClosed !== true || batch.calls.length !== 1 || matching.length !== 1) {
-            append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection", code: "closed-batch" });
-            throw new Error("回执非唯一终局工具调用");
-          }
+          const state = await stateFor(context, runId);
+          const append = (event: SubmissionLedgerEvent) => appendFor(state, context, runId, attemptId, event);
+          if (state.sealed) throw new Error("提交账已封账");
+          append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
           let result: HostToolResult<unknown>;
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (isTypedCorrectableRejection(error)) {
+            if (
+              isCorrectableSubmissionError(error)
+              || error instanceof GatekeeperDecisionError
+              || error instanceof WorkerCommitReminderError
+              || error instanceof WorkerPrefixReminderError
+              || error instanceof WorkerUnfinishedReasonReminderError
+            ) {
               append({
                 type: "outcome",
                 attemptId,
@@ -239,44 +294,41 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
             throw error;
           }
           if (isAuditEscalationProjection(result.details)) {
-            append({
-              type: "outcome",
-              attemptId,
+            const candidates = rounds.get(attemptId) ?? [];
+            candidates.push({
               toolCallId,
-              outcome: "audit-escalation",
-              projection: {
+              toolName: tool.name as TerminatingToolName,
+              role,
+              result,
+              context,
+              auditProjection: {
                 kind: "audit_escalation",
                 role,
                 status: "audit_escalation",
                 decisiveFacts: result.details as Record<string, unknown>,
               },
             });
-            return result;
+            rounds.set(attemptId, candidates);
+            return {
+              content: [],
+              details: { submissionDisposition: "pending-round-closure" },
+            };
           }
           if (result.terminate !== true) {
             append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection", code: "non-terminate" });
             return result;
           }
-          const details = typeof result.details === "object" && result.details !== null ? result.details as Record<string, unknown> : {};
-          // sealed.status sole authority = acceptedFacts (Collector → collected); no parallel mapper.
           if (!isTerminatingToolName(tool.name)) {
             append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: `non-terminating tool ${tool.name}` });
             throw new Error("提交账只受理终止工具");
           }
-          const status = acceptedFacts(tool.name, details as AcceptedDetails).status;
-          if (typeof status !== "string" || status.length === 0) {
-            append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: "acceptedFacts missing status" });
-            throw new Error("提交账封账缺少 acceptedFacts.status");
-          }
-          const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role, status, decisiveFacts: details };
-          try {
-            append({ type: "sealed", attemptId, toolCallId, accepted: result.details, projection });
-          } catch (error) {
-            try { append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: error instanceof Error ? error.message : String(error) }); } catch { /* original persistence failure remains authoritative */ }
-            throw error;
-          }
-          state.sealed = true;
-          return result;
+          const candidates = rounds.get(attemptId) ?? [];
+          candidates.push({ toolCallId, toolName: tool.name, role, result, context });
+          rounds.set(attemptId, candidates);
+          return {
+            content: [],
+            details: { submissionDisposition: "pending-round-closure" },
+          };
         },
       });
     },

@@ -77,6 +77,7 @@ function markerMatchesExpectedIdentity(marker, expected) {
 function classifyPackagedRoleTerminalResult(message) {
   if (typeof message.toolName !== "string") return { kind: "nonterminal" };
   if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  if (typeof message.details === "object" && message.details !== null && message.details.submissionDisposition === "pending-round-closure") return { kind: "nonterminal" };
   const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
   const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : void 0;
   if (message.isError === true) {
@@ -98,10 +99,8 @@ function isAcceptedPackagedRoleTerminalResult(message) {
 }
 function durableTerminalAt(entries, index) {
   const entry = entries[index];
-  if (entry?.type !== "message") return void 0;
-  const message = entry.message;
-  if (message?.role !== "toolResult") return void 0;
-  if (typeof message.toolName !== "string") return void 0;
+  const message = entry?.type === "custom" && entry.customType === "ak-role-submission-closure" ? typeof entry.data === "object" && entry.data !== null ? entry.data : void 0 : entry?.type === "message" && entry.message?.role === "toolResult" ? entry.message : void 0;
+  if (typeof message?.toolName !== "string") return void 0;
   const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
   if (role === void 0) return void 0;
   const classification = classifyPackagedRoleTerminalResult(message);
@@ -117,10 +116,7 @@ function durableTerminalAt(entries, index) {
   };
 }
 function isPackagedRoleTerminalEntry(entry) {
-  if (entry?.type !== "message") return false;
-  const message = entry.message;
-  if (message?.role !== "toolResult") return false;
-  return isDurablePackagedRoleTerminalResult(message);
+  return durableTerminalAt(entry === void 0 ? [] : [entry], 0) !== void 0;
 }
 function isInvocationMarkerEntry(entry) {
   return entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY;

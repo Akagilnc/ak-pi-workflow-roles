@@ -7,37 +7,42 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
+import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
+test.after(() => { process.exitCode = undefined; });
+
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
-import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { GATEKEEPER_OUTPUT_TOOL, INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
+import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
+import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+  noReceiptLifecycleFacts,
+} from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
   createSubmissionLedgerHost,
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
-import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
-import { packageRoot, runPiSubprocess, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
+import { packageRoot, runPiSubprocess, seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { seatSelection, writeInstitutionalSeatTable } from "../helpers/institutional-seat-table.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { Type } from "typebox";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 
@@ -240,10 +245,130 @@ type AcceptedRow = {
   }) => Promise<string[]> | string[];
 };
 
-/** Shared subprocess entry — same runAkRole + sealedAcceptance path for every accepted row. */
+function hostNeutralTypedTurn(options: {
+  role: TerminalRoleName;
+  runId: string;
+  details: unknown;
+  sessionLines?: readonly string[];
+  turns?: readonly (readonly { id: string; kind: "output" | "sibling" }[])[];
+  onRejection?: (rejection: unknown) => void;
+  postSealAction?: boolean;
+  stopAfterCandidate?: "end" | "failure";
+}): RoleTurnHost {
+  return {
+    async executeTurn(request) {
+      let registered: HostToolDefinition | undefined;
+      const handlers = new Map<string, (...values: any[]) => unknown>();
+      const host = {
+        registerTool(tool: HostToolDefinition) { registered = tool; },
+        on(event: string, handler: (...values: any[]) => unknown) { handlers.set(event, handler); },
+        async deliverSubmissionRejection(rejection: unknown) { options.onRejection?.(rejection); },
+      } as RoleHost;
+      const outputTool = packagedRoleOutputTool(options.role)!;
+      const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, options.role]]));
+      pipeline.registerTool({
+        name: outputTool,
+        label: "output",
+        description: "",
+        parameters: Type.Object({}),
+        execute: async () => ({ content: [], details: options.details, terminate: true }),
+      });
+      const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(join(coordinates.sessionFile, ".."), { recursive: true });
+      await writeFile(
+        coordinates.sessionFile,
+        options.sessionLines === undefined ? "" : `${options.sessionLines.join("\n")}\n`,
+        "utf8",
+      );
+      const context = {
+        cwd: request.cwd,
+        mode: "json",
+        model: undefined,
+        sessionManager: {
+          getHeader: () => ({ type: "session", id: `${options.runId}:alternate-host` }),
+          appendCustomEntry(customType: string, data: unknown) {
+            appendFileSync(coordinates.sessionFile, `${JSON.stringify({ type: "custom", customType, data })}\n`, "utf8");
+          },
+        },
+        abort() {},
+      } as HostContext;
+      const priorRun = process.env.AK_ROLE_RUN_DIR;
+      process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+      try {
+        const turns = options.turns ?? [[{ id: "t1", kind: "output" as const }]];
+        for (const [turnIndex, turn] of turns.entries()) {
+          const calls = turn.map(({ id, kind }) => ({
+            toolCallId: id,
+            toolName: kind === "output" ? outputTool : INSPECTOR_OUTPUT_TOOL,
+          }));
+          for (const call of calls) {
+            await handlers.get("tool_execution_start")!(call, context);
+          }
+          for (const { id, kind } of turn) {
+            if (kind === "output") {
+              const result = await registered!.execute(id, {}, undefined, undefined, context) as {
+                content: unknown;
+                details: unknown;
+              };
+              await appendFile(coordinates.sessionFile, `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: id,
+                  toolName: outputTool,
+                  isError: false,
+                  content: result.content,
+                  details: result.details,
+                },
+              })}\n`, "utf8");
+            }
+          }
+          if (options.stopAfterCandidate !== undefined) {
+            if (options.stopAfterCandidate === "failure") {
+              return {
+                code: 1,
+                stderr: "host failed after output candidate",
+                timedOut: false,
+                knownFailure: {
+                  cause: "session",
+                  identity: { name: "AlternateHostSessionFailure", code: "candidate-unclosed" },
+                },
+              };
+            }
+            context.sessionManager.appendCustomEntry!(
+              NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+              noReceiptLifecycleFacts({
+                terminalToolCalled: true,
+                rejectedReceipts: [],
+                deliveryTurns: 2,
+                runPointer: request.runDirectory,
+                attemptPointer: `current:${request.runDirectory}`,
+              }),
+            );
+            return { code: 0, stderr: "", timedOut: false };
+          }
+          await handlers.get("turn_end")!({ turnIndex, calls }, context);
+        }
+        if (options.postSealAction === true) {
+          const late = { toolCallId: "after-seal", toolName: outputTool };
+          await handlers.get("tool_execution_start")!(late, context);
+        }
+      } finally {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+      return { code: 0, stderr: "", timedOut: false };
+    },
+  };
+}
+
+/** Shared public entry backed by a host-neutral typed-turn runtime for every accepted row. */
 async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
   const runId = `run-table-${row.role}-accepted`;
   const args = await row.args(project, home);
+  const details = await row.details({ project, home, runId, args });
+  const sessionLines = row.sessionLines
+    ? await row.sessionLines({ project, home, runId, details })
+    : undefined;
   const { io, stderr } = captureIo();
   const result = await runAkRole(args, {
     packageRoot,
@@ -252,59 +377,11 @@ async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
     createRunId: () => runId,
     credentials: { "openai-codex": true, xai: false },
     io,
-    roleTurnHost: roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (piArgs, options) => {
-        const sessionIdx = piArgs.indexOf("--session");
-        const sessionFile =
-          sessionIdx >= 0
-            ? piArgs[sessionIdx + 1]!
-            : join(piArgs[piArgs.indexOf("--session-dir") + 1]!, "session.jsonl");
-        await mkdir(join(sessionFile, ".."), { recursive: true });
-        const details = await row.details({ project, home, runId, args: piArgs });
-        const lines = row.sessionLines
-          ? await row.sessionLines({ project, home, runId, details })
-          : [
-              JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolCallId: "t1",
-                  toolName: (() => {
-                    switch (row.role) {
-                      case "judge":
-                        return JUDGE_OUTPUT_TOOL_NAME;
-                      case "coder":
-                        return CODER_OUTPUT_TOOL_NAME;
-                      case "fixer":
-                        return FIXER_OUTPUT_TOOL_NAME;
-                      case "reviewer":
-                        return REVIEWER_OUTPUT_TOOL_NAME;
-                      case "doctor":
-                        return DOCTOR_OUTPUT_TOOL_NAME;
-                      case "merger":
-                        return MERGER_OUTPUT_TOOL_NAME;
-                      case "notary":
-                        return NOTARY_OUTPUT_TOOL_NAME;
-                      case "collector":
-                        return COLLECTOR_OUTPUT_TOOL;
-                    }
-                  })(),
-                  isError: false,
-                  details,
-                },
-              }),
-            ];
-        await writeFile(sessionFile, `${lines.join("\n")}\n`, "utf8");
-        return {
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...piArgs],
-          sealedAcceptance: { role: row.role, details, toolCallId: "t1" },
-        };
-      },
+    roleTurnHost: hostNeutralTypedTurn({
+      role: row.role,
+      runId,
+      details,
+      ...(sessionLines === undefined ? {} : { sessionLines }),
     }),
   });
   return { result, runId, stderr: stderr.join("") };
@@ -364,7 +441,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
       diagnosis: "new product decision",
       report: "both authorized intents cannot coexist",
     }),
-    sessionLines: async ({ details }) => {
+    sessionLines: async () => {
       const material = await loadPackagedMethodSkillMaterial(
         packageRoot,
         "resolving-merge-conflicts",
@@ -374,16 +451,6 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
         JSON.stringify({
           type: "message",
           message: { role: "user", content: [{ type: "text", text: expansion }] },
-        }),
-        JSON.stringify({
-          type: "message",
-          message: {
-            role: "toolResult",
-            toolCallId: "t1",
-            toolName: MERGER_OUTPUT_TOOL_NAME,
-            isError: false,
-            details,
-          },
         }),
       ];
     },
@@ -431,9 +498,57 @@ test("public-cli eight packaged roles accept via shared sealed→Terminal entry"
   });
 });
 
+test("host-neutral typed turns reject non-sole output and accept same-session retry", async () => {
+  await withSharedHome(async (home, project) => {
+    for (const row of [
+      {
+        name: "output+sibling",
+        turns: [
+          [{ id: "first", kind: "output" as const }, { id: "sibling", kind: "sibling" as const }],
+          [{ id: "retry", kind: "output" as const }],
+        ],
+      },
+      {
+        name: "double-output",
+        turns: [
+          [{ id: "first", kind: "output" as const }, { id: "second", kind: "output" as const }],
+          [{ id: "retry", kind: "output" as const }],
+        ],
+      },
+    ]) {
+      const runId = `run-host-neutral-${row.name}`;
+      const rejections: unknown[] = [];
+      const { io } = captureIo();
+      const result = await runAkRole(["judge", "--project", project, "Decide."], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        credentials: { "openai-codex": true, xai: false },
+        io,
+        roleTurnHost: hostNeutralTypedTurn({
+          role: "judge",
+          runId,
+          details: { judgeStatus: "converged" },
+          turns: row.turns,
+          onRejection: (rejection) => rejections.push(rejection),
+        }),
+      });
+      assert.equal(rejections.length, 1, row.name);
+      assert.deepEqual(rejections[0], {
+        kind: "correctable-rejection",
+        code: "non-sole-round",
+        toolCallIds: row.name === "double-output" ? ["first", "second"] : ["first"],
+      });
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted", row.name);
+      assert.equal((await readSealedSubmission(project, runId))?.role, "judge", row.name);
+    }
+  });
+});
+
 test("public-cli shared entry covers post-seal, no-receipt, and infrastructure", { timeout: 120_000 }, async () => {
   await withSharedHome(async (home, project) => {
-    // no-receipt: host ends without sealing
+    // no-receipt: output candidate exists, but the host ends without typed closure
     {
       const { io } = captureIo();
       const result = await runAkRole(
@@ -445,30 +560,29 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           createRunId: () => "run-table-no-receipt",
           credentials: { "openai-codex": true, xai: false },
           io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-              await mkdir(sessionDir, { recursive: true });
-              await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-              return { code: 0, stderr: "", timedOut: false, args: [...args] };
-            },
+          roleTurnHost: hostNeutralTypedTurn({
+            role: "judge",
+            runId: "run-table-no-receipt",
+            details: { judgeStatus: "converged" },
+            stopAfterCandidate: "end",
           }),
         },
       );
-      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
+      assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
+      if (result.terminal?.roleOutcome.kind !== "no_receipt") throw new Error("expected no-receipt outcome");
+      assert.equal(result.terminal.roleOutcome.terminalToolCalled, true);
+      assert.deepEqual(result.terminal.roleOutcome.rejectedReceipts, []);
+      assert.equal(result.terminal.roleOutcome.deliveryTurns, 2);
       assert.equal(
-        result.terminal?.roleOutcome.kind === "no_receipt" ||
-          result.terminal?.roleOutcome.kind === "incomplete" ||
-          result.exitCode !== 0,
-        true,
-        "no sealed path must not accept",
+        result.terminal.roleOutcome.sessionCompletion,
+        "settled-without-accepted-receipt",
       );
+      assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
       assert.equal(await readSealedSubmission(project, "run-table-no-receipt"), undefined);
     }
 
-    // infrastructure: host known failure / throw path
+    // infrastructure: output candidate exists, then the host fails before typed closure
     {
       const { io } = captureIo();
       const result = await runAkRole(
@@ -480,76 +594,47 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           createRunId: () => "run-table-infrastructure",
           credentials: { "openai-codex": true, xai: false },
           io,
-          roleTurnHost: createMinimalHost(async () => {
-            throw new Error("typed seam unavailable");
+          roleTurnHost: hostNeutralTypedTurn({
+            role: "coder",
+            runId: "run-table-infrastructure",
+            details: { status: "completed", report: "candidate before failure" },
+            stopAfterCandidate: "failure",
           }),
         },
       );
-      assert.notEqual(result.exitCode, 0);
-      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.terminal?.roleOutcome.kind, "failure");
+      if (result.terminal?.roleOutcome.kind !== "failure") throw new Error("expected failure outcome");
+      assert.equal(result.terminal.roleOutcome.cause, "session");
+      assert.equal(
+        result.terminal.roleOutcome.decisiveFacts.errorName,
+        "AlternateHostSessionFailure",
+      );
+      assert.equal(result.terminal.roleOutcome.decisiveFacts.errorCode, "candidate-unclosed");
       assert.equal(await readSealedSubmission(project, "run-table-infrastructure"), undefined);
+      process.exitCode = undefined;
     }
 
-    // post-seal anomaly after public accepted seal on the same run ledger
+    // post-seal action is observed by the same typed-turn adapter and blocks ordinary success.
     {
-      const { result, runId } = await runAcceptedRow(ACCEPTED_ROWS[0]!, home, project);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      const sealed = await readSealedSubmission(project, runId);
-      assert.ok(sealed);
-
-      let registered: HostToolDefinition | undefined;
-      const host = {
-        registerTool(tool: HostToolDefinition) {
-          registered = tool;
-        },
-      } as RoleHost;
-      createSubmissionLedgerHost(host, new Map([[JUDGE_OUTPUT_TOOL_NAME, "judge"]])).registerTool({
-        name: JUDGE_OUTPUT_TOOL_NAME,
-        label: "output",
-        description: "",
-        parameters: Type.Object({}),
-        execute: async () => ({
-          content: [],
+      const runId = "run-table-post-seal";
+      const { io } = captureIo();
+      const result = await runAkRole(["judge", "--project", project, "Decide."], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        credentials: { "openai-codex": true, xai: false },
+        io,
+        roleTurnHost: hostNeutralTypedTurn({
+          role: "judge",
+          runId,
           details: { judgeStatus: "converged" },
-          terminate: true,
+          postSealAction: true,
         }),
       });
-      const priorHome = process.env.HOME;
-      const priorRun = process.env.AK_ROLE_RUN_DIR;
-      process.env.HOME = home;
-      process.env.AK_ROLE_RUN_DIR = `${project}/runs/${runId}@judge`;
-      // runDirectory may live under the ledger home book — use admitted path from first run when present
-      try {
-        await assert.rejects(
-          registered!.execute(
-            "after-seal",
-            {},
-            undefined,
-            undefined,
-            {
-              cwd: project,
-              mode: "json",
-              model: undefined,
-              sessionManager: {
-                getHeader: () => ({ type: "session", id: `${runId}:attempt` }),
-              },
-              terminationBatch: {
-                batchClosed: true,
-                calls: [{ id: "after-seal", name: JUDGE_OUTPUT_TOOL_NAME }],
-              },
-              abort() {},
-            } as unknown as HostContext,
-          ),
-          /提交账已封账/,
-        );
-      } finally {
-        if (priorHome === undefined) delete process.env.HOME;
-        else process.env.HOME = priorHome;
-        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-        else process.env.AK_ROLE_RUN_DIR = priorRun;
-      }
-      // Original sealed projection remains the sole accepted fact.
-      assert.deepEqual(await readSealedSubmission(project, runId), sealed);
+      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(await readSealedSubmission(project, runId), undefined);
     }
   });
 });
@@ -689,6 +774,12 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
         provider: `singleton-${row.role}`,
         tokenSize: { min: 1000, max: 1000 },
       });
+      const seededModels = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
+      await writeInstitutionalSeatTable(work, {
+        gatekeeper: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
+        inspector: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
+      });
+      let rejectionObservedByModel = false;
       faux.setResponses([
         fauxAssistantMessage(
           [
@@ -697,9 +788,32 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
           ],
           { stopReason: "toolUse" },
         ),
-        fauxAssistantMessage("done"),
+        fauxAssistantMessage(
+          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-1" }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage(
+          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-1" }),
+          { stopReason: "toolUse" },
+        ),
+        async (context: any) => {
+          rejectionObservedByModel = context.messages.filter((message: any) => message.role === "user").length > 1;
+          return fauxAssistantMessage(
+            [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
+            { stopReason: "toolUse" },
+          );
+        },
+        fauxAssistantMessage(
+          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-2" }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage(
+          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-2" }),
+          { stopReason: "toolUse" },
+        ),
       ] as any);
-      await withInProcessPi(
+      try {
+        await withInProcessPi(
         {
           activationLedgerSession: true,
           cwd: work,
@@ -722,13 +836,20 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
               entry.message.role === "toolResult" &&
               entry.message.toolName === row.tool,
           );
-          assert.equal(output?.message.isError, true, `${row.role} non-sole-final rejected`);
+          assert.deepEqual(
+            output?.message.details,
+            { submissionDisposition: "pending-round-closure" },
+            `${row.role} remains pending until typed turn closure`,
+          );
+          assert.equal(rejectionObservedByModel, true, `${row.role} receives the rejection before retrying`);
           const headerId = sessionManager.getHeader?.()?.id;
-          const sealed =
-            headerId === undefined ? undefined : await readSealedSubmission(work, headerId);
-          assert.equal(sealed, undefined, `${row.role} must not seal non-sole-final`);
+          const sealed = headerId === undefined ? undefined : await readSealedSubmission(work, headerId);
+          assert.equal(sealed?.role, row.role, `${row.role} retry on the same durable session seals`);
         },
-      );
+        );
+      } finally {
+        await seededModels.close();
+      }
     });
   }
 });
