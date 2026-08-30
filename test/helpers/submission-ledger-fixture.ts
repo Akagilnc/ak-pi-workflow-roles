@@ -70,9 +70,9 @@ async function driveLedgerProducer(input: {
       } as HostContext;
     await handlers.get("tool_execution_start")!({ toolCallId: input.toolCallId, toolName }, context);
     await registered.execute(input.toolCallId, {}, undefined, undefined, context);
-    await handlers.get("agent_end")!({
-      messages: [],
-      terminalRoundCalls: [{ toolCallId: input.toolCallId, toolName }],
+    await handlers.get("turn_end")!({
+      turnIndex: 0,
+      calls: [{ toolCallId: input.toolCallId, toolName }],
     }, context);
   } finally {
     if (input.home !== undefined) {

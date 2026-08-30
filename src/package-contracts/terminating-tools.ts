@@ -25,6 +25,7 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { isAuditEscalationResult } from "../audit-escalation.ts";
+import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
@@ -122,7 +123,7 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
   }
 }
 
-export class AcceptedDetailsContractError extends Error {
+export class AcceptedDetailsContractError extends CorrectableSubmissionError {
   readonly code = "accepted_details_contract" as const;
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);

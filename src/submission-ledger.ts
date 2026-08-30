@@ -9,6 +9,7 @@ import {
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
+import { isCorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
@@ -29,18 +30,6 @@ export type SubmissionLedgerEvent =
     }
   | { readonly type: "sealed"; readonly attemptId: string; readonly toolCallId: string; readonly accepted: unknown; readonly projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> }
   | { readonly type: "post-seal-anomaly"; readonly attemptId: string; readonly toolCallId: string; readonly toolName: string };
-
-/** Typed bounce anchors owned by existing gates — never prose-classified. */
-function isTypedCorrectableRejection(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) return false;
-  return new Set([
-    "gatekeeper_decision",
-    "worker_unfinished_reason_reminder",
-    "worker_commit_reminder",
-    "worker_prefix_reminder",
-    "accepted_details_contract",
-  ]).has(error.code as string);
-}
 
 /**
  * Admitted run identity for the ledger subject.
@@ -193,7 +182,7 @@ export function createSubmissionLedgerHost(
       failInfrastructure(error, context);
     }
   });
-  host.on("agent_end", async (event, context) => {
+  host.on("turn_end", async (event, context) => {
     try {
       const runId = runIdentity(context);
       const attemptId = attemptIdentity(context, runId);
@@ -201,16 +190,22 @@ export function createSubmissionLedgerHost(
       if (candidates === undefined) return;
       rounds.delete(attemptId);
       const state = await stateFor(context, runId);
-      const calls = (event.terminalRoundCalls ?? []).map(({ toolCallId: id, toolName: name }) => ({ id, name }));
+      const calls = event.calls.map(({ toolCallId: id, toolName: name }) => ({ id, name }));
       appendFor(state, context, runId, attemptId, { type: "roundContext", attemptId, calls });
       const sole = calls.length === 1 && candidates.length === 1 && calls[0]?.id === candidates[0]?.toolCallId;
       if (!sole) {
         for (const candidate of candidates) appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "correctable-rejection", code: "non-sole-round" });
+        context.sessionManager.appendCustomEntry?.("ak-role-submission-rejection", {
+          kind: "correctable-rejection",
+          code: "non-sole-round",
+          toolCallIds: candidates.map(({ toolCallId }) => toolCallId),
+        });
         return;
       }
       const candidate = candidates[0]!;
       if (candidate.auditProjection !== undefined) {
         appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "audit-escalation", projection: candidate.auditProjection });
+        context.abort();
         return;
       }
       const details = typeof candidate.result.details === "object" && candidate.result.details !== null ? candidate.result.details as Record<string, unknown> : {};
@@ -219,6 +214,7 @@ export function createSubmissionLedgerHost(
       const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role: candidate.role, status, decisiveFacts: details };
       appendFor(state, candidate.context, runId, attemptId, { type: "sealed", attemptId, toolCallId: candidate.toolCallId, accepted: candidate.result.details, projection });
       state.sealed = true;
+      context.abort();
     } catch (error) {
       failInfrastructure(error, context);
     }
@@ -242,7 +238,7 @@ export function createSubmissionLedgerHost(
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (isTypedCorrectableRejection(error)) {
+            if (isCorrectableSubmissionError(error)) {
               append({
                 type: "outcome",
                 attemptId,
@@ -278,7 +274,10 @@ export function createSubmissionLedgerHost(
               },
             });
             rounds.set(attemptId, candidates);
-            return result;
+            return {
+              content: [],
+              details: { submissionDisposition: "pending-round-closure" },
+            };
           }
           if (result.terminate !== true) {
             append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection", code: "non-terminate" });
@@ -291,7 +290,10 @@ export function createSubmissionLedgerHost(
           const candidates = rounds.get(attemptId) ?? [];
           candidates.push({ toolCallId, toolName: tool.name, role, result, context });
           rounds.set(attemptId, candidates);
-          return result;
+          return {
+            content: [],
+            details: { submissionDisposition: "pending-round-closure" },
+          };
         },
       });
     },

@@ -54,7 +54,7 @@ function registerTool(
     close: async () => {
       const calls = terminalRoundCalls;
       terminalRoundCalls = [];
-      await handlers.get("agent_end")!({ messages: [], terminalRoundCalls: calls }, context);
+      await handlers.get("turn_end")!({ turnIndex: 0, calls }, context);
     },
   };
 }
@@ -91,7 +91,8 @@ test("host-neutral round closure seals only a sole terminal candidate", async ()
   await withLedgerFixture(async (f) => {
     await f.start("only");
     const accepted = await f.tool().execute("only", {}, undefined, undefined, f.context);
-    assert.equal(accepted.terminate, true);
+    assert.equal(accepted.terminate, undefined);
+    assert.deepEqual(accepted.details, { submissionDisposition: "pending-round-closure" });
     assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
 
     await f.close();
@@ -151,6 +152,17 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
   });
 });
 
+test("a forged correctable code remains infrastructure", async () => {
+  await withLedgerFixture(async (f) => {
+    const forged = Object.assign(new Error("forged"), { code: "gatekeeper_decision" });
+    const failing = registerTool(f.root, async () => { throw forged; });
+    await assert.rejects(failing.tool().execute("forged", {}, undefined, undefined, failing.context), (error) => error === forged);
+    const outcome = (await ledgerRecords(f.root)).at(-1)?.payload as { outcome?: string; diagnostic?: string };
+    assert.equal(outcome.outcome, "infrastructure");
+    assert.equal(outcome.diagnostic, "forged");
+  });
+});
+
 test("pipeline ledger records typed bounce anchors as correctable-rejection", async () => {
   await withLedgerFixture(async (f) => {
     const anchors: Array<{ label: string; error: Error }> = [
@@ -179,7 +191,8 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
     const escalating = registerTool(f.root, async () => ({ content: [], details, terminate: true }));
     await escalating.start("esc");
     const result = await escalating.tool().execute("esc", {}, undefined, undefined, escalating.context);
-    assert.equal(result.terminate, true);
+    assert.equal(result.terminate, undefined);
+    assert.deepEqual(result.details, { submissionDisposition: "pending-round-closure" });
     assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
     await escalating.close();
     const projection = await readAuditEscalationSubmission(f.root, "run-ledger");
