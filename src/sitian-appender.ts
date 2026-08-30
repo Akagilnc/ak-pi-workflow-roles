@@ -58,9 +58,7 @@ export function resolveSitianRecordPath(input: SitianRecordInput): {
   readonly ledgerHome: string;
 } {
   const cwd = input.cwd ?? process.cwd();
-  const ledgerHome = resolveActivationLedgerHome(
-    input.home !== undefined ? () => input.home as string : undefined,
-  );
+  const ledgerHome = resolveActivationLedgerHome();
   const category = resolveSitianVolumeCategory(input.kind);
 
   let sessionDir: string;
