@@ -634,17 +634,19 @@ export async function projectClosedSubmissionLifecycle(
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
 
-export function createRoleRuntimeExtension(
+type RoleRuntimeEnvelope = Pick<ExtensionAPI, "appendEntry" | "sendMessage">;
+
+/** Host-neutral shared envelope composition used by every main-session adapter. */
+export function configureRoleRuntimeEnvelope(
   dependencies: RoleRuntimeDependencies,
-  injectedPiHostAdapter?: PiRoleHostAdapter,
-): (pi: ExtensionAPI) => void {
-  return (pi) => {
-    const piHostAdapter = injectedPiHostAdapter ?? createPiRoleHostAdapter(pi);
+  host: RoleHost,
+  envelope: RoleRuntimeEnvelope,
+): void {
     let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection, context: HostContext) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
-      piHostAdapter.host,
+      host,
       new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
       failInfrastructure,
       async (projection, context) => projectClosedSubmission(projection, context),
@@ -872,7 +874,7 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // one-shot roles must not mistake this delivery request for later caller input.
-        pi.appendEntry("ak-receipt-delivery-request");
+        envelope.appendEntry("ak-receipt-delivery-request");
         try {
           sitianReport({
             level: "event",
@@ -883,7 +885,7 @@ export function createRoleRuntimeExtension(
             source: "role-runtime",
           });
         } catch {}
-        pi.sendMessage({
+        envelope.sendMessage({
           customType: "ak-receipt-delivery-prompt",
           content: RECEIPT_DELIVERY_PROMPT,
           display: false,
@@ -893,7 +895,7 @@ export function createRoleRuntimeExtension(
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
           const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
-          pi.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          envelope.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
           try {
             sitianReport({
               level: "event",
@@ -922,7 +924,7 @@ export function createRoleRuntimeExtension(
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation === undefined) return;
-      await pi.sendMessage({
+      await envelope.sendMessage({
         customType: NAVIGATOR_EVENT_TYPE,
         content: formatNavigatorReport(presentation.report),
         display: true,
@@ -938,7 +940,7 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       if (presentation !== undefined) {
         try {
-          await pi.sendMessage({
+          await envelope.sendMessage({
             customType: NAVIGATOR_EVENT_TYPE,
             content: formatNavigatorReport(presentation.report),
             display: true,
@@ -1261,7 +1263,7 @@ export function createRoleRuntimeExtension(
               phase: invocationPhase,
               subjectKey: work.subjectKey,
             };
-            pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
+            envelope.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
             try {
               sitianReport({
                 level: "event",
@@ -1329,5 +1331,15 @@ export function createRoleRuntimeExtension(
         failInfrastructure(error, ctx);
       }
     });
-  };
+}
+
+export function createRoleRuntimeExtension(
+  dependencies: RoleRuntimeDependencies,
+  injectedPiHostAdapter?: PiRoleHostAdapter,
+): (pi: ExtensionAPI) => void {
+  return (pi) => configureRoleRuntimeEnvelope(
+    dependencies,
+    (injectedPiHostAdapter ?? createPiRoleHostAdapter(pi)).host,
+    pi,
+  );
 }
