@@ -33,7 +33,7 @@ import {
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
-import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
+import { createOAuthKeepalive, type OAuthKeepaliveContext, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -536,6 +536,8 @@ export type RoleRuntimeDependencies = {
    * (default ["kimi-coding"] when the setting file is absent). Tests may inject.
    */
   oauthKeepalive?: OAuthKeepaliveOptions;
+  /** Host projection for Pi-only credential refresh; alternate hosts may omit it. */
+  oauthKeepaliveContext?(context: HostContext): OAuthKeepaliveContext | undefined;
 };
 
 function abortContext(ctx: { abort(): void }): void {
@@ -1176,7 +1178,9 @@ export function createRoleRuntimeExtension(
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
-      oauthKeepalive.start(toPiContext(ctx));
+      const keepaliveContext = dependencies.oauthKeepaliveContext?.(ctx) ??
+        (dependencies.oauthKeepaliveContext === undefined ? toPiContext(ctx) : undefined);
+      if (keepaliveContext !== undefined) oauthKeepalive.start(keepaliveContext);
       const rawRole = roleHost.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);
