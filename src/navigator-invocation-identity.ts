@@ -267,10 +267,14 @@ function durableTerminalAt(
   index: number,
 ): DurablePackagedRoleTerminalRef | undefined {
   const entry = entries[index];
-  if (entry?.type !== "message") return undefined;
-  const message = entry.message;
-  if (message?.role !== "toolResult") return undefined;
-  if (typeof message.toolName !== "string") return undefined;
+  const message = entry?.type === "custom" && entry.customType === "ak-role-submission-closure"
+    ? (typeof entry.data === "object" && entry.data !== null
+      ? entry.data as PackagedRoleTerminalMessage
+      : undefined)
+    : entry?.type === "message" && entry.message?.role === "toolResult"
+      ? entry.message
+      : undefined;
+  if (typeof message?.toolName !== "string") return undefined;
   const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
   if (role === undefined) return undefined;
   const classification = classifyPackagedRoleTerminalResult(message);
@@ -287,15 +291,7 @@ function durableTerminalAt(
 }
 
 function isPackagedRoleTerminalEntry(entry: NavigatorInvocationEntryLike | undefined): boolean {
-  if (entry?.type === "custom" && entry.customType === "ak-role-submission-closure") {
-    return isDurablePackagedRoleTerminalResult(
-      typeof entry.data === "object" && entry.data !== null ? entry.data : {},
-    );
-  }
-  if (entry?.type !== "message") return false;
-  const message = entry.message;
-  if (message?.role !== "toolResult") return false;
-  return isDurablePackagedRoleTerminalResult(message);
+  return durableTerminalAt(entry === undefined ? [] : [entry], 0) !== undefined;
 }
 
 function isInvocationMarkerEntry(entry: NavigatorInvocationEntryLike | undefined): boolean {
