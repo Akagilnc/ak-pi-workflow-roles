@@ -397,7 +397,8 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     const roleSessionEntries: Array<{ type: string; customType?: string; data?: unknown; message?: unknown }> = [];
     let attendanceInvocationId: string | undefined;
     let settleEvent: { invocationId?: string; disposition?: string } | undefined;
-    let activeNavigator: ReturnType<typeof createNavigatorAttendance> | undefined;
+    let outputTool: { execute: (...args: any[]) => Promise<any> } | undefined;
+    const sentMessages: Array<{ customType?: string }> = [];
     const modelSettingPath = join(home, "navigator-model.json");
     await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }));
 
@@ -412,7 +413,9 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
         handlers.set(name, handler);
       },
-      registerTool() {},
+      registerTool(tool: { name: string; execute: (...args: any[]) => Promise<any> }) {
+        if (tool.name === JUDGE_OUTPUT_TOOL_NAME) outputTool = tool;
+      },
       getAllTools() {
         return [];
       },
@@ -423,6 +426,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         sessionManager.appendCustomEntry(customType, data);
       },
       async sendMessage(message: { customType?: string; details?: unknown }) {
+        sentMessages.push(message);
         if (message.customType === "ak-navigator-attendance") {
           roleSessionEntries.push({
             type: "custom_message",
@@ -433,6 +437,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       },
     };
 
+    const { createPiRoleHostAdapter } = await import("../../src/pi/adapter.ts");
     createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "",
@@ -476,10 +481,12 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
             await options.onEvent(event, report);
           },
         });
-        activeNavigator = nav;
         return nav;
       },
-    })(pi as never);
+    }, (() => {
+      const adapter = createPiRoleHostAdapter(pi as never);
+      return { ...adapter, host: { ...adapter.host, requireGatekeeperPass: async () => undefined } };
+    })() as never)(pi as never);
 
     const sessionDir = join(
       home,
@@ -549,43 +556,26 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    // Real host execution persists its pending candidate toolResult before the
-    // ledger appends the authoritative typed closure for the same submission.
-    sessionManager.appendMessage({
-      role: "toolResult",
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      toolCallId: "judge-out",
-      isError: false,
-      content: [],
-      timestamp: Date.now(),
-      details: { submissionDisposition: "pending-round-closure" },
-    } as never);
-    const closure = {
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      isError: false,
-      details: { judgeStatus: "converged" },
-    };
-    const { projectClosedSubmissionLifecycle } = await import("../../src/role-runtime.ts");
-    await projectClosedSubmissionLifecycle(
-      { role: "judge", decisiveFacts: closure.details } as never,
-      ctx as never,
-      null,
-      () => {},
-      async (settlement) => {
-        if (settlement !== undefined) await activeNavigator!.settle(settlement);
-      },
-    );
+    // Registered output execute creates only a candidate; typed turn_end owns closure.
+    assert.ok(outputTool);
+    await handlers.get("tool_execution_start")?.({ toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "judge-out" }, ctx);
+    const pending = await outputTool.execute("judge-out", { judgeStatus: "converged" }, undefined, undefined, ctx);
+    assert.deepEqual(pending.details, { submissionDisposition: "pending-round-closure" });
+    assert.equal(sessionManager.getEntries().some((entry: any) => entry.type === "custom" && entry.customType === "ak-role-submission-closure"), false);
+    await handlers.get("turn_end")?.({ turnIndex: 0, toolResults: [{ toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "judge-out" }] }, ctx);
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
     await handlers.get("agent_settled")?.({}, ctx);
 
     assert.ok(settleEvent);
     assert.equal(settleEvent?.invocationId, markerId);
     assert.equal(settleEvent?.disposition, "recommendation");
+    assert.equal(sentMessages.some((message) => message.customType === "ak-receipt-delivery-prompt"), false, "accepted closure suppresses receipt催交");
     const closureNavigator = extractNavigatorFact([
       ...sessionManager.getEntries(),
       ...roleSessionEntries.filter((entry) => entry.type === "custom_message"),
     ] as never);
     assert.equal(closureNavigator.disposition, "recommendation", "public Navigator consumes the same typed closure as restart");
-    assert.equal(bindCurrentDurableTerminalToMarker(sessionManager.getEntries()).kind, "bound", "pending toolResult plus its closure count as one terminal");
+    assert.equal(bindCurrentDurableTerminalToMarker(sessionManager.getEntries()).kind, "bound", "typed closure binds the accepted terminal");
 
     // Same session after accepted role terminal is a new invocation → fresh principal.
     await handlers.get("session_start")?.({}, ctx);
