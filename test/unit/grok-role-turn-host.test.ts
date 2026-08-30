@@ -27,12 +27,34 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   const host = createGrokRoleTurnHost({
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({ mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], systemPrompt: "law" }),
+    prepare: async () => ({
+      mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }],
+      systemPrompt: "law",
+      closeRound: async () => ({ accepted: true }),
+    }),
   });
 
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
   assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/cancel"]);
   assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
+});
+
+test("grok host reports typed round closure failure instead of accepting no submission", async () => {
+  const connection: GrokAcpConnection = {
+    async request(method) {
+      if (method === "session/new") return { sessionId: "s1" };
+      return {};
+    },
+    notify() { assert.fail("unsealed round must not cancel as accepted"); },
+    async close() {},
+  };
+  const knownFailure = { cause: "output", identity: { name: "MissingSubmission", code: "round-ended-without-submission" } } as const;
+  const host = createGrokRoleTurnHost({
+    connect: async () => connection,
+    inspect: async () => ({ privateActive: [], akActive: [] }),
+    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: false, failure: knownFailure }) }),
+  });
+  assert.deepEqual(await host.executeTurn(request), { code: null, stderr: "", timedOut: false, knownFailure });
 });
 
 test("structured inspect classifies builtin, AK, and private sources by provenance", () => {
@@ -67,7 +89,7 @@ test("grok host rejects an uncontrolled personalized session before model work",
   const host = createGrokRoleTurnHost({
     connect: async () => { connected = true; throw new Error("must not connect"); },
     inspect: async () => ({ privateActive: ["user-plugin"], akActive: [] }),
-    prepare: async () => ({ mcpServers: [], systemPrompt: "law" }),
+    prepare: async () => ({ mcpServers: [], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
   });
   assert.deepEqual(await host.executeTurn(request), {
     code: null, stderr: "", timedOut: false,

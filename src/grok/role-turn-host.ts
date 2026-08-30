@@ -1,4 +1,7 @@
-import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+
+import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 
 /** ACP v1 surface used by the Grok adapter. Protocol details stay in this module. */
 export interface GrokAcpConnection {
@@ -17,6 +20,11 @@ export type GrokControlledInspection = Readonly<{
 export type GrokPreparedTurn = Readonly<{
   mcpServers: readonly Readonly<Record<string, unknown>>[];
   systemPrompt: string;
+  /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
+  closeRound(input: { readonly sessionId: string; readonly promptResult: Readonly<Record<string, unknown>> }): Promise<
+    | { readonly accepted: true }
+    | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
+  >;
 }>;
 
 export type GrokRoleTurnHostConfig = Readonly<{
@@ -36,6 +44,62 @@ function failure(cause: "activation" | "session" | "output", name: string, code:
       ...(details === undefined ? {} : { details }),
     },
   };
+}
+
+type RpcReply = { readonly id?: unknown; readonly result?: unknown; readonly error?: unknown };
+
+/** One ACP JSON-RPC stdio process. Natural close/SIGTERM are its only lifecycle exits. */
+export function connectGrokAcpStdio(options: {
+  readonly binary: string;
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly model?: string;
+}): Promise<GrokAcpConnection> {
+  const args = ["agent", ...(options.model === undefined ? [] : ["--model", options.model]), "--always-approve", "stdio"];
+  const child = spawn(options.binary, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"] });
+  const pending = new Map<number, { resolve(value: Readonly<Record<string, unknown>>): void; reject(error: Error): void }>();
+  let nextId = 0;
+  let closed = false;
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+  createInterface({ input: child.stdout }).on("line", (line) => {
+    let message: RpcReply;
+    try { message = JSON.parse(line) as RpcReply; }
+    catch (error) {
+      for (const waiter of pending.values()) waiter.reject(new Error(`Invalid Grok ACP JSON: ${String(error)}`));
+      pending.clear();
+      return;
+    }
+    if (typeof message.id !== "number") return;
+    const waiter = pending.get(message.id);
+    if (waiter === undefined) return;
+    pending.delete(message.id);
+    if (message.error !== undefined) waiter.reject(new Error(`Grok ACP error: ${JSON.stringify(message.error)}`));
+    else waiter.resolve((message.result ?? {}) as Readonly<Record<string, unknown>>);
+  });
+  child.on("close", (code) => {
+    closed = true;
+    for (const waiter of pending.values()) waiter.reject(new Error(`Grok ACP closed (${String(code)}): ${stderr}`));
+    pending.clear();
+  });
+  return Promise.resolve({
+    request(method, params) {
+      const id = ++nextId;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      });
+    },
+    notify(method, params) {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+    },
+    async close() {
+      if (closed) return;
+      child.stdin.end();
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    },
+  });
 }
 
 /**
@@ -92,8 +156,13 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
           }
           // session/prompt resolution is ACP's typed round boundary. At this point
-          // the shared ledger has seen every MCP execute in the round; cancellation
-          // prevents a sealed role session from accepting further work.
+          // the shared ledger has seen every MCP execute in the round.
+          const closure = await prepared.closeRound({ sessionId, promptResult: result });
+          if (!closure.accepted) {
+            return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+          }
+          // A sealed role session cannot accept further work. This is typed ACP
+          // cancellation, independent of host-specific Stop hooks.
           connection.notify("session/cancel", { sessionId });
           return { code: 0, stderr: "", timedOut: false };
         } finally {
