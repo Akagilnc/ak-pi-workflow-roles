@@ -47,7 +47,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
   assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/close"]);
   assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
-  assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
+  assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law", yoloMode: false } }]);
 });
 
 test("grok session identity is bound by its authority and decoded for resume", async () => {
@@ -72,7 +72,7 @@ test("grok session identity is bound by its authority and decoded for resume", a
   await host.executeTurn(durableRequest);
   await host.executeTurn({ ...durableRequest, continuation: { kind: "resume", prompt: "again" } });
   const load = sessionCalls.find(([method]) => method === "session/load");
-  assert.deepEqual(load, ["session/load", { sessionId: "durable-s1", cwd: "/work", mcpServers: [{}], _meta: { systemPromptOverride: "law" } }]);
+  assert.deepEqual(load, ["session/load", { sessionId: "durable-s1", cwd: "/work", mcpServers: [{}], _meta: { systemPromptOverride: "law", yoloMode: false } }]);
 });
 
 test("grok host rejects a model absent from typed ACP capabilities", async () => {

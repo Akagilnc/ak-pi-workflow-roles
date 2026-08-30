@@ -1,0 +1,76 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import test from "node:test";
+
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
+
+async function listThroughMcp(server: {
+  command: string;
+  args: string[];
+  env: Array<{ name: string; value: string }>;
+}): Promise<Record<string, unknown>> {
+  const child = spawn(server.command, server.args, {
+    env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  try {
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    await replies.next();
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
+    const line = await replies.next();
+    assert.equal(line.done, false);
+    const response = JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
+    assert.equal(response.error, undefined);
+    return response.result ?? {};
+  } finally {
+    child.stdin.end();
+    child.kill("SIGTERM");
+  }
+}
+
+test("Grok MCP projection activates shared Judge materials and all active AK tools", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const socketPath = join(root, "mcp.sock");
+    const request = {
+      principal: {}, activation: { role: "judge" }, methods: [],
+      continuation: { kind: "initial", prompt: "decide" },
+      model: { provider: "xai", model: "grok-4.6" }, cwd: process.cwd(), home: root,
+      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-run"),
+    } as RoleTurnRequest;
+    const prepared = await prepareGrokRoleEnvelope({
+      request,
+      socketPath,
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+        oauthKeepaliveContext: () => undefined,
+      },
+    });
+    try {
+      assert.match(prepared.systemPrompt, /修内司|ak-pi-workflow-roles/);
+      const server = prepared.mcpServers[0] as { command: string; args: string[]; env: Array<{ name: string; value: string }> };
+      const listed = await listThroughMcp(server) as { tools?: Array<{ name: string }> };
+      assert.deepEqual(listed.tools?.map(({ name }) => name), [JUDGE_OUTPUT_TOOL_NAME]);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
