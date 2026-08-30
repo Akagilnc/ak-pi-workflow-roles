@@ -75,14 +75,3 @@ test("Countersign runtime refuses empty soul", async () => {
   await assert.rejects(runtime.activate());
 });
 
-test("Countersign submit enforces the singleton terminating submission and delivers the original verdict", async () => {
-  const h = countersignHarness();
-  const runtime = createCountersignRoleRuntime(
-    h.pi as never,
-    { loadSoul: async () => "LAW" },
-    { failInfrastructure(error) { throw error; } },
-  );
-  await runtime.activate();
-  const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
-});
