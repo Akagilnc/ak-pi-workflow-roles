@@ -3079,27 +3079,6 @@ export type LawfulCountersignRoleOutcome = {
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
 
-,
-  buildFacts: (output: unknown) => Record<string, unknown>,
-): { outcome: { kind: "accepted"; role: typeof role; status: string; decisiveFacts: Record<string, unknown> }; output: unknown } | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== outputToolName) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const output = validate(message.details);
-      const status = String(output.countersignStatus ?? output.status);
-      const outcome = { kind: "accepted" as const, role, status, decisiveFacts: buildFacts(output) };
-      return { output, outcome };
-    } catch { continue; }
-  }
-  return undefined;
-}
-
 export function extractNotaryRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulNotaryRoleOutcome; output: NotaryOutput } | undefined {
