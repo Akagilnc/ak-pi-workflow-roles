@@ -106,6 +106,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
           {
             cwd: fixture,
             // Full-suite evidence: isolated ~1.4s; contended green ~8–9s; contended red timed out at 15s (duration_ms 16346).
+            // #567: this file is on HEAVYWEIGHT_MANIFEST (concurrency=2) so suite contention is scheduled, not absorbed by a wider wait.
             timeoutMs: 30_000,
             env: {
               ...process.env,

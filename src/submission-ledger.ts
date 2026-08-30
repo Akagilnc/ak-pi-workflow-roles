@@ -1,6 +1,12 @@
+import { resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
-import { GatekeeperDecisionError } from "./gatekeeper-role.ts";
+import {
+  GatekeeperDecisionError,
+  WorkerCommitReminderError,
+  WorkerPrefixReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "./submission-errors.ts";
 import {
   AcceptedDetailsContractError,
   acceptedFacts,
@@ -8,13 +14,8 @@ import {
   type AcceptedDetails,
 } from "./package-contracts/terminating-tools.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
-import { readSitianRecords, resolveSitianRecordPath, sitianReport, type RecordPointer } from "./sitian-facade.ts";
+import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
-import {
-  WorkerCommitReminderError,
-  WorkerPrefixReminderError,
-  WorkerUnfinishedReasonReminderError,
-} from "./worker-submission-gates.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
@@ -92,12 +93,20 @@ function isAuditEscalationTerminalProjection(
 export type SealedSubmissionProjection = Extract<SubmissionLedgerEvent, { type: "sealed" }>["projection"];
 export type AuditEscalationSubmissionProjection = Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
 
-function submissionRecordFile(cwd: string, runId: string): string {
-  return resolveSitianRecordPath({ level: "event", kind: "candidate", subject: { runId }, cwd }).recordFile;
+function submissionRecordFile(cwd: string, runId: string, home?: string): string {
+  const ledgerHome = resolveActivationLedgerHome(
+    home === undefined ? undefined : () => home,
+  );
+  return resolveSitianRecordPathInLedger({
+    level: "event",
+    kind: "candidate",
+    subject: { runId },
+    cwd,
+  }, ledgerHome).recordFile;
 }
 
-async function readOwnedSubmissionRecords(cwd: string, runId: string) {
-  const file = submissionRecordFile(cwd, runId);
+async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: string) {
+  const file = submissionRecordFile(cwd, runId, home);
   const { records } = await readSitianRecords(file);
   return {
     file,
@@ -106,8 +115,12 @@ async function readOwnedSubmissionRecords(cwd: string, runId: string) {
 }
 
 /** Settlement read seam: typed sealed projection only, never host session JSONL. */
-export async function readSealedSubmission(cwd: string, runId: string): Promise<SealedSubmissionProjection | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId);
+export async function readSealedSubmission(
+  cwd: string,
+  runId: string,
+  home?: string,
+): Promise<SealedSubmissionProjection | undefined> {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
     if (record?.kind !== "sealed") continue;
@@ -121,8 +134,9 @@ export async function readSealedSubmission(cwd: string, runId: string): Promise<
 export async function readAuditEscalationSubmission(
   cwd: string,
   runId: string,
+  home?: string,
 ): Promise<AuditEscalationSubmissionProjection | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
     if (record?.kind !== "outcome") continue;
@@ -139,8 +153,9 @@ export type LatestSubmissionOutcome = Extract<SubmissionLedgerEvent, { type: "ou
 export async function readLatestSubmissionOutcome(
   cwd: string,
   runId: string,
+  home?: string,
 ): Promise<LatestSubmissionOutcome | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
     if (record?.kind !== "outcome") continue;

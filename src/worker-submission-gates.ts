@@ -10,6 +10,13 @@ import {
   WORKER_SUBMISSION_GATE_KIND,
 } from "./archivist-record-entry.ts";
 import { sitianReport } from "./sitian-facade.ts";
+import {
+  WorkerCommitReminderError,
+  WorkerPrefixReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "./submission-errors.ts";
+
+export { WorkerCommitReminderError, WorkerPrefixReminderError, WorkerUnfinishedReasonReminderError } from "./submission-errors.ts";
 
 export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
@@ -24,30 +31,6 @@ const HOOK_FILE = "reference-transaction";
 /** Open platform-prefix domain (constitution #10) — not a closed singleton. */
 const PLATFORM_PREFIX = /^[A-Za-z][A-Za-z0-9_-]*:/;
 const UNFINISHED_REASON_BOUNCE_LIMIT = 2;
-
-export class WorkerCommitReminderError extends Error {
-  readonly code = "worker_commit_reminder" as const;
-  constructor() {
-    super("未观察到 commit");
-    this.name = "WorkerCommitReminderError";
-  }
-}
-
-export class WorkerPrefixReminderError extends Error {
-  readonly code = "worker_prefix_reminder" as const;
-  constructor() {
-    super("观察到缺前缀 commit");
-    this.name = "WorkerPrefixReminderError";
-  }
-}
-
-export class WorkerUnfinishedReasonReminderError extends Error {
-  readonly code = "worker_unfinished_reason_reminder" as const;
-  constructor() {
-    super("本次 unfinished 回执未含 reason；本接缝缺由至多打回两次。");
-    this.name = "WorkerUnfinishedReasonReminderError";
-  }
-}
 
 export type WorkerSubmissionGateParent = RecordSessionParent;
 
