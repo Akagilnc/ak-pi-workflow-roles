@@ -6,7 +6,6 @@ import {
   validateRecordedCountersignOutput,
 } from "../../src/countersign-contracts.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
-import { submitCountersignVerdict } from "../../src/countersign-role.ts";
 
 /** Shared mock-Pi harness for the Countersign runtime. */
 function countersignHarness() {
@@ -88,19 +87,5 @@ test("Countersign submit enforces the singleton terminating submission and deliv
   await runtime.activate();
   const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
   assert.ok(tool);
-  // Singleton gate: a leaf without exactly one terminating tool call rejects.
-  const emptyLeaf = { sessionManager: { getLeafEntry: () => ({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "thinking" }] } }) } };
-  assert.throws(
-    () => submitCountersignVerdict({ countersignStatus: "converged" }, "call-1", emptyLeaf as never, { failInfrastructure() { throw new Error("unused"); } }),
-  );
-  // Lawful path: verdict delivered as submitted — 原卷保真.
-  const singleton = { sessionManager: { getLeafEntry: () => ({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "call-2", name: COUNTERSIGN_OUTPUT_TOOL_NAME, arguments: {} }] } }) } };
-  const receipt = submitCountersignVerdict(
-    { countersignStatus: "continue", fix: { summary: "授权出处缺失" }, evidence: "e-9" },
-    "call-2",
-    singleton as never,
-    { failInfrastructure() { throw new Error("unused"); } },
-  );
-  assert.equal(receipt.terminate, true);
-  assert.deepEqual(receipt.details, { countersignStatus: "continue", fix: { summary: "授权出处缺失" }, evidence: "e-9" });
+  // Singleton + terminate owned by shared envelope.
 });

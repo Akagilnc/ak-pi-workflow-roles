@@ -893,6 +893,7 @@ export type AdmitCountersignInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  correlationId?: string;
 };
 
 /**
@@ -931,6 +932,7 @@ export async function admitCountersignInvocation(
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -958,6 +960,7 @@ export async function admitCountersignInvocation(
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
     ...ticketFields,
   };
 }
