@@ -187,6 +187,10 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
         findings: ["票面授权无可溯真源"],
         disposition: "rewrite",
       },
+      {
+        countersignStatus: "escalate",
+        decisionGate: { question: "本票走哪条路？", options: ["a", "b"] },
+      },
     ] as const;
 
     for (const [index, receipt] of receipts.entries()) {

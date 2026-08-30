@@ -17794,6 +17794,13 @@ function requireAuthorityRef(value) {
   return value;
 }
 function parseJudgeArgv(args) {
+  for (const token of args) {
+    if (isRejectedPublicSpelling("judge", token)) {
+      throw new CliUsageError(
+        "judge does not accept a public burden selector; Judge infers its own burden"
+      );
+    }
+  }
   return parseInstructionArgv(args, "judge");
 }
 function parseCountersignArgv(args) {
@@ -17992,7 +17999,7 @@ async function admitJudgeInvocation(options) {
     ...ticketFields
   };
 }
-function buildJudgeTransportPrompt(admitted, engineMaterial) {
+function buildInstructionTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -18002,72 +18009,29 @@ function buildJudgeTransportPrompt(admitted, engineMaterial) {
     }
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+function buildJudgeTransportPrompt(admitted, engineMaterial) {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 async function admitCountersignInvocation(options) {
-  if (options.project !== void 0) {
-    requireOptionPath("--project", options.project);
-  }
-  const projectRoot = resolve5(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "countersign", home: options.home });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
-  const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "countersign",
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-    ...ticketFields,
-    instruction,
-    instructionEmpty,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind
-    }))
-  };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
+  const base = await admitJudgeInvocation({
+    home: options.home,
+    cwd: options.cwd,
+    instruction: options.instruction,
+    attachmentPaths: options.attachmentPaths,
+    ...options.project === void 0 ? {} : { project: options.project },
+    ...options.createRunId === void 0 ? {} : { createRunId: options.createRunId },
+    ...options.model === void 0 ? {} : { model: options.model }
+  });
+  const identityPath = join9(base.runDirectory, "invocation.json");
+  const identity = JSON.parse(await readFile6(identityPath, "utf8"));
+  identity.role = "countersign";
+  await writeFile4(identityPath, `${JSON.stringify(identity, null, 2)}
 `, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
-  return {
-    role: "countersign",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-    admittedRequestPath,
-    ...ticketFields
-  };
+  return { ...base, role: "countersign" };
 }
 function buildCountersignTransportPrompt(admitted, engineMaterial) {
-  const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 async function ensureRunArtifactsDir(runDirectory) {
   const dir = join9(runDirectory, "artifacts");
