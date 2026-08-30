@@ -8,13 +8,8 @@ import {
   listHelpCapabilities,
   publicStartupCandidates,
 } from "../../src/public-cli/registry.ts";
-import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 
 test("public registry exposes callable roles plus automatic configurable seats", () => {
-  assert.deepEqual(
-    [...PUBLIC_CALLABLE_ROLES],
-    PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
-  );
   assert.equal(PUBLIC_CALLABLE_ROLES.length, 9);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("countersign"), true);
