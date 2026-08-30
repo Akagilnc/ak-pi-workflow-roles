@@ -19,6 +19,7 @@ import { collectorOutputArgsSchema } from "../../src/collector-tool-schemas.ts";
 import { doctorSubmissionSchema } from "../../src/doctor-contracts.ts";
 import { mergerOutputSchema } from "../../src/merger-contracts.ts";
 import { notaryOutputSchema } from "../../src/notary-contracts.ts";
+import { countersignVerdictSchema } from "../../src/countersign-role.ts";
 
 const NINE = [
   ["Judge", judgeVerdictSchema],
@@ -29,6 +30,7 @@ const NINE = [
   ["Doctor", doctorSubmissionSchema],
   ["Merger", mergerOutputSchema],
   ["Notary", notaryOutputSchema],
+  ["Countersign", countersignVerdictSchema],
   "countersign",
 ] as const;
 
@@ -40,7 +42,7 @@ type SchemaObj = { properties: Record<string, unknown> };
 
 test("all eight output tool schemas advertise the same non-empty infrastructure-failure declaration", () => {
   const diagnostics: string[] = [];
-  for (const [name, schema] of EIGHT) {
+  for (const [name, schema] of NINE) {
     const obj = schema as unknown as SchemaObj;
     const declaration = obj.properties?.[INFRASTRUCTURE_FAILURE_DECLARATION_KEY] as
       | Declared
