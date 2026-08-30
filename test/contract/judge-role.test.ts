@@ -1125,7 +1125,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
     };
     let navigator: ReturnType<typeof createNavigatorAttendance> | undefined;
     const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
-    const extension = createPiRoleRuntimeExtension({
+    const extension = createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "record",
       auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
@@ -2469,7 +2469,7 @@ test(
       let attendance: ReturnType<typeof createNavigatorAttendance> | undefined;
       const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
 
-      const extension = createPiRoleRuntimeExtension({
+      const extension = createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
         transcriptFromContext: () => "record",
         auditSoulCompliance: async () => ({ status: "pass" }),

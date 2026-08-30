@@ -29,18 +29,12 @@ const piContexts = new WeakMap<HostContext, ExtensionContext>();
 /** Pi-only entrypoint adapter around the host-neutral shared composition. */
 export function createPiRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
-  optionsOrEnvelope: { transcriptFromContext?: (context: ExtensionContext) => string } | RoleEnvelopeHost = {},
+  options: { transcriptFromContext?: (context: ExtensionContext) => string } = {},
 ): (pi: ExtensionAPI) => void {
-  return (pi) => {
-    if ("roleHost" in optionsOrEnvelope) {
-      createRoleRuntimeExtension(dependencies)(optionsOrEnvelope);
-      return;
-    }
-    createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi, {
-      ...optionsOrEnvelope,
-      ...(dependencies.oauthKeepalive === undefined ? {} : { oauthKeepalive: dependencies.oauthKeepalive }),
-    }));
-  };
+  return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi, {
+    ...options,
+    ...(dependencies.oauthKeepalive === undefined ? {} : { oauthKeepalive: dependencies.oauthKeepalive }),
+  }));
 }
 
 /** Project Pi's activation context onto the package-owned host contract. */
@@ -56,11 +50,7 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
       getEntries: () => context.sessionManager.getEntries(),
       getSessionDir: () => context.sessionManager.getSessionDir(),
       getSessionFile: () => context.sessionManager.getSessionFile(),
-      getHeader: () => {
-        if (typeof context.sessionManager.getHeader === "function") return context.sessionManager.getHeader();
-        const id = context.sessionManager.getSessionFile();
-        return { type: "session", ...(id === undefined ? {} : { id }) };
-      },
+      getHeader: () => context.sessionManager.getHeader(),
       setSessionFile: (path) => sessionManager.setSessionFile(path),
       appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
     },

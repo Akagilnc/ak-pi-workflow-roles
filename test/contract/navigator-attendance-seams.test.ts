@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -670,7 +671,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
       };
 
       const piHostAdapter = createPiRoleHostAdapter(pi as never);
-      createPiRoleRuntimeExtension({
+      createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
         transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),

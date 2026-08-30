@@ -220,7 +220,7 @@ test(
           extensionFactories: [
             (pi) => {
               const piHostAdapter = createPiRoleHostAdapter(pi);
-              createPiRoleRuntimeExtension({
+              createRoleRuntimeExtension({
               loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
               transcriptFromContext: () => "adjudication evidence",
               auditSoulCompliance: (options) => auditSoulCompliance({ ...options, context: toPiContext(options.context) }),
