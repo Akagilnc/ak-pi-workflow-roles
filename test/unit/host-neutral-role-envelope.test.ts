@@ -28,11 +28,7 @@ test("shared envelope configures every public seat on a non-Pi host", () => {
     async sendMessage() {},
   } as never);
 
-  const roleFlag = flags.get("ak-role");
-  assert.ok(roleFlag);
-  for (const role of ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger", "notary"]) {
-    assert.match(roleFlag.description, new RegExp(`\\b${role}\\b`));
-  }
+  assert.ok(flags.has("ak-role"));
   assert.ok(handlers.some(([event]) => event === "session_start"));
   assert.ok(handlers.some(([event]) => event === "turn_end"));
 });

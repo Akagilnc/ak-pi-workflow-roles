@@ -25,7 +25,7 @@ export function createGrokSessionIdentityAuthority(authority: DurablePrincipalAu
       const target = bindingPath(principal);
       await mkdir(dirname(target), { recursive: true });
       const temporary = `${target}.${process.pid}.tmp`;
-      await writeFile(temporary, `${JSON.stringify({ version: 1, sessionId })}\n`, { encoding: "utf8", mode: 0o600 });
+      await writeFile(temporary, `${JSON.stringify({ sessionId })}\n`, { encoding: "utf8", mode: 0o600 });
       await rename(temporary, target);
     },
   };

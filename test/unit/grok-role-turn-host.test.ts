@@ -35,6 +35,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   const host = createGrokRoleTurnHost({
     sessionIdentity,
     recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
+    installPreToolUseDeny: async () => {},
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
     prepare: async () => ({
@@ -46,7 +47,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
 
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
   assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/close"]);
-  assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
+  assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
   assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law", yoloMode: false } }]);
 });
 
@@ -139,7 +140,7 @@ test("grok host serializes concurrent ACP prompts", async () => {
   assert.equal(promptCount, 2);
 });
 
-test("grok refusal is a typed failure and never closes the session as accepted", async () => {
+test("grok refusal is a typed failure and cancels instead of closing as accepted", async () => {
   const calls: string[] = [];
   const host = createGrokRoleTurnHost({
     sessionIdentity,
@@ -151,7 +152,7 @@ test("grok refusal is a typed failure and never closes the session as accepted",
         if (method === "session/prompt") return { stopReason: "refusal" };
         return {};
       },
-      notify() {},
+      notify(method) { calls.push(method); },
       async close() {},
     }),
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
@@ -161,6 +162,7 @@ test("grok refusal is a typed failure and never closes the session as accepted",
   const result = await host.executeTurn(request);
   assert.equal(result.knownFailure?.identity?.code, "refusal");
   assert.equal(calls.includes("session/close"), false);
+  assert.equal(calls.includes("session/cancel"), true);
 });
 
 test("grok host delivers a typed rejection and resubmits in the same ACP session", async () => {
@@ -228,12 +230,16 @@ test("structured inspect classifies builtin, AK, and private sources by provenan
       { name: "private-hook", source: { type: "user", path: "/home/.grok/hooks.json" } },
       { name: "disabled-hook", compatibilityStatus: "disabled", source: { type: "user", path: "/home/.grok/hooks.json" } },
     ],
+    externalCompat: { cells: [
+      { vendor: "claude", surface: "hooks", enabled: false },
+      { vendor: "cursor", surface: "mcps", enabled: true },
+    ] },
     projectInstructions: [
       { path: "/pkg/CLAUDE.md", scope: "project" },
       { path: "/home/.claude/CLAUDE.md", scope: "global", disabled: true },
     ],
   }, "/pkg"), {
-    privateActive: ["agents:private-agent", "hooks:private-hook", "mcpServers:private-mcp", "plugins:private-plugin", "skills:private"],
+    privateActive: ["agents:private-agent", "externalCompat:cursor:mcps", "hooks:private-hook", "mcpServers:private-mcp", "plugins:private-plugin", "skills:private"],
     akActive: ["projectInstructions:/pkg/CLAUDE.md", "skills:ak-method"],
   });
 });

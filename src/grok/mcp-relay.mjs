@@ -9,19 +9,41 @@ if (!socketPath || !token) throw new Error("AK Grok MCP relay identity is missin
 const upstream = connect(socketPath);
 const waiters = new Map();
 let nextId = 0;
+let terminalError;
+function settle(error) {
+  if (terminalError !== undefined) return;
+  terminalError = error;
+  for (const waiter of waiters.values()) waiter.reject(error);
+  waiters.clear();
+}
+upstream.on("error", (error) => settle(error));
+upstream.on("close", () => settle(new Error("AK Grok MCP upstream closed")));
 createInterface({ input: upstream }).on("line", (line) => {
-  const message = JSON.parse(line);
+  let message;
+  try { message = JSON.parse(line); }
+  catch (error) { settle(error); upstream.destroy(); return; }
   const waiter = waiters.get(message.id);
   if (waiter === undefined) return;
   waiters.delete(message.id);
-  if (message.error !== undefined) waiter.reject(new Error(message.error));
-  else waiter.resolve(message.result);
+  if (message.error !== undefined) {
+    const error = new Error(typeof message.error.message === "string" ? message.error.message : "AK Grok MCP relay failure");
+    error.code = message.error.code;
+    error.cause = message.error;
+    waiter.reject(error);
+  } else waiter.resolve(message.result);
 });
 function request(method, params = {}) {
+  if (terminalError !== undefined) return Promise.reject(terminalError);
   const id = ++nextId;
   return new Promise((resolve, reject) => {
     waiters.set(id, { resolve, reject });
-    upstream.write(`${JSON.stringify({ id, token, method, params })}\n`);
+    upstream.write(`${JSON.stringify({ id, token, method, params })}\n`, (error) => {
+      if (error === null || error === undefined) return;
+      const waiter = waiters.get(id);
+      if (waiter === undefined) return;
+      waiters.delete(id);
+      waiter.reject(error);
+    });
   });
 }
 function send(message) { process.stdout.write(`${JSON.stringify(message)}\n`); }
