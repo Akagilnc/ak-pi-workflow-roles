@@ -306,7 +306,7 @@ test("clearing inspector model preserves its direct-call engine", () => {
   assert.deepEqual(cleared.seats.inspector, { engine: "cursor" });
 });
 
-test("#453 non-notary engine-only residual is rejected on persist boundary", async () => {
+test("#453 judge engine-only residual is rejected on persist boundary", async () => {
   await withTempHome(async (home) => {
     await assert.rejects(
       () => savePublicCliConfig({ seats: { judge: { engine: "opus" } } }, home),

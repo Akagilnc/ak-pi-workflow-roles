@@ -22681,6 +22681,21 @@ function extractInspectorRoleOutcome(entries) {
   }
   return void 0;
 }
+function findUnusableOutputReceipt(entries, toolName, isUsable, diagnostic) {
+  let acceptedNonUsable;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult") continue;
+    const residual = boundErroredToolCandidate(entries, index, message, toolName);
+    if (residual !== void 0) {
+      return { candidate: residual.candidate, diagnostic: residual.diagnostic };
+    }
+    if (acceptedNonUsable === void 0 && message.toolName === toolName && isAcceptedPackagedRoleTerminalResult(message) && !isUsable(message.details)) {
+      acceptedNonUsable = message.details;
+    }
+  }
+  return acceptedNonUsable === void 0 ? void 0 : { candidate: acceptedNonUsable, diagnostic };
+}
 async function trySettleInspectorTerminalResult(admitted) {
   const entries = await readLawfulSettlementEntries(admitted);
   if (entries === void 0) return void 0;
@@ -22693,26 +22708,17 @@ async function trySettleInspectorTerminalResult(admitted) {
       runId: admitted.runId
     }, admitted.sessionDirectory);
   }
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const message = entries[index]?.message;
-    if (message?.role !== "toolResult") continue;
-    const residual = boundErroredToolCandidate(entries, index, message, INSPECTOR_OUTPUT_TOOL_NAME);
-    if (residual !== void 0) {
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: residual.diagnostic,
-        details: { candidate: residual.candidate, acceptedReceipt: false }
-      });
-    }
-    if (message.toolName === INSPECTOR_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: "\u7ED9\u4E8B\u4E2D\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
-        details: { candidate: message.details, acceptedReceipt: false }
-      });
-    }
-  }
-  return void 0;
+  const unusable = findUnusableOutputReceipt(
+    entries,
+    INSPECTOR_OUTPUT_TOOL_NAME,
+    (candidate) => isRecord8(candidate) && (candidate.status === "pass" || candidate.status === "bounce"),
+    "\u7ED9\u4E8B\u4E2D\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce"
+  );
+  return unusable === void 0 ? void 0 : settleFailureTerminalResult(admitted, {
+    cause: "output",
+    diagnostic: unusable.diagnostic,
+    details: { candidate: unusable.candidate, acceptedReceipt: false }
+  });
 }
 function extractNotaryRoleOutcome(entries) {
   if (!isReceiptSettlementBindingClear(entries)) return void 0;
@@ -22743,39 +22749,24 @@ async function settleLawfulNotaryTerminalResult(admitted) {
   if (entries === void 0) return void 0;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === void 0) {
-    let acceptedNonUsable;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(
-        entries,
-        index,
-        message,
-        NOTARY_OUTPUT_TOOL_NAME
-      );
-      if (residual !== void 0) {
-        return settleFailureTerminalResult(admitted, {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details: { candidate: residual.candidate, acceptedReceipt: false }
-        });
-      }
-      if (acceptedNonUsable === void 0 && message.toolName === NOTARY_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
+    const unusable = findUnusableOutputReceipt(
+      entries,
+      NOTARY_OUTPUT_TOOL_NAME,
+      (candidate) => {
         try {
-          validateRecordedNotaryOutput(message.details);
+          validateRecordedNotaryOutput(candidate);
+          return true;
         } catch {
-          acceptedNonUsable = message.details;
+          return false;
         }
-      }
-    }
-    if (acceptedNonUsable !== void 0) {
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
-        details: { candidate: acceptedNonUsable, acceptedReceipt: false }
-      });
-    }
-    return void 0;
+      },
+      "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce"
+    );
+    return unusable === void 0 ? void 0 : settleFailureTerminalResult(admitted, {
+      cause: "output",
+      diagnostic: unusable.diagnostic,
+      details: { candidate: unusable.candidate, acceptedReceipt: false }
+    });
   }
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(

@@ -8,13 +8,11 @@ export const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
 export const PUBLIC_CALLABLE_ROLES = PACKAGED_ROLE_REGISTRY.map((entry) => entry.role);
 /** Automatic attendance seat — configurable, never a caller-selected command. */
 export const AUTOMATIC_NAVIGATOR_SEAT = "navigator";
-/** Automatic gate seats — configurable model only; never caller commands (#453). */
+/** Automatic province seat — configurable model only; never a caller command. */
 export const AUTOMATIC_GATEKEEPER_SEAT = "gatekeeper";
-export const AUTOMATIC_INSPECTOR_SEAT = "inspector";
-/** All automatic configurable seats (no independent public activation command). */
+/** Automatic-only configurable seats. Inspector remains automatic-capable via its callable seat. */
 export const AUTOMATIC_CONFIGURABLE_SEATS = [
     AUTOMATIC_GATEKEEPER_SEAT,
-    AUTOMATIC_INSPECTOR_SEAT,
     AUTOMATIC_NAVIGATOR_SEAT,
 ];
 export const PUBLIC_CONFIGURABLE_SEATS = [

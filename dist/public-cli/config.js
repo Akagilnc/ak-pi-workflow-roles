@@ -67,21 +67,21 @@ export function setPersistentSeatConfig(config, seat, selection) {
 /**
  * Clear a gate officer's persistent model override (#453).
  * Scope is GateOfficerSeat only — non-province seats have no destructive clear seam.
- * Only notary may retain an engine-only residual so direct notary activation keeps
+ * Directly callable gate officers may retain an engine-only residual so activation keeps
  * its labor engine while model resolution returns to startup / province inheritance.
- * gatekeeper/inspector drop the whole row. Already-absent seats are a no-op.
+ * Gatekeeper drops the whole row. Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(config, seat) {
     const previous = config.seats[seat];
     if (previous === undefined)
         return config;
-    // Engine-only residual ownership is notary-only — never widen to other officers.
-    if (seat === "notary" && previous.engine !== undefined) {
+    // Direct officer engine ownership survives an independent model clear.
+    if ((seat === "notary" || seat === "inspector") && previous.engine !== undefined) {
         return {
             ...config,
             seats: {
                 ...config.seats,
-                notary: { engine: previous.engine },
+                [seat]: { engine: previous.engine },
             },
         };
     }
@@ -111,8 +111,8 @@ export function isEngineAxisSeat(seat) {
 }
 /**
  * Set or clear persistent engine on a callable role seat (#356 / #378 / #391 / #453).
- * First engine still requires an existing seat row (model, or notary engine residual).
- * Clearing engine from a notary engine-only residual drops the empty row; clearing
+ * First engine still requires an existing seat row (model, or direct-officer engine residual).
+ * Clearing engine from an engine-only residual drops the empty row; clearing
  * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
  * (navigator excluded at the type boundary).
  */
@@ -297,10 +297,10 @@ function parseSeatModelConfig(value, seat) {
         // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
         throw new Error(`config seat ${seat} engine must be a string`);
     }
-    // #453: engine-only residual is legal only for notary after model clear.
+    // Direct officer engine-only residual remains legal after model clear.
     // All other seats keep the baseline provider/model required contract.
     if (!hasProvider) {
-        if (seat === "notary" && typeof raw.engine === "string") {
+        if ((seat === "notary" || seat === "inspector") && typeof raw.engine === "string") {
             if (raw.thinking !== undefined) {
                 throw new Error(`config seat ${seat} thinking requires provider/model`);
             }
