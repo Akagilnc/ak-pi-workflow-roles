@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
-import { createPiRoleHostAdapter, toPiContext } from "../src/pi/adapter.ts";
+import { createPiRoleRuntimeExtension, toPiContext } from "../src/pi/adapter.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
@@ -37,7 +37,6 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
   createProductionMergerGitState,
-  createRoleRuntimeExtension,
   ROLE_FLAG,
 } from "../src/role-runtime.ts";
 import {
@@ -245,13 +244,10 @@ export async function loadNavigatorWorkContext(
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner({ packageRoot });
   const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
-  const piHostAdapter = createPiRoleHostAdapter(pi, {
-    transcriptFromContext,
-    oauthKeepalive: { providers: oauthKeepaliveProviders },
-  });
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
+    oauthKeepalive: { providers: oauthKeepaliveProviders },
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
@@ -307,5 +303,5 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext: (context) => context.transcript?.() ?? "",
     auditSoulCompliance: (options) => createPiJudgeAuditor()({ ...options, context: toPiContext(options.context) }),
-  })(piHostAdapter);
+  }, { transcriptFromContext })(pi);
 }
