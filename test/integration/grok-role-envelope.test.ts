@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -9,7 +9,10 @@ import test from "node:test";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
+import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
 import { prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
 
@@ -101,6 +104,51 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
       const server = prepared.mcpServers[0] as McpServer;
       const listed = await listThroughMcp(server) as { tools?: Array<{ name: string }> };
       assert.deepEqual(listed.tools?.map(({ name }) => name), [JUDGE_OUTPUT_TOOL_NAME]);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok MCP projection expands the canonical Coder tdd Skill from typed methods", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const socketPath = join(root, "mcp.sock");
+    const taskPath = join(root, "task.md");
+    const tddPath = resolvePackagedMethodSkillPath(packageRoot, "tdd");
+    const request = {
+      principal: {}, activation: { role: "coder", phase: "apply", taskPath }, methods: [{ kind: "skill", path: tddPath }],
+      continuation: { kind: "initial", prompt: "decide" },
+      model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "coder-run"),
+    } as RoleTurnRequest;
+    const prepared = await prepareGrokRoleEnvelope({
+      request,
+      socketPath,
+      dependencies: {
+        loadCoderSoul: async () => "CODER SOUL",
+        loadCoderTask: async () => "implement the plan",
+        loadCanonicalSkillBinding: async (name) =>
+          name === "tdd"
+            ? loadPackagedCanonicalSkillBinding(packageRoot, "tdd")
+            : loadPackagedCanonicalSkillBinding(packageRoot, "code-review"),
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      // The shared input transform rewrites the prompt to the canonical Skill invocation.
+      assert.equal(prepared.prompt, "/skill:tdd decide");
+      assert.ok(prepared.systemPrompt.includes("CODER SOUL"));
     } finally {
       await prepared.dispose?.();
     }
