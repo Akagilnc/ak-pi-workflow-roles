@@ -18,6 +18,7 @@ import {
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
+import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { Type } from "typebox";
 
 function registerTool(
@@ -217,7 +218,19 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
     assert.equal(projection?.kind, "audit_escalation");
     assert.equal(projection?.role, "judge");
     assert.equal(projection?.decisiveFacts.kind, "audit_escalation");
-    assert.deepEqual(escalating.closedSubmissions, [projection]);
+    assert.deepEqual(escalating.closedSubmissions, [projection], "typed audit receipt reaches the closure consumer");
+    assert.deepEqual(publicNavigatorSettlement("judge", null, {
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: projection?.decisiveFacts,
+    }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
+
+    // Audit escalation is not sealed and therefore does not lock the durable run.
+    const retry = registerTool(f.root);
+    await retry.start("after-audit");
+    await retry.tool().execute("after-audit", {}, undefined, undefined, retry.context);
+    await retry.close();
+    assert.equal((await readSealedSubmission(f.root, "run-ledger"))?.status, "converged");
   });
 });
 
