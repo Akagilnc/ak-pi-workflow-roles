@@ -1,10 +1,38 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { connectGrokAcpStdio } from "../../src/grok/role-turn-host.ts";
+import { connectGrokAcpStdio, controlledGrokChildEnv, inspectControlledGrok, prepareControlledGrokHome } from "../../src/grok/role-turn-host.ts";
+
+test("controlled Grok inspect keeps auth but excludes personalized sources", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-inspect-"));
+  try {
+    const sourceHome = join(root, "personalized");
+    const controlledHome = join(root, "controlled");
+    await mkdir(join(sourceHome, ".grok"), { recursive: true });
+    await writeFile(join(sourceHome, ".grok", "auth.json"), "AUTHORITY", { mode: 0o600 });
+    const executable = join(root, "grok-faux.mjs");
+    await writeFile(executable, `#!/usr/bin/env node
+const privateSource = process.env.HOME.includes("personalized");
+process.stdout.write(JSON.stringify({
+  skills: privateSource ? [{ name: "private", source: { type: "user", path: process.env.HOME + "/.grok/skills/private/SKILL.md" } }] : [{ name: "ak", source: { type: "project", path: process.env.AK_PACKAGE_ROOT + "/souls/judge.md" } }],
+  plugins: privateSource ? [{ name: "private-plugin", enabled: true, path: process.env.HOME + "/plugin" }] : [],
+  agents: [{ name: "builtin", source: { type: "builtin" } }]
+}));
+`);
+    await chmod(executable, 0o755);
+    await prepareControlledGrokHome(sourceHome, controlledHome);
+    assert.equal(await readFile(join(controlledHome, "auth.json"), "utf8"), "AUTHORITY");
+    const env = controlledGrokChildEnv({ ...process.env, AK_PACKAGE_ROOT: "/pkg" }, controlledHome);
+    assert.deepEqual(await inspectControlledGrok({ binary: executable, cwd: root, env, packageRoot: "/pkg" }), {
+      privateActive: [], akActive: ["skills:ak"],
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("ACP stdio preserves spawn failure and rejects later writes", async () => {
   const connection = await connectGrokAcpStdio({ binary: join(tmpdir(), "missing-grok-binary"), cwd: tmpdir(), env: process.env });
