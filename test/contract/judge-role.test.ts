@@ -470,16 +470,10 @@ test("shared runtime activates Inspector soul and executes its terminating recei
       loadJudgeSoul: async () => "judge",
       transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
-      loadInspectorSoul: async () => "INSPECTOR LAW",
+      loadInspectorSoul: async () => "inspector",
     })(harness.pi as ExtensionAPI);
 
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
-    const prompt = await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "base" },
-      activationCtx(home),
-    ) as { systemPrompt?: string } | undefined;
-    assert.equal(prompt?.systemPrompt?.includes("INSPECTOR LAW"), true);
-
     const tool = harness.tools.get(INSPECTOR_OUTPUT_TOOL);
     assert.ok(tool);
     const receipt = await tool.execute(
@@ -491,6 +485,19 @@ test("shared runtime activates Inspector soul and executes its terminating recei
     );
     assert.equal(receipt.terminate, true);
     assert.deepEqual(receipt.details, { status: "bounce", findings: ["missing public-seam proof"] });
+    await assert.rejects(
+      tool.execute(
+        "inspector-call-2",
+        { status: "pass", findings: [] },
+        new AbortController().signal,
+        () => {},
+        toolCallContext([
+          { id: "inspector-call-2", name: INSPECTOR_OUTPUT_TOOL },
+          { id: "second-terminal", name: INSPECTOR_OUTPUT_TOOL },
+        ]),
+      ),
+      /非唯一终局工具调用/,
+    );
   });
 });
 

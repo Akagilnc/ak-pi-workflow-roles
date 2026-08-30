@@ -10,7 +10,7 @@ import { buildSeatModelCliArgs, type SeatModelConfig } from "./config.ts";
 import { runAdmittedOneShotRole, type OneShotRunEnv } from "./one-shot-dispatch.ts";
 import { presentStructuralRejection, trySettleInspectorTerminalResult } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import { isLawfulTypedTerminalOutcome, type TerminalResult } from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
 
 export type InspectorRunEnv = OneShotRunEnv & { createRunId?: () => string; extraPiArgs?: readonly string[] };
 
@@ -55,7 +55,7 @@ export async function runPublicInspector(
   });
   return runAdmittedOneShotRole({
     admitted, env, io, extraArgs,
-    adapters: { trySettle: trySettleInspectorTerminalResult, shouldPresentSettled: (terminal) => isLawfulTypedTerminalOutcome(terminal.roleOutcome) },
+    adapters: { trySettle: trySettleInspectorTerminalResult, shouldPresentSettled: () => true },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

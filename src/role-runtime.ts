@@ -1007,11 +1007,18 @@ export function createRoleRuntimeExtension(
           pi.registerTool({
             name: INSPECTOR_OUTPUT_TOOL_NAME,
             label: "给事中输出",
-            description: "提交复杂度与测试质量的 typed pass/bounce 决议。",
-            promptSnippet: "提交给事中决议",
+            description: "给事中终局回执，状态为 pass 或 bounce。",
+            promptSnippet: "给事中终局回执",
             parameters: inspectorOutputSchema,
             async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
               failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
+              const leaf = ctx.sessionManager.getLeafEntry();
+              const calls = leaf?.type === "message" && leaf.message.role === "assistant"
+                ? leaf.message.content.filter((part) => part.type === "toolCall")
+                : [];
+              if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== INSPECTOR_OUTPUT_TOOL_NAME) {
+                throw new Error("给事中回执非唯一终局工具调用");
+              }
               return projectInspectorReceipt(parameters);
             },
           });

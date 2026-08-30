@@ -147,13 +147,13 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
   ]);
   assert.equal(seats.includes("auditor" as never), false);
 
-  // #453: automatic gate seats are configurable but never receive startup candidates.
+  // Gate officers do not receive hard-coded startup candidates.
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.source, "unconfigured");
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.selection, undefined);
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.automatic, true);
   assert.equal(codexOnly.find((s) => s.seat === "inspector")?.source, "unconfigured");
   assert.equal(codexOnly.find((s) => s.seat === "inspector")?.selection, undefined);
-  assert.equal(codexOnly.find((s) => s.seat === "inspector")?.automatic, true);
+  assert.equal(codexOnly.find((s) => s.seat === "inspector")?.automatic, false);
 });
 
 // #453: province model selection is persistent-only with gatekeeper inheritance.
@@ -296,7 +296,7 @@ test("#453 clear notary model keeps engine; unset-engine drops residual row", as
   });
 });
 
-// #453: engine-only residual ownership is notary-only at the persist boundary.
+// Direct Inspector keeps its engine independently of the inherited model axis.
 test("clearing inspector model preserves its direct-call engine", () => {
   let config = setPersistentSeatConfig({ seats: {} }, "inspector", {
     provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium",

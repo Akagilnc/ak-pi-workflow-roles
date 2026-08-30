@@ -252,6 +252,8 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
           role: "judge",
         }),
       };
+    case "inspector":
+      return { ...base, loadInspectorSoul: law };
     default:
       throw new Error(`unexpected packaged role: ${role}`);
   }
@@ -302,6 +304,7 @@ test("packaged terminating tools expose the provider-open registration inventory
       case "doctor": return ["status", "case", "findings", "reason", "missingEvidence", "infrastructureFailure"];
       case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis", "infrastructureFailure"];
       case "notary": return ["status", "findings", "infrastructureFailure"];
+      case "inspector": return ["status", "findings", "infrastructureFailure"];
       default: throw new Error(`unexpected packaged role ${role}`);
     }
   };
@@ -634,6 +637,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
           loadCollectorSoul: reject,
           loadDoctorSoul: reject,
           loadNotarySoul: reject,
+          loadInspectorSoul: reject,
           loadMergerSoul: reject,
           createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
           transcriptFromContext: () => "",
