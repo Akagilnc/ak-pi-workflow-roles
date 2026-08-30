@@ -19,6 +19,7 @@ import { collectorOutputArgsSchema } from "../../src/collector-tool-schemas.ts";
 import { doctorSubmissionSchema } from "../../src/doctor-contracts.ts";
 import { mergerOutputSchema } from "../../src/merger-contracts.ts";
 import { notaryOutputSchema } from "../../src/notary-contracts.ts";
+import { countersignVerdictSchema } from "../../src/countersign-role.ts";
 
 const EIGHT = [
   ["Judge", judgeVerdictSchema],
@@ -29,6 +30,7 @@ const EIGHT = [
   ["Doctor", doctorSubmissionSchema],
   ["Merger", mergerOutputSchema],
   ["Notary", notaryOutputSchema],
+  ["Countersign", countersignVerdictSchema],
 ] as const;
 
 type Declared = {

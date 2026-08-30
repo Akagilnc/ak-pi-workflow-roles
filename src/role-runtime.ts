@@ -685,7 +685,8 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   }
   const status = typeof details.status === "string"
     ? details.status
-    : typeof details.judgeStatus === "string" ? details.judgeStatus : undefined;
+    : typeof details.judgeStatus === "string" ? details.judgeStatus
+    : typeof details.countersignStatus === "string" ? details.countersignStatus : undefined;
   if (status !== undefined && status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
