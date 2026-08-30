@@ -25,6 +25,7 @@ import {
   setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
+  setPersistentSeatHost,
   validatePublicCliConfigEngines,
   type CredentialProviders,
   type EffectiveSeat,
@@ -124,7 +125,8 @@ type TakenPublicGlobalFlag =
   | { flag: "help"; consume: 1 }
   | { flag: "model"; consume: 1 | 2; value: string | undefined }
   | { flag: "thinking"; consume: 1 | 2; raw: string | undefined }
-  | { flag: "engine"; consume: 1 | 2; value: string | undefined };
+  | { flag: "engine"; consume: 1 | 2; value: string | undefined }
+  | { flag: "host"; consume: 1 | 2; value: string | undefined };
 
 /**
  * If `argv[index]` is a public global flag, describe its span and payload.
@@ -157,14 +159,32 @@ function takePublicGlobalFlag(
       raw: taken.value,
     };
   }
-  if (taken.def.id === "engine") {
+  if (taken.def.id === "engine" || taken.def.id === "host") {
     return {
-      flag: "engine",
+      flag: taken.def.id,
       consume: consumed as 1 | 2,
       value: taken.value,
     };
   }
   return undefined;
+}
+
+export type HostSelectionFailure = {
+  readonly kind: "host-unregistered" | "host-model-mismatch";
+  readonly host: string;
+  readonly seat: PublicCallableRole;
+  readonly model: string;
+};
+
+export type NamedRoleTurnHostAdapter = {
+  readonly name: string;
+  readonly create: (input: { role: PublicCallableRole; model: EffectiveSeat["selection"] }) =>
+    | { readonly ok: true; readonly host: RoleTurnHost }
+    | { readonly ok: false; readonly failure: HostSelectionFailure };
+};
+
+class HostSelectionError extends Error {
+  constructor(readonly failure: HostSelectionFailure) { super(failure.kind); }
 }
 
 export type CliEnv = {
@@ -182,6 +202,8 @@ export type CliEnv = {
    * adapter once per dispatch from packageRoot + seat extraPiArgs/timeout.
    */
   roleTurnHost?: RoleTurnHost;
+  /** Composition-root-owned unique named adapter table. */
+  hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Optional caller correlation id (#78 host channel). */
   correlationId?: string;
   /** Extra Pi args for Judge runs (tests: faux provider). */
@@ -223,13 +245,14 @@ export type CliEnv = {
 function resolveRoleTurnHost(
   env: CliEnv,
   options: {
+    role: PublicCallableRole;
+    seat: EffectiveSeat;
     principalAuthority: DurablePrincipalAuthority;
     extraPiArgs?: readonly string[];
     timeoutMs?: number;
   },
 ): RoleTurnHost {
-  if (env.roleTurnHost !== undefined) return env.roleTurnHost;
-  return createPiRoleTurnHost({
+  const piHost = env.roleTurnHost ?? createPiRoleTurnHost({
     packageRoot: env.packageRoot,
     principalAuthority: options.principalAuthority,
     ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
@@ -238,6 +261,14 @@ function resolveRoleTurnHost(
     recordLaunchedRolePackageIdentity,
     observeLaunchedRolePackageIdentity,
   });
+  const adapters = env.hostAdapters ?? [{ name: "pi", create: () => ({ ok: true as const, host: piHost }) }];
+  const hostName = options.seat.host ?? "pi";
+  const adapter = adapters.find((candidate) => candidate.name === hostName);
+  const model = options.seat.selection === undefined ? "unconfigured" : `${options.seat.selection.provider}/${options.seat.selection.model}`;
+  if (adapter === undefined) throw new HostSelectionError({ kind: "host-unregistered", host: hostName, seat: options.role, model });
+  const selected = adapter.create({ role: options.role, model: options.seat.selection });
+  if (!selected.ok) throw new HostSelectionError(selected.failure);
+  return selected.host;
 }
 
 type RoleEnvironmentOptions = {
@@ -312,6 +343,8 @@ function createRoleEnvironment(
     sessionAppender: appendPiSessionCustomEntry,
     packageRoot: env.packageRoot,
     roleTurnHost: resolveRoleTurnHost(env, {
+      role,
+      seat: options.seat,
       principalAuthority: env.principalAuthority!,
       ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -333,6 +366,7 @@ export type CliResult = {
   exitCode: number;
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
   terminal?: TerminalResult;
+  hostFailure?: HostSelectionFailure;
 };
 
 const THINKING_LEVELS = new Set([
@@ -374,6 +408,7 @@ type ParsedGlobal = {
   model?: string;
   thinking?: PublicThinkingLevel;
   engine?: string;
+  host?: string;
   help: boolean;
 };
 
@@ -389,6 +424,7 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
   let model: string | undefined;
   let thinking: PublicThinkingLevel | undefined;
   let engine: string | undefined;
+  let host: string | undefined;
   let help = false;
   const positional: string[] = [];
   const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
@@ -432,11 +468,12 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
         args.splice(0, taken.consume);
         continue;
       }
-      if (taken.flag === "engine") {
-        if (taken.value === undefined) {
-          throw new CliUsageError("--engine requires a value");
+      if (taken.flag === "engine" || taken.flag === "host") {
+        if (taken.value === undefined || taken.value.trim() === "") {
+          throw new CliUsageError(`--${taken.flag} requires a value`);
         }
-        engine = taken.value;
+        if (taken.flag === "engine") engine = taken.value;
+        else host = taken.value;
         args.splice(0, taken.consume);
         continue;
       }
@@ -455,6 +492,7 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
     ...(model === undefined ? {} : { model }),
     ...(thinking === undefined ? {} : { thinking }),
     ...(engine === undefined ? {} : { engine }),
+    ...(host === undefined ? {} : { host }),
     help,
   };
 }
@@ -481,7 +519,8 @@ function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | u
   if (
     parsed.model === undefined &&
     parsed.thinking === undefined &&
-    parsed.engine === undefined
+    parsed.engine === undefined &&
+    parsed.host === undefined
   ) {
     return undefined;
   }
@@ -489,6 +528,7 @@ function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | u
     ...(parsed.model === undefined ? {} : { model: parsed.model }),
     ...(parsed.thinking === undefined ? {} : { thinking: parsed.thinking }),
     ...(parsed.engine === undefined ? {} : { engine: parsed.engine }),
+    ...(parsed.host === undefined ? {} : { host: parsed.host }),
   };
 }
 
@@ -781,6 +821,24 @@ async function runConfigCommand(
     return 0;
   }
 
+  if (args[0] === "set-host" || args[0] === "unset-host") {
+    const unset = args[0] === "unset-host";
+    if (args.length !== (unset ? 2 : 3)) {
+      throw new CliUsageError(`usage: ak-role config ${args[0]} <seat>${unset ? "" : " <name>"}`);
+    }
+    const seat = args[1]!;
+    requireEngineAxisSeat(seat, unset ? "unset-engine" : "set-engine");
+    let config = await loadAndValidateConfig(home, packageRoot);
+    try {
+      config = setPersistentSeatHost(config, seat, unset ? undefined : args[2]!);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
@@ -881,6 +939,9 @@ export async function runAkRole(
     const parsed = parseArgv(argv);
     // Invocation --engine rejects at the call-request seam (not role submission).
     // #356 / #378 / #391: engine axis is every callable role (not resume / support).
+    if (parsed.host !== undefined && parsed.command === "resume") {
+      throw new CliUsageError("resume cannot change host");
+    }
     if (parsed.engine !== undefined) {
       requireLegalEngineName(parsed.engine);
       if (
@@ -1295,6 +1356,10 @@ export async function runAkRole(
     // tokens (including misspelled role names) are structural rejects.
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
+    if (error instanceof HostSelectionError) {
+      io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}`));
+      return { exitCode: 1, hostFailure: error.failure };
+    }
     if (error instanceof CliUsageError) {
       // Non-judge structural paths share the same rejection presenter as Judge.
       presentStructuralRejection(error, io);

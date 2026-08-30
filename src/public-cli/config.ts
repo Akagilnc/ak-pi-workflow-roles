@@ -50,6 +50,7 @@ export type PersistentSeatConfig = {
   model?: string;
   thinking?: PublicThinkingLevel;
   engine?: string;
+  host?: string;
 };
 
 export type PublicCliConfig = {
@@ -67,6 +68,7 @@ export type EffectiveSource = "persistent" | "startup" | "invocation" | "unconfi
 
 /** Engine axis source is independent of model source (#356). */
 export type EngineSource = "invocation" | "persistent" | "unconfigured";
+export type HostSource = "invocation" | "persistent" | "default";
 
 export type EffectiveSeat = {
   seat: PublicConfigurableSeat;
@@ -77,6 +79,8 @@ export type EffectiveSeat = {
   /** Selected engine name when configured; undefined = no engine (default path). */
   engine?: string;
   engineSource: EngineSource;
+  host?: string;
+  hostSource?: HostSource;
 };
 
 export type InvocationModelOverride = {
@@ -84,6 +88,7 @@ export type InvocationModelOverride = {
   thinking?: PublicThinkingLevel;
   /** Optional engine override for this invocation only (#356). */
   engine?: string;
+  host?: string;
 };
 
 export const THINKING_LEVELS = new Set<PublicThinkingLevel>([
@@ -148,6 +153,7 @@ export function setPersistentSeatConfig(
         ...selection,
         // Model rewrite preserves a previously configured engine axis.
         ...(previous?.engine === undefined ? {} : { engine: previous.engine }),
+        ...(previous?.host === undefined ? {} : { host: previous.host }),
       },
     },
   };
@@ -211,6 +217,22 @@ export function isEngineAxisSeat(seat: string): seat is PublicCallableRole {
  * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
  * (navigator excluded at the type boundary).
  */
+export function setPersistentSeatHost(
+  config: PublicCliConfig,
+  seat: PublicCallableRole,
+  host: string | undefined,
+): PublicCliConfig {
+  const previous = config.seats[seat];
+  if (previous === undefined) {
+    throw new Error(`config seat ${seat} has no persistent model; set provider/model[:thinking] before host`);
+  }
+  if (host === undefined) {
+    const { host: _dropped, ...rest } = previous;
+    return { ...config, seats: { ...config.seats, [seat]: rest } };
+  }
+  return { ...config, seats: { ...config.seats, [seat]: { ...previous, host } } };
+}
+
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
   seat: PublicCallableRole,
@@ -424,6 +446,9 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
   if (hasProvider !== hasModel) {
     throw new Error(`config seat ${seat} requires both provider and model`);
   }
+  if (raw.host !== undefined && (typeof raw.host !== "string" || raw.host.trim() === "")) {
+    throw new Error(`config seat ${seat} host must be a non-empty string`);
+  }
   if (raw.engine !== undefined && typeof raw.engine !== "string") {
     // Shape only: engine must be a string field. Path-safety syntax is deferred to
     // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
@@ -462,6 +487,7 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
       ? {}
       : { thinking: raw.thinking as PublicThinkingLevel }),
     ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
+    ...(raw.host === undefined ? {} : { host: raw.host as string }),
   };
   return parsed;
 }
@@ -498,6 +524,17 @@ function pickStartupCandidate(
     }
   }
   return undefined;
+}
+
+function attachHostAxis(
+  seat: EffectiveSeat,
+  config: PublicCliConfig,
+  invocation?: InvocationModelOverride,
+): EffectiveSeat {
+  if (invocation?.host !== undefined) return { ...seat, host: invocation.host, hostSource: "invocation" };
+  const persistent = config.seats[seat.seat]?.host;
+  if (persistent !== undefined) return { ...seat, host: persistent, hostSource: "persistent" };
+  return { ...seat, host: "pi", hostSource: "default" };
 }
 
 function attachEngineAxis(
@@ -609,7 +646,7 @@ export function resolveEffectiveSeat(
     }
   }
 
-  return attachEngineAxis(modelSeat, config, invocation);
+  return attachHostAxis(attachEngineAxis(modelSeat, config, invocation), config, invocation);
 }
 
 export function effectiveSeatConfigurations(
