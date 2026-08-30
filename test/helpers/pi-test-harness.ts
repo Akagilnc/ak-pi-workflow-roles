@@ -904,6 +904,9 @@ export function activationExtensionContext(input: {
     cwd: input.cwd,
     abort: input.abort ?? (() => {}),
     sessionManager: {
+      getLeafEntry: () => undefined,
+      getLeafId: () => null,
+      getEntries: () => [],
       getSessionDir: () => sessionDir,
       getSessionFile: () => sessionFile,
     },
