@@ -376,17 +376,60 @@ export async function recordLaunchedRolePackageIdentity(
   });
 }
 
-export type ParseJudgeArgvResult = {
+export type ParseInstructionArgvResult = {
   instruction: string;
   attachmentPaths: string[];
   project?: string;
 };
 
-export type ParseCountersignArgvResult = {
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-};
+/** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
+export type ParseJudgeArgvResult = ParseInstructionArgvResult;
+export type ParseCountersignArgvResult = ParseInstructionArgvResult;
+
+/** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
+function parseInstructionArgv(
+  args: readonly string[],
+  owner: "judge" | "countersign",
+): ParseInstructionArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+  const definitions = roleOptions(owner);
+  const options = createTypedOptionConsumer(definitions);
+
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      positional.push(...tokens);
+      break;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== undefined) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+    }
+    const token = tokens.shift()!;
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown ${owner} option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  options.assertRequired();
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+  };
+}
 
 export type ParseCoderArgvResult = {
   phase: CoderPhase;
@@ -548,91 +591,11 @@ export function requireAuthorityRef(value: string | undefined): string {
  * Spellings from PUBLIC_OPTION_TABLE.judge; rejects burden family (#342).
  */
 export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("judge");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown judge option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    // Judge owns burden inference — rejected spellings from REJECTED_PUBLIC_SPELLINGS.
-    if (isRejectedPublicSpelling("judge", token)) {
-      throw new CliUsageError(
-        "judge does not accept a public burden selector; Judge infers its own burden",
-      );
-    }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown judge option: ${token}`);
-    }
-    positional.push(token);
-  }
-
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-  };
+  return parseInstructionArgv(args, "judge");
 }
 
 export function parseCountersignArgv(args: readonly string[]): ParseCountersignArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("countersign");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown countersign option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown countersign option: ${token}`);
-    }
-    positional.push(token);
-  }
-
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-  };
+  return parseInstructionArgv(args, "countersign");
 }
 
 /**

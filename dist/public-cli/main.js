@@ -17724,6 +17724,44 @@ async function recordLaunchedRolePackageIdentity(runDirectory, identity) {
     entryMode: identity.entryMode
   });
 }
+function parseInstructionArgv(args, owner) {
+  const attachmentPaths = [];
+  let project;
+  const positional = [];
+  const tokens = [...args];
+  const definitions = roleOptions(owner);
+  const options = createTypedOptionConsumer(definitions);
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      positional.push(...tokens);
+      break;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+    }
+    const token = tokens.shift();
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown ${owner} option: ${token}`);
+    }
+    positional.push(token);
+  }
+  options.assertRequired();
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project }
+  };
+}
 function requireOptionPath(flag, value) {
   if (value === void 0 || value.trim() === "") {
     throw new CliUsageError(
@@ -17756,85 +17794,10 @@ function requireAuthorityRef(value) {
   return value;
 }
 function parseJudgeArgv(args) {
-  const attachmentPaths = [];
-  let project;
-  const positional = [];
-  const tokens = [...args];
-  const definitions = roleOptions("judge");
-  const options = createTypedOptionConsumer(definitions);
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== void 0) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown judge option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift();
-    if (isRejectedPublicSpelling("judge", token)) {
-      throw new CliUsageError(
-        "judge does not accept a public burden selector; Judge infers its own burden"
-      );
-    }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown judge option: ${token}`);
-    }
-    positional.push(token);
-  }
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...project === void 0 ? {} : { project }
-  };
+  return parseInstructionArgv(args, "judge");
 }
 function parseCountersignArgv(args) {
-  const attachmentPaths = [];
-  let project;
-  const positional = [];
-  const tokens = [...args];
-  const definitions = roleOptions("countersign");
-  const options = createTypedOptionConsumer(definitions);
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== void 0) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown countersign option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift();
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown countersign option: ${token}`);
-    }
-    positional.push(token);
-  }
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...project === void 0 ? {} : { project }
-  };
+  return parseInstructionArgv(args, "countersign");
 }
 function parseCoderArgv(args) {
   const attachmentPaths = [];
