@@ -46,10 +46,6 @@ export type CountersignRuntimeDependencies = {
   loadSoul(): Promise<string>;
 };
 
-export function validateCountersignVerdict(verdict: CountersignVerdictParameters): CountersignVerdict {
-  return validateRecordedCountersignOutput(verdict);
-}
-
 /**
  * 决定工具规格。生命周期装配（注册、activate、prompt 注入、singleton 检查、
  * terminate）归注册信封 owner——src/role-runtime.ts（ADR 0018 / #572 R2 判词）。

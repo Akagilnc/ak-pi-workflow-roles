@@ -44,6 +44,7 @@ import {
   COUNTERSIGN_TOOL_SPEC,
   type CountersignRuntimeDependencies,
 } from "./countersign-role.ts";
+import { COUNTERSIGN_ACCEPTED_TEXT } from "./countersign-contracts.ts";
 
 /**
  * 共享注册信封（ADR 0018 / #572 判词送修 3）：activate、tool 注册、
@@ -118,7 +119,7 @@ export function createCountersignRoleRuntime(
     {
       role: "countersign",
       tool: COUNTERSIGN_TOOL_SPEC,
-      acceptedText: "给事中回执已接受",
+      acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
       soulTag: "countersign",
     },
     dependencies,
