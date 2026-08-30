@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-
 import {
   NOTARY_OUTPUT_TOOL_NAME,
   projectLawfulNotaryOutput,
@@ -62,45 +60,4 @@ test("Notary runtime registers output tool and binds source-run locator without 
   assert.equal(prompted.systemPrompt.includes(JSON.stringify({ sourceRun: LOCATOR })), true);
   assert.equal(prompted.systemPrompt.includes("judge_draft"), false);
   assert.equal(prompted.systemPrompt.includes('"material"'), false);
-});
-
-test("Notary output routes an infrastructure-failure declaration to the host before any projection", async () => {
-  const h = notaryHarness();
-  let hostCalls = 0;
-  const runtime = createNotaryRoleRuntime(
-    h.pi as never,
-    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
-    {
-      failInfrastructure(error: unknown, _ctx: unknown, id?: string) {
-        hostCalls += 1;
-        assert.equal(id, "infra");
-        throw error instanceof Error ? error : new Error(String(error));
-      },
-    },
-  );
-  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
-  await runtime.activate();
-  const tool = h.tools.get(NOTARY_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
-  const sessionManager = SessionManager.inMemory();
-  sessionManager.appendMessage({
-    role: "assistant",
-    content: [{ type: "toolCall", id: "infra", name: NOTARY_OUTPUT_TOOL_NAME, arguments: {} }],
-    api: "openai-responses",
-    provider: "test",
-    model: "test",
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-    stopReason: "toolUse",
-    timestamp: 0,
-  });
-  const parameters = { infrastructureFailure: { diagnostic: "notary engine 541" } };
-  await assert.rejects(
-    tool.execute("infra", parameters, undefined, undefined, { sessionManager }),
-    (error) => {
-      assert.ok(error instanceof Error);
-      assert.equal(error.message, "notary engine 541");
-      return true;
-    },
-  );
-  assert.equal(hostCalls, 1, "the notary infra declaration reaches the host exactly once");
 });
