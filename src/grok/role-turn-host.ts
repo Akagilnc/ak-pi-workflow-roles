@@ -222,11 +222,10 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             && hookCapability.blockingEvents.includes("pre_tool_use")
             && Array.isArray(hookCapability.decisions)
             && hookCapability.decisions.includes("deny");
-          // Capability alone is not an installed seatbelt. Hang the belt in the
-          // controlled home only when the host can honor deny; never claim true
-          // for a no-op callback or missing install.
+          // ADR 0008: seatbelt hangs only on the activated Fixer. Capability alone
+          // is not an installed belt, and review seats (ADR 0064) must stay unnarrowed.
           let preToolUseDeny = false;
-          if (canDeny) {
+          if (canDeny && request.activation.role === "fixer") {
             await installGrokPreToolUseDeny(request.home);
             preToolUseDeny = true;
           }
