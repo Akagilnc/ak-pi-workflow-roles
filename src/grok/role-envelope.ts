@@ -151,6 +151,7 @@ export async function prepareGrokRoleEnvelope(options: {
     return results;
   };
   await emit("session_start", { reason: request.continuation.kind });
+  await emit("input", { text: request.continuation.prompt, source: "interactive" });
   const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
   const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
   const promptResults = await emit("before_agent_start", {
