@@ -1,5 +1,8 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { copyFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { promisify } from "node:util";
 
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 
@@ -266,6 +269,33 @@ export function classifyGrokInspection(document: Readonly<Record<string, unknown
     }
   }
   return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
+}
+
+const execFileAsync = promisify(execFile);
+
+/** Copy only Grok's authentication authority into an otherwise isolated home. */
+export async function prepareControlledGrokHome(sourceHome: string, controlledHome: string): Promise<void> {
+  await mkdir(controlledHome, { recursive: true, mode: 0o700 });
+  await copyFile(join(sourceHome, ".grok", "auth.json"), join(controlledHome, "auth.json"));
+}
+
+/** First-party structured inspection under the exact environment used by ACP. */
+export async function inspectControlledGrok(options: {
+  readonly binary: string;
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly packageRoot: string;
+}): Promise<GrokControlledInspection> {
+  const { stdout } = await execFileAsync(options.binary, ["inspect", "--json"], {
+    cwd: options.cwd,
+    env: options.env,
+    encoding: "utf8",
+  });
+  const document: unknown = JSON.parse(stdout);
+  if (typeof document !== "object" || document === null || Array.isArray(document)) {
+    throw new Error("Grok structured inspection did not return an object");
+  }
+  return classifyGrokInspection(document as Readonly<Record<string, unknown>>, options.packageRoot);
 }
 
 /** Exact child environment shared by inspect and ACP agent processes. */
