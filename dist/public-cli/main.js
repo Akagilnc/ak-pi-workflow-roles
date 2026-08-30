@@ -18040,6 +18040,7 @@ async function admitCountersignInvocation(options) {
     runDirectory,
     sessionDirectory,
     sessionFile,
+    ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId },
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -18067,6 +18068,7 @@ async function admitCountersignInvocation(options) {
     sessionDirectory,
     sessionFile,
     admittedRequestPath,
+    ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId },
     ...ticketFields
   };
 }
