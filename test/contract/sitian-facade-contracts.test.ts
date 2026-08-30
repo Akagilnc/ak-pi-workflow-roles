@@ -230,7 +230,7 @@ test("Sitian facade: S4 submission ledger channel with 5 kinds, priorEventId cha
 
     const s4Kinds = [
       "candidate",
-      "batchContext",
+      "roundContext",
       "outcome",
       "sealed",
       "post-seal-anomaly",
@@ -239,7 +239,7 @@ test("Sitian facade: S4 submission ledger channel with 5 kinds, priorEventId cha
     let previousEventId: string | undefined;
     let recordFile = "";
 
-    // Attempt 1: write candidate, batchContext, outcome
+    // Attempt 1: write candidate, roundContext, outcome
     for (let i = 0; i < 3; i++) {
       const kind = s4Kinds[i]!;
       const eventId = `s4-evt-${i + 1}`;

@@ -3499,16 +3499,16 @@ async function settleLawfulMergerTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted);
   if (roleOutcome?.role !== "merger") {
-    // Ledger owns 0041: closed-batch rejection is not residual-incomplete material.
+    // Ledger owns 0041: a non-sole closed round is not residual-incomplete material.
     const latestOutcome = await readLatestSubmissionOutcome(
       admitted.projectRoot,
       admitted.runId,
       sealedLedgerHome(admitted),
     );
-    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "closed-batch") {
+    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "non-sole-round") {
       return undefined;
     }
-    // Residual incomplete: shape/identity fail after closed-batch passed (ledger typed).
+    // Residual incomplete: shape/identity fail after the sole-round barrier passed (ledger typed).
     // Settlement does not re-judge calls.length.
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;

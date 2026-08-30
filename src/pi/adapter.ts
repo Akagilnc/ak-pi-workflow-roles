@@ -39,18 +39,6 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
       setSessionFile: (path) => sessionManager.setSessionFile(path),
       appendCustomEntry: (customType, data) => sessionManager.appendCustomEntry(customType, data),
     },
-    ...(() => {
-      const leaf = context.sessionManager?.getLeafEntry();
-      if (leaf?.type !== "message" || leaf.message?.role !== "assistant" || !Array.isArray(leaf.message.content)) return {};
-      return {
-        terminationBatch: {
-          batchClosed: true as const,
-          calls: leaf.message.content
-            .filter((part): part is Extract<typeof part, { type: "toolCall" }> => part.type === "toolCall")
-            .map((part) => ({ id: part.id, name: part.name })),
-        },
-      };
-    })(),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     ...(context.ui === undefined ? {} : { ui: { notify: (message, type) => context.ui.notify(message, type) } }),
     ...(transcriptFromContext === undefined ? {} : { transcript: () => transcriptFromContext(context) }),
@@ -120,6 +108,14 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string } = {},
 ): PiRoleHostAdapter {
   const host: RoleHost = {
+    deliverSubmissionRejection(rejection) {
+      pi.sendMessage({
+        customType: "ak-role-submission-rejection",
+        content: "The terminal submission was rejected because it was not the sole tool call in its turn. Correct the call pattern and resubmit.",
+        display: true,
+        details: rejection,
+      }, { triggerTurn: true, deliverAs: "followUp" });
+    },
     capabilities: {
       skillExpansion(prompt) {
         const parsed = parseSkillBlock(prompt);
@@ -172,18 +168,27 @@ export function createPiRoleHostAdapter(
       } else if (registration[0] === "agent_end") {
         const [, handler] = registration;
         pi.on("agent_end", (value, ctx) => handler({
-        messages: value.messages.map((message) => ({
-          role: message.role,
-          content: "content" in message && Array.isArray(message.content) ? message.content.map((part) => part.type === "text"
-            ? { type: "text", text: part.text }
-            : part.type === "toolCall"
-              ? { type: "toolCall", id: part.id, name: part.name, arguments: part.arguments }
-              : { type: part.type }) : [],
-          ...("toolName" in message && typeof message.toolName === "string" ? { toolName: message.toolName } : {}),
-          ...("isError" in message && typeof message.isError === "boolean" ? { isError: message.isError } : {}),
-          ...("stopReason" in message && typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
-        })),
-      }, context(ctx)));
+          messages: value.messages.map((message) => ({
+            role: message.role,
+            content: "content" in message && Array.isArray(message.content) ? message.content.map((part) => part.type === "text"
+              ? { type: "text", text: part.text }
+              : part.type === "toolCall"
+                ? { type: "toolCall", id: part.id, name: part.name, arguments: part.arguments }
+                : { type: part.type }) : [],
+            ...("toolName" in message && typeof message.toolName === "string" ? { toolName: message.toolName } : {}),
+            ...("isError" in message && typeof message.isError === "boolean" ? { isError: message.isError } : {}),
+            ...("stopReason" in message && typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
+          })),
+        }, context(ctx)));
+      } else if (registration[0] === "turn_end") {
+        const [, handler] = registration;
+        pi.on("turn_end", (value, ctx) => handler({
+          turnIndex: value.turnIndex,
+          calls: value.toolResults.map((result) => ({
+            toolCallId: result.toolCallId,
+            toolName: result.toolName,
+          })),
+        }, context(ctx)));
       } else if (registration[0] === "agent_settled") {
         const [, handler] = registration;
         pi.on("agent_settled", (_value, ctx) => handler({}, context(ctx)));

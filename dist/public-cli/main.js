@@ -15013,7 +15013,8 @@ function setPersistentSeatConfig(config, seat, selection) {
       [seat]: {
         ...selection,
         // Model rewrite preserves a previously configured engine axis.
-        ...previous?.engine === void 0 ? {} : { engine: previous.engine }
+        ...previous?.engine === void 0 ? {} : { engine: previous.engine },
+        ...previous?.host === void 0 ? {} : { host: previous.host }
       }
     }
   };
@@ -15021,20 +15022,35 @@ function setPersistentSeatConfig(config, seat, selection) {
 function clearPersistentSeatConfig(config, seat) {
   const previous = config.seats[seat];
   if (previous === void 0) return config;
-  if (seat === "notary" && previous.engine !== void 0) {
+  if (seat === "notary" && (previous.engine !== void 0 || previous.host !== void 0)) {
     return {
       ...config,
       seats: {
         ...config.seats,
-        notary: { engine: previous.engine }
+        notary: {
+          ...previous.engine === void 0 ? {} : { engine: previous.engine },
+          ...previous.host === void 0 ? {} : { host: previous.host }
+        }
       }
     };
   }
   const { [seat]: _dropped, ...seats } = config.seats;
   return { ...config, seats };
 }
-function isEngineAxisSeat(seat) {
-  return isPublicCallableRole(seat);
+function setPersistentSeatHost(config, seat, host) {
+  const previous = config.seats[seat];
+  if (previous === void 0) {
+    throw new Error(`config seat ${seat} has no persistent model; set provider/model[:thinking] before host`);
+  }
+  if (host === void 0) {
+    const { host: _dropped, ...rest } = previous;
+    if (seatModelOnly(rest) === void 0 && rest.engine === void 0) {
+      const { [seat]: _row, ...seats } = config.seats;
+      return { ...config, seats };
+    }
+    return { ...config, seats: { ...config.seats, [seat]: rest } };
+  }
+  return { ...config, seats: { ...config.seats, [seat]: { ...previous, host } } };
 }
 function setPersistentSeatEngine(config, seat, engine) {
   const previous = config.seats[seat];
@@ -15045,7 +15061,7 @@ function setPersistentSeatEngine(config, seat, engine) {
   }
   if (engine === void 0) {
     const { engine: _dropped, ...modelOnly } = previous;
-    if (seatModelOnly(modelOnly) === void 0) {
+    if (seatModelOnly(modelOnly) === void 0 && modelOnly.host === void 0) {
       const { [seat]: _row, ...seats } = config.seats;
       return { ...config, seats };
     }
@@ -15080,15 +15096,15 @@ function seatModelOnly(seat) {
   if (seat?.provider === void 0 || seat.model === void 0) return void 0;
   return seat.thinking === void 0 ? { provider: seat.provider, model: seat.model } : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
 }
-function validatePublicCliConfigEngines(config, _packageRoot) {
+function validatePublicCliConfigAxes(config, _packageRoot) {
   for (const seat of Object.keys(config.seats)) {
     const row = config.seats[seat];
-    if (row?.engine === void 0) continue;
-    if (!isEngineAxisSeat(seat)) {
+    if ((row?.engine !== void 0 || row?.host !== void 0) && !isPublicCallableRole(seat)) {
       throw new Error(
-        `config seat ${seat} cannot persist engine: no independent activation path; storing would be silently ineffective`
+        `config seat ${seat} cannot persist call axes: no independent activation path; storing would be silently ineffective`
       );
     }
+    if (row?.engine === void 0) continue;
     try {
       assertLegalEngineName(row.engine);
     } catch (error) {
@@ -15173,15 +15189,21 @@ function parseSeatModelConfig(value, seat) {
   if (hasProvider !== hasModel) {
     throw new Error(`config seat ${seat} requires both provider and model`);
   }
+  if (raw.host !== void 0 && (typeof raw.host !== "string" || raw.host.trim() === "")) {
+    throw new Error(`config seat ${seat} host must be a non-empty string`);
+  }
   if (raw.engine !== void 0 && typeof raw.engine !== "string") {
     throw new Error(`config seat ${seat} engine must be a string`);
   }
   if (!hasProvider) {
-    if (seat === "notary" && typeof raw.engine === "string") {
+    if (seat === "notary" && (typeof raw.engine === "string" || typeof raw.host === "string")) {
       if (raw.thinking !== void 0) {
         throw new Error(`config seat ${seat} thinking requires provider/model`);
       }
-      return { engine: raw.engine };
+      return {
+        ...raw.engine === void 0 ? {} : { engine: raw.engine },
+        ...raw.host === void 0 ? {} : { host: raw.host }
+      };
     }
     throw new Error(`config seat ${seat} requires provider`);
   }
@@ -15200,7 +15222,8 @@ function parseSeatModelConfig(value, seat) {
     provider: raw.provider,
     model: raw.model,
     ...raw.thinking === void 0 ? {} : { thinking: raw.thinking },
-    ...raw.engine === void 0 ? {} : { engine: raw.engine }
+    ...raw.engine === void 0 ? {} : { engine: raw.engine },
+    ...raw.host === void 0 ? {} : { host: raw.host }
   };
   return parsed;
 }
@@ -15221,8 +15244,14 @@ function pickStartupCandidate(seat, credentials) {
   }
   return void 0;
 }
+function attachHostAxis(seat, config, invocation) {
+  if (invocation?.host !== void 0) return { ...seat, host: invocation.host, hostSource: "invocation" };
+  const persistent = config.seats[seat.seat]?.host;
+  if (persistent !== void 0) return { ...seat, host: persistent, hostSource: "persistent" };
+  return { ...seat, host: "pi", hostSource: "default" };
+}
 function attachEngineAxis(seat, config, invocation) {
-  if (!isEngineAxisSeat(seat.seat)) {
+  if (!isPublicCallableRole(seat.seat)) {
     return {
       ...seat,
       engineSource: "unconfigured"
@@ -15306,7 +15335,7 @@ function resolveEffectiveSeat(config, seat, credentials, invocation) {
       };
     }
   }
-  return attachEngineAxis(modelSeat, config, invocation);
+  return attachHostAxis(attachEngineAxis(modelSeat, config, invocation), config, invocation);
 }
 function effectiveSeatConfigurations(config, credentials, invocation) {
   return PUBLIC_CONFIGURABLE_SEATS.map(
@@ -15560,7 +15589,7 @@ var init_sitian_appender = __esm({
     init_sitian_contracts();
     S4_SUBMISSION_LEDGER_KINDS = /* @__PURE__ */ new Set([
       "candidate",
-      "batchContext",
+      "roundContext",
       "outcome",
       "sealed",
       "post-seal-anomaly"
@@ -16000,6 +16029,18 @@ var init_audit_escalation = __esm({
   }
 });
 
+// src/submission-correctable-error.ts
+var correctableSubmissionErrorBrand, CorrectableSubmissionError;
+var init_submission_correctable_error = __esm({
+  "src/submission-correctable-error.ts"() {
+    "use strict";
+    correctableSubmissionErrorBrand = /* @__PURE__ */ Symbol("ak-roles.correctable-submission-error");
+    CorrectableSubmissionError = class extends Error {
+      [correctableSubmissionErrorBrand] = true;
+    };
+  }
+});
+
 // src/package-contracts/terminating-tools.ts
 function isTerminatingToolName(name) {
   return TERMINATING_TOOL_NAMES.includes(name);
@@ -16091,6 +16132,7 @@ var init_terminating_tools = __esm({
     init_judge_output();
     init_reviewer_output();
     init_audit_escalation();
+    init_submission_correctable_error();
     init_doctor_contracts();
     init_merger_contracts();
     init_notary_contracts();
@@ -16105,7 +16147,8 @@ var init_terminating_tools = __esm({
       MERGER_OUTPUT_TOOL_NAME,
       NOTARY_OUTPUT_TOOL_NAME
     ];
-    AcceptedDetailsContractError = class extends Error {
+    AcceptedDetailsContractError = class extends CorrectableSubmissionError {
+      code = "accepted_details_contract";
       constructor(message, options) {
         super(message, options);
         this.name = "AcceptedDetailsContractError";
@@ -17624,6 +17667,20 @@ var init_option_definitions = __esm({
         }
       },
       {
+        id: "host",
+        owner: "global",
+        canonical: "--host",
+        aliases: [],
+        valueMetavar: "name",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Select the named main-session host adapter for this invocation.",
+          zh: "\u4E3A\u672C\u8C03\u7528\u9009\u62E9\u5177\u540D\u4E3B\u4F1A\u8BDD\u5BBF\u4E3B\u9002\u914D\u5668\u3002"
+        }
+      },
+      {
         id: "help",
         owner: "global",
         canonical: "--help",
@@ -18122,6 +18179,8 @@ var init_option_definitions = __esm({
           "ak-role config unset <gatekeeper|inspector|notary>",
           "ak-role config set-engine <seat> <name>",
           "ak-role config unset-engine <seat>",
+          "ak-role config set-host <seat> <name>",
+          "ak-role config unset-host <seat>",
           "ak-role config set-auto-resume-limit <N>"
         ],
         examples: [
@@ -20847,6 +20906,7 @@ async function readSealedSubmission(cwd, runId, home) {
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record4 = owned[index];
+    if (record4?.kind === "post-seal-anomaly") return void 0;
     if (record4?.kind !== "sealed") continue;
     const payload = record4.payload;
     if (payload?.type === "sealed" && isAcceptedProjection(payload.projection)) return payload.projection;
@@ -20885,6 +20945,7 @@ var init_submission_ledger = __esm({
     init_terminating_tools();
     init_run_terminal_artifacts();
     init_sitian_facade();
+    init_submission_correctable_error();
   }
 });
 
@@ -21353,6 +21414,7 @@ function parseInvocationMarkerIdentity(data) {
 function classifyPackagedRoleTerminalResult(message) {
   if (typeof message.toolName !== "string") return { kind: "nonterminal" };
   if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  if (typeof message.details === "object" && message.details !== null && message.details.submissionDisposition === "pending-round-closure") return { kind: "nonterminal" };
   const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
   const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : void 0;
   if (message.isError === true) {
@@ -21370,10 +21432,8 @@ function isAcceptedPackagedRoleTerminalResult(message) {
 }
 function durableTerminalAt(entries, index) {
   const entry = entries[index];
-  if (entry?.type !== "message") return void 0;
-  const message = entry.message;
-  if (message?.role !== "toolResult") return void 0;
-  if (typeof message.toolName !== "string") return void 0;
+  const message = entry?.type === "custom" && entry.customType === "ak-role-submission-closure" ? typeof entry.data === "object" && entry.data !== null ? entry.data : void 0 : entry?.type === "message" && entry.message?.role === "toolResult" ? entry.message : void 0;
+  if (typeof message?.toolName !== "string") return void 0;
   const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
   if (role === void 0) return void 0;
   const classification = classifyPackagedRoleTerminalResult(message);
@@ -23561,7 +23621,7 @@ async function settleLawfulMergerTerminalResult(admitted, authority, options) {
       admitted.runId,
       sealedLedgerHome(admitted)
     );
-    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "closed-batch") {
+    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "non-sole-round") {
       return void 0;
     }
     for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -27920,9 +27980,9 @@ function takePublicGlobalFlag(argv, index, options) {
       raw: taken.value
     };
   }
-  if (taken.def.id === "engine") {
+  if (taken.def.id === "engine" || taken.def.id === "host") {
     return {
-      flag: "engine",
+      flag: taken.def.id,
       consume: consumed,
       value: taken.value
     };
@@ -27930,8 +27990,7 @@ function takePublicGlobalFlag(argv, index, options) {
   return void 0;
 }
 function resolveRoleTurnHost(env, options) {
-  if (env.roleTurnHost !== void 0) return env.roleTurnHost;
-  return createPiRoleTurnHost({
+  const piHost = env.roleTurnHost ?? createPiRoleTurnHost({
     packageRoot: env.packageRoot,
     principalAuthority: options.principalAuthority,
     ...options.extraPiArgs === void 0 ? {} : { extraPiArgs: options.extraPiArgs },
@@ -27940,6 +27999,25 @@ function resolveRoleTurnHost(env, options) {
     recordLaunchedRolePackageIdentity,
     observeLaunchedRolePackageIdentity
   });
+  const adapters = env.hostAdapters ?? [{ name: "pi", create: () => ({ ok: true, host: piHost }) }];
+  const hostName = options.seat.host;
+  const adapter = adapters.find((candidate) => candidate.name === hostName);
+  const model = options.seat.selection === void 0 ? "unconfigured" : `${options.seat.selection.provider}/${options.seat.selection.model}`;
+  const registeredHosts = adapters.map(({ name }) => name);
+  if (adapter === void 0) {
+    throw new HostSelectionError(
+      { kind: "host-unregistered", host: hostName, seat: options.role, model },
+      registeredHosts
+    );
+  }
+  const selected = adapter.create({ role: options.role, model: options.seat.selection });
+  if (!selected.ok) {
+    throw new HostSelectionError(
+      { kind: "host-model-mismatch", host: hostName, seat: options.role, model },
+      registeredHosts
+    );
+  }
+  return selected.host;
 }
 function createRoleEnvironment(env, options) {
   const role = options.role;
@@ -27953,6 +28031,8 @@ function createRoleEnvironment(env, options) {
     sessionAppender: appendPiSessionCustomEntry,
     packageRoot: env.packageRoot,
     roleTurnHost: resolveRoleTurnHost(env, {
+      role,
+      seat: options.seat,
       principalAuthority: env.principalAuthority,
       ...extraPiArgs === void 0 ? {} : { extraPiArgs },
       ...timeoutMs === void 0 ? {} : { timeoutMs }
@@ -27994,6 +28074,7 @@ function parseArgv(argv) {
   let model;
   let thinking;
   let engine;
+  let host;
   let help = false;
   const positional = [];
   const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
@@ -28030,11 +28111,12 @@ function parseArgv(argv) {
         args.splice(0, taken.consume);
         continue;
       }
-      if (taken.flag === "engine") {
-        if (taken.value === void 0) {
-          throw new CliUsageError("--engine requires a value");
+      if (taken.flag === "engine" || taken.flag === "host") {
+        if (taken.value === void 0 || taken.value.trim() === "") {
+          throw new CliUsageError(`--${taken.flag} requires a value`);
         }
-        engine = taken.value;
+        if (taken.flag === "engine") engine = taken.value;
+        else host = taken.value;
         args.splice(0, taken.consume);
         continue;
       }
@@ -28049,6 +28131,7 @@ function parseArgv(argv) {
     ...model === void 0 ? {} : { model },
     ...thinking === void 0 ? {} : { thinking },
     ...engine === void 0 ? {} : { engine },
+    ...host === void 0 ? {} : { host },
     help
   };
 }
@@ -28066,13 +28149,14 @@ function parseResumeRequest(args) {
   return { runId };
 }
 function invocationFromParsed(parsed) {
-  if (parsed.model === void 0 && parsed.thinking === void 0 && parsed.engine === void 0) {
+  if (parsed.model === void 0 && parsed.thinking === void 0 && parsed.engine === void 0 && parsed.host === void 0) {
     return void 0;
   }
   return {
     ...parsed.model === void 0 ? {} : { model: parsed.model },
     ...parsed.thinking === void 0 ? {} : { thinking: parsed.thinking },
-    ...parsed.engine === void 0 ? {} : { engine: parsed.engine }
+    ...parsed.engine === void 0 ? {} : { engine: parsed.engine },
+    ...parsed.host === void 0 ? {} : { host: parsed.host }
   };
 }
 function requireLegalEngineName(name) {
@@ -28085,14 +28169,14 @@ function requireLegalEngineName(name) {
     );
   }
 }
-function requireEngineAxisSeat(seat, verb) {
+function requireCallableSeat(seat, axis, verb) {
   if (isAutomaticConfigurableSeat(seat)) {
     throw new CliUsageError(
       `config ${verb} refuses ${seat}: no independent activation path; storing would be silently ineffective`
     );
   }
-  if (!isEngineAxisSeat(seat)) {
-    throw new CliUsageError(`unknown engine-axis seat: ${seat}`);
+  if (!isPublicCallableRole(seat)) {
+    throw new CliUsageError(`unknown ${axis}-axis seat: ${seat}`);
   }
 }
 function projectSeatEngine(seat) {
@@ -28101,7 +28185,7 @@ function projectSeatEngine(seat) {
 function loadAndValidateConfig(home, packageRoot2) {
   return loadPublicCliConfig(home).then((config) => {
     try {
-      validatePublicCliConfigEngines(config, packageRoot2);
+      validatePublicCliConfigAxes(config, packageRoot2);
     } catch (error) {
       throw new CliUsageError(
         error instanceof Error ? error.message : String(error),
@@ -28230,7 +28314,7 @@ function renderPersistentSeatModel(selection) {
   return model === void 0 ? "-" : formatModelSpec(model);
 }
 function renderConfig(config) {
-  const lines = ["seat	model	engine"];
+  const lines = ["seat	model	engine	host"];
   const keys = Object.keys(config.seats);
   if (keys.length === 0) {
     lines.push("(empty)");
@@ -28239,7 +28323,8 @@ function renderConfig(config) {
       const selection = config.seats[seat];
       if (selection === void 0) continue;
       const engine = selection.engine === void 0 ? "-" : selection.engine;
-      lines.push(`${seat}	${renderPersistentSeatModel(selection)}	${engine}`);
+      const host = selection.host === void 0 ? "-" : selection.host;
+      lines.push(`${seat}	${renderPersistentSeatModel(selection)}	${engine}	${host}`);
     }
   }
   lines.push(`autoResumeLimit	${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
@@ -28259,10 +28344,9 @@ async function runConfigCommand(args, home, packageRoot2, io) {
 `);
       } else {
         const engine = selection.engine === void 0 ? "-" : selection.engine;
-        io.stdout(
-          `${args[1]}	${renderPersistentSeatModel(selection)}	${engine}
-`
-        );
+        const host = selection.host === void 0 ? "-" : selection.host;
+        io.stdout(`${args[1]}	${renderPersistentSeatModel(selection)}	${engine}	${host}
+`);
       }
       return 0;
     }
@@ -28314,6 +28398,23 @@ async function runConfigCommand(args, home, packageRoot2, io) {
     io.stdout(renderConfig(config));
     return 0;
   }
+  if (args[0] === "set-host" || args[0] === "unset-host") {
+    const unset = args[0] === "unset-host";
+    if (args.length !== (unset ? 2 : 3)) {
+      throw new CliUsageError(`usage: ak-role config ${args[0]} <seat>${unset ? "" : " <name>"}`);
+    }
+    const seat = args[1];
+    requireCallableSeat(seat, "host", unset ? "unset-host" : "set-host");
+    let config = await loadAndValidateConfig(home, packageRoot2);
+    try {
+      config = setPersistentSeatHost(config, seat, unset ? void 0 : args[2]);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
@@ -28322,7 +28423,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
     }
     const seat = args[1];
     const name = args[2];
-    requireEngineAxisSeat(seat, "set-engine");
+    requireCallableSeat(seat, "engine", "set-engine");
     requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot2);
     try {
@@ -28344,7 +28445,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
       );
     }
     const seat = args[1];
-    requireEngineAxisSeat(seat, "unset-engine");
+    requireCallableSeat(seat, "engine", "unset-engine");
     let config = await loadAndValidateConfig(home, packageRoot2);
     try {
       config = setPersistentSeatEngine(config, seat, void 0);
@@ -28394,6 +28495,12 @@ async function runAkRole(argv, env) {
       principalAuthority: env.principalAuthority ?? piDurablePrincipalAuthority
     };
     const parsed = parseArgv(argv);
+    if (parsed.host !== void 0 && parsed.command === "resume") {
+      throw new CliUsageError("resume cannot change host");
+    }
+    if (parsed.host !== void 0 && !parsed.help && parsed.command !== void 0 && parsed.command !== "help" && !isPublicCallableRole(parsed.command)) {
+      throw new CliUsageError(`host axis is role commands only; refused command ${parsed.command}`);
+    }
     if (parsed.engine !== void 0) {
       requireLegalEngineName(parsed.engine);
       if (!parsed.help && parsed.command !== void 0 && parsed.command !== "help" && !isPublicCallableRole(parsed.command)) {
@@ -28747,6 +28854,11 @@ async function runAkRole(argv, env) {
     }
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
+    if (error instanceof HostSelectionError) {
+      const registered = error.registeredHosts.join(", ");
+      io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}; registered: ${registered}`));
+      return { exitCode: 1, hostFailure: error.failure };
+    }
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
       return { exitCode: 2 };
@@ -28760,7 +28872,7 @@ async function runAkRole(argv, env) {
     return { exitCode: 1 };
   }
 }
-var PUBLIC_ROLE_ARGV, PUBLIC_GLOBAL_OPTIONS, THINKING_LEVELS2;
+var PUBLIC_ROLE_ARGV, PUBLIC_GLOBAL_OPTIONS, HostSelectionError, THINKING_LEVELS2;
 var init_cli = __esm({
   "src/public-cli/cli.ts"() {
     "use strict";
@@ -28798,6 +28910,15 @@ var init_cli = __esm({
       analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") }
     };
     PUBLIC_GLOBAL_OPTIONS = optionsForOwner("global");
+    HostSelectionError = class extends Error {
+      constructor(failure, registeredHosts) {
+        super(failure.kind);
+        this.failure = failure;
+        this.registeredHosts = registeredHosts;
+      }
+      failure;
+      registeredHosts;
+    };
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",
       "minimal",

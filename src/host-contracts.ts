@@ -178,12 +178,7 @@ export interface DurablePrincipalAuthority {
 type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
 /** Context supplied by a host for one activation and its interceptable events. */
-export type TerminationBatchSnapshot = {
-  readonly batchClosed: true;
-  readonly calls: readonly { readonly id: string; readonly name: string }[];
-};
-
-export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; terminationBatch?: TerminationBatchSnapshot; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; };
 
@@ -194,6 +189,8 @@ type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean;
 type SessionStartEvent = { reason: string };
 type ProviderResponseEvent = { status?: number };
 type AgentEndEvent = { messages: readonly HostEventMessage[] };
+/** Typed closure of exactly one assistant turn; calls come from the host event, not transcript inspection. */
+type TurnEndEvent = { readonly turnIndex: number; readonly calls: readonly ToolExecutionEvent[] };
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
 type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };
@@ -207,6 +204,7 @@ type HostEventMap = {
   session_shutdown: Record<never, never>;
   after_provider_response: ProviderResponseEvent;
   agent_end: AgentEndEvent;
+  turn_end: TurnEndEvent;
   agent_settled: Record<never, never>;
   tool_execution_start: ToolExecutionEvent;
   tool_execution_update: ToolExecutionUpdateEvent;
@@ -223,6 +221,7 @@ type HostEventResultMap = {
   session_shutdown: void;
   after_provider_response: void;
   agent_end: void;
+  turn_end: void;
   agent_settled: void;
   tool_execution_start: void;
   tool_execution_update: void;
@@ -258,6 +257,8 @@ export type HostCapabilityDeclaration = Readonly<{
 /** The activation surface consumed by package role factories. */
 export interface RoleHost {
   readonly capabilities?: HostCapabilityDeclaration;
+  /** Deliver a typed correctable rejection into the current durable session's model context. */
+  deliverSubmissionRejection?(rejection: { readonly kind: "correctable-rejection"; readonly code: string; readonly toolCallIds: readonly string[] }): void | Promise<void>;
   registerFlag(name: string, definition: { description: string; type: "boolean" | "string"; default?: boolean | string }): void;
   getFlag(name: string): boolean | string | undefined;
   registerTool<S extends TSchema, D = unknown>(tool: HostToolDefinition<S, D>): void;
@@ -273,6 +274,7 @@ export interface RoleHost {
   on(event: "session_shutdown", handler: HostEventHandler<"session_shutdown">): void;
   on(event: "after_provider_response", handler: HostEventHandler<"after_provider_response">): void;
   on(event: "agent_end", handler: HostEventHandler<"agent_end">): void;
+  on(event: "turn_end", handler: HostEventHandler<"turn_end">): void;
   on(event: "agent_settled", handler: HostEventHandler<"agent_settled">): void;
   on(event: "tool_execution_start", handler: HostEventHandler<"tool_execution_start">): void;
   on(event: "tool_execution_update", handler: HostEventHandler<"tool_execution_update">): void;
