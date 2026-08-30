@@ -58,7 +58,7 @@ export const MAIN_ROLE_SESSION_MATERIALS = {
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],
   notary: ["CLAUDE.md", "souls/notary.md", "souls/gate-output-guide.md"],
-  countersign: ["CLAUDE.md", "souls/countersign.md", "souls/countersign-output-guide.md"],
+  countersign: ["CLAUDE.md", "souls/countersign.md"],
   navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
 
