@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -279,7 +280,12 @@ function hostNeutralTypedTurn(options: {
         cwd: request.cwd,
         mode: "json",
         model: undefined,
-        sessionManager: { getHeader: () => ({ type: "session", id: `${options.runId}:alternate-host` }) },
+        sessionManager: {
+          getHeader: () => ({ type: "session", id: `${options.runId}:alternate-host` }),
+          appendCustomEntry(customType: string, data: unknown) {
+            appendFileSync(coordinates.sessionFile, `${JSON.stringify({ type: "custom", customType, data })}\n`, "utf8");
+          },
+        },
         abort() {},
       } as HostContext;
       const priorRun = process.env.AK_ROLE_RUN_DIR;
