@@ -6,7 +6,7 @@ import { executeAuditorChild, type AuditorDecisionTool } from "./evidence-child-
 import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
-import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
+import { GatekeeperDecisionError } from "./submission-errors.ts";
 
 export const GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
 export const INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
@@ -51,25 +51,7 @@ function gateSeatLabel(stage: "gatekeeper" | "inspector" | "notary"): string {
   }
 }
 
-function nonPassMessage(result: GatekeeperNonPassResult): string {
-  // Message text is what pi-agent-core createErrorToolResult exposes to the model.
-  if (result.status === "bounce") {
-    const findings = result.findings.length === 0 ? "（无 findings）" : result.findings.join("; ");
-    return `门下省打回重写，findings：${findings}`;
-  }
-  return `门下省 ${result.status}（${result.stage}）：${result.reason}`;
-}
-
-/** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
-export class GatekeeperDecisionError extends CorrectableSubmissionError {
-  readonly code = "gatekeeper_decision" as const;
-  readonly result: GatekeeperNonPassResult;
-  constructor(result: GatekeeperNonPassResult) {
-    super(nonPassMessage(result));
-    this.name = "GatekeeperDecisionError";
-    this.result = result;
-  }
-}
+export { GatekeeperDecisionError } from "./submission-errors.ts";
 
 export type RunGatekeeperOptions = {
   readonly context: ExtensionContext | HostContext;

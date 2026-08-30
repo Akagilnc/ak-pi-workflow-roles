@@ -28,6 +28,13 @@ async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 function seedGitProject(root:string){execFileSync("git",["init","-b","main"],{cwd:root});execFileSync("git",["config","user.email","416@test.local"],{cwd:root});execFileSync("git",["config","user.name","416"],{cwd:root});execFileSync("git",["commit","--allow-empty","-m","seed"],{cwd:root});}
+/** Accepted judge details + sealedAcceptance for faux runners (S4 ledger-only settlement). */
+function acceptedJudge(details: Record<string, unknown> = { judgeStatus: "converged" }) {
+  return {
+    write: (sessionFile: string) => writeFile(sessionFile, JSON.stringify({ type: "message", message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details } }) + "\n", "utf8"),
+    sealedAcceptance: { role: "judge" as const, details },
+  };
+}
 
 test("block1: terminal without accepted is now resumable", async()=>{
   await withTempHome(async(home)=>{
@@ -51,7 +58,7 @@ test("block1: terminal without accepted is now resumable", async()=>{
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async(args)=>{dispatched=true; seenSessionFile=args[args.indexOf("--session")+1]!; seenEnvelope=args.includes("[ak-role:resume-continue]"); await writeFile(seenSessionFile,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};},
+        piRunner: async(args)=>{dispatched=true; seenSessionFile=args[args.indexOf("--session")+1]!; seenEnvelope=args.includes("[ak-role:resume-continue]"); const acc=acceptedJudge(); await acc.write(seenSessionFile);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(dispatched,true);
     assert.equal(seenEnvelope,true);
@@ -71,7 +78,7 @@ test("S5: terminal with accepted receipt is also resumable (owner '根本不要�
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async(args)=>{const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
-        const sf=args[args.indexOf("--session")+1]!;await writeFile(sf,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged",note:"ok"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};},
+        const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge({judgeStatus:"converged",note:"ok"});await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(first.exitCode,0);
     assert.equal(first.terminal?.roleOutcome.kind,"accepted");
@@ -84,7 +91,7 @@ test("S5: terminal with accepted receipt is also resumable (owner '根本不要�
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async(args)=>{calls+=1;resumeArgs=[...args];const sf=args[args.indexOf("--session")+1]!;await writeFile(sf,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged",note:"resumed ok"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};},
+        piRunner: async(args)=>{calls+=1;resumeArgs=[...args];const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge({judgeStatus:"converged",note:"resumed ok"});await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(calls,1);
     assert.ok(resumeArgs!.includes("[ak-role:resume-continue]"));
@@ -117,7 +124,7 @@ test("S5: resumable (typed 429) state also resumable", async()=>{
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async(args)=>{calls+=1;const sf=args[args.indexOf("--session")+1]!;await writeFile(sf,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};},
+        piRunner: async(args)=>{calls+=1;const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(calls,1);
     assert.equal(resumed.exitCode,0);
@@ -197,7 +204,7 @@ test("block2: second attempt success needs only 1 auto", async()=>{
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async(args)=>{calls+=1;const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
         const sf=args[args.indexOf("--session")+1]!;
-        if(calls===2){await writeFile(sf,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};}
+        if(calls===2){const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};}
         await writeFile(sf,JSON.stringify({type:"message",message:{role:"user",content:[{type:"text",text:"go"}]}})+"\n","utf8");return{code:1,stderr:"fail\n",timedOut:false,args:[...args]};},
       })});
     assert.equal(calls,2);assert.equal(result.exitCode,0);assert.equal(result.terminal?.autoResumeCount,1);
@@ -257,7 +264,7 @@ test("block2: lawful (accepted) does not trigger auto - single presentation", as
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async(args)=>{calls+=1;const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
-        const sf=args[args.indexOf("--session")+1]!;await writeFile(sf,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};},
+        const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(calls,1);assert.equal(result.exitCode,0);assert.equal(stdout.length,1);assert.equal(result.terminal?.autoResumeCount,0);
   });
@@ -282,7 +289,7 @@ test("block2: count is call-local, manual resume exact once", async()=>{
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async(args)=>{manualCalls+=1;resumeArgs=[...args];const sf=args[args.indexOf("--session")+1]!;await writeFile(sf,JSON.stringify({type:"message",message:{role:"toolResult",toolName:JUDGE_OUTPUT_TOOL_NAME,isError:false,details:{judgeStatus:"converged"}}})+"\n","utf8");return{code:0,stderr:"",timedOut:false,args:[...args]};},
+        piRunner: async(args)=>{manualCalls+=1;resumeArgs=[...args];const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(manualCalls,1);
     assert.ok(resumeArgs!.includes("[ak-role:resume-continue]"));

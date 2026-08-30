@@ -51,14 +51,18 @@ function safeBookKey(cwd: string): string {
   }
 }
 
-/** Compute the destination directory and record file from ledger topology (ADR 0065). */
-export function resolveSitianRecordPath(input: SitianRecordInput): {
+type SitianRecordPath = {
   readonly sessionDir: string;
   readonly recordFile: string;
   readonly ledgerHome: string;
-} {
+};
+
+/** Pure topology owner shared by ambient writes and explicit-home submission reads. */
+export function resolveSitianRecordPathInLedger(
+  input: SitianRecordInput,
+  ledgerHome: string,
+): SitianRecordPath {
   const cwd = input.cwd ?? process.cwd();
-  const ledgerHome = resolveActivationLedgerHome();
   const category = resolveSitianVolumeCategory(input.kind);
 
   let sessionDir: string;
@@ -86,6 +90,11 @@ export function resolveSitianRecordPath(input: SitianRecordInput): {
 
   const recordFile = join(sessionDir, "records.jsonl");
   return { sessionDir, recordFile, ledgerHome };
+}
+
+/** Compute a write destination from ambient ledger topology (ADR 0065). */
+export function resolveSitianRecordPath(input: SitianRecordInput): SitianRecordPath {
+  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
 }
 
 /**
