@@ -240,54 +240,91 @@ type AcceptedRow = {
   }) => Promise<string[]> | string[];
 };
 
-/** Shared public entry backed by a host-neutral typed-turn runtime for every accepted row. */
-async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
-  const runId = `run-table-${row.role}-accepted`;
-  const args = await row.args(project, home);
-  const { io, stderr } = captureIo();
-  const alternateHost: RoleTurnHost = {
+function hostNeutralTypedTurn(options: {
+  role: TerminalRoleName;
+  runId: string;
+  details: unknown;
+  sessionLines?: readonly string[];
+  turns?: readonly (readonly { id: string; kind: "output" | "sibling" }[])[];
+  onRejection?: (rejection: unknown) => void;
+  postSealAction?: boolean;
+  onPostSealError?: (error: unknown) => void;
+}): RoleTurnHost {
+  return {
     async executeTurn(request) {
       let registered: HostToolDefinition | undefined;
       const handlers = new Map<string, (...values: any[]) => unknown>();
       const host = {
         registerTool(tool: HostToolDefinition) { registered = tool; },
         on(event: string, handler: (...values: any[]) => unknown) { handlers.set(event, handler); },
+        async deliverSubmissionRejection(rejection: unknown) { options.onRejection?.(rejection); },
       } as RoleHost;
-      const outputTool = packagedRoleOutputTool(row.role)!;
-      const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, row.role]]));
-      const details = await row.details({ project, home, runId, args });
+      const outputTool = packagedRoleOutputTool(options.role)!;
+      const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, options.role]]));
       pipeline.registerTool({
         name: outputTool,
         label: "output",
         description: "",
         parameters: Type.Object({}),
-        execute: async () => ({ content: [], details, terminate: true }),
+        execute: async () => ({ content: [], details: options.details, terminate: true }),
       });
       const coordinates = piDurablePrincipalAuthority.decode(request.principal);
       await mkdir(join(coordinates.sessionFile, ".."), { recursive: true });
-      const lines = row.sessionLines
-        ? await row.sessionLines({ project, home, runId, details })
-        : [JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: outputTool, isError: false, details } })];
-      await writeFile(coordinates.sessionFile, `${lines.join("\n")}\n`, "utf8");
+      await writeFile(
+        coordinates.sessionFile,
+        options.sessionLines === undefined ? "" : `${options.sessionLines.join("\n")}\n`,
+        "utf8",
+      );
       const context = {
         cwd: request.cwd,
         mode: "json",
         model: undefined,
-        sessionManager: { getHeader: () => ({ type: "session", id: `${runId}:alternate-host` }) },
+        sessionManager: { getHeader: () => ({ type: "session", id: `${options.runId}:alternate-host` }) },
         abort() {},
       } as HostContext;
       const priorRun = process.env.AK_ROLE_RUN_DIR;
       process.env.AK_ROLE_RUN_DIR = request.runDirectory;
       try {
-        await handlers.get("tool_execution_start")!({ toolCallId: "t1", toolName: outputTool }, context);
-        await registered!.execute("t1", {}, undefined, undefined, context);
-        await handlers.get("turn_end")!({ turnIndex: 0, calls: [{ toolCallId: "t1", toolName: outputTool }] }, context);
+        const turns = options.turns ?? [[{ id: "t1", kind: "output" as const }]];
+        for (const [turnIndex, turn] of turns.entries()) {
+          const calls = turn.map(({ id, kind }) => ({
+            toolCallId: id,
+            toolName: kind === "output" ? outputTool : INSPECTOR_OUTPUT_TOOL,
+          }));
+          for (const call of calls) {
+            await handlers.get("tool_execution_start")!(call, context);
+          }
+          for (const { id, kind } of turn) {
+            if (kind === "output") await registered!.execute(id, {}, undefined, undefined, context);
+          }
+          await handlers.get("turn_end")!({ turnIndex, calls }, context);
+        }
+        if (options.postSealAction === true) {
+          const late = { toolCallId: "after-seal", toolName: outputTool };
+          await handlers.get("tool_execution_start")!(late, context);
+          try {
+            await registered!.execute(late.toolCallId, {}, undefined, undefined, context);
+          } catch (error) {
+            options.onPostSealError?.(error);
+          }
+        }
       } finally {
         if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
       }
       return { code: 0, stderr: "", timedOut: false };
     },
   };
+}
+
+/** Shared public entry backed by a host-neutral typed-turn runtime for every accepted row. */
+async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
+  const runId = `run-table-${row.role}-accepted`;
+  const args = await row.args(project, home);
+  const details = await row.details({ project, home, runId, args });
+  const sessionLines = row.sessionLines
+    ? await row.sessionLines({ project, home, runId, details })
+    : undefined;
+  const { io, stderr } = captureIo();
   const result = await runAkRole(args, {
     packageRoot,
     home,
@@ -295,7 +332,12 @@ async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
     createRunId: () => runId,
     credentials: { "openai-codex": true, xai: false },
     io,
-    roleTurnHost: alternateHost,
+    roleTurnHost: hostNeutralTypedTurn({
+      role: row.role,
+      runId,
+      details,
+      ...(sessionLines === undefined ? {} : { sessionLines }),
+    }),
   });
   return { result, runId, stderr: stderr.join("") };
 }
@@ -421,6 +463,54 @@ test("public-cli eight packaged roles accept via shared sealed→Terminal entry"
   });
 });
 
+test("host-neutral typed turns reject non-sole output and accept same-session retry", async () => {
+  await withSharedHome(async (home, project) => {
+    for (const row of [
+      {
+        name: "output+sibling",
+        turns: [
+          [{ id: "first", kind: "output" as const }, { id: "sibling", kind: "sibling" as const }],
+          [{ id: "retry", kind: "output" as const }],
+        ],
+      },
+      {
+        name: "double-output",
+        turns: [
+          [{ id: "first", kind: "output" as const }, { id: "second", kind: "output" as const }],
+          [{ id: "retry", kind: "output" as const }],
+        ],
+      },
+    ]) {
+      const runId = `run-host-neutral-${row.name}`;
+      const rejections: unknown[] = [];
+      const { io } = captureIo();
+      const result = await runAkRole(["judge", "--project", project, "Decide."], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        credentials: { "openai-codex": true, xai: false },
+        io,
+        roleTurnHost: hostNeutralTypedTurn({
+          role: "judge",
+          runId,
+          details: { judgeStatus: "converged" },
+          turns: row.turns,
+          onRejection: (rejection) => rejections.push(rejection),
+        }),
+      });
+      assert.equal(rejections.length, 1, row.name);
+      assert.deepEqual(rejections[0], {
+        kind: "correctable-rejection",
+        code: "non-sole-round",
+        toolCallIds: row.name === "double-output" ? ["first", "second"] : ["first"],
+      });
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted", row.name);
+      assert.equal((await readSealedSubmission(project, runId))?.role, "judge", row.name);
+    }
+  });
+});
+
 test("public-cli shared entry covers post-seal, no-receipt, and infrastructure", { timeout: 120_000 }, async () => {
   await withSharedHome(async (home, project) => {
     // no-receipt: host ends without sealing
@@ -435,15 +525,11 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           createRunId: () => "run-table-no-receipt",
           credentials: { "openai-codex": true, xai: false },
           io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-              await mkdir(sessionDir, { recursive: true });
-              await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-              return { code: 0, stderr: "", timedOut: false, args: [...args] };
-            },
+          roleTurnHost: hostNeutralTypedTurn({
+            role: "judge",
+            runId: "run-table-no-receipt",
+            details: { judgeStatus: "converged" },
+            turns: [],
           }),
         },
       );
@@ -481,64 +567,28 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       process.exitCode = undefined;
     }
 
-    // post-seal anomaly after public accepted seal on the same run ledger
+    // post-seal action is observed by the same typed-turn adapter and blocks ordinary success.
     {
-      const { result, runId } = await runAcceptedRow(ACCEPTED_ROWS[0]!, home, project);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      const sealed = await readSealedSubmission(project, runId);
-      assert.ok(sealed);
-
-      let registered: HostToolDefinition | undefined;
-      const handlers = new Map<string, (...args: any[]) => unknown>();
-      const host = {
-        registerTool(tool: HostToolDefinition) {
-          registered = tool;
-        },
-        on(event: string, handler: (...args: any[]) => unknown) {
-          handlers.set(event, handler);
-        },
-      } as RoleHost;
-      createSubmissionLedgerHost(host, new Map([[JUDGE_OUTPUT_TOOL_NAME, "judge"]])).registerTool({
-        name: JUDGE_OUTPUT_TOOL_NAME,
-        label: "output",
-        description: "",
-        parameters: Type.Object({}),
-        execute: async () => ({
-          content: [],
+      const runId = "run-table-post-seal";
+      const errors: unknown[] = [];
+      const { io } = captureIo();
+      const result = await runAkRole(["judge", "--project", project, "Decide."], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        credentials: { "openai-codex": true, xai: false },
+        io,
+        roleTurnHost: hostNeutralTypedTurn({
+          role: "judge",
+          runId,
           details: { judgeStatus: "converged" },
-          terminate: true,
+          postSealAction: true,
+          onPostSealError: (error) => errors.push(error),
         }),
       });
-      const priorHome = process.env.HOME;
-      const priorRun = process.env.AK_ROLE_RUN_DIR;
-      process.env.HOME = home;
-      process.env.AK_ROLE_RUN_DIR = `${project}/runs/${runId}@judge`;
-      // runDirectory may live under the ledger home book — use admitted path from first run when present
-      try {
-        const context = {
-          cwd: project,
-          mode: "json",
-          model: undefined,
-          sessionManager: {
-            getHeader: () => ({ type: "session", id: `${runId}:attempt` }),
-          },
-          abort() {},
-        } as HostContext;
-        await handlers.get("tool_execution_start")!(
-          { toolCallId: "after-seal", toolName: JUDGE_OUTPUT_TOOL_NAME },
-          context,
-        );
-        await assert.rejects(
-          registered!.execute("after-seal", {}, undefined, undefined, context),
-          /提交账已封账/,
-        );
-      } finally {
-        if (priorHome === undefined) delete process.env.HOME;
-        else process.env.HOME = priorHome;
-        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-        else process.env.AK_ROLE_RUN_DIR = priorRun;
-      }
-      // The immutable seal remains on-ledger, but the typed anomaly blocks ordinary success consumption.
+      assert.match(String(errors[0]), /提交账已封账/);
+      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(await readSealedSubmission(project, runId), undefined);
     }
   });
