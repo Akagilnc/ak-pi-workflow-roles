@@ -615,6 +615,23 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };
 }
 
+export async function projectClosedSubmissionLifecycle(
+  projection: import("./submission-ledger.ts").ClosedSubmissionProjection,
+  context: HostContext,
+  phase: NavigatorPhase,
+  recordAccepted: () => void,
+  settle: (settlement: NavigatorSettlement | undefined) => Promise<void>,
+): Promise<void> {
+  recordAccepted();
+  const closure = {
+    toolName: navigatorOutputTool(projection.role)!,
+    isError: false,
+    details: projection.decisiveFacts,
+  };
+  context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
+  await settle(publicNavigatorSettlement(projection.role, phase, closure));
+}
+
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
   injectedPiHostAdapter?: PiRoleHostAdapter,
@@ -699,20 +716,13 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = pending;
       await pending;
     };
-    projectClosedSubmission = async (projection, context) => {
-      receiptDelivery.recordAccepted();
-      const closure = {
-        toolName: navigatorOutputTool(projection.role)!,
-        isError: false,
-        details: projection.decisiveFacts,
-      };
-      context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
-      await settleNavigatorProjection(publicNavigatorSettlement(
-        projection.role,
-        navigatorPhase(roleHost, projection.role),
-        closure,
-      ));
-    };
+    projectClosedSubmission = async (projection, context) => projectClosedSubmissionLifecycle(
+      projection,
+      context,
+      navigatorPhase(roleHost, projection.role),
+      () => receiptDelivery.recordAccepted(),
+      settleNavigatorProjection,
+    );
     roleHost.on("input", (event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
