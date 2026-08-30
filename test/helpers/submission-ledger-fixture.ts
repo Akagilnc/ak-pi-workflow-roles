@@ -94,7 +94,8 @@ export async function sealAcceptedSubmission(input: {
   readonly toolCallId?: string;
   readonly runDirectory?: string;
 }): Promise<void> {
-  if (await readSealedSubmission(input.cwd, input.runId) !== undefined) return;
+  // Read under the same machine home the producer writes (not ambient process HOME).
+  if (await readSealedSubmission(input.cwd, input.runId, input.home) !== undefined) return;
   await driveLedgerProducer({
     cwd: input.cwd,
     runId: input.runId,

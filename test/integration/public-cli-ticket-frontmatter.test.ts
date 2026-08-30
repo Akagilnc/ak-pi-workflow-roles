@@ -337,6 +337,7 @@ test("public runner typed face: freeze/admit → durable pages → resume → bo
           stderr: "",
           timedOut: false,
           args: [...args],
+          sealedAcceptance: { role: "judge", details: { judgeStatus: "converged" } },
         };
       },
           }),

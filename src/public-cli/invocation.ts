@@ -298,7 +298,8 @@ function effectiveModelLedgerFields(
   };
 }
 
-function homeFromRunDirectory(runDirectory: string): string {
+/** Recover the machine home that owns a run directory under `.ak-roles/`. */
+export function homeFromRunDirectory(runDirectory: string): string {
   const marker = `${sep}.ak-roles${sep}`;
   const idx = runDirectory.indexOf(marker);
   if (idx !== -1) {

@@ -1,5 +1,12 @@
+import { resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
+import {
+  GatekeeperDecisionError,
+  WorkerCommitReminderError,
+  WorkerPrefixReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "./submission-errors.ts";
 import {
   acceptedFacts,
   isTerminatingToolName,
@@ -7,7 +14,7 @@ import {
   type TerminatingToolName,
 } from "./package-contracts/terminating-tools.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
-import { readSitianRecords, resolveSitianRecordPath, sitianReport, type RecordPointer } from "./sitian-facade.ts";
+import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
 import { isCorrectableSubmissionError } from "./submission-correctable-error.ts";
 
@@ -77,12 +84,20 @@ export type SealedSubmissionProjection = Extract<SubmissionLedgerEvent, { type: 
 export type AuditEscalationSubmissionProjection = Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
 export type ClosedSubmissionProjection = SealedSubmissionProjection | AuditEscalationSubmissionProjection;
 
-function submissionRecordFile(cwd: string, runId: string): string {
-  return resolveSitianRecordPath({ level: "event", kind: "candidate", subject: { runId }, cwd }).recordFile;
+function submissionRecordFile(cwd: string, runId: string, home?: string): string {
+  const ledgerHome = resolveActivationLedgerHome(
+    home === undefined ? undefined : () => home,
+  );
+  return resolveSitianRecordPathInLedger({
+    level: "event",
+    kind: "candidate",
+    subject: { runId },
+    cwd,
+  }, ledgerHome).recordFile;
 }
 
-async function readOwnedSubmissionRecords(cwd: string, runId: string) {
-  const file = submissionRecordFile(cwd, runId);
+async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: string) {
+  const file = submissionRecordFile(cwd, runId, home);
   const { records } = await readSitianRecords(file);
   return {
     file,
@@ -91,8 +106,12 @@ async function readOwnedSubmissionRecords(cwd: string, runId: string) {
 }
 
 /** Settlement read seam: typed sealed projection only, never host session JSONL. */
-export async function readSealedSubmission(cwd: string, runId: string): Promise<SealedSubmissionProjection | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId);
+export async function readSealedSubmission(
+  cwd: string,
+  runId: string,
+  home?: string,
+): Promise<SealedSubmissionProjection | undefined> {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
     if (record?.kind === "post-seal-anomaly") return undefined;
@@ -107,8 +126,9 @@ export async function readSealedSubmission(cwd: string, runId: string): Promise<
 export async function readAuditEscalationSubmission(
   cwd: string,
   runId: string,
+  home?: string,
 ): Promise<AuditEscalationSubmissionProjection | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
     if (record?.kind !== "outcome") continue;
@@ -125,8 +145,9 @@ export type LatestSubmissionOutcome = Extract<SubmissionLedgerEvent, { type: "ou
 export async function readLatestSubmissionOutcome(
   cwd: string,
   runId: string,
+  home?: string,
 ): Promise<LatestSubmissionOutcome | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
     if (record?.kind !== "outcome") continue;
@@ -246,7 +267,13 @@ export function createSubmissionLedgerHost(
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (isCorrectableSubmissionError(error)) {
+            if (
+              isCorrectableSubmissionError(error)
+              || error instanceof GatekeeperDecisionError
+              || error instanceof WorkerCommitReminderError
+              || error instanceof WorkerPrefixReminderError
+              || error instanceof WorkerUnfinishedReasonReminderError
+            ) {
               append({
                 type: "outcome",
                 attemptId,

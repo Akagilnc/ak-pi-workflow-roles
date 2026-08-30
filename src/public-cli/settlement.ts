@@ -110,6 +110,7 @@ import type {
 } from "../host-contracts.ts";
 import {
   ensureRunArtifactsDir,
+  homeFromRunDirectory,
   type AdmittedCoderInvocation,
   type AdmittedCollectorInvocation,
   type AdmittedDoctorInvocation,
@@ -121,15 +122,24 @@ import {
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 
+/** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
+function sealedLedgerHome(admitted: AdmittedRoleInvocation): string {
+  return homeFromRunDirectory(admitted.runDirectory);
+}
+
 async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" }> | undefined> {
-  return readSealedSubmission(admitted.projectRoot, admitted.runId);
+  return readSealedSubmission(admitted.projectRoot, admitted.runId, sealedLedgerHome(admitted));
 }
 
 async function auditEscalationLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: "judge" | "doctor",
 ): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
-  const projection = await readAuditEscalationSubmission(admitted.projectRoot, admitted.runId);
+  const projection = await readAuditEscalationSubmission(
+    admitted.projectRoot,
+    admitted.runId,
+    sealedLedgerHome(admitted),
+  );
   if (projection?.role !== role) return undefined;
   return projection;
 }
@@ -3490,7 +3500,11 @@ async function settleLawfulMergerTerminalResult(
   const roleOutcome = await sealedLedgerOutcome(admitted);
   if (roleOutcome?.role !== "merger") {
     // Ledger owns 0041: a non-sole closed round is not residual-incomplete material.
-    const latestOutcome = await readLatestSubmissionOutcome(admitted.projectRoot, admitted.runId);
+    const latestOutcome = await readLatestSubmissionOutcome(
+      admitted.projectRoot,
+      admitted.runId,
+      sealedLedgerHome(admitted),
+    );
     if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "non-sole-round") {
       return undefined;
     }
