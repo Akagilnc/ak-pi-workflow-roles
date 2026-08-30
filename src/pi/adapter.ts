@@ -108,6 +108,14 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string } = {},
 ): PiRoleHostAdapter {
   const host: RoleHost = {
+    deliverSubmissionRejection(rejection) {
+      pi.sendMessage({
+        customType: "ak-role-submission-rejection",
+        content: "The terminal submission was rejected because it was not the sole tool call in its turn. Correct the call pattern and resubmit.",
+        display: true,
+        details: rejection,
+      }, { triggerTurn: true, deliverAs: "followUp" });
+    },
     capabilities: {
       skillExpansion(prompt) {
         const parsed = parseSkillBlock(prompt);
@@ -176,11 +184,10 @@ export function createPiRoleHostAdapter(
         const [, handler] = registration;
         pi.on("turn_end", (value, ctx) => handler({
           turnIndex: value.turnIndex,
-          calls: value.message.role === "assistant" && Array.isArray(value.message.content)
-            ? value.message.content.flatMap((part) => part.type === "toolCall"
-              ? [{ toolCallId: part.id, toolName: part.name }]
-              : [])
-            : [],
+          calls: value.toolResults.map((result) => ({
+            toolCallId: result.toolCallId,
+            toolName: result.toolName,
+          })),
         }, context(ctx)));
       } else if (registration[0] === "agent_settled") {
         const [, handler] = registration;

@@ -154,6 +154,11 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         isError: true,
         details: { kind: "role_infrastructure_failure", source: "other", reasonCode: "host_failure" },
       };
+      const pendingRoundClosureMsg = {
+        toolName: entry.outputTool,
+        isError: false,
+        details: { submissionDisposition: "pending-round-closure" },
+      };
       assert.equal(classifyPackagedRoleTerminalResult(acceptedMsg).kind, "accepted", `${entry.role}:${String(phase)}:classify-accepted`);
       assert.equal(classifyPackagedRoleTerminalResult(infraMsg).kind, "infrastructure", `${entry.role}:${String(phase)}:classify-infra`);
       assert.equal(classifyPackagedRoleTerminalResult(retryableMsg).kind, "nonterminal", `${entry.role}:${String(phase)}:classify-retryable`);
@@ -165,6 +170,8 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       assert.equal(isDurablePackagedRoleTerminalResult(extraKeyInfraMsg), true, `${entry.role}:${String(phase)}:extra-key-infra-durable`);
       assert.equal(classifyPackagedRoleTerminalResult(extraKeyInfraMsg).kind, "infrastructure", `${entry.role}:${String(phase)}:extra-key-infra-classify`);
       assert.equal(isDurablePackagedRoleTerminalResult(malformedInfraMsg), false, `${entry.role}:${String(phase)}:malformed-infra`);
+      assert.equal(classifyPackagedRoleTerminalResult(pendingRoundClosureMsg).kind, "nonterminal", `${entry.role}:${String(phase)}:pending-round-closure`);
+      assert.equal(publicNavigatorSettlement(entry.role, phase, pendingRoundClosureMsg), undefined, `${entry.role}:${String(phase)}:pending-settlement`);
       assert.equal(isNavigatorInfrastructureFailureFact(extraKeyInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-extras`);
       assert.equal(isNavigatorInfrastructureFailureFact(malformedInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-wrong-source`);
 

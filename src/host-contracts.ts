@@ -257,6 +257,8 @@ export type HostCapabilityDeclaration = Readonly<{
 /** The activation surface consumed by package role factories. */
 export interface RoleHost {
   readonly capabilities?: HostCapabilityDeclaration;
+  /** Deliver a typed correctable rejection into the current durable session's model context. */
+  deliverSubmissionRejection?(rejection: { readonly kind: "correctable-rejection"; readonly code: string; readonly toolCallIds: readonly string[] }): void | Promise<void>;
   registerFlag(name: string, definition: { description: string; type: "boolean" | "string"; default?: boolean | string }): void;
   getFlag(name: string): boolean | string | undefined;
   registerTool<S extends TSchema, D = unknown>(tool: HostToolDefinition<S, D>): void;
