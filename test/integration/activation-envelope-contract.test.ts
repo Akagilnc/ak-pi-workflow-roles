@@ -304,7 +304,7 @@ test("packaged terminating tools expose the provider-open registration inventory
       case "doctor": return ["status", "case", "findings", "reason", "missingEvidence", "infrastructureFailure"];
       case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis", "infrastructureFailure"];
       case "notary": return ["status", "findings", "infrastructureFailure"];
-      case "countersign": return ["countersignStatus", "note", "findings", "infrastructureFailure"];
+      case "countersign": return ["countersignStatus", "fix", "note", "evidence", "decisionGate", "infrastructureFailure"];
       default: throw new Error(`unexpected packaged role ${role}`);
     }
   };

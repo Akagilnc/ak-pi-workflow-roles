@@ -39,7 +39,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎仍为一次性，无 resume。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。
+`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎、给事中仍为一次性，无 resume。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。
 
 大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
@@ -48,7 +48,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# 门下省官席（交卷自动出席；除直调符宝郎外无独立命令）
+# 门下省交卷闸官席（察院/符宝郎，交卷自动出席；给事中票庭由调用者直召，见「调用百官」）
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
@@ -118,7 +118,7 @@ ak-role resume <runId> "<裁定>"
 | **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **审署诏敕与质量保证的省。** 交卷时判断受审物、够不够审、该谁审，派察院或符宝郎；给事中票庭由调用者开工前传召；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
 | **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
 | **察院** | inspector（无独立 CLI；可由门下省派发） | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。原给事中，ADR 0074 分立。 |
-| **符宝郎** | notary | **引语真伪与票面对齐。** 受审物是大理寺拟判等文书；可被门下省派发，也可 `ak-role notary` 单独调。 |
+| **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）；引语真伪与票面对齐为手段。受审物是大理寺拟判等文书；可被门下省派发，也可 `ak-role notary` 单独调。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
 | **游奕使** | navigator（无 CLI，自动出席） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |

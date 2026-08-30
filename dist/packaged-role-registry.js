@@ -18,6 +18,12 @@ const PACKAGED_ROLE_REGISTRY = [
   { role: "notary", phases: [null], outputTool: NOTARY_OUTPUT_TOOL_NAME, inputFlag: "ak-notary-source-run", phaseFlag: void 0, activationStage: "load-and-install" },
   { role: "countersign", phases: [null], outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" }
 ];
+const ONE_SHOT_ROLES = [
+  "collector",
+  "doctor",
+  "notary",
+  "countersign"
+];
 function packagedRoleMetadata(role) {
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
 }
@@ -31,6 +37,7 @@ function packagedRoleOutputTool(role) {
   return packagedRoleMetadata(role)?.outputTool;
 }
 export {
+  ONE_SHOT_ROLES,
   PACKAGED_ROLE_REGISTRY,
   packagedRoleInputFlag,
   packagedRoleMetadata,

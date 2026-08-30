@@ -22,6 +22,14 @@ export const PACKAGED_ROLE_REGISTRY = [
 ] as const;
 
 export type PackagedRole = (typeof PACKAGED_ROLE_REGISTRY)[number]["role"];
+
+/** One-shot seats: runs terminate and refuse resume — single typed owner (#572 判词送修 5). */
+export const ONE_SHOT_ROLES: readonly PackagedRole[] = [
+  "collector",
+  "doctor",
+  "notary",
+  "countersign",
+];
 export type PackagedRoleMetadata = (typeof PACKAGED_ROLE_REGISTRY)[number];
 
 export function packagedRoleMetadata(role: string): PackagedRoleMetadata | undefined {

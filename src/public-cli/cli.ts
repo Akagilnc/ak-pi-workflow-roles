@@ -59,6 +59,7 @@ import {
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicCountersign } from "./countersign-run.ts";
+import { ONE_SHOT_ROLES } from "../packaged-role-registry.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicNotary } from "./notary-run.ts";
@@ -207,10 +208,6 @@ export type CliEnv = {
   notaryExtraPiArgs?: readonly string[];
   /** Override Notary role-run timeout (tests). */
   notaryTimeoutMs?: number;
-  /** Extra Pi args for Countersign runs (tests: faux provider). */
-  countersignExtraPiArgs?: readonly string[];
-  /** Override Countersign role-run timeout (tests). */
-  countersignTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -829,19 +826,10 @@ export async function runAkRole(
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const resumeRequest = parseResumeRequest(parsed.args);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
-      if (resumeRole === "collector") {
+      // One-shot seats refuse resume — single typed owner, not a per-role chain.
+      if (resumeRole !== undefined && ONE_SHOT_ROLES.includes(resumeRole)) {
         throw new CliUsageError(
-          "collector role runs are one-shot and cannot be resumed",
-        );
-      }
-      if (resumeRole === "doctor") {
-        throw new CliUsageError(
-          "doctor role runs are one-shot and cannot be resumed",
-        );
-      }
-      if (resumeRole === "countersign") {
-        throw new CliUsageError(
-          "countersign role runs are one-shot and cannot be resumed",
+          `${resumeRole} role runs are one-shot and cannot be resumed`,
         );
       }
       const resumeSeatRole =
@@ -1080,12 +1068,6 @@ export async function runAkRole(
           ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
           ...(seat.selection === undefined ? {} : { model: seat.selection }),
           ...projectSeatEngine(seat),
-          ...(env.countersignExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.countersignExtraPiArgs }),
-          ...(env.countersignTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.countersignTimeoutMs }),
           ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
         },
         io,

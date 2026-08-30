@@ -1,5 +1,5 @@
 import { writeSync } from "node:fs";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -39,7 +39,88 @@ import {
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { createNotaryRoleRuntime } from "./notary-role.ts";
-import { createCountersignRoleRuntime } from "./countersign-role.ts";
+import {
+  COUNTERSIGN_ACCEPTED_TEXT,
+  COUNTERSIGN_TOOL_SPEC,
+  submitCountersignVerdict,
+  type CountersignRuntimeDependencies,
+  type CountersignHostActions,
+} from "./countersign-role.ts";
+
+/**
+ * 共享注册信封（ADR 0018 / #572 判词送修 3）：activate、tool 注册、
+ * before_agent_start prompt 装配、inventory 检查的唯一 owner。角色模块只提供
+ * label、soul 装载、决定工具执行体（submit）与形状。
+ */
+function createFiledOfficerRuntime(
+  pi: ExtensionAPI,
+  spec: {
+    role: string;
+    tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
+    acceptedText: string;
+    soulTag: string;
+    extraBindings?: (soul: string) => Record<string, unknown>;
+    submit(parameters: unknown, toolCallId: string, ctx: ExtensionContext, hostActions: { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never }): AgentToolResult<unknown>;
+  },
+  dependencies: { loadSoul(): Promise<string> },
+  hostActions: { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never },
+) {
+  let soul: string | undefined;
+  let registered = false;
+  return {
+    async activate() {
+      const loaded = (await dependencies.loadSoul()).trim();
+      if (loaded.length === 0) throw new Error(`${spec.role} soul is empty`);
+      soul = loaded;
+      if (!registered) {
+        registered = true;
+        pi.registerTool({
+          name: spec.tool.name,
+          label: spec.tool.label,
+          description: spec.tool.description,
+          promptSnippet: spec.tool.promptSnippet,
+          parameters: spec.tool.parameters as never,
+          async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
+            if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+            return spec.submit(parameters, toolCallId, ctx, hostActions);
+          },
+        });
+        pi.on("before_agent_start", (event) => {
+          if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+          const tail = `\n\n<${spec.soulTag}_soul>\n${soul}\n</${spec.soulTag}_soul>`;
+          const bindings = spec.extraBindings?.(soul);
+          const withBindings = bindings === undefined
+            ? tail
+            : `${tail}\n\n<${spec.soulTag}_bindings>\n${JSON.stringify(bindings)}\n</${spec.soulTag}_bindings>`;
+          return { systemPrompt: `${event.systemPrompt}${withBindings}` };
+        });
+      }
+      const all = pi.getAllTools().map((tool) => tool.name);
+      if (all.filter((name) => name === spec.tool.name).length !== 1) {
+        throw new Error(`${spec.role} required tool collision or missing: ${spec.tool.name}`);
+      }
+    },
+  };
+}
+
+export function createCountersignRoleRuntime(
+  pi: ExtensionAPI,
+  dependencies: CountersignRuntimeDependencies,
+  hostActions: CountersignHostActions,
+) {
+  return createFiledOfficerRuntime(
+    pi,
+    {
+      role: "countersign",
+      tool: COUNTERSIGN_TOOL_SPEC,
+      acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
+      soulTag: "countersign",
+      submit: (parameters, toolCallId, ctx) => submitCountersignVerdict(parameters, toolCallId, ctx, hostActions),
+    },
+    dependencies,
+    hostActions,
+  );
+}
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,

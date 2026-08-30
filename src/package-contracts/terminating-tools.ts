@@ -28,7 +28,7 @@ import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
-import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignOutput } from "../countersign-contracts.ts";
+import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -73,7 +73,7 @@ export type {
   DoctorSubmission,
   MergerOutput,
   NotaryOutput,
-  CountersignOutput,
+  CountersignVerdict,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -98,7 +98,7 @@ export type AcceptedDetails =
   | DoctorOutput
   | MergerOutput
   | NotaryOutput
-  | CountersignOutput;
+  | CountersignVerdict;
 
 export function isTerminatingToolName(
   name: string,

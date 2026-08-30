@@ -35,12 +35,11 @@ async function withRunDirectory<T>(fn: (dir: string) => Promise<T>): Promise<T> 
   }
 }
 
-/** A verifiably dead pid: spawned, SIGKILLed, and reaped before returning. */
+/** A verifiably dead pid: a child that already exited and was reaped. */
 async function firstDeadPid(): Promise<number> {
-  const child = spawn("sleep", ["30"]);
+  const child = spawn(process.execPath, ["-e", ""]);
   const pid = child.pid;
   assert.ok(typeof pid === "number" && pid > 0, "spawn failed to produce a pid");
-  child.kill("SIGKILL");
   await new Promise<void>((resolve) => child.once("close", () => resolve()));
   return pid;
 }

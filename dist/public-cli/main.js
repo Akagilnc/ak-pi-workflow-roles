@@ -14417,72 +14417,34 @@ var init_notary_contracts = __esm({
 });
 
 // src/countersign-contracts.ts
-function isRecord4(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function asStringArray2(value) {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item) => typeof item === "string");
-}
-function projectLawfulCountersignOutput(value) {
-  if (!isRecord4(value)) return void 0;
-  const status = typeof value.countersignStatus === "string" ? value.countersignStatus : void 0;
-  if (status === "continue") {
-    const clone = structuredClone(value);
-    if (clone.disposition === void 0) clone.disposition = "rewrite";
-    if (!Array.isArray(clone.findings)) clone.findings = asStringArray2(clone.findings);
-    return clone;
+function validateRecordedCountersignOutput(verdict) {
+  if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) {
+    throw new Error("Countersign verdict has no execution discriminator");
   }
-  if (status === "converged" || status === "escalate") {
-    const clone = structuredClone(value);
-    if (!Array.isArray(clone.findings)) clone.findings = asStringArray2(clone.findings);
-    return clone;
+  let countersignStatus;
+  try {
+    countersignStatus = verdict.countersignStatus;
+  } catch {
+    throw new Error("Countersign verdict has no execution discriminator");
   }
-  return void 0;
-}
-function validateRecordedCountersignOutput(value) {
-  const projected = projectLawfulCountersignOutput(value);
-  if (projected === void 0) {
-    throw new Error("Countersign output has no recognized execution discriminator");
+  if (typeof countersignStatus !== "string") {
+    throw new Error("Countersign verdict has no execution discriminator");
   }
-  return projected;
-}
-function countersignDecisiveFacts(output) {
-  const facts = { countersignStatus: output.countersignStatus };
-  facts.findingsCount = Array.isArray(output.findings) ? output.findings.length : 0;
-  if (output.countersignStatus === "continue") {
-    facts.disposition = "rewrite";
+  if (["converged", "continue", "escalate"].includes(countersignStatus)) {
+    return verdict;
   }
-  return facts;
+  throw new Error("Countersign verdict has no execution discriminator");
 }
-var COUNTERSIGN_OUTPUT_TOOL_NAME, countersignOutputSchema;
+var COUNTERSIGN_OUTPUT_TOOL_NAME;
 var init_countersign_contracts = __esm({
   "src/countersign-contracts.ts"() {
     "use strict";
-    init_build();
-    init_open_tool_schema();
-    init_terminating_infrastructure();
     COUNTERSIGN_OUTPUT_TOOL_NAME = "ak_countersign_output";
-    countersignOutputSchema = withInfrastructureFailureDeclaration(
-      openToolObject(
-        typebox_exports.Object({
-          countersignStatus: typebox_exports.Unknown({
-            description: "converged\uFF08\u7F72\uFF09| continue\uFF08\u5C01\u9A73\uFF09| escalate\uFF08\u4E0A\u5448\uFF09\u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
-          }),
-          note: typebox_exports.Unknown({
-            description: "\u88C1\u51B3\u7406\u7531\u53D9\u4E8B\uFF0C\u968F\u6001\u7559\u5B58"
-          }),
-          findings: typebox_exports.Unknown({
-            description: "string[] \u9010\u6761\u7406\u7531\u4E0E\u8BC1\u636E\u6307\u9488"
-          })
-        })
-      )
-    );
   }
 });
 
 // src/packaged-role-registry.ts
-var PACKAGED_ROLE_REGISTRY;
+var PACKAGED_ROLE_REGISTRY, ONE_SHOT_ROLES;
 var init_packaged_role_registry = __esm({
   "src/packaged-role-registry.ts"() {
     "use strict";
@@ -14505,6 +14467,12 @@ var init_packaged_role_registry = __esm({
       { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" },
       { role: "notary", phases: [null], outputTool: NOTARY_OUTPUT_TOOL_NAME, inputFlag: "ak-notary-source-run", phaseFlag: void 0, activationStage: "load-and-install" },
       { role: "countersign", phases: [null], outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" }
+    ];
+    ONE_SHOT_ROLES = [
+      "collector",
+      "doctor",
+      "notary",
+      "countersign"
     ];
   }
 });
@@ -16145,14 +16113,16 @@ function describeAutopsy(autopsy) {
 }
 async function reclaimStaleWriterLock(lockPath, runDirectory) {
   const current = await autopsyWriterLock(lockPath);
-  if (current.verdict !== "dead") return;
+  if (current.verdict !== "dead") return false;
   try {
     await unlink2(lockPath);
+    return true;
   } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return;
+    if (errorCodeOf(error) === "ENOENT") return false;
     if (errorCodeOf(error) !== "EACCES") throw error;
     await chmod(runDirectory, 493);
     await unlink2(lockPath);
+    return true;
   }
 }
 async function createWriterLease(lockPath, runDirectory, reportCleanupFailure) {
@@ -16226,16 +16196,19 @@ async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
       );
     }
     if (reclaimsLeft <= 0) break;
+    let reclaimed = false;
     try {
-      await reclaimStaleWriterLock(lockPath, runDirectory);
+      reclaimed = await reclaimStaleWriterLock(lockPath, runDirectory);
     } catch (reclaimError) {
       throw new RunWriterLeaseHeldError(
         `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`
       );
     }
-    reportDiagnostic(
-      `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run \u2014 check for a surviving pi process on this run before continuing`
-    );
+    if (reclaimed) {
+      reportDiagnostic(
+        `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run \u2014 check for a surviving pi process on this run before continuing`
+      );
+    }
   }
   throw new RunWriterLeaseHeldError(
     `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`
@@ -19841,11 +19814,11 @@ function resolvePackagedMethodSkillRoot(packageRoot2, name) {
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
   return join11(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
-function isRecord5(value) {
+function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseProvenance(raw, expectedName) {
-  if (!isRecord5(raw)) {
+  if (!isRecord4(raw)) {
     throw new Error(`Packaged method provenance must be an object for ${expectedName}`);
   }
   if (raw.name !== expectedName) {
@@ -19859,7 +19832,7 @@ function parseProvenance(raw, expectedName) {
   if (typeof raw.packageAdaptation !== "string" || raw.packageAdaptation.trim() === "") {
     throw new Error(`Packaged method provenance packageAdaptation must be nonblank`);
   }
-  if (!isRecord5(raw.upstream)) {
+  if (!isRecord4(raw.upstream)) {
     throw new Error(`Packaged method provenance upstream must be an object`);
   }
   const upstream = raw.upstream;
@@ -19886,12 +19859,12 @@ function parseProvenance(raw, expectedName) {
       `Packaged method provenance upstream must include nonblank tag or version`
     );
   }
-  if (!isRecord5(raw.files)) {
+  if (!isRecord4(raw.files)) {
     throw new Error(`Packaged method provenance files must be an object`);
   }
   const files = {};
   for (const [rel, entry] of Object.entries(raw.files)) {
-    if (!isRecord5(entry)) {
+    if (!isRecord4(entry)) {
       throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
     }
     if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
@@ -20235,7 +20208,7 @@ var init_terminal = __esm({
 
 // src/ledger-session-read.ts
 import { readFile as readFile9 } from "node:fs/promises";
-function isRecord6(value) {
+function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readLedgerSessionJsonl(path) {
@@ -20259,7 +20232,7 @@ async function readLedgerSessionJsonl(path) {
       }
       break;
     }
-    if (!isRecord6(row)) {
+    if (!isRecord5(row)) {
       const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
       throw new LedgerSessionJsonlError(
         `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
@@ -20296,7 +20269,7 @@ function extractSessionModelSequence(rows) {
     if (row.type === "model_change" && typeof row.modelId === "string") {
       push(row.modelId);
     }
-    const message = isRecord6(row.message) ? row.message : void 0;
+    const message = isRecord5(row.message) ? row.message : void 0;
     if (message?.role === "assistant" && typeof message.model === "string") {
       push(message.model);
     }
@@ -20312,11 +20285,11 @@ function extractSessionToolIntervals(rows) {
   const openById = /* @__PURE__ */ new Map();
   for (const row of rows) {
     const rowTimestamp = typeof row.timestamp === "string" ? row.timestamp : void 0;
-    const message = isRecord6(row.message) ? row.message : void 0;
+    const message = isRecord5(row.message) ? row.message : void 0;
     if (message?.role === "assistant" && Array.isArray(message.content)) {
       const callTimestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : rowTimestamp;
       for (const part of message.content) {
-        if (!isRecord6(part) || part.type !== "toolCall") continue;
+        if (!isRecord5(part) || part.type !== "toolCall") continue;
         if (typeof part.id !== "string" || part.id.length === 0) {
           throw new Error("toolCall frame missing string id");
         }
@@ -20329,7 +20302,7 @@ function extractSessionToolIntervals(rows) {
         if (openById.has(part.id)) {
           throw new Error(`duplicate toolCall id ${part.id}`);
         }
-        const args = isRecord6(part.arguments) ? part.arguments : void 0;
+        const args = isRecord5(part.arguments) ? part.arguments : void 0;
         const command = part.name === "bash" && args !== void 0 && typeof args.command === "string" ? bashCommandFirstLine(args.command) : void 0;
         const interval = {
           toolCallId: part.id,
@@ -20398,7 +20371,7 @@ var init_ledger_session_read = __esm({
 // src/analyst-gate-cycles-read.ts
 import { readdir as readdir3 } from "node:fs/promises";
 import { join as join12 } from "node:path";
-function isRecord7(value) {
+function isRecord6(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function isMissingDirectoryError(error) {
@@ -20423,7 +20396,7 @@ function isGateTerminatingToolName(toolName) {
 function acceptedGateReceiptIds(rows) {
   const accepted = /* @__PURE__ */ new Set();
   for (const row of rows) {
-    const message = isRecord7(row.message) ? row.message : void 0;
+    const message = isRecord6(row.message) ? row.message : void 0;
     if (message?.role !== "toolResult") continue;
     if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) continue;
     if (message.isError === false) accepted.add(message.toolCallId);
@@ -20434,17 +20407,17 @@ function extractLastAcceptedGateToolCall(rows) {
   const acceptedIds = acceptedGateReceiptIds(rows);
   let last;
   for (const row of rows) {
-    const message = isRecord7(row.message) ? row.message : void 0;
+    const message = isRecord6(row.message) ? row.message : void 0;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
-      if (!isRecord7(part) || part.type !== "toolCall") continue;
+      if (!isRecord6(part) || part.type !== "toolCall") continue;
       if (typeof part.id !== "string" || part.id.length === 0) continue;
       if (!acceptedIds.has(part.id)) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
       if (!isGateTerminatingToolName(part.name)) continue;
       last = {
         toolName: part.name,
-        args: isRecord7(part.arguments) ? part.arguments : void 0
+        args: isRecord6(part.arguments) ? part.arguments : void 0
       };
     }
   }
@@ -20643,11 +20616,11 @@ var init_engine_detour_tool = __esm({
 });
 
 // src/receipt-delivery-policy.ts
-function isRecord8(value) {
+function isRecord7(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseNoReceiptLifecycleFacts(input) {
-  if (!isRecord8(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord8(item) && typeof item.reason === "string")) {
+  if (!isRecord7(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord7(item) && typeof item.reason === "string")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
   return {
@@ -21257,7 +21230,7 @@ function extractSessionProviderStop(entries) {
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
-    const response = isRecord9(entry.data) && isRecord9(entry.data.response) ? entry.data.response : void 0;
+    const response = isRecord8(entry.data) && isRecord8(entry.data.response) ? entry.data.response : void 0;
     const stop = sessionProviderStopFromAssistant(response);
     if (stop !== void 0) return stop;
     break;
@@ -21296,7 +21269,7 @@ async function readBoundEvidenceChildKnownFailure(sessionFile) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord9(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord8(header) || header.parentSession !== sessionFile) continue;
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
@@ -21322,12 +21295,12 @@ async function loadBoundAuditorVolumes(sessionFile) {
   if (parentId === void 0) return void 0;
   const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
   const isResumeEnvelope = (msg) => {
-    if (!isRecord9(msg) || msg.role !== "user") return false;
+    if (!isRecord8(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof msg.content === "string" ? msg.content : void 0;
     if (text === RESUME_ENVELOPE) return true;
     const content = msg.content;
     if (Array.isArray(content)) {
-      return content.some((p) => isRecord9(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+      return content.some((p) => isRecord8(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
     }
     return false;
   };
@@ -21356,9 +21329,9 @@ async function loadBoundAuditorVolumes(sessionFile) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord9(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord8(header) || header.parentSession !== sessionFile) continue;
     const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
-    const bindingParent = isRecord9(bindingEntry?.data) && isRecord9(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
+    const bindingParent = isRecord8(bindingEntry?.data) && isRecord8(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
@@ -21377,11 +21350,11 @@ function complianceFailureFromAuditorVolumes(volumes) {
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
       const entry = entries[i];
-      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord9(entry.data)) continue;
-      const parent = isRecord9(entry.data.parent) ? entry.data.parent : void 0;
-      const failure = isRecord9(entry.data.failure) ? entry.data.failure : void 0;
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord8(entry.data)) continue;
+      const parent = isRecord8(entry.data.parent) ? entry.data.parent : void 0;
+      const failure = isRecord8(entry.data.failure) ? entry.data.failure : void 0;
       if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider" && failure?.cause !== "unrecognized") continue;
-      const identity = isRecord9(failure.identity) ? failure.identity : void 0;
+      const identity = isRecord8(failure.identity) ? failure.identity : void 0;
       return {
         cause: failure.cause === "provider" ? "provider" : "unrecognized",
         ...identity === void 0 ? {} : { identity: {
@@ -21389,7 +21362,7 @@ function complianceFailureFromAuditorVolumes(volumes) {
           ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
         } },
         ...typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {},
-        ...isRecord9(failure.details) ? { details: failure.details } : {}
+        ...isRecord8(failure.details) ? { details: failure.details } : {}
       };
     }
   }
@@ -21436,9 +21409,9 @@ function typedFailedTerminatingToolKnownFailure(entries) {
     if (classification.kind !== "infrastructure") continue;
     if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
     if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
-    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord9(part) && part.type === "text" && typeof part.text === "string") : void 0;
-    const diagnostic = isRecord9(textPart) ? textPart.text : void 0;
-    const details = isRecord9(message.details) ? message.details : classification.fact;
+    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord8(part) && part.type === "text" && typeof part.text === "string") : void 0;
+    const diagnostic = isRecord8(textPart) ? textPart.text : void 0;
+    const details = isRecord8(message.details) ? message.details : classification.fact;
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
@@ -21599,7 +21572,7 @@ function controlledFailureInputFromResolution(resolution) {
     } : {}
   };
 }
-function isRecord9(value) {
+function isRecord8(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function safelyRead(object, key) {
@@ -21626,7 +21599,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   const statusBase = judgeStatus;
   if (statusBase === "continue") {
     const fix = safelyRead(verdict, "fix");
-    if (fix.readable && isRecord9(fix.value)) {
+    if (fix.readable && isRecord8(fix.value)) {
       const summary = safelyRead(fix.value, "summary");
       if (summary.readable && typeof summary.value === "string") {
         facts.fixSummary = summary.value;
@@ -21636,7 +21609,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
     if (classes.readable && Array.isArray(classes.value)) {
       try {
         facts.classes = classes.value.map((entry) => {
-          if (!isRecord9(entry)) throw new Error("unreadable Judge class");
+          if (!isRecord8(entry)) throw new Error("unreadable Judge class");
           return {
             name: entry.name,
             owner: entry.owner,
@@ -21651,7 +21624,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   }
   if (statusBase === "escalate") {
     const gate = safelyRead(verdict, "decisionGate");
-    if (gate.readable && isRecord9(gate.value)) {
+    if (gate.readable && isRecord8(gate.value)) {
       const question = safelyRead(gate.value, "question");
       const options = safelyRead(gate.value, "options");
       if (question.readable && typeof question.value === "string") {
@@ -21697,7 +21670,7 @@ function fixerDecisiveFacts(output) {
     facts.reason = reason.value;
   }
   const blockerRead = safelyRead(candidate, "blocker");
-  if (statusBase === "refused" && blockerRead.readable && isRecord9(blockerRead.value)) {
+  if (statusBase === "refused" && blockerRead.readable && isRecord8(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
     if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
     const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
@@ -21709,13 +21682,13 @@ function fixerDecisiveFacts(output) {
     const blockers = [];
     try {
       for (const entry of classResults.value) {
-        if (!isRecord9(entry)) throw new Error("unreadable class result");
+        if (!isRecord8(entry)) throw new Error("unreadable class result");
         const name = safelyRead(entry, "name");
         const disposition = safelyRead(entry, "disposition");
         if (!name.readable || !disposition.readable) throw new Error("unreadable class result");
         rows.push({ name: name.value, disposition: disposition.value });
         const blocker = safelyRead(entry, "blocker");
-        if (disposition.value === "refused" && blocker.readable && isRecord9(blocker.value)) blockers.push(blocker.value);
+        if (disposition.value === "refused" && blocker.readable && isRecord8(blocker.value)) blockers.push(blocker.value);
       }
       facts.classResultCount = rows.length;
       facts.classDispositions = rows;
@@ -21748,7 +21721,7 @@ function collectorDecisiveFacts(receipt) {
   if (groups.readable && Array.isArray(groups.value)) {
     try {
       facts.groups = groups.value.map((group) => {
-        if (!isRecord9(group)) throw new Error("unreadable Collector group");
+        if (!isRecord8(group)) throw new Error("unreadable Collector group");
         const identity = safelyRead(group, "identity");
         const attendance = safelyRead(group, "attendance");
         const materials = safelyRead(group, "materials");
@@ -21782,7 +21755,7 @@ function doctorDecisiveFacts(output) {
     return facts;
   }
   const caseValue = safelyRead(candidate, "case");
-  if (caseValue.readable && isRecord9(caseValue.value)) {
+  if (caseValue.readable && isRecord8(caseValue.value)) {
     const issueNumber = safelyRead(caseValue.value, "issueNumber");
     const runsPath = safelyRead(caseValue.value, "runsPath");
     if (issueNumber.readable && issueNumber.value !== void 0) facts.issueNumber = issueNumber.value;
@@ -21793,7 +21766,7 @@ function doctorDecisiveFacts(output) {
   return facts;
 }
 function reviewerAxes(value) {
-  if (!isRecord9(value)) return [];
+  if (!isRecord8(value)) return [];
   return ["standards", "spec"].filter((axis) => {
     const projected = safelyRead(value, axis);
     return projected.readable && projected.value !== void 0;
@@ -21926,7 +21899,7 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
     const candidateMessage = entries[index]?.message;
     if (candidateMessage?.role === "assistant" && Array.isArray(candidateMessage.content)) {
       for (const part of candidateMessage.content) {
-        if (!isRecord9(part) || part.type !== "toolCall" || part.id !== callId) {
+        if (!isRecord8(part) || part.type !== "toolCall" || part.id !== callId) {
           continue;
         }
         if (part.name !== outputToolName) return void 0;
@@ -21948,7 +21921,7 @@ function sameAuditValue(left, right) {
       (value, index) => sameAuditValue(value, right[index])
     );
   }
-  if (isRecord9(left) && isRecord9(right)) {
+  if (isRecord8(left) && isRecord8(right)) {
     const leftKeys = Object.keys(left);
     const rightKeys = Object.keys(right);
     return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
@@ -21986,7 +21959,7 @@ function boundAuditEscalationForResult(entries, resultIndex, message, role, outp
     const decision = readComplianceCandidate(retained.candidate);
     if (decision.status !== "escalate") return void 0;
     const details = message.details;
-    if (!isAuditEscalationResult(details) || !isRecord9(details)) return void 0;
+    if (!isAuditEscalationResult(details) || !isRecord8(details)) return void 0;
     const projectedDetails = snapshotAuditDetails(details);
     const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
     const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
@@ -22006,7 +21979,7 @@ function isUnboundAuditEscalationFace(details) {
     if (isAuditEscalationResult(details)) return true;
   } catch {
   }
-  if (!isRecord9(details)) return false;
+  if (!isRecord8(details)) return false;
   const kind = safelyRead(details, "kind");
   return kind.readable && kind.value === "audit_escalation";
 }
@@ -22017,11 +21990,11 @@ function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolNa
     if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
       continue;
     }
-    if (!isRecord9(entry.data) || !isRecord9(entry.data.response)) continue;
+    if (!isRecord8(entry.data) || !isRecord8(entry.data.response)) continue;
     const response = entry.data.response;
     if (!Array.isArray(response.content)) continue;
     const calls = response.content.filter(
-      (part) => isRecord9(part) && part.type === "toolCall"
+      (part) => isRecord8(part) && part.type === "toolCall"
     );
     if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
     matches.push({ candidate: calls[0]?.arguments });
@@ -22082,7 +22055,7 @@ function extractJudgeRoleOutcome(entries) {
       };
     }
     if (isUnboundAuditEscalationFace(details)) continue;
-    if (!isRecord9(details)) continue;
+    if (!isRecord8(details)) continue;
     const statusRead = safelyRead(details, "judgeStatus");
     if (!statusRead.readable || typeof statusRead.value !== "string") continue;
     const judgeStatus = statusRead.value;
@@ -22111,7 +22084,7 @@ function parseNavigatorAttendanceDetails(details) {
   const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {};
   if (disposition === "recommendation") {
     const next = details.next;
-    if (!isRecord9(next) || typeof next.role !== "string") {
+    if (!isRecord8(next) || typeof next.role !== "string") {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -22119,7 +22092,7 @@ function parseNavigatorAttendanceDetails(details) {
       };
     }
     const reason = typeof details.reason === "string" ? details.reason : "";
-    const route = Array.isArray(details.route) ? details.route.filter(isRecord9).map((target) => ({
+    const route = Array.isArray(details.route) ? details.route.filter(isRecord8).map((target) => ({
       role: String(target.role),
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
@@ -22187,7 +22160,7 @@ async function extractGateFactFromSessionDirectory(sessionDirectory) {
 }
 async function withOptionalGateProjection(base, sessionDirectory) {
   const secondaryEvidence = base.roleOutcome.kind === "failure" ? base.roleOutcome.decisiveFacts.secondaryEvidence : void 0;
-  if (isRecord9(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
+  if (isRecord8(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
   const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
   return gate === void 0 ? base : { ...base, gate };
 }
@@ -22227,7 +22200,7 @@ function extractNavigatorFact(entries) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord9(details)) {
+      if (!isRecord8(details)) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -22695,7 +22668,7 @@ async function settleLawfulCollectorTerminalResult(admitted) {
       const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
       if (residual === void 0) continue;
       const candidate = residual.candidate;
-      const duration = isRecord9(candidate) ? candidate.durationMs : void 0;
+      const duration = isRecord8(candidate) ? candidate.durationMs : void 0;
       if (Number.isSafeInteger(duration) && duration >= 1 && duration <= 9e5) {
         continue;
       }
@@ -22946,14 +22919,14 @@ function extractCountersignRoleOutcome(entries) {
     if (message.toolName !== COUNTERSIGN_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
-      const output = validateRecordedCountersignOutput(message.details);
+      const verdict = validateRecordedCountersignOutput(message.details);
       const outcome = {
         kind: "accepted",
         role: "countersign",
-        status: String(output.countersignStatus),
-        decisiveFacts: countersignDecisiveFacts(output)
+        status: String(verdict.countersignStatus),
+        decisiveFacts: { countersignStatus: String(verdict.countersignStatus) }
       };
-      return { output, outcome };
+      return { verdict, outcome };
     } catch {
       continue;
     }
@@ -23301,8 +23274,8 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === void 0) continue;
       const callMessage = entries[residual.callIndex]?.message;
-      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord9(part) && part.type === "toolCall") : [];
-      const attemptId = isRecord9(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
+      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord8(part) && part.type === "toolCall") : [];
+      const attemptId = isRecord8(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
       if (calls.length !== 1 || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME || !attemptId.readable || attemptId.value !== admitted.runId) {
         continue;
       }
@@ -27000,14 +26973,14 @@ function isMissingPathError4(error) {
 function errorText2(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function isRecord10(value) {
+function isRecord9(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function readUsableTerminalArtifactBody(body) {
   if (body === null) {
     return { ok: false, reason: "terminal artifact JSON value is null" };
   }
-  if (!isRecord10(body)) {
+  if (!isRecord9(body)) {
     return {
       ok: false,
       reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`
@@ -27136,7 +27109,7 @@ function isMissingPathError5(error) {
 function errorText3(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function isRecord11(value) {
+function isRecord10(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readExistingRunLifecycleState(runDirectory) {
@@ -27144,7 +27117,7 @@ async function readExistingRunLifecycleState(runDirectory) {
     const raw = JSON.parse(
       await readFile14(join25(runDirectory, "run-state.json"), "utf8")
     );
-    if (!isRecord11(raw) || typeof raw.state !== "string") return void 0;
+    if (!isRecord10(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
   } catch {
     return void 0;
@@ -27180,7 +27153,7 @@ async function readInvocationScopeFields(runDirectory) {
     throw error;
   }
   const parsed = JSON.parse(raw);
-  if (!isRecord11(parsed)) return void 0;
+  if (!isRecord10(parsed)) return void 0;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return void 0;
   }
@@ -27208,7 +27181,7 @@ async function resolveSessionFile(runDirectory) {
   try {
     const raw = await readFile14(join25(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
-    if (isRecord11(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
+    if (isRecord10(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
     }
   } catch (error) {
@@ -27449,7 +27422,7 @@ var init_analyst_ledger = __esm({
 });
 
 // src/analyst-metric-families/acceptance-success-rework.ts
-function isRecord12(value) {
+function isRecord11(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan(span) {
@@ -27458,21 +27431,21 @@ function wallMsFromSpan(span) {
 function findCollectorGroups(body) {
   if (Array.isArray(body.groups)) return body.groups;
   const receipt = body.receipt;
-  if (isRecord12(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
+  if (isRecord11(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
   const outcome = body.outcome;
-  if (isRecord12(outcome)) {
+  if (isRecord11(outcome)) {
     const facts = outcome.decisiveFacts;
-    if (isRecord12(facts) && Array.isArray(facts.groups)) return facts.groups;
+    if (isRecord11(facts) && Array.isArray(facts.groups)) return facts.groups;
   }
   return void 0;
 }
 function extractStatus(body) {
   const outcome = body.outcome;
-  if (isRecord12(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
+  if (isRecord11(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
     return outcome.status;
   }
   const receipt = body.receipt;
-  if (isRecord12(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
+  if (isRecord11(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
     return receipt.status;
   }
   if (typeof body.status === "string" && body.status.trim() !== "") {
@@ -28096,21 +28069,21 @@ var init_leg_wall_clock = __esm({
 });
 
 // src/analyst-metric-families/round-timeline.ts
-function isRecord13(value) {
+function isRecord12(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan2(startedAt, endedAt) {
   return Date.parse(endedAt) - Date.parse(startedAt);
 }
 function readOutcomeStatus(body) {
-  if (!isRecord13(body.outcome)) return void 0;
+  if (!isRecord12(body.outcome)) return void 0;
   const status = body.outcome.status;
   if (typeof status !== "string" || status.trim() === "") return void 0;
   return status;
 }
 function readClassCount(body) {
-  if (!isRecord13(body.outcome)) return void 0;
-  if (!isRecord13(body.outcome.decisiveFacts)) return void 0;
+  if (!isRecord12(body.outcome)) return void 0;
+  if (!isRecord12(body.outcome.decisiveFacts)) return void 0;
   const classCount = body.outcome.decisiveFacts.classCount;
   if (typeof classCount !== "number" || !Number.isFinite(classCount)) {
     return void 0;
@@ -29298,19 +29271,9 @@ async function runAkRole(argv, env) {
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const resumeRequest = parseResumeRequest(parsed.args);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
-      if (resumeRole === "collector") {
+      if (resumeRole !== void 0 && ONE_SHOT_ROLES.includes(resumeRole)) {
         throw new CliUsageError(
-          "collector role runs are one-shot and cannot be resumed"
-        );
-      }
-      if (resumeRole === "doctor") {
-        throw new CliUsageError(
-          "doctor role runs are one-shot and cannot be resumed"
-        );
-      }
-      if (resumeRole === "countersign") {
-        throw new CliUsageError(
-          "countersign role runs are one-shot and cannot be resumed"
+          `${resumeRole} role runs are one-shot and cannot be resumed`
         );
       }
       const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : resumeRole === "reviewer" ? "reviewer" : resumeRole === "merger" ? "merger" : "judge";
@@ -29492,8 +29455,6 @@ async function runAkRole(argv, env) {
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },
           ...projectSeatEngine(seat),
-          ...env.countersignExtraPiArgs === void 0 ? {} : { extraPiArgs: env.countersignExtraPiArgs },
-          ...env.countersignTimeoutMs === void 0 ? {} : { timeoutMs: env.countersignTimeoutMs },
           ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
         },
         io,
@@ -29794,6 +29755,7 @@ var init_cli = __esm({
     init_coder_run();
     init_collector_run();
     init_countersign_run();
+    init_packaged_role_registry();
     init_doctor_run();
     init_fixer_run();
     init_notary_run();

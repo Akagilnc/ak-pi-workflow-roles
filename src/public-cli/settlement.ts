@@ -79,9 +79,8 @@ import {
 } from "../notary-contracts.ts";
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
-  countersignDecisiveFacts,
   validateRecordedCountersignOutput,
-  type CountersignOutput,
+  type CountersignVerdict,
 } from "../countersign-contracts.ts";
 import {
   observePackagedMethodSkillInvocation,
@@ -3182,7 +3181,7 @@ export async function settleNotaryTerminalResult(
 
 export function extractCountersignRoleOutcome(
   entries: readonly SessionEntry[],
-): { outcome: LawfulCountersignRoleOutcome; output: CountersignOutput } | undefined {
+): { outcome: LawfulCountersignRoleOutcome; verdict: CountersignVerdict } | undefined {
   if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
@@ -3192,14 +3191,14 @@ export function extractCountersignRoleOutcome(
     if (message.toolName !== COUNTERSIGN_OUTPUT_TOOL_NAME) continue;
     if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
-      const output = validateRecordedCountersignOutput(message.details);
+      const verdict = validateRecordedCountersignOutput(message.details);
       const outcome: LawfulCountersignRoleOutcome = {
         kind: "accepted",
         role: "countersign",
-        status: String(output.countersignStatus),
-        decisiveFacts: countersignDecisiveFacts(output),
+        status: String(verdict.countersignStatus),
+        decisiveFacts: { countersignStatus: String(verdict.countersignStatus) },
       };
-      return { output, outcome };
+      return { verdict, outcome };
     } catch {
       continue;
     }
