@@ -15,8 +15,9 @@ test("public registry exposes callable roles plus automatic configurable seats",
     [...PUBLIC_CALLABLE_ROLES],
     PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
   );
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
+  assert.equal(PUBLIC_CALLABLE_ROLES.length, 9);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("countersign"), true);
   // #453: automatic gate seats join navigator as configurable-only (never caller commands).
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],

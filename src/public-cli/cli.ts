@@ -37,6 +37,7 @@ import {
 import {
   parseCoderArgv,
   parseCollectorArgv,
+  parseCountersignArgv,
   parseDoctorArgv,
   parseFixerArgv,
   parseJudgeArgv,
@@ -57,6 +58,7 @@ import {
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
+import { runPublicCountersign } from "./countersign-run.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicNotary } from "./notary-run.ts";
@@ -98,6 +100,7 @@ export type { CliIo } from "./cli-io.ts";
  */
 export const PUBLIC_ROLE_ARGV = {
   judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
+  countersign: { parse: parseCountersignArgv, options: optionsForOwner("countersign") },
   coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
   fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
   collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
@@ -204,6 +207,10 @@ export type CliEnv = {
   notaryExtraPiArgs?: readonly string[];
   /** Override Notary role-run timeout (tests). */
   notaryTimeoutMs?: number;
+  /** Extra Pi args for Countersign runs (tests: faux provider). */
+  countersignExtraPiArgs?: readonly string[];
+  /** Override Countersign role-run timeout (tests). */
+  countersignTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -832,6 +839,11 @@ export async function runAkRole(
           "doctor role runs are one-shot and cannot be resumed",
         );
       }
+      if (resumeRole === "countersign") {
+        throw new CliUsageError(
+          "countersign role runs are one-shot and cannot be resumed",
+        );
+      }
       const resumeSeatRole =
         resumeRole === "coder"
           ? "coder"
@@ -1034,6 +1046,50 @@ export async function runAkRole(
         },
         io,
         PUBLIC_ROLE_ARGV.judge.parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Countersign ticket-court run path (#572 / ADR 0074) — one-shot.
+    if (parsed.command === "countersign") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "countersign",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicCountersign(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...projectSeatEngine(seat),
+          ...(env.countersignExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.countersignExtraPiArgs }),
+          ...(env.countersignTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.countersignTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        PUBLIC_ROLE_ARGV.countersign.parse,
       );
       return {
         exitCode: result.exitCode,

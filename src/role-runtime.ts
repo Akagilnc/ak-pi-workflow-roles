@@ -39,6 +39,7 @@ import {
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { createNotaryRoleRuntime } from "./notary-role.ts";
+import { createCountersignRoleRuntime } from "./countersign-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -367,6 +368,7 @@ type ActivationRuntime = {
   collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
   notary: { activate(): Promise<void> };
+  countersign: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -404,6 +406,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
     case "notary": return { id: "load-and-install", run: async () => runtime.notary.activate() };
+    case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -487,6 +490,7 @@ export type RoleRuntimeDependencies = {
   loadDoctorSoul?(): Promise<string>;
   loadNotarySoul?(): Promise<string>;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
+  loadCountersignSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -999,6 +1003,12 @@ export function createRoleRuntimeExtension(
         return dependencies.loadNotarySourceRun(path);
       },
     }, hostActions);
+    const countersign = createCountersignRoleRuntime(pi, {
+      async loadSoul() {
+        if (!dependencies.loadCountersignSoul) throw new Error("Countersign runtime dependencies are not configured");
+        return dependencies.loadCountersignSoul();
+      },
+    }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(pi, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1138,6 +1148,7 @@ export function createRoleRuntimeExtension(
         collector,
         doctor,
         notary,
+        countersign,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);

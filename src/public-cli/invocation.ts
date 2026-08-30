@@ -111,6 +111,10 @@ export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
   readonly role: "judge";
 };
 
+export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "countersign";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -189,6 +193,7 @@ export type AdmittedMergerInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
+  | AdmittedCountersignInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -372,6 +377,12 @@ export async function recordLaunchedRolePackageIdentity(
 }
 
 export type ParseJudgeArgvResult = {
+  instruction: string;
+  attachmentPaths: string[];
+  project?: string;
+};
+
+export type ParseCountersignArgvResult = {
   instruction: string;
   attachmentPaths: string[];
   project?: string;
@@ -571,6 +582,47 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
     }
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown judge option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  options.assertRequired();
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+  };
+}
+
+export function parseCountersignArgv(args: readonly string[]): ParseCountersignArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+  const definitions = roleOptions("countersign");
+  const options = createTypedOptionConsumer(definitions);
+
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      positional.push(...tokens);
+      break;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== undefined) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown countersign option: ${taken.def.canonical}`);
+    }
+    const token = tokens.shift()!;
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown countersign option: ${token}`);
     }
     positional.push(token);
   }
@@ -836,6 +888,100 @@ export async function admitJudgeInvocation(
 /** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("已受理附件（冻结快照路径）：");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+
+export type AdmitCountersignInvocationOptions = {
+  home: string;
+  cwd: string;
+  instruction: string;
+  attachmentPaths: readonly string[];
+  project?: string;
+  /** Injectable clock/id for tests. */
+  createRunId?: () => string;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
+};
+
+/**
+ * Atomically admit a Countersign Role run: freeze Attachments, persist the
+ * request, write the invocation ledger (#572 / ADR 0074).
+ */
+export async function admitCountersignInvocation(
+  options: AdmitCountersignInvocationOptions,
+): Promise<AdmittedCountersignInvocation> {
+  // Empty project override must not reach resolve("") → cwd (silent default).
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "countersign", home: options.home });
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "countersign" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    ...ticketFields,
+    instruction,
+    instructionEmpty,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+
+  return {
+    role: "countersign",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    ...ticketFields,
+  };
+}
+
+/** Build the Pi prompt transport for an admitted Countersign request. */
+export function buildCountersignTransportPrompt(
+  admitted: AdmittedCountersignInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];

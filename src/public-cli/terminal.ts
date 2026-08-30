@@ -38,7 +38,8 @@ export type TerminalRoleName =
   | "doctor"
   | "reviewer"
   | "merger"
-  | "notary";
+  | "notary"
+  | "countersign";
 
 /** Merger/Collector residual only — Notary/audit residual abolished (#475). */
 export type ResidualIncompleteTerminalOutcome = {

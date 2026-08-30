@@ -9,8 +9,9 @@ import { isAuditEscalationResult } from "../audit-escalation.js";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput } from "../notary-contracts.js";
+import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput } from "../countersign-contracts.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
-export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, validateDoctorSubmissionShape, validateRecordedDoctorOutput, validateMergerOutput, validateRecordedNotaryOutput, };
+export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, validateDoctorSubmissionShape, validateRecordedDoctorOutput, validateMergerOutput, validateRecordedNotaryOutput, validateRecordedCountersignOutput, };
 export const TERMINATING_TOOL_NAMES = [
     CODER_OUTPUT_TOOL_NAME,
     FIXER_OUTPUT_TOOL_NAME,
@@ -20,6 +21,7 @@ export const TERMINATING_TOOL_NAMES = [
     DOCTOR_OUTPUT_TOOL_NAME,
     MERGER_OUTPUT_TOOL_NAME,
     NOTARY_OUTPUT_TOOL_NAME,
+    COUNTERSIGN_OUTPUT_TOOL_NAME,
 ];
 export function isTerminatingToolName(name) {
     return TERMINATING_TOOL_NAMES.includes(name);
@@ -42,6 +44,8 @@ export function acceptedTextFor(toolName) {
             return MERGER_ACCEPTED_TEXT;
         case NOTARY_OUTPUT_TOOL_NAME:
             return NOTARY_ACCEPTED_TEXT;
+        case COUNTERSIGN_OUTPUT_TOOL_NAME:
+            return COUNTERSIGN_ACCEPTED_TEXT;
     }
 }
 export class AcceptedDetailsContractError extends Error {
@@ -72,7 +76,12 @@ export function validateAcceptedDetails(toolName, details) {
     if (auditEscalation || safeProperty(candidate, "kind") === "audit_escalation") {
         throw new AcceptedDetailsContractError("audit escalation is not an accepted role receipt");
     }
-    const discriminator = safeProperty(candidate, toolName === JUDGE_OUTPUT_TOOL_NAME ? "judgeStatus" : "status");
+    const statusKey = toolName === JUDGE_OUTPUT_TOOL_NAME
+        ? "judgeStatus"
+        : toolName === COUNTERSIGN_OUTPUT_TOOL_NAME
+            ? "countersignStatus"
+            : "status";
+    const discriminator = safeProperty(candidate, statusKey);
     const lawfulStatuses = {
         [CODER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "unfinished"],
         [FIXER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "partially_completed", "unfinished"],
@@ -82,6 +91,7 @@ export function validateAcceptedDetails(toolName, details) {
         [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
         [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
         [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+        [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
     };
     const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
     const baseDiscriminator = discriminator;
@@ -109,6 +119,8 @@ export function validateAcceptedDetails(toolName, details) {
                 return validateMergerOutput(details);
             case NOTARY_OUTPUT_TOOL_NAME:
                 return validateRecordedNotaryOutput(details);
+            case COUNTERSIGN_OUTPUT_TOOL_NAME:
+                return validateRecordedCountersignOutput(details);
         }
     }
     catch (error) {
@@ -148,6 +160,7 @@ export function acceptedFacts(toolName, details) {
         case DOCTOR_OUTPUT_TOOL_NAME:
         case NOTARY_OUTPUT_TOOL_NAME: return { status: details.status };
         case JUDGE_OUTPUT_TOOL_NAME: return { status: details.judgeStatus };
+        case COUNTERSIGN_OUTPUT_TOOL_NAME: return { status: details.countersignStatus };
         case MERGER_OUTPUT_TOOL_NAME: {
             const output = details;
             const status = output.status;

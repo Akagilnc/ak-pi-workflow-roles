@@ -22,6 +22,7 @@ export type RolePhase = "plan" | "apply";
 export type OptionOwner =
   | "global"
   | "judge"
+  | "countersign"
   | "coder"
   | "fixer"
   | "reviewer"
@@ -369,6 +370,11 @@ const JUDGE_OPTIONS = [
   bindOwner("judge", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const COUNTERSIGN_OPTIONS = [
+  bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
+  bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
 const CODER_OPTIONS = [
   {
     id: "phase",
@@ -714,6 +720,7 @@ const ANALYST_OPTIONS = [
 export const PUBLIC_OPTION_TABLE = {
   global: GLOBAL_OPTIONS,
   judge: JUDGE_OPTIONS,
+  countersign: COUNTERSIGN_OPTIONS,
   coder: CODER_OPTIONS,
   fixer: FIXER_OPTIONS,
   reviewer: REVIEWER_OPTIONS,
@@ -729,6 +736,7 @@ export type PublicRoleOptionOwner = Exclude<OptionOwner, "global">;
 /** Role/deterministic owners that appear on PUBLIC_ROLE_ARGV. */
 export const PUBLIC_ROLE_OPTION_OWNERS = [
   "judge",
+  "countersign",
   "coder",
   "fixer",
   "reviewer",
@@ -1036,6 +1044,15 @@ const ROLE_COMMAND_HELP = {
     examples: [
       'ak-role judge --attach ./plan.md "Review this plan."',
       'ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."',
+    ],
+  },
+  countersign: {
+    command: "countersign",
+    summary: "Ticket-court review before work starts; five questions, 署/封驳/上呈.",
+    usage: ["ak-role countersign [options] [instruction]"],
+    examples: [
+      'ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"',
+      'ak-role countersign --attach ./plan.md --attach ./adr.md "裁：方案五问。"',
     ],
   },
   coder: {
