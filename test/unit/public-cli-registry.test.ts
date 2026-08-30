@@ -164,6 +164,11 @@ test("startup model candidates follow #11 package defaults per seat", () => {
     { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ]);
+  // #572 给事中 — same sol/high court tier as judge (ticket-court review).
+  assert.deepEqual(publicStartupCandidates("countersign"), [
+    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
+    { provider: "xai", model: "grok-4.5", thinking: "high" },
+  ]);
   assert.deepEqual(publicStartupCandidates("reviewer"), [
     { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },

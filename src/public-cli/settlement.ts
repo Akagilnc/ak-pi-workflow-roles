@@ -1234,6 +1234,41 @@ function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> 
   }
 }
 
+/** Countersign terminal projection — escalate keeps decisionGate; continue keeps fix (#572 / ADR 0074). */
+function countersignDecisiveFacts(
+  verdict: object,
+  countersignStatus: string,
+): Record<string, unknown> {
+  const facts: Record<string, unknown> = { countersignStatus };
+  if (countersignStatus === "continue") {
+    const fix = safelyRead(verdict, "fix");
+    if (fix.readable && isRecord(fix.value)) {
+      const summary = safelyRead(fix.value, "summary");
+      if (summary.readable && typeof summary.value === "string") {
+        facts.fixSummary = summary.value;
+      }
+    }
+  }
+  if (countersignStatus === "escalate") {
+    const gate = safelyRead(verdict, "decisionGate");
+    if (gate.readable && isRecord(gate.value)) {
+      const question = safelyRead(gate.value, "question");
+      const options = safelyRead(gate.value, "options");
+      if (question.readable && typeof question.value === "string") {
+        facts.decisionQuestion = question.value;
+      }
+      if (options.readable && Array.isArray(options.value)) {
+        facts.decisionOptions = [...options.value];
+      }
+    }
+  }
+  const note = safelyRead(verdict, "note");
+  if (note.readable && note.value !== undefined) facts.note = note.value;
+  const evidence = safelyRead(verdict, "evidence");
+  if (evidence.readable && evidence.value !== undefined) facts.evidence = evidence.value;
+  return facts;
+}
+
 function judgeDecisiveFacts(
   verdict: object,
   judgeStatus: string,
@@ -3185,7 +3220,7 @@ async function settleLawfulCountersignTerminalResult(
     kind: "accepted",
     role: "countersign",
     status: roleOutcome.status,
-    decisiveFacts: { countersignStatus: String(verdict.countersignStatus) },
+    decisiveFacts: countersignDecisiveFacts(verdict as object, roleOutcome.status),
   };
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(

@@ -22479,6 +22479,36 @@ function auditNoReceiptDecisiveFact(candidate) {
     return {};
   }
 }
+function countersignDecisiveFacts(verdict, countersignStatus) {
+  const facts = { countersignStatus };
+  if (countersignStatus === "continue") {
+    const fix = safelyRead(verdict, "fix");
+    if (fix.readable && isRecord11(fix.value)) {
+      const summary = safelyRead(fix.value, "summary");
+      if (summary.readable && typeof summary.value === "string") {
+        facts.fixSummary = summary.value;
+      }
+    }
+  }
+  if (countersignStatus === "escalate") {
+    const gate = safelyRead(verdict, "decisionGate");
+    if (gate.readable && isRecord11(gate.value)) {
+      const question = safelyRead(gate.value, "question");
+      const options = safelyRead(gate.value, "options");
+      if (question.readable && typeof question.value === "string") {
+        facts.decisionQuestion = question.value;
+      }
+      if (options.readable && Array.isArray(options.value)) {
+        facts.decisionOptions = [...options.value];
+      }
+    }
+  }
+  const note = safelyRead(verdict, "note");
+  if (note.readable && note.value !== void 0) facts.note = note.value;
+  const evidence = safelyRead(verdict, "evidence");
+  if (evidence.readable && evidence.value !== void 0) facts.evidence = evidence.value;
+  return facts;
+}
 function judgeDecisiveFacts(verdict, judgeStatus) {
   const facts = {
     judgeStatus,
@@ -23639,7 +23669,7 @@ async function settleLawfulCountersignTerminalResult(admitted, authority) {
     kind: "accepted",
     role: "countersign",
     status: roleOutcome.status,
-    decisiveFacts: { countersignStatus: String(verdict.countersignStatus) }
+    decisiveFacts: countersignDecisiveFacts(verdict, roleOutcome.status)
   };
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
