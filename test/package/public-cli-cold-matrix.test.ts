@@ -340,7 +340,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       { cwd: project, stdio: "ignore" },
     );
 
-    // Discoverability: seven callable + automatic Navigator; no auditors.
+    // Discoverability: packaged callable seats + automatic Navigator; no auditors.
     const roles = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
