@@ -6,6 +6,14 @@ import test from "node:test";
 
 import { connectGrokAcpStdio } from "../../src/grok/role-turn-host.ts";
 
+test("ACP stdio preserves spawn failure and rejects later writes", async () => {
+  const connection = await connectGrokAcpStdio({ binary: join(tmpdir(), "missing-grok-binary"), cwd: tmpdir(), env: process.env });
+  await assert.rejects(connection.request("initialize", {}), /process error.*ENOENT/i);
+  await assert.rejects(connection.request("after-error", {}), /process error.*ENOENT/i);
+  assert.throws(() => connection.notify("after-error", {}), /process error.*ENOENT/i);
+  await connection.close();
+});
+
 test("ACP stdio pairs framed replies and closes one real child", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-faux-"));
   try {
