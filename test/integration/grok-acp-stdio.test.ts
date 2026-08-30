@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,9 +8,10 @@ import { connectGrokAcpStdio } from "../../src/grok/role-turn-host.ts";
 
 test("ACP stdio pairs framed replies and closes one real child", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-faux-"));
-  const executable = join(root, "grok-faux.mjs");
-  const events = join(root, "events.jsonl");
-  await writeFile(executable, `#!/usr/bin/env node
+  try {
+    const executable = join(root, "grok-faux.mjs");
+    const events = join(root, "events.jsonl");
+    await writeFile(executable, `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 const events = process.env.FAUX_EVENTS;
@@ -33,5 +34,10 @@ process.on("SIGTERM", () => process.exit(0));
   assert.deepEqual(second, { order: 2 });
   connection.notify("session/cancel", { sessionId: "s1" });
   await connection.close();
-  assert.deepEqual((await readFile(events, "utf8")).trim().split("\n").map((line) => JSON.parse(line).method), ["first", "second", "session/cancel"]);
+    assert.deepEqual((await readFile(events, "utf8")).trim().split("\n").map((line) => JSON.parse(line).method), ["first", "second", "session/cancel"]);
+    await assert.rejects(connection.request("after-close", {}), /closed/i);
+    assert.throws(() => connection.notify("after-close", {}), /closed/i);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -60,8 +60,17 @@ export function connectGrokAcpStdio(options: {
   const pending = new Map<number, { resolve(value: Readonly<Record<string, unknown>>): void; reject(error: Error): void }>();
   let nextId = 0;
   let closed = false;
+  let terminalError: Error | undefined;
   let stderr = "";
+  const settleClosed = (error: Error): void => {
+    if (closed) return;
+    closed = true;
+    terminalError = error;
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  };
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+  child.on("error", (error) => settleClosed(new Error(`Grok ACP process error: ${error.message}`, { cause: error })));
   createInterface({ input: child.stdout }).on("line", (line) => {
     let message: RpcReply;
     try { message = JSON.parse(line) as RpcReply; }
@@ -77,20 +86,24 @@ export function connectGrokAcpStdio(options: {
     if (message.error !== undefined) waiter.reject(new Error(`Grok ACP error: ${JSON.stringify(message.error)}`));
     else waiter.resolve((message.result ?? {}) as Readonly<Record<string, unknown>>);
   });
-  child.on("close", (code) => {
-    closed = true;
-    for (const waiter of pending.values()) waiter.reject(new Error(`Grok ACP closed (${String(code)}): ${stderr}`));
-    pending.clear();
-  });
+  child.on("close", (code) => settleClosed(new Error(`Grok ACP closed (${String(code)}): ${stderr}`)));
   return Promise.resolve({
     request(method, params) {
+      if (closed) return Promise.reject(terminalError ?? new Error("Grok ACP connection is closed"));
       const id = ++nextId;
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`, (error) => {
+          if (error === null || error === undefined) return;
+          const waiter = pending.get(id);
+          if (waiter === undefined) return;
+          pending.delete(id);
+          waiter.reject(new Error(`Grok ACP write failed: ${error.message}`, { cause: error }));
+        });
       });
     },
     notify(method, params) {
+      if (closed) throw terminalError ?? new Error("Grok ACP connection is closed");
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
     },
     async close() {

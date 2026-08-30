@@ -16,7 +16,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   const connection: GrokAcpConnection = {
     async request(method, params) {
       calls.push([method, params]);
-      if (method === "initialize") return { agentCapabilities: { loadSession: true } };
+      if (method === "initialize") return { agentCapabilities: { loadSession: true }, _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } } };
       if (method === "session/new") return { sessionId: "s1" };
       if (method === "session/prompt") return { stopReason: "end_turn" };
       throw new Error(method);
@@ -37,6 +37,29 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
   assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/cancel"]);
   assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
+});
+
+test("grok host rejects a model absent from typed ACP capabilities", async () => {
+  let prompted = false;
+  const host = createGrokRoleTurnHost({
+    connect: async () => ({
+      async request(method) {
+        if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "grok-4.6" }] } } };
+        prompted = true;
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
+  });
+
+  assert.deepEqual(await host.executeTurn(request), {
+    code: null, stderr: "", timedOut: false,
+    knownFailure: { cause: "activation", identity: { name: "GrokHostModelMismatch", code: "host-model-mismatch" }, details: { provider: "xai", model: "grok-4.5" } },
+  });
+  assert.equal(prompted, false);
 });
 
 test("grok host serializes concurrent ACP prompts", async () => {
