@@ -256,7 +256,7 @@ export type HostCapabilityDeclaration = Readonly<{
 
 /** Host-owned effects used by the shared activation envelope. */
 export interface RoleEnvelopeHost {
-  readonly roleHost: RoleHost;
+  readonly host: RoleHost;
   appendEntry(customType: string, data?: unknown): void;
   sendMessage(message: { customType: string; content: string; display?: boolean; details?: unknown }, options: { triggerTurn: boolean; deliverAs?: "followUp" }): void | Promise<void>;
   startKeepalive(context: HostContext): void;

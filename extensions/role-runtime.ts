@@ -247,7 +247,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   createPiRoleRuntimeExtension({
-    oauthKeepalive: { providers: oauthKeepaliveProviders },
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
@@ -301,7 +300,9 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     },
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, { ...options, context: toPiContext(options.context) }),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
-    transcriptFromContext: (context) => context.transcript?.() ?? "",
     auditSoulCompliance: (options) => createPiJudgeAuditor()({ ...options, context: toPiContext(options.context) }),
-  }, { transcriptFromContext })(pi);
+  }, {
+    transcriptFromContext,
+    oauthKeepalive: { providers: oauthKeepaliveProviders },
+  })(pi);
 }

@@ -31,7 +31,6 @@ export async function observeTyped429ViaProductionHandler(input: {
   };
   createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "",
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(pi as unknown as ExtensionAPI);
 

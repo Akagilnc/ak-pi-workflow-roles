@@ -11,7 +11,7 @@ import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
-import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { buildNavigatorInfrastructureFailureFact, createRoleRuntimeExtension, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
 import {
   context,
@@ -438,9 +438,8 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     };
 
     const { createPiRoleHostAdapter } = await import("../../src/pi/adapter.ts");
-    createPiRoleRuntimeExtension({
+    createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
-      transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
       loadNavigatorWorkContext: async () => ({
         subjectKey: `${home}/.ak/work`,
@@ -483,10 +482,10 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         });
         return nav;
       },
-    }, (() => {
+    })((() => {
       const adapter = createPiRoleHostAdapter(pi as never);
       return { ...adapter, host: { ...adapter.host, requireGatekeeperPass: async () => undefined } };
-    })() as never)(pi as never);
+    })());
 
     const sessionDir = join(
       home,
@@ -735,9 +734,8 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     const started = new Promise<void>((resolve) => { prepStarted = resolve; });
     const events: Array<{ disposition?: string }> = [];
 
-    createPiRoleRuntimeExtension({
+    createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
-      transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
       loadNavigatorWorkContext: async () => ({
         subjectKey: "/repo/.ak/work/issues/11",
@@ -797,10 +795,10 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
           },
         };
       },
-    }, (() => {
+    })((() => {
       const adapter = createPiRoleHostAdapter(pi as never);
       return { ...adapter, host: { ...adapter.host, requireGatekeeperPass: async () => undefined } };
-    })() as never)(pi as never);
+    })());
 
     await writeFile(join(home, "navigator-model.json"), JSON.stringify({ model: "provider/model" }));
     const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "survive", "session");

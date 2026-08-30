@@ -128,17 +128,15 @@ function createOAuthMockProvider(options: {
   };
 }
 
-function minimalRoleDeps(oauthKeepalive?: {
+function minimalRoleExtension(oauthKeepalive: {
   providers?: readonly string[];
   intervalMs?: number;
   scheduler?: OAuthKeepaliveScheduler;
 }) {
-  return {
+  return createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge",
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" as const }),
-    ...(oauthKeepalive === undefined ? {} : { oauthKeepalive }),
-  };
+  }, { oauthKeepalive });
 }
 
 async function fireTick(ticks: Array<() => void>, index = 0): Promise<void> {
@@ -177,9 +175,7 @@ test(
           mode: "print",
           flags: {},
           extensionFactories: [
-            createPiRoleRuntimeExtension(
-              minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
-            ),
+            minimalRoleExtension({ providers: ["kimi-coding"], scheduler }),
           ],
         },
         async ({ session }) => {
@@ -265,9 +261,7 @@ test(
           mode: "print",
           flags: {},
           extensionFactories: [
-            createPiRoleRuntimeExtension(
-              minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
-            ),
+            minimalRoleExtension({ providers: ["kimi-coding"], scheduler }),
           ],
         },
         async ({ modelRuntime }) => {
@@ -314,9 +308,7 @@ test("#351 shutdown: session_shutdown then advance scheduler yields zero further
         // Emit production session_shutdown on teardown (same hook keepalive owns).
         reviewerShutdown: true,
         extensionFactories: [
-          createPiRoleRuntimeExtension(
-            minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
-          ),
+          minimalRoleExtension({ providers: ["kimi-coding"], scheduler }),
         ],
       },
       async ({ session }) => {
@@ -371,9 +363,7 @@ test("#351 unexpired window: tick is no-op (zero network / zero oauth.refresh)",
         mode: "print",
         flags: {},
         extensionFactories: [
-          createPiRoleRuntimeExtension(
-            minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
-          ),
+          minimalRoleExtension({ providers: ["kimi-coding"], scheduler }),
         ],
       },
       async () => {
@@ -711,9 +701,7 @@ test(
           flags: {},
           extensionFactories: [
             // Same production seam: setting-read providers enter createRoleRuntimeExtension.
-            createPiRoleRuntimeExtension(
-              minimalRoleDeps({ providers, scheduler }),
-            ),
+            minimalRoleExtension({ providers, scheduler }),
           ],
         },
         async ({ modelRuntime }) => {

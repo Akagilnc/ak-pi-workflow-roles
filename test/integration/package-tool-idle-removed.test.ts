@@ -73,7 +73,6 @@ async function withPackageToolSession<T>(
         (pi: ExtensionAPI) => {
           createPiRoleRuntimeExtension({
             loadJudgeSoul: async () => "judge",
-            transcriptFromContext: () => "",
             auditSoulCompliance: async () => ({ status: "pass" }),
           })(pi);
           pi.registerTool(tool);
@@ -222,7 +221,6 @@ test(
               const piHostAdapter = createPiRoleHostAdapter(pi);
               createRoleRuntimeExtension({
               loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
-              transcriptFromContext: () => "adjudication evidence",
               auditSoulCompliance: (options) => auditSoulCompliance({ ...options, context: toPiContext(options.context) }),
               })(piHostAdapter);
             },

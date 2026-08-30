@@ -122,7 +122,7 @@ test("role extension binds Merger Git state to session cwd while preserving inje
       const states: object[] = [];
       const state = { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } };
       createPiRoleRuntimeExtension({
-        loadJudgeSoul: async () => "unused", transcriptFromContext: () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
+        loadJudgeSoul: async () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
         loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input,
         createMergerGitState(root) { roots.push(root); const created = { ...state }; states.push(created); return created; },
         ...(injected ? { mergerGitState: state } : {}),

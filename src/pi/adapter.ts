@@ -19,22 +19,19 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 
-export type PiRoleHostAdapter = RoleEnvelopeHost & {
-  /** Compatibility alias for host-specific callers that only consume RoleHost. */
-  readonly host: RoleHost;
-};
+export type PiRoleHostAdapter = RoleEnvelopeHost;
 
 const piContexts = new WeakMap<HostContext, ExtensionContext>();
 
 /** Pi-only entrypoint adapter around the host-neutral shared composition. */
 export function createPiRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
-  options: { transcriptFromContext?: (context: ExtensionContext) => string } = {},
+  options: {
+    transcriptFromContext?: (context: ExtensionContext) => string;
+    oauthKeepalive?: OAuthKeepaliveOptions;
+  } = {},
 ): (pi: ExtensionAPI) => void {
-  return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi, {
-    ...options,
-    ...(dependencies.oauthKeepalive === undefined ? {} : { oauthKeepalive: dependencies.oauthKeepalive }),
-  }));
+  return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi, options));
 }
 
 /** Project Pi's activation context onto the package-owned host contract. */
@@ -223,7 +220,6 @@ export function createPiRoleHostAdapter(
   };
   return {
     host,
-    roleHost: host,
     appendEntry: (customType, data) => pi.appendEntry(customType, data),
     sendMessage: (message, sendOptions) => pi.sendMessage({
       customType: message.customType,

@@ -96,7 +96,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
   const oid = (ch: string) => ch.repeat(40);
   const base = {
     loadJudgeSoul: law,
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" as const }),
     activationClock: () => "2025-06-01T12:00:00.000Z",
     activationTraceWriter: () => {},
@@ -570,7 +569,6 @@ test("unselected role and unsupported role leave zero accepted-activation facts"
       flags: {},
       extensionFactories: [createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "LAW",
-        transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
       })],
     }, async () => {
@@ -590,7 +588,6 @@ test("unselected role and unsupported role leave zero accepted-activation facts"
       flags: { "ak-role": "router" },
       extensionFactories: [createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "LAW",
-        transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
       })],
     }, async () => {
@@ -637,7 +634,6 @@ test("every registered whole-activation rejection terminates nonzero with a name
           loadNotarySoul: reject,
           loadMergerSoul: reject,
           createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
-          transcriptFromContext: () => "",
           auditSoulCompliance: async () => ({ status: "pass" }),
           activationClock: () => "2025-01-01T00:00:00.000Z",
           activationTraceWriter: (record) => { traces.push(record); },
@@ -1147,7 +1143,6 @@ test("observation writer failure aborts through real ExtensionRunner emit with o
         flags: { "ak-role": "judge" },
         extensionFactories: [createPiRoleRuntimeExtension({
           loadJudgeSoul: async () => "LAW",
-          transcriptFromContext: () => "",
           auditSoulCompliance: async () => ({ status: "pass" }),
           activationClock: () => "2025-01-01T00:00:00.000Z",
           activationTraceWriter: () => {},
