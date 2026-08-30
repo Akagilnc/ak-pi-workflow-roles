@@ -1,0 +1,77 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { classifyGrokInspection, controlledGrokChildEnv, createGrokRoleTurnHost, type GrokAcpConnection } from "../../src/grok/role-turn-host.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+
+const request = {
+  principal: {}, activation: { role: "judge" }, methods: [],
+  continuation: { kind: "initial", prompt: "decide" },
+  model: { provider: "xai", model: "grok-build" }, cwd: "/work", home: "/home/user",
+  agentDir: "/agent", runDirectory: "/run",
+} as RoleTurnRequest;
+
+test("grok host closes an accepted ACP turn through the typed round boundary", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const connection: GrokAcpConnection = {
+    async request(method, params) {
+      calls.push([method, params]);
+      if (method === "initialize") return { agentCapabilities: { loadSession: true } };
+      if (method === "session/new") return { sessionId: "s1" };
+      if (method === "session/prompt") return { stopReason: "end_turn" };
+      throw new Error(method);
+    },
+    notify(method, params) { calls.push([method, params]); },
+    async close() {},
+  };
+  const host = createGrokRoleTurnHost({
+    connect: async () => connection,
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => ({ mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], systemPrompt: "law" }),
+  });
+
+  assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
+  assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/cancel"]);
+  assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
+});
+
+test("structured inspect classifies builtin, AK, and private sources by provenance", () => {
+  assert.deepEqual(classifyGrokInspection({
+    skills: [
+      { name: "builtin", source: { type: "bundled" } },
+      { name: "ak-method", source: { type: "project", path: "/pkg/resources/method/SKILL.md" } },
+      { name: "private", source: { type: "user", path: "/home/.grok/skills/private/SKILL.md" } },
+      { name: "disabled", disabled: true, source: { type: "user", path: "/home/disabled" } },
+    ],
+    plugins: [{ name: "private-plugin", enabled: true, path: "/home/plugin" }],
+  }, "/pkg"), {
+    privateActive: ["plugins:private-plugin", "skills:private"],
+    akActive: ["skills:ak-method"],
+  });
+});
+
+test("controlled child env disables every compat source with one parameterized rule", () => {
+  const env = controlledGrokChildEnv({ PATH: "/bin" }, "/run/grok-home");
+  for (const vendor of ["CLAUDE", "CURSOR", "CODEX"]) {
+    for (const kind of ["SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"]) {
+      assert.equal(env[`GROK_${vendor}_${kind}_ENABLED`], "false", `${vendor}/${kind}`);
+    }
+  }
+  assert.equal(env.GROK_HOME, "/run/grok-home");
+  assert.equal(env.GROK_MEMORY, "0");
+  assert.equal(env.GROK_SUBAGENTS, "0");
+});
+
+test("grok host rejects an uncontrolled personalized session before model work", async () => {
+  let connected = false;
+  const host = createGrokRoleTurnHost({
+    connect: async () => { connected = true; throw new Error("must not connect"); },
+    inspect: async () => ({ privateActive: ["user-plugin"], akActive: [] }),
+    prepare: async () => ({ mcpServers: [], systemPrompt: "law" }),
+  });
+  assert.deepEqual(await host.executeTurn(request), {
+    code: null, stderr: "", timedOut: false,
+    knownFailure: { cause: "activation", identity: { name: "UncontrolledGrokSession", code: "private-config-active" }, details: { privateActive: ["user-plugin"] } },
+  });
+  assert.equal(connected, false);
+});
