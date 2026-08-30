@@ -308,7 +308,7 @@ async function installFromTarball(
 }
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, 9);
+  assert.equal(PUBLIC_CALLABLE_ROLES.length, PACKAGED_ROLE_REGISTRY.length);
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
@@ -419,6 +419,24 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       assertNoDeferredSlice("judge", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "judge");
+      assert.equal(args.includes("--no-skills"), true);
+      assert.equal(args.includes("-e"), true);
+      const entry = flagValue(args, "-e");
+      assert.ok(entry);
+      assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
+    }
+
+    // countersign — instruction-seat gate: Internal --ak-role countersign, no ambient skills.
+    {
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["countersign", "--project", project, "裁：所附计划是否足以开工。"],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("countersign", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "countersign");
       assert.equal(args.includes("--no-skills"), true);
       assert.equal(args.includes("-e"), true);
       const entry = flagValue(args, "-e");
