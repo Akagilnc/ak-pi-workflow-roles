@@ -36,28 +36,27 @@ export function createComplianceDecisionTool(name, description) {
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
 export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
 export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
-import { attachDirectErrnoCode, sitianReport } from "./sitian-facade.js";
 export class ComplianceResponseRetentionError extends Error {
-    constructor(message, options) {
-        super(message, options);
-        this.name = "ComplianceResponseRetentionError";
-        attachDirectErrnoCode(this, options?.cause);
+    constructor(message, options) { super(message, options); this.name = "ComplianceResponseRetentionError"; }
+}
+/** Unique owner for session custom-entry append with availability check and typed failure. */
+export function appendActiveSessionCustomEntry(context, customType, data, labels = {}) {
+    const manager = context.sessionManager;
+    if (typeof manager?.appendCustomEntry !== "function") {
+        throw new ComplianceResponseRetentionError(labels.unavailable ?? "session custom entry append is unavailable");
+    }
+    try {
+        return manager.appendCustomEntry(customType, data);
+    }
+    catch (error) {
+        throw new ComplianceResponseRetentionError(labels.failed ?? "session custom entry append failed", { cause: error });
     }
 }
 function retainComplianceResponse(context, response) {
-    try {
-        sitianReport({
-            level: "event",
-            kind: "auditor",
-            cwd: context.cwd,
-            sessionParent: context.sessionManager.getSessionFile(),
-            payload: { version: 1, response },
-            source: "compliance-transport",
-        });
-    }
-    catch (error) {
-        throw new ComplianceResponseRetentionError(`compliance response retention failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
+    appendActiveSessionCustomEntry(context, COMPLIANCE_RESPONSE_ENTRY_TYPE, { version: 1, response }, {
+        unavailable: "compliance response retention is unavailable",
+        failed: "compliance response retention failed",
+    });
 }
 function readListField(value) { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 export function readComplianceCandidate(arguments_, usage) {
