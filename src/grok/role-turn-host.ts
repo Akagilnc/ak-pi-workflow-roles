@@ -209,6 +209,7 @@ export function controlledGrokChildEnv(base: NodeJS.ProcessEnv, grokHome: string
   return {
     ...base,
     ...PRIVATE_COMPAT_ENV,
+    HOME: grokHome,
     GROK_HOME: grokHome,
     GROK_MEMORY: "0",
     GROK_SUBAGENTS: "0",

@@ -79,6 +79,7 @@ test("controlled child env disables every compat source with one parameterized r
       assert.equal(env[`GROK_${vendor}_${kind}_ENABLED`], "false", `${vendor}/${kind}`);
     }
   }
+  assert.equal(env.HOME, "/run/grok-home");
   assert.equal(env.GROK_HOME, "/run/grok-home");
   assert.equal(env.GROK_MEMORY, "0");
   assert.equal(env.GROK_SUBAGENTS, "0");
