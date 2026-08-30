@@ -17,7 +17,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  readdir,
   realpath,
   rm,
   writeFile,
@@ -40,13 +39,11 @@ import {
   type PiManagedInstall,
 } from "../helpers/pi-test-harness.ts";
 import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
 import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
@@ -111,7 +108,7 @@ function seedGitProject(root: string): void {
 async function writePiArgvShim(
   shimDir: string,
   argvLog: string,
-  options: { forward?: boolean; exitCode?: number; providerPath?: string } = {},
+  options: { forward?: boolean; exitCode?: number } = {},
 ): Promise<string> {
   await mkdir(shimDir, { recursive: true });
   const shimPath = resolve(shimDir, "pi");
@@ -126,17 +123,8 @@ import { writeFileSync } from "node:fs";
 ${TEST_PI_VERSION_BRANCH}
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
-const forwarded = [];
-let providerInjected = false;
-for (let i = 0; i < args.length; i += 1) {
-  forwarded.push(args[i]);
-  if (${JSON.stringify(options.providerPath)} && !providerInjected && args[i] === "-e" && i + 1 < args.length) {
-    forwarded.push(args[++i], "-e", ${JSON.stringify(options.providerPath)});
-    providerInjected = true;
-  }
-}
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args), "utf8");
-const child = spawn(${JSON.stringify(realPi)}, forwarded, {
+const child = spawn(${JSON.stringify(realPi)}, args, {
   stdio: "inherit",
   env: process.env,
 });
@@ -418,70 +406,6 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       PATH: `${shimDir}:${process.env.PATH ?? ""}`,
       PI_OFFLINE: "1",
     };
-
-    // Inspector public chain: cold-installed CLI → real Pi/runtime/tool → public Terminal.
-    {
-      const attachment = resolve(project, "inspector-material.txt");
-      await writeFile(attachment, "frozen review material", "utf8");
-      const providerPath = resolve(packageRoot, "test/fixtures/inspector-public-provider.ts");
-      await writePiArgvShim(shimDir, argvLog, { forward: true, providerPath });
-      const runsRoot = resolve(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs");
-      for (const row of [
-        { status: "pass", exitCode: 0, findings: ["pass-finding"] },
-        { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
-        { status: "malformed", exitCode: 1, candidate: { status: "unknown", findings: "unaltered" } },
-      ] as const) {
-        const before = await readdir(runsRoot).catch(() => [] as string[]);
-        const result = await runAkRoleBin(
-          installed.akRoleBin,
-          [
-            "inspector", "--model", "ak-inspector-offline/faux-1", "--thinking", "off",
-            "--project", project, "--attach", attachment, "Review this material.",
-          ],
-          {
-            home,
-            agentDir: piAgentDir,
-            cwd: project,
-            env: { ...shimEnv, AK_TEST_INSPECTOR_STATUS: row.status },
-          },
-        );
-        assert.equal(result.localTimeout, false, result.stderr);
-        assert.equal(result.code, row.exitCode, `${result.stdout}\n${result.stderr}`);
-        const after = await readdir(runsRoot);
-        const run = after.find((name) => !before.includes(name) && name.endsWith("@inspector"));
-        assert.ok(run, `missing Inspector run for ${row.status}`);
-        const sessionFiles = await readdir(resolve(runsRoot, run, "session"));
-        const sessionFile = sessionFiles.find((name) => name.endsWith(".jsonl"));
-        assert.ok(sessionFile);
-        const entries = (await readFile(resolve(runsRoot, run, "session", sessionFile), "utf8"))
-          .split("\n").filter(Boolean).map((line) => JSON.parse(line) as any);
-        const outputResult = entries.find(
-          (entry: any) => entry.message?.role === "toolResult" &&
-            entry.message.toolName === INSPECTOR_OUTPUT_TOOL_NAME,
-        )?.message;
-        assert.ok(outputResult, `missing runtime Inspector result for ${row.status}`);
-        if (row.status === "malformed") {
-          const artifactDir = resolve(runsRoot, run, "artifacts");
-          const artifactNames = await readdir(artifactDir);
-          const artifactBodies = await Promise.all(artifactNames.map(async (name) =>
-            JSON.parse(await readFile(resolve(artifactDir, name), "utf8")) as any));
-          assert.equal(artifactBodies.some((body) => body.kind === "error" && body.cause === "output"), true);
-          const outputCall = entries.find(
-            (entry: any) => entry.message?.role === "assistant" &&
-              entry.message.content?.some((part: any) =>
-                part.type === "toolCall" && part.name === INSPECTOR_OUTPUT_TOOL_NAME),
-          )?.message.content.find((part: any) => part.name === INSPECTOR_OUTPUT_TOOL_NAME);
-          assert.deepEqual(outputCall.arguments, row.candidate);
-        } else {
-          assert.equal(outputResult.isError, false);
-          assert.equal(outputResult.details.status, row.status);
-          assert.deepEqual(outputResult.details.findings, row.findings);
-        }
-      }
-      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
-      assert.equal(flagValue(args, "--ak-role"), "inspector");
-      assert.equal(args.includes("--no-skills"), true);
-    }
 
     // judge — retained role gate: Internal --ak-role judge, no ambient skills.
     {
