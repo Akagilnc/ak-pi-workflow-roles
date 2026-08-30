@@ -30,6 +30,10 @@ import {
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "./worker-submission-gates.ts";
+import {
+  fixerBashSeatbeltDenyReason,
+  matchFixerBashForbiddenLiteral,
+} from "./fixer-bash-seatbelt.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -38,21 +42,7 @@ export {
 };
 export type { WorkerOutput };
 
-/** Exact case-sensitive substring literals blocked on Fixer bash only. */
-const FIXER_BASH_FORBIDDEN_LITERALS = [
-  "rm -rf",
-  "git reset --hard",
-  "git clean",
-  "git checkout --",
-] as const;
 
-function matchFixerBashForbiddenLiteral(
-  command: string,
-): (typeof FIXER_BASH_FORBIDDEN_LITERALS)[number] | undefined {
-  return FIXER_BASH_FORBIDDEN_LITERALS.find((literal) =>
-    command.includes(literal)
-  );
-}
 
 const coderOutputVariants = Type.Union([
   Type.Object({
@@ -295,8 +285,7 @@ export function createFixerRoleRuntime(
           if (matched === undefined) return;
           return {
             block: true,
-            reason:
-              `修内司 bash 拦截：命中禁用字面量 ${matched}`,
+            reason: fixerBashSeatbeltDenyReason(matched),
           };
         });
         pi.on("before_agent_start", (event) => {
