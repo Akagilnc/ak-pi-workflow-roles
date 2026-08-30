@@ -11,8 +11,6 @@ export interface GrokAcpConnection {
   request(method: string, params: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>>;
   notify(method: string, params: Readonly<Record<string, unknown>>): void;
   close(): Promise<void>;
-  /** Subscribe to unsolicited ACP notifications (e.g. session/update available_commands_update). */
-  onNotification?(handler: (method: string, params: Readonly<Record<string, unknown>>) => void): void;
 }
 
 export type GrokControlledInspection = Readonly<{
@@ -30,14 +28,12 @@ export type GrokPreparedTurn = Readonly<{
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
-  closeRound(input: { readonly sessionId: string; readonly promptResult: Readonly<Record<string, unknown>> }): Promise<
+  closeRound(): Promise<
     | { readonly accepted: true }
     | { readonly accepted: false; readonly retry: { readonly code: string; readonly toolCallIds: readonly string[] } }
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
   dispose?(): Promise<void>;
-  /** Report the host's observed builtin tool names; never echo role-requested names. */
-  observeBuiltinTools?(names: readonly string[]): void;
 }>;
 
 export type GrokCapabilityDeclaration = Readonly<{
@@ -173,9 +169,6 @@ export function connectGrokAcpStdio(options: {
       if (closed) throw terminalError ?? acpError("acp-connection-closed", "Grok ACP connection is closed");
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
     },
-    onNotification(handler) {
-      notificationHandlers.push(handler);
-    },
     async close() {
       if (closed) return;
       settleClosed(acpError("acp-connection-closed", "Grok ACP connection is closed"));
@@ -248,19 +241,6 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           if (continuation.kind === "resume" && resumedSessionId === undefined) {
             return failure("session", "GrokAcpSessionFailure", "session-binding-missing");
           }
-          // Observe the host's typed builtin tool surface when the ACP seam delivers it
-          // (G5/G10: report the real surface to the shared envelope, never echo names).
-          connection.onNotification?.((method, params) => {
-            if (method !== "session/update") return;
-            const update = (params as { update?: unknown }).update;
-            if (typeof update !== "object" || update === null) return;
-            if ((update as { sessionUpdate?: unknown }).sessionUpdate !== "available_commands_update") return;
-            const meta = (update as { _meta?: { tools?: unknown } })._meta;
-            if (Array.isArray(meta?.tools)) {
-              const observed = meta.tools.filter((tool): tool is string => typeof tool === "string");
-              if (observed.length > 0) prepared.observeBuiltinTools?.(observed);
-            }
-          });
           const session = await connection.request(
             continuation.kind === "resume" ? "session/load" : "session/new",
             {
@@ -286,7 +266,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             }
             // session/prompt resolution is ACP's typed round boundary. At this point
             // the shared ledger has seen every MCP execute in the round.
-            const closure = await prepared.closeRound({ sessionId, promptResult: result });
+            const closure = await prepared.closeRound();
             if (closure.accepted) {
               // Wait for ACP's typed close acknowledgement before tearing down the
               // process; Stop hooks and fire-and-forget cancellation are not closure.

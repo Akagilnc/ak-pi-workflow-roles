@@ -124,7 +124,6 @@ export async function prepareGrokRoleEnvelope(options: {
   const customEntries: Array<{ customType: string; data: unknown }> = [];
   const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
-  let builtinTools = new Set<string>();
   let rejection: { readonly code: string; readonly toolCallIds: readonly string[] } | undefined;
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID();
   await mkdir(request.runDirectory, { recursive: true });
@@ -173,10 +172,9 @@ export async function prepareGrokRoleEnvelope(options: {
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
     getFlag(name) { return flags.get(name); },
     registerTool(tool) { tools.set(tool.name, tool); },
-    // Real surface: AK tools plus the host's observed builtin names (reported as
-    // observed, never echoed from role-requested names). Builtins are only
-    // observable after session/new, so they join post-activation.
-    getAllTools() { return [...new Set([...tools.keys(), ...builtinTools])].map((name) => ({ name })); },
+    // The real AK-owned surface only; Grok's builtin surface is host-side and
+    // observable after session/new, never echoed back into role-requested names.
+    getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
     // Grok receives tool choice as role guidance; every tool registered for the
     // seat remains reachable through MCP.
     setActiveTools(names) { preferredTools = [...names]; },
@@ -302,7 +300,7 @@ export async function prepareGrokRoleEnvelope(options: {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };
 
-  const closeRound: GrokPreparedTurn["closeRound"] = async (input) => {
+  const closeRound: GrokPreparedTurn["closeRound"] = async () => {
     await emit("turn_end", { turnIndex: 0, calls: [...calls] });
     let closure: { customType: string; data: unknown } | undefined;
     for (let index = customEntries.length - 1; index >= 0; index -= 1) {
@@ -323,8 +321,7 @@ export async function prepareGrokRoleEnvelope(options: {
   };
 
   // Shared envelope activation. systemPrompt must be ready before session/new
-  // (ACP delivers it there), so activation runs during prepare; the host's builtin
-  // surface is observed later and only joins getAllTools post-activation.
+  // (ACP delivers it there), so activation runs during prepare.
   await emit("session_start", { reason: request.continuation.kind });
   const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });
   let prompt = request.continuation.prompt;
@@ -358,6 +355,5 @@ export async function prepareGrokRoleEnvelope(options: {
     prompt,
     closeRound,
     dispose,
-    observeBuiltinTools(names) { builtinTools = new Set(names); },
   };
 }
