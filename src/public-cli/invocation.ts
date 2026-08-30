@@ -899,22 +899,64 @@ export type AdmitCountersignInvocationOptions = {
 export async function admitCountersignInvocation(
   options: AdmitCountersignInvocationOptions,
 ): Promise<AdmittedCountersignInvocation> {
-  // Judge-shaped admission shared body; ledger written with the real role.
-  const base = await admitJudgeInvocation({
-    home: options.home,
-    cwd: options.cwd,
-    instruction: options.instruction,
-    attachmentPaths: options.attachmentPaths,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.model === undefined ? {} : { model: options.model }),
-  });
-  // Re-write identity page with the actual role (admission wrote "judge").
-  const identityPath = join(base.runDirectory, "invocation.json");
-  const identity = JSON.parse(await readFile(identityPath, "utf8")) as Record<string, unknown>;
-  identity.role = "countersign";
-  await writeFile(identityPath, `${JSON.stringify(identity, null, 2)}\n`, "utf8");
-  return { ...base, role: "countersign" as const };
+  // Same shared freeze/coordinate body as judge but role: "countersign" so
+  // the ledger and session coordinates use the correct role from the start.
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "countersign", home: options.home });
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "countersign" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    ...ticketFields,
+    instruction,
+    instructionEmpty,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+
+  return {
+    role: "countersign",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    ...ticketFields,
+  };
 }
 
 /** Build the Pi prompt transport for an admitted Countersign request. */

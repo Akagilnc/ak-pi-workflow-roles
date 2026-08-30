@@ -189,6 +189,7 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
       },
       {
         countersignStatus: "escalate",
+        findings: [] as string[],
         decisionGate: { question: "本票走哪条路？", options: ["a", "b"] },
       },
     ] as const;
