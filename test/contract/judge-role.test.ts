@@ -53,6 +53,36 @@ import {
   createRoleRuntimeExtension,
   type JudgeVerdict,
 } from "../../src/role-runtime.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
+
+async function acceptThroughTypedRoundClosure(input: {
+  handlers: Map<string, any>;
+  tool: { execute: (...args: any[]) => Promise<any>; name?: string };
+  toolCallId: string;
+  toolName: string;
+  output: unknown;
+  context: any;
+}): Promise<{ sealed: NonNullable<Awaited<ReturnType<typeof readSealedSubmission>>>; pending: any }> {
+  const pending = await input.tool.execute(input.toolCallId, input.output, undefined, undefined, input.context);
+  assert.deepEqual(pending.details, { submissionDisposition: "pending-round-closure" });
+  assert.equal(pending.terminate, undefined);
+  const turnEnd = input.handlers.get("turn_end");
+  assert.ok(turnEnd, "shared envelope must register turn_end");
+  await turnEnd({
+    turnIndex: 0,
+    calls: [{ toolCallId: input.toolCallId, toolName: input.toolName }],
+    toolResults: [{ toolCallId: input.toolCallId, toolName: input.toolName }],
+  }, input.context);
+  const runDirectory = process.env.AK_ROLE_RUN_DIR;
+  assert.ok(typeof runDirectory === "string" && runDirectory.length > 0, "admitted run directory required");
+  const runId = runIdFromRunDirectory(runDirectory);
+  assert.ok(runId);
+  const cwd = typeof input.context.cwd === "string" ? input.context.cwd : process.cwd();
+  const sealed = await readSealedSubmission(cwd, runId);
+  assert.ok(sealed, "typed turn_end must seal sole candidate");
+  return { sealed, pending };
+}
 import {
   readTypedHttp429Observation,
   renderResumeCommand,
@@ -663,6 +693,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "before_agent_start",
     "session_start",
     "tool_result",
+    "turn_end",
     "agent_end",
     "agent_settled",
     "session_shutdown",
@@ -1032,18 +1063,20 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   assert.match((promptResult as { systemPrompt: string }).systemPrompt, /JUDGE LAW/);
 
   const verdict: JudgeVerdict = { judgeStatus: "converged" };
-  const result = await tool.execute(
-    "call-1",
-    verdict,
-    undefined,
-    undefined,
-    await withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict }])),
-  );
+  const context = await withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict }]));
+  const { sealed, pending } = await acceptThroughTypedRoundClosure({
+    handlers: harness.handlers,
+    tool,
+    toolCallId: "call-1",
+    toolName: JUDGE_OUTPUT_TOOL_NAME,
+    output: verdict,
+    context,
+  });
 
   // Zero hand-delivery: auditor is invoked with context only (no projected materials).
   assert.equal(auditCalls, 1);
-  assert.equal(result.terminate, true);
-  assert.deepEqual(result.details, verdict);
+  assert.equal(pending.terminate, undefined);
+  assert.deepEqual(sealed.decisiveFacts, verdict);
 });
 
 test("judge role returns revise as an ordinary errored tool result without aborting", async () => {
@@ -1263,15 +1296,17 @@ test("coder plan loads its task without construction skill and returns planned",
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const output = { status: "planned", report: "Plan the public seam first." };
-  const result = await tool.execute(
-    "coder",
+  const context = await withPassingGatekeeper(toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]));
+  const { sealed, pending } = await acceptThroughTypedRoundClosure({
+    handlers: harness.handlers,
+    tool,
+    toolCallId: "coder",
+    toolName: CODER_OUTPUT_TOOL_NAME,
     output,
-    undefined,
-    undefined,
-    await withPassingGatekeeper(toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }])),
-  );
-  assert.deepEqual(result.details, output);
-  assert.equal(result.terminate, true);
+    context,
+  });
+  assert.deepEqual(sealed.decisiveFacts, output);
+  assert.equal(pending.terminate, undefined);
 });
 
 test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
@@ -1315,16 +1350,16 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
         error.code === "worker_unfinished_reason_reminder",
     );
     assert.equal(bounceGatekeeperProviderRequests, 0);
-    assert.deepEqual(
-      (await tool.execute(
-        "unfinished-reasoned",
-        reasoned,
-        undefined,
-        undefined,
-        await withPassingGatekeeper(toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }])),
-      )).details,
-      reasoned,
-    );
+    const context = await withPassingGatekeeper(toolCallContext([{ id: "unfinished-reasoned", name: CODER_OUTPUT_TOOL_NAME }]));
+    const { sealed } = await acceptThroughTypedRoundClosure({
+      handlers: harness.handlers,
+      tool,
+      toolCallId: "unfinished-reasoned",
+      toolName: CODER_OUTPUT_TOOL_NAME,
+      output: reasoned,
+      context,
+    });
+    assert.deepEqual(sealed.decisiveFacts, reasoned);
   });
   // Negative: continuous bare resubmits bounce at most twice, then accept through Gatekeeper (no loop).
   // Fresh admitted run — prior seal must not cross run boundaries.
@@ -1355,16 +1390,16 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
       (error: unknown) => error instanceof WorkerUnfinishedReasonReminderError,
     );
     assert.equal(bounceGatekeeperProviderRequests, 0);
-    assert.deepEqual(
-      (await tool2.execute(
-        "u3",
-        bare,
-        undefined,
-        undefined,
-        await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }])),
-      )).details,
-      bare,
-    );
+    const context2 = await withPassingGatekeeper(toolCallContext([{ id: "u3", name: CODER_OUTPUT_TOOL_NAME }]));
+    const { sealed } = await acceptThroughTypedRoundClosure({
+      handlers: harness2.handlers,
+      tool: tool2,
+      toolCallId: "u3",
+      toolName: CODER_OUTPUT_TOOL_NAME,
+      output: bare,
+      context: context2,
+    });
+    assert.deepEqual(sealed.decisiveFacts, bare);
   });
 });
 
@@ -1561,7 +1596,7 @@ test("fixer submissions of every status traverse the real Gatekeeper provider ga
 
 test("judge submissions traverse the real Gatekeeper provider gate before auditor", async () => {
   let auditCalls = 0;
-  const { tool } = await startJudge(async () => {
+  const { harness, tool } = await startJudge(async () => {
     auditCalls += 1;
     return { status: "pass" };
   });
@@ -1579,15 +1614,17 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
   });
   await tracer.assertRejectSequence();
   assert.equal(auditCalls, 0, "auditor must not start on Gatekeeper non-pass");
-  const accepted = await tool.execute(
-    "continue-pass",
-    continueVerdict,
-    undefined,
-    undefined,
-    tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME),
-  );
-  assert.equal(accepted.terminate, true);
-  assert.deepEqual(accepted.details, continueVerdict);
+  const context = tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME);
+  const { sealed, pending } = await acceptThroughTypedRoundClosure({
+    handlers: harness.handlers,
+    tool,
+    toolCallId: "continue-pass",
+    toolName: JUDGE_OUTPUT_TOOL_NAME,
+    output: continueVerdict,
+    context,
+  });
+  assert.equal(pending.terminate, undefined);
+  assert.deepEqual(sealed.decisiveFacts, continueVerdict);
   assert.equal(auditCalls, 1, "auditor runs only after Gatekeeper pass");
   assert.equal(tracer.providerRequests, 17);
   assert.equal(tracer.remainingResponses, 0);
@@ -1700,29 +1737,53 @@ test("#453 real coder/fixer/judge entries observe gate model inheritance and ove
       {
         name: "judge",
         officer: "notary" as const,
-        start: async () => (await startJudge(async () => ({ status: "pass" as const }))).tool,
+        start: async () => startJudge(async () => ({ status: "pass" as const })),
         output: continueVerdict,
         toolName: JUDGE_OUTPUT_TOOL_NAME,
       },
     ]) {
-      const tool = await entry.start();
-      const tracer = await realEntryGateModelHarness({ officer: entry.officer });
-      const accepted = await tool.execute(
-        `${entry.name}-inherit`,
-        entry.output,
-        undefined,
-        undefined,
-        tracer.context(`${entry.name}-inherit`, entry.toolName),
-      );
-      assert.equal(accepted.terminate, true, `${entry.name} must terminate after gate pass`);
-      assert.deepEqual(
-        tracer.seen,
-        [
-          { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
-          { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
-        ],
-        `${entry.name} unconfigured gate seats inherit parent model`,
-      );
+      if (entry.name === "judge") {
+        const { harness, tool } = await entry.start() as { harness: any; tool: any };
+        const tracer = await realEntryGateModelHarness({ officer: entry.officer });
+        const context = tracer.context(`${entry.name}-inherit`, entry.toolName);
+        const { sealed, pending } = await acceptThroughTypedRoundClosure({
+          handlers: harness.handlers,
+          tool,
+          toolCallId: `${entry.name}-inherit`,
+          toolName: entry.toolName,
+          output: entry.output,
+          context,
+        });
+        assert.equal(pending.terminate, undefined);
+        assert.deepEqual(sealed.decisiveFacts, entry.output);
+        assert.deepEqual(
+          tracer.seen,
+          [
+            { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
+            { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
+          ],
+          `${entry.name} unconfigured gate seats inherit parent model`,
+        );
+      } else {
+        const tool = await entry.start() as any;
+        const tracer = await realEntryGateModelHarness({ officer: entry.officer });
+        const accepted = await tool.execute(
+          `${entry.name}-inherit`,
+          entry.output,
+          undefined,
+          undefined,
+          tracer.context(`${entry.name}-inherit`, entry.toolName),
+        );
+        assert.equal(accepted.terminate, true, `${entry.name} must terminate after gate pass`);
+        assert.deepEqual(
+          tracer.seen,
+          [
+            { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
+            { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
+          ],
+          `${entry.name} unconfigured gate seats inherit parent model`,
+        );
+      }
     }
 
     // gatekeeper-only: province + officer both use the produced gatekeeper page.
@@ -2286,9 +2347,17 @@ test("undeclared prerequisite submissions are rejected; declared references pass
     await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, Object.assign(toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() })), /Fixer output/);
     // Each accepted sole-final needs its own admitted run — post-seal is terminal.
     await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
-      const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }])));
-      assert.equal(Object.isFrozen(accepted.details), true);
-      assert.deepEqual(accepted.details, candidate("owner.choice"));
+      const context = await withPassingGatekeeper(toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
+      const { sealed, pending } = await acceptThroughTypedRoundClosure({
+        handlers: harness.handlers,
+        tool,
+        toolCallId: "good",
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        output: candidate("owner.choice"),
+        context,
+      });
+      assert.equal(pending.terminate, undefined);
+      assert.deepEqual(sealed.decisiveFacts, candidate("owner.choice"));
     });
 
     const partial = {
@@ -2306,17 +2375,34 @@ test("undeclared prerequisite submissions are rejected; declared references pass
           error instanceof WorkerCommitReminderError &&
           error.code === "worker_commit_reminder",
       );
-      const second = await tool.execute("partial2", partial, undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }])));
-      assert.deepEqual(second.details, partial);
+      const context2 = await withPassingGatekeeper(toolCallContext([{ id: "partial2", name: FIXER_OUTPUT_TOOL_NAME }]));
+      const { sealed } = await acceptThroughTypedRoundClosure({
+        handlers: harness.handlers,
+        tool,
+        toolCallId: "partial2",
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        output: partial,
+        context: context2,
+      });
+      assert.deepEqual(sealed.decisiveFacts, partial);
     });
 
     const sharedCommit = "shared-commit";
     const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
     const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
     await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
-      const shared = await tool.execute("shared", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }])));
-      assert.equal(shared.terminate, true);
-      assert.deepEqual(shared.details.classResults, [classA, classB]);
+      const output = { status: "completed" as const, report: "Both classes settled.", classResults: [classA, classB] };
+      const context3 = await withPassingGatekeeper(toolCallContext([{ id: "shared", name: FIXER_OUTPUT_TOOL_NAME }]));
+      const { sealed, pending } = await acceptThroughTypedRoundClosure({
+        handlers: harness.handlers,
+        tool,
+        toolCallId: "shared",
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        output,
+        context: context3,
+      });
+      assert.equal(pending.terminate, undefined);
+      assert.deepEqual(sealed.decisiveFacts.classResults, [classA, classB]);
     });
   });
 });
@@ -2329,10 +2415,18 @@ test("declared plan refusal passes structure then Gatekeeper", async () => {
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
-    const candidate = { status: "refused", report: "Blocked.", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "Choice absent." } };
-    const accepted = await tool.execute("plan-refused", candidate, undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "plan-refused", name: FIXER_OUTPUT_TOOL_NAME }])));
-    assert.deepEqual(accepted.details, candidate);
-    assert.equal(accepted.terminate, true);
+    const candidate = { status: "refused" as const, report: "Blocked.", remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "owner.choice", evidence: "Choice absent." } };
+    const context = await withPassingGatekeeper(toolCallContext([{ id: "plan-refused", name: FIXER_OUTPUT_TOOL_NAME }]));
+    const { sealed, pending } = await acceptThroughTypedRoundClosure({
+      handlers: harness.handlers,
+      tool,
+      toolCallId: "plan-refused",
+      toolName: FIXER_OUTPUT_TOOL_NAME,
+      output: candidate,
+      context,
+    });
+    assert.deepEqual(sealed.decisiveFacts, candidate);
+    assert.equal(pending.terminate, undefined);
   });
 });
 test("fixer role loads opaque instructions and returns a thin report envelope", async () => {
@@ -2371,26 +2465,24 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
-  assert.deepEqual(
-    (await tool.execute(
-      "fixer-call",
-      {
-        status: "refused",
-        report: "The requested guard contradicts the authority.",
-        classResults: [{ name: "Guard", disposition: "refused", remainingScope: "requested guard", blocker: { cause: "authority_violation", evidence: "contradicts controlling authority" } }],
-      },
-      undefined,
-      undefined,
-      await withPassingGatekeeper(toolCallContext([
-        { id: "fixer-call", name: FIXER_OUTPUT_TOOL_NAME },
-      ])),
-    )).details,
-    {
-      status: "refused",
-      report: "The requested guard contradicts the authority.",
-      classResults: [{ name: "Guard", disposition: "refused", remainingScope: "requested guard", blocker: { cause: "authority_violation", evidence: "contradicts controlling authority" } }],
-    }
-  );
+  const output = {
+    status: "refused" as const,
+    report: "The requested guard contradicts the authority.",
+    classResults: [{ name: "Guard", disposition: "refused" as const, remainingScope: "requested guard", blocker: { cause: "authority_violation" as const, evidence: "contradicts controlling authority" } }],
+  };
+  const context = await withPassingGatekeeper(toolCallContext([
+    { id: "fixer-call", name: FIXER_OUTPUT_TOOL_NAME },
+  ]));
+  const { sealed, pending } = await acceptThroughTypedRoundClosure({
+    handlers: harness.handlers,
+    tool,
+    toolCallId: "fixer-call",
+    toolName: FIXER_OUTPUT_TOOL_NAME,
+    output,
+    context,
+  });
+  assert.equal(pending.terminate, undefined);
+  assert.deepEqual(sealed.decisiveFacts, output);
 });
 
 
@@ -2503,22 +2595,35 @@ test(
         attendance.prepare();
         await preparationStartedPromise;
 
-        // Real role-runtime tool_result → raceNavigatorGrace(default setTimeout sleep).
-        // Start the handler, flush to the production timer, then advance the grace ceiling.
-        const toolResultPending = harness.handlers.get("tool_result")?.({
+        // Registered output execute creates only a candidate; typed turn_end owns closure + grace race.
+        const executeCtx = await withPassingGatekeeper(ctx);
+        const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
+        assert.ok(tool);
+        await harness.handlers.get("tool_execution_start")?.({
           toolName: JUDGE_OUTPUT_TOOL_NAME,
           toolCallId: "accepted-grace",
-          isError: false,
-          details: { judgeStatus: "converged", note: "ok" },
-        }, ctx);
+        }, executeCtx);
+        const pending = await tool.execute(
+          "accepted-grace",
+          { judgeStatus: "converged", note: "ok" },
+          undefined,
+          undefined,
+          executeCtx,
+        );
+        assert.deepEqual(pending.details, { submissionDisposition: "pending-round-closure" });
+        const turnEndPending = harness.handlers.get("turn_end")?.({
+          turnIndex: 0,
+          calls: [{ toolCallId: "accepted-grace", toolName: JUDGE_OUTPUT_TOOL_NAME }],
+          toolResults: [{ toolCallId: "accepted-grace", toolName: JUDGE_OUTPUT_TOOL_NAME }],
+        }, executeCtx);
         await new Promise<void>((resolve) => setImmediate(resolve));
         t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
         await new Promise<void>((resolve) => setImmediate(resolve));
-        await toolResultPending;
+        await turnEndPending;
 
         assert.ok(disposeCalls >= 1, "late attendance must be disposed after grace timeout");
 
-        await harness.handlers.get("agent_settled")?.({}, ctx);
+        await harness.handlers.get("agent_settled")?.({}, executeCtx);
         assert.equal(sentMessages.length, 1);
         const details = sentMessages[0]?.details as NavigatorEvent;
         assert.equal(details.disposition, "unavailable");

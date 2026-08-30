@@ -279,15 +279,21 @@ test(
             .join("")
         : String(detourResults[0].message.content ?? "");
       assert.equal(detourText.includes("canned-engine-labor-content-357"), true);
-      const judgeAccepted = rows.some(
+      const judgeOutput = rows.some(
         (row) =>
           row.type === "message" &&
           row.message?.role === "toolResult" &&
           row.message?.toolName === "ak_judge_output" &&
-          row.message?.isError !== true &&
-          row.message?.details?.judgeStatus === "converged",
+          row.message?.isError !== true,
       );
-      assert.equal(judgeAccepted, true);
+      assert.equal(judgeOutput, true);
+      const judgeClosure = rows.some(
+        (row) =>
+          row.type === "custom" &&
+          row.customType === "ak-role-submission-closure" &&
+          (row.data?.details?.judgeStatus === "converged" || row.details?.judgeStatus === "converged"),
+      );
+      assert.equal(judgeClosure, true);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -390,15 +396,21 @@ test(
             )),
       );
       assert.equal(detourTouch, false, "detour tool must not appear without engine");
-      const judgeAccepted = rows.some(
+      const judgeOutput = rows.some(
         (row) =>
           row.type === "message" &&
           row.message?.role === "toolResult" &&
           row.message?.toolName === "ak_judge_output" &&
-          row.message?.isError !== true &&
-          row.message?.details?.judgeStatus === "converged",
+          row.message?.isError !== true,
       );
-      assert.equal(judgeAccepted, true);
+      assert.equal(judgeOutput, true);
+      const judgeClosure = rows.some(
+        (row) =>
+          row.type === "custom" &&
+          row.customType === "ak-role-submission-closure" &&
+          (row.data?.details?.judgeStatus === "converged" || row.details?.judgeStatus === "converged"),
+      );
+      assert.equal(judgeClosure, true);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
