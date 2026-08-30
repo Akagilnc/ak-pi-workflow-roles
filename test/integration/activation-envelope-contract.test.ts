@@ -17,6 +17,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
 import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
@@ -29,6 +30,7 @@ import {
   durableSessionPointer,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
+  createCountersignRoleRuntime,
   createRoleRuntimeExtension,
   type AcceptedActivationFact,
   type ToolExecutionObservationRecord,
@@ -59,6 +61,7 @@ import {
 } from "../helpers/pi-test-harness.ts";
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 
 function sha256Hex(bytes: Uint8Array | string): string {
@@ -442,6 +445,70 @@ test("remaining support tools expose their actual registration inventory", async
       });
     }
   });
+});
+
+test("countersign envelope execute rejects infrastructure failure and non-unique final before acceptance", async () => {
+  const tools = new Map<string, { name: string; execute: Function }>();
+  const pi = {
+    registerTool(tool: { name: string; execute: Function }) { tools.set(tool.name, tool); },
+    on() {},
+    getAllTools() { return [{ name: COUNTERSIGN_OUTPUT_TOOL_NAME }, { name: "bash" }]; },
+  } as unknown as ExtensionAPI;
+  let infraHostCalls = 0;
+  const runtime = createCountersignRoleRuntime(
+    pi,
+    { loadSoul: async () => "COUNTERSIGN LAW" },
+    {
+      failInfrastructure(error: unknown, _ctx: unknown, id?: string) {
+        infraHostCalls += 1;
+        assert.equal(id, "infra");
+        throw error instanceof Error ? error : new Error(String(error));
+      },
+    },
+  );
+  await runtime.activate();
+  const tool = tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+
+  // (a) infrastructure-failure declaration reaches the host before any acceptance.
+  const infraSession = SessionManager.inMemory();
+  infraSession.appendMessage({
+    role: "assistant",
+    content: [{ type: "toolCall", id: "infra", name: COUNTERSIGN_OUTPUT_TOOL_NAME, arguments: {} }],
+    api: "openai-responses",
+    provider: "test",
+    model: "test",
+    usage,
+    stopReason: "toolUse",
+    timestamp: 0,
+  });
+  await assert.rejects(
+    tool.execute("infra", { infrastructureFailure: { diagnostic: "countersign engine down" } }, undefined, undefined, { sessionManager: infraSession }),
+    (error: unknown) => error instanceof Error && error.message === "countersign engine down",
+  );
+  assert.equal(infraHostCalls, 1, "infra declaration reaches the host exactly once");
+
+  // (b) non-unique final submission is rejected, never accepted.
+  const nonUniqueSession = SessionManager.inMemory();
+  nonUniqueSession.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "toolCall", id: "one", name: COUNTERSIGN_OUTPUT_TOOL_NAME, arguments: {} },
+      { type: "toolCall", id: "two", name: COUNTERSIGN_OUTPUT_TOOL_NAME, arguments: {} },
+    ],
+    api: "openai-responses",
+    provider: "test",
+    model: "test",
+    usage,
+    stopReason: "toolUse",
+    timestamp: 0,
+  });
+  await assert.rejects(
+    tool.execute("one", { countersignStatus: "continue" }, undefined, undefined, { sessionManager: nonUniqueSession }),
+    /非唯一终局/,
+  );
 });
 
 test("every registered role writes exactly one accepted-activation fact after admission", async () => {
