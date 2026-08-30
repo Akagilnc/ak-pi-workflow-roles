@@ -184,9 +184,9 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           if (!closure.accepted) {
             return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
           }
-          // A sealed role session cannot accept further work. This is typed ACP
-          // cancellation, independent of host-specific Stop hooks.
-          connection.notify("session/cancel", { sessionId });
+          // Wait for ACP's typed close acknowledgement before tearing down the
+          // process; Stop hooks and fire-and-forget cancellation are not closure.
+          await connection.request("session/close", { sessionId });
           return { code: 0, stderr: "", timedOut: false };
         } finally {
           await connection.close();
