@@ -29,11 +29,11 @@ import {
   durableSessionPointer,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
-  createRoleRuntimeExtension,
   type AcceptedActivationFact,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../../src/activation-trace.ts";
+import { createPiRoleRuntimeExtension as createRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import {
   buildDispatchStubFact,
   reconcileInvocation,
