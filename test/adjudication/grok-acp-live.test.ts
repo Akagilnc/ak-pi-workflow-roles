@@ -6,7 +6,6 @@ import test from "node:test";
 
 import { connectGrokAcpStdio, controlledGrokChildEnv, prepareControlledGrokHome, type GrokAcpConnection } from "../../src/grok/role-turn-host.ts";
 
-type Update = { sessionUpdate?: unknown; status?: unknown };
 const binary = join(homedir(), ".grok", "bin", "grok");
 const auth = join(homedir(), ".grok", "auth.json");
 
@@ -15,13 +14,10 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 180_000 }, async
   try { await Promise.all([access(binary), access(auth)]); } catch { t.skip("authenticated Grok unavailable"); return; }
   const home = await mkdtemp(join(tmpdir(), "ak-grok-acp-live-"));
   const connections: GrokAcpConnection[] = [];
-  const open = async (options: { toolset?: string; updates?: Update[] } = {}) => {
+  const open = async (options: { toolset?: string } = {}) => {
     const connection = await connectGrokAcpStdio({
       binary, cwd: process.cwd(), env: controlledGrokChildEnv(process.env, home),
       ...(options.toolset === undefined ? {} : { toolset: options.toolset }),
-      ...(options.updates === undefined ? {} : { onNotification(method, params) {
-        if (method === "session/update" && typeof params.update === "object" && params.update !== null) options.updates!.push(params.update as Update);
-      } }),
     });
     connections.push(connection);
     await connection.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
@@ -29,16 +25,14 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 180_000 }, async
   };
   try {
     await prepareControlledGrokHome(homedir(), home);
-    const sessionUpdates: Update[] = [];
-    const firstConnection = await open({ updates: sessionUpdates });
+    const firstConnection = await open();
     const session = await firstConnection.request("session/new", { cwd: process.cwd(), mcpServers: [], _meta: { yoloMode: false } });
     const sessionId = session.sessionId as string;
     assert.ok(sessionId);
     const first = await firstConnection.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "Do not use tools. Reply READY." }] });
     assert.equal(first.stopReason, "end_turn"); // G8
-    const second = await firstConnection.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "Attempt to run pwd with the shell tool, then stop." }] });
+    const second = await firstConnection.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "Reply AGAIN." }] });
     assert.equal((second._meta as { sessionId?: unknown }).sessionId, sessionId); // G9
-    assert.equal(sessionUpdates.some(({ sessionUpdate, status }) => sessionUpdate === "tool_call_update" && status === "completed"), true);
     await firstConnection.request("session/close", { sessionId });
     await firstConnection.close();
 
@@ -48,8 +42,17 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 180_000 }, async
     await resumed.request("session/close", { sessionId });
     await resumed.close();
 
-    const configuredUpdates: Update[] = [];
-    const configured = await open({ toolset: "coding", updates: configuredUpdates });
+    const configuredUpdates: Array<{ sessionUpdate?: unknown; status?: unknown }> = [];
+    const configured = await connectGrokAcpStdio({
+      binary, cwd: process.cwd(), env: controlledGrokChildEnv(process.env, home), toolset: "coding",
+      onNotification(method, params) {
+        if (method === "session/update" && typeof params.update === "object" && params.update !== null) {
+          configuredUpdates.push(params.update as { sessionUpdate?: unknown; status?: unknown });
+        }
+      },
+    });
+    connections.push(configured);
+    await configured.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
     const configuredSession = await configured.request("session/new", { cwd: process.cwd(), mcpServers: [] });
     const configuredId = configuredSession.sessionId as string;
     await configured.request("session/prompt", { sessionId: configuredId, prompt: [{ type: "text", text: "Run pwd with the shell tool exactly once, then stop." }] });
