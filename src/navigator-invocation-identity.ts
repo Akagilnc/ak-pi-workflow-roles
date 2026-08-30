@@ -287,6 +287,11 @@ function durableTerminalAt(
 }
 
 function isPackagedRoleTerminalEntry(entry: NavigatorInvocationEntryLike | undefined): boolean {
+  if (entry?.type === "custom" && entry.customType === "ak-role-submission-closure") {
+    return isDurablePackagedRoleTerminalResult(
+      typeof entry.data === "object" && entry.data !== null ? entry.data : {},
+    );
+  }
   if (entry?.type !== "message") return false;
   const message = entry.message;
   if (message?.role !== "toolResult") return false;
