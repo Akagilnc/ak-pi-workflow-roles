@@ -523,7 +523,8 @@ const WRITER_LEASE_RECLAIM_ROUNDS = 3;
  * race repeatedly lost) surfaces the same typed error instead of spinning.
  *
  * `onCleanupFailure` receives a non-terminal diagnostic line when release-time
- * lock cleanup fails or a contested lock cannot be read. Release stays
+ * lock cleanup fails, a contested lock cannot be read, or a stale lock is
+ * reclaimed (the #556 orphan-pi residual declaration). Release stays
  * best-effort (a stale lock is reclaimed by the next acquire's autopsy), but
  * the true error identity must still land somewhere observable — silent
  * swallowing is forbidden.
@@ -532,17 +533,23 @@ export async function acquireRunWriterLease(
   runDirectory: string,
   onCleanupFailure?: (diagnostic: string) => void,
 ): Promise<RunWriterLease> {
-  const reportCleanupFailure = (error: unknown): void => {
-    // Sink isolation: a throwing onCleanupFailure must not propagate through
-    // release() — release stays best-effort by contract. The true cleanup
-    // cause has already been handed to the sink as its argument.
+  const reportDiagnostic = (diagnostic: string): void => {
+    // Single sink exit for every non-terminal writer-lease diagnostic (#556):
+    // a throwing onCleanupFailure must not propagate through release() or
+    // acquire() — both are best-effort by contract. Template wording stays at
+    // the call sites, never inside this wrapper. The default io.stderr writes
+    // raw, so this exit guarantees the line delimiter.
+    const line = diagnostic.endsWith("\n") ? diagnostic : `${diagnostic}\n`;
     try {
-      onCleanupFailure?.(
-        `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
-      );
+      onCleanupFailure?.(line);
     } catch {
-      // diagnostic-sink failure is itself best-effort; never break release().
+      // diagnostic-sink failure is itself best-effort; never break acquire()/release().
     }
+  };
+  const reportCleanupFailure = (error: unknown): void => {
+    reportDiagnostic(
+      `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+    );
   };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
   let lastAutopsy: WriterLockAutopsy = { verdict: "absent" };
@@ -585,6 +592,12 @@ export async function acquireRunWriterLease(
         `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
       );
     }
+    // #556 residual declaration, facts only: the pid-only autopsy proves the
+    // CLI holder died; its pi child may outlive it and keep writing this run.
+    // Declare — do not guard.
+    reportDiagnostic(
+      `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run — check for a surviving pi process on this run before continuing`,
+    );
   }
   throw new RunWriterLeaseHeldError(
     `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,

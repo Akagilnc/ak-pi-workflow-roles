@@ -16111,13 +16111,18 @@ async function createWriterLease(lockPath, runDirectory, reportCleanupFailure) {
   };
 }
 async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
-  const reportCleanupFailure = (error) => {
+  const reportDiagnostic = (diagnostic) => {
+    const line2 = diagnostic.endsWith("\n") ? diagnostic : `${diagnostic}
+`;
     try {
-      onCleanupFailure?.(
-        `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join7(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
-      );
+      onCleanupFailure?.(line2);
     } catch {
     }
+  };
+  const reportCleanupFailure = (error) => {
+    reportDiagnostic(
+      `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join7(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+    );
   };
   const lockPath = join7(runDirectory, WRITER_LOCK_FILE);
   let lastAutopsy = { verdict: "absent" };
@@ -16149,6 +16154,9 @@ async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
         `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`
       );
     }
+    reportDiagnostic(
+      `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run \u2014 check for a surviving pi process on this run before continuing`
+    );
   }
   throw new RunWriterLeaseHeldError(
     `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`
