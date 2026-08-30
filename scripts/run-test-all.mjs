@@ -19,6 +19,11 @@ const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/package/package-entrypoint-navigator.integration.test.ts",
   "test/package/package-entrypoint-observation.integration.test.ts",
   "test/package/package-entrypoint-packaged-workers.integration.test.ts",
+  // #567: cold Doctor lifecycle + install surface — real pack/Pi under ordinary
+  // file-parallelism contended past hang detectors; schedule on heavy concurrency=2
+  // instead of widening wait windows (full-suite #567 evidence).
+  "test/package/doctor-package-lifecycle.test.ts",
+  "test/package/public-cli-install.test.ts",
 ]);
 
 const TIERS = Object.freeze([

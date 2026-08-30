@@ -352,9 +352,6 @@ function issuePiDurablePrincipalCoordinates(request) {
     sessionFile: join3(sessionDirectory, "session.jsonl")
   };
 }
-function decodePiDurablePrincipal(authority, principal) {
-  return authority.decode(principal);
-}
 var piDurablePrincipalAuthority;
 var init_durable_principal = __esm({
   "src/pi/durable-principal.ts"() {
@@ -15461,9 +15458,8 @@ function safeBookKey(cwd) {
     return basename3(resolve3(cwd)) || "default";
   }
 }
-function resolveSitianRecordPath(input) {
+function resolveSitianRecordPathInLedger(input, ledgerHome) {
   const cwd = input.cwd ?? process.cwd();
-  const ledgerHome = resolveActivationLedgerHome();
   const category = resolveSitianVolumeCategory(input.kind);
   let sessionDir;
   if (input.sessionParent !== void 0 && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
@@ -15488,6 +15484,9 @@ function resolveSitianRecordPath(input) {
   }
   const recordFile = join6(sessionDir, "records.jsonl");
   return { sessionDir, recordFile, ledgerHome };
+}
+function resolveSitianRecordPath(input) {
+  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
 }
 function appendSitianRecord(input) {
   try {
@@ -15719,10 +15718,7 @@ function buildMethodArgs(methods) {
   return skillArgs;
 }
 function buildPiTurnExtraArgs(request, authority, extraPiArgs = []) {
-  const { sessionFile, sessionDirectory } = decodePiDurablePrincipal(
-    authority,
-    request.principal
-  );
+  const { sessionFile, sessionDirectory } = authority.decode(request.principal);
   const prompt = request.continuation.kind === "initial" || request.continuation.kind === "resume" ? request.continuation.prompt : (() => {
     const _exhaustive = request.continuation;
     return _exhaustive;
@@ -15885,7 +15881,7 @@ function createPiRoleTurnHost(config) {
   };
 }
 async function appendPiSessionCustomEntry(authority, principal, customType, data) {
-  const { sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const { sessionFile } = authority.decode(principal);
   const text = await readFile3(sessionFile, "utf8");
   let parentId = null;
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
@@ -15920,7 +15916,6 @@ var init_role_turn_host = __esm({
     "use strict";
     init_host_contracts();
     init_engine_detour();
-    init_durable_principal();
     init_sitian_facade();
     INTERNAL_ROLE_ENTRYPOINT_RELATIVE2 = "extensions/role-runtime.ts";
     execFileAsync = promisify(execFile);
@@ -16632,10 +16627,7 @@ async function readRoleRunIdentity(runDirectory) {
   };
 }
 async function markRunAdmitted(admitted, authority) {
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(
-    authority,
-    admitted.principal
-  );
+  const { sessionDirectory, sessionFile } = authority.decode(admitted.principal);
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
     role: admitted.role,
@@ -17166,7 +17158,6 @@ var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_ST
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
-    init_durable_principal();
     init_activation_ledger_topology();
     init_cli_errors();
     init_typed_provider_http();
@@ -18223,7 +18214,7 @@ import {
 import { basename as basename5, isAbsolute as isAbsolute5, join as join12, resolve as resolve7, sep as sep3 } from "node:path";
 function issueAdmissionPlacement(authority, request) {
   const principal = authority.issue(request);
-  const { sessionDirectory, sessionFile } = decodePiDurablePrincipal(authority, principal);
+  const { sessionDirectory, sessionFile } = authority.decode(principal);
   const runDirectory = join12(sessionDirectory, "..");
   const ledgerHome = resolveActivationLedgerHome(
     request.home === void 0 ? void 0 : () => request.home
@@ -20052,7 +20043,6 @@ var init_invocation = __esm({
     "use strict";
     init_activation_ledger_topology();
     init_activation_ledger_git();
-    init_durable_principal();
     init_ticket_frontmatter();
     init_doctor_evidence();
     init_collector_config();
@@ -20680,6 +20670,224 @@ var init_analyst_gate_cycles_read = __esm({
   }
 });
 
+// src/submission-errors.ts
+var init_submission_errors = __esm({
+  "src/submission-errors.ts"() {
+    "use strict";
+  }
+});
+
+// src/run-terminal-artifacts.ts
+import { readdir as readdir4, readFile as readFile12 } from "node:fs/promises";
+import { basename as basename6, dirname as dirname8, join as join15 } from "node:path";
+function isMissingPathError2(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+function errorText2(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function isRecord9(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readUsableTerminalArtifactBody(body) {
+  if (body === null) {
+    return { ok: false, reason: "terminal artifact JSON value is null" };
+  }
+  if (!isRecord9(body)) {
+    return {
+      ok: false,
+      reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`
+    };
+  }
+  if (typeof body.role !== "string" || body.role.trim() === "") {
+    return {
+      ok: false,
+      reason: "terminal artifact missing nonblank producer-owned role field"
+    };
+  }
+  return { ok: true, body };
+}
+async function readTerminalArtifactAtPath(path, file) {
+  let raw;
+  try {
+    raw = await readFile12(path, "utf8");
+  } catch (error) {
+    if (isMissingPathError2(error)) return void 0;
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: errorText2(error)
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: error instanceof Error ? error.message : `terminal artifact JSON parse failed: ${String(error)}`
+    };
+  }
+  const usable = readUsableTerminalArtifactBody(parsed);
+  if (!usable.ok) {
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: usable.reason
+    };
+  }
+  return { status: "present", file, path, body: usable.body };
+}
+async function listUniqueErrorFallbackPaths(directories) {
+  const found = [];
+  for (const dir of directories) {
+    let names;
+    try {
+      names = await readdir4(dir);
+    } catch (error) {
+      if (isMissingPathError2(error)) continue;
+      throw error;
+    }
+    for (const name of names.sort((a, b) => a.localeCompare(b))) {
+      if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
+      found.push(join15(dir, name));
+    }
+  }
+  return found;
+}
+function runIdFromRunDirectory(runDirectory) {
+  const name = basename6(runDirectory);
+  const at = name.lastIndexOf("@");
+  if (at <= 0 || at === name.length - 1) return void 0;
+  return name.slice(0, at);
+}
+function presentUniqueFallbackBoundToRun(body, expectedRunId) {
+  if (expectedRunId === void 0) return false;
+  return typeof body.runId === "string" && body.runId === expectedRunId;
+}
+async function readRunTerminalArtifact(runDirectory) {
+  const artifactsDir = join15(runDirectory, "artifacts");
+  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
+    const path = join15(artifactsDir, file);
+    const read3 = await readTerminalArtifactAtPath(path, file);
+    if (read3 !== void 0) return read3;
+  }
+  for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
+    const path = join15(runDirectory, relative3);
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 !== void 0) return read3;
+  }
+  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 !== void 0) return read3;
+  }
+  const expectedRunId = runIdFromRunDirectory(runDirectory);
+  for (const path of await listUniqueErrorFallbackPaths([dirname8(runDirectory)])) {
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 === void 0) continue;
+    if (read3.status === "present") {
+      if (!presentUniqueFallbackBoundToRun(read3.body, expectedRunId)) continue;
+      return read3;
+    }
+  }
+  return { status: "absent" };
+}
+var RUN_TERMINAL_ARTIFACT_FILES, RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS, UNIQUE_ERROR_FALLBACK_NAME;
+var init_run_terminal_artifacts = __esm({
+  "src/run-terminal-artifacts.ts"() {
+    "use strict";
+    RUN_TERMINAL_ARTIFACT_FILES = [
+      "report.json",
+      "error.json",
+      "audit-incomplete.json"
+    ];
+    RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
+      "artifacts/error.settlement.json",
+      "error.settlement.json"
+    ];
+    UNIQUE_ERROR_FALLBACK_NAME = /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
+  }
+});
+
+// src/submission-ledger.ts
+function isAcceptedProjection(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value;
+  return candidate.kind === "accepted" && typeof candidate.role === "string" && typeof candidate.status === "string" && typeof candidate.decisiveFacts === "object" && candidate.decisiveFacts !== null;
+}
+function isAuditEscalationTerminalProjection(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value;
+  return candidate.kind === "audit_escalation" && typeof candidate.role === "string" && candidate.status === "audit_escalation" && typeof candidate.decisiveFacts === "object" && candidate.decisiveFacts !== null;
+}
+function submissionRecordFile(cwd, runId, home) {
+  const ledgerHome = resolveActivationLedgerHome(
+    home === void 0 ? void 0 : () => home
+  );
+  return resolveSitianRecordPathInLedger({
+    level: "event",
+    kind: "candidate",
+    subject: { runId },
+    cwd
+  }, ledgerHome).recordFile;
+}
+async function readOwnedSubmissionRecords(cwd, runId, home) {
+  const file = submissionRecordFile(cwd, runId, home);
+  const { records: records2 } = await readSitianRecords(file);
+  return {
+    file,
+    owned: records2.filter((record4) => typeof record4.subject === "object" && record4.subject?.runId === runId)
+  };
+}
+async function readSealedSubmission(cwd, runId, home) {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  for (let index = owned.length - 1; index >= 0; index -= 1) {
+    const record4 = owned[index];
+    if (record4?.kind !== "sealed") continue;
+    const payload = record4.payload;
+    if (payload?.type === "sealed" && isAcceptedProjection(payload.projection)) return payload.projection;
+  }
+  return void 0;
+}
+async function readAuditEscalationSubmission(cwd, runId, home) {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  for (let index = owned.length - 1; index >= 0; index -= 1) {
+    const record4 = owned[index];
+    if (record4?.kind !== "outcome") continue;
+    const payload = record4.payload;
+    if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation") continue;
+    if (isAuditEscalationTerminalProjection(payload.projection)) return payload.projection;
+  }
+  return void 0;
+}
+async function readLatestSubmissionOutcome(cwd, runId, home) {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  for (let index = owned.length - 1; index >= 0; index -= 1) {
+    const record4 = owned[index];
+    if (record4?.kind !== "outcome") continue;
+    const payload = record4.payload;
+    if (payload?.type === "outcome" && typeof payload.outcome === "string") {
+      return payload;
+    }
+  }
+  return void 0;
+}
+var init_submission_ledger = __esm({
+  "src/submission-ledger.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+    init_audit_escalation();
+    init_submission_errors();
+    init_terminating_tools();
+    init_run_terminal_artifacts();
+    init_sitian_facade();
+  }
+});
+
 // src/session-opening-materials.ts
 var packageRootUrl, MAIN_ROLE_SESSION_MATERIALS;
 var init_session_opening_materials = __esm({
@@ -20732,11 +20940,11 @@ var init_engine_detour_tool = __esm({
 });
 
 // src/receipt-delivery-policy.ts
-function isRecord9(value) {
+function isRecord10(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseNoReceiptLifecycleFacts(input) {
-  if (!isRecord9(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord9(item) && typeof item.reason === "string")) {
+  if (!isRecord10(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord10(item) && typeof item.reason === "string")) {
     throw new TypeError("malformed no-receipt lifecycle facts");
   }
   return {
@@ -20806,29 +21014,7 @@ function createComplianceDecisionTool(name, description) {
     return { content: [{ type: "text", text: "\u5BA1\u8BA1\u51B3\u8BAE\u5DF2\u6536" }], details: params, terminate: true };
   } };
 }
-function readListField(value) {
-  return Array.isArray(value) ? value : value === void 0 ? [] : [value];
-}
-function readComplianceCandidate(arguments_, usage) {
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
-    throw new ComplianceCandidateUnreadableError(
-      { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ },
-      arguments_,
-      usage
-    );
-  }
-  const args = arguments_;
-  const status = args.status;
-  if (status === "pass") return { status, ...usage === void 0 ? {} : { usage } };
-  if (status === "revise") return { status, violations: readListField(args.violations), ...usage === void 0 ? {} : { usage } };
-  if (status === "escalate") return { status, ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}, ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}, ...usage === void 0 ? {} : { usage } };
-  throw new ComplianceCandidateUnreadableError(
-    { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" },
-    arguments_,
-    usage
-  );
-}
-var ComplianceCandidateUnreadableError, nonblank2, decisionGateSchema, complianceDecisionSchema, COMPLIANCE_RESPONSE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE;
+var nonblank2, decisionGateSchema, complianceDecisionSchema, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE;
 var init_compliance_transport = __esm({
   "src/compliance-transport.ts"() {
     "use strict";
@@ -20836,23 +21022,9 @@ var init_compliance_transport = __esm({
     init_evidence_child_executor();
     init_auditor_dossier_tool();
     init_sitian_facade();
-    ComplianceCandidateUnreadableError = class extends Error {
-      observation;
-      candidate;
-      usage;
-      constructor(observation, candidate, usage) {
-        const detail = observation.kind === "non-object-arguments" ? `${observation.kind}:${observation.type}` : observation.kind === "object-status-unreadable" ? `${observation.kind}:${observation.status}` : observation.kind === "missing-subject" ? `${observation.kind}:${observation.subject}` : observation.kind;
-        super(`Compliance candidate unreadable: ${detail}`);
-        this.name = "ComplianceCandidateUnreadableError";
-        this.observation = observation;
-        this.candidate = candidate;
-        if (usage !== void 0) this.usage = usage;
-      }
-    };
     nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
     decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
     complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "pass | revise | escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), violations: typebox_exports.Array(nonblank2, { description: "\u89C2\u5BDF\u5230\u7684\u5408\u89C4\u8FDD\u89C4" }), conflicts: typebox_exports.Array(nonblank2, { description: "\u672A\u51B3\u6743\u5A01\u6216\u6267\u884C\u51B2\u7A81" }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "\u5347\u7EA7\u95EE\u9898\u4E0E\u53EF\u9009\u9009\u9879" }) }, { additionalProperties: true, required: [] });
-    COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
     AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
     AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
   }
@@ -21024,13 +21196,13 @@ var init_reviewer_dispatch = __esm({
 });
 
 // src/public-cli/reviewer-dispatch-rejection.ts
-import { readFile as readFile12, unlink as unlink3 } from "node:fs/promises";
-import { join as join15 } from "node:path";
+import { readFile as readFile13, unlink as unlink3 } from "node:fs/promises";
+import { join as join16 } from "node:path";
 function isReviewerPreflightViolation(value) {
   return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
 }
 function reviewerDispatchRejectionPath(runDirectory) {
-  return join15(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+  return join16(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 async function clearReviewerDispatchRejection(runDirectory) {
   try {
@@ -21045,7 +21217,7 @@ async function clearReviewerDispatchRejection(runDirectory) {
 async function readReviewerDispatchRejection(runDirectory) {
   let raw;
   try {
-    raw = await readFile12(reviewerDispatchRejectionPath(runDirectory), "utf8");
+    raw = await readFile13(reviewerDispatchRejectionPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -21216,56 +21388,12 @@ function durableTerminalAt(entries, index) {
     message
   };
 }
-function isInvocationMarkerEntry(entry) {
-  return entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY;
-}
 function findLatestDurablePackagedRoleTerminal(entries) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const terminal = durableTerminalAt(entries, i);
     if (terminal !== void 0) return terminal;
   }
   return void 0;
-}
-function bindCurrentDurableTerminalToMarker(entries) {
-  const terminal = findLatestDurablePackagedRoleTerminal(entries);
-  if (terminal === void 0) return { kind: "absent" };
-  let markerIndex = -1;
-  for (let i = terminal.index - 1; i >= 0; i -= 1) {
-    if (isInvocationMarkerEntry(entries[i])) {
-      markerIndex = i;
-      break;
-    }
-  }
-  if (markerIndex < 0) {
-    return { kind: "unbound", terminal };
-  }
-  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
-  if (marker === void 0) {
-    return { kind: "unbound", terminal };
-  }
-  let windowEnd = entries.length;
-  for (let i = markerIndex + 1; i < entries.length; i += 1) {
-    if (isInvocationMarkerEntry(entries[i])) {
-      windowEnd = i;
-      break;
-    }
-  }
-  let durableCount = 0;
-  for (let i = markerIndex + 1; i < windowEnd; i += 1) {
-    if (durableTerminalAt(entries, i) !== void 0) durableCount += 1;
-  }
-  if (durableCount !== 1) return { kind: "ambiguous" };
-  if (terminal.index <= markerIndex || terminal.index >= windowEnd) {
-    return { kind: "ambiguous" };
-  }
-  return {
-    kind: "bound",
-    terminal,
-    marker: { ...marker, index: markerIndex }
-  };
-}
-function isReceiptSettlementBindingClear(entries) {
-  return bindCurrentDurableTerminalToMarker(entries).kind !== "ambiguous";
 }
 var NAVIGATOR_INVOCATION_ENTRY, NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS, PACKAGED_ROLE_OUTPUT_TOOLS;
 var init_navigator_invocation_identity = __esm({
@@ -21438,10 +21566,25 @@ var init_terminal = __esm({
 
 // src/public-cli/settlement.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { appendFile as appendFile2, readFile as readFile13, readdir as readdir4, writeFile as writeFile6 } from "node:fs/promises";
-import { dirname as dirname8, join as join16 } from "node:path";
+import { appendFile as appendFile2, readFile as readFile14, readdir as readdir5, writeFile as writeFile6 } from "node:fs/promises";
+import { dirname as dirname9, join as join17 } from "node:path";
+function sealedLedgerHome(admitted) {
+  return homeFromRunDirectory(admitted.runDirectory);
+}
+async function sealedLedgerOutcome(admitted) {
+  return readSealedSubmission(admitted.projectRoot, admitted.runId, sealedLedgerHome(admitted));
+}
+async function auditEscalationLedgerOutcome(admitted, role) {
+  const projection = await readAuditEscalationSubmission(
+    admitted.projectRoot,
+    admitted.runId,
+    sealedLedgerHome(admitted)
+  );
+  if (projection?.role !== role) return void 0;
+  return projection;
+}
 function coordinatesFromAdmitted(authority, admitted) {
-  return decodePiDurablePrincipal(authority, admitted.principal);
+  return authority.decode(admitted.principal);
 }
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
@@ -21502,10 +21645,10 @@ function presentControlledFailure(failure, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile13(sessionFile, "utf8");
+    await readFile14(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
-    if (isMissingPathError2(error)) return { state: "missing" };
+    if (isMissingPathError3(error)) return { state: "missing" };
     return {
       state: "unreadable",
       diagnostic: error instanceof Error ? error.message || error.name : String(error)
@@ -21615,7 +21758,7 @@ function explicitInternalKnownFailureClassificationInput(failure) {
     ...failure.details === void 0 ? {} : { knownDetails: failure.details }
   };
 }
-function isMissingPathError2(error) {
+function isMissingPathError3(error) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 function sessionReadFailure(error, fallbackMessage) {
@@ -21644,7 +21787,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile13(sessionFile, "utf8");
+  const text = await readFile14(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -21705,12 +21848,12 @@ async function readSitianRetainedAuditorProviderStop(sessionFile) {
       kind: "auditor",
       sessionParent: sessionFile,
       // Path is driven by sessionParent when under ledger home; cwd is a fallback only.
-      cwd: dirname8(sessionFile)
+      cwd: dirname9(sessionFile)
     });
     const { records: records2 } = await readSitianRecords(recordFile);
     for (let i = records2.length - 1; i >= 0; i -= 1) {
       const payload = records2[i]?.payload;
-      if (!isRecord10(payload) || !isRecord10(payload.response)) continue;
+      if (!isRecord11(payload) || !isRecord11(payload.response)) continue;
       if (typeof payload.type === "string") continue;
       const stop = sessionProviderStopFromAssistant(payload.response);
       if (stop !== void 0) return stop;
@@ -21731,23 +21874,23 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join16(dirname8(sessionFile), "evidence-children");
+  const childDirectory = join17(dirname9(sessionFile), "evidence-children");
   let names;
   try {
-    names = await readdir4(childDirectory);
+    names = await readdir5(childDirectory);
   } catch (error) {
-    if (isMissingPathError2(error)) return void 0;
+    if (isMissingPathError3(error)) return void 0;
     throw sessionReadFailure(error, "failed to read bound evidence-child session directory");
   }
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join16(childDirectory, file));
+      entries = await readBoundSessionEntries(join17(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord10(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord11(header) || header.parentSession !== sessionFile) continue;
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
@@ -21766,19 +21909,19 @@ async function loadBoundAuditorVolumes(sessionFile) {
   try {
     parentEntries = await readBoundSessionEntries(sessionFile);
   } catch (error) {
-    if (isMissingPathError2(error)) return void 0;
+    if (isMissingPathError3(error)) return void 0;
     throw sessionReadFailure(error, "failed to read parent session for auditor binding");
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === void 0) return void 0;
   const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
   const isResumeEnvelope = (msg) => {
-    if (!isRecord10(msg) || msg.role !== "user") return false;
+    if (!isRecord11(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof msg.content === "string" ? msg.content : void 0;
     if (text === RESUME_ENVELOPE) return true;
     const content = msg.content;
     if (Array.isArray(content)) {
-      return content.some((p) => isRecord10(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+      return content.some((p) => isRecord11(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
     }
     return false;
   };
@@ -21790,26 +21933,26 @@ async function loadBoundAuditorVolumes(sessionFile) {
     latestParentUserIndex = i;
     break;
   }
-  const childDirectory = join16(dirname8(sessionFile), "auditor-roles");
+  const childDirectory = join17(dirname9(sessionFile), "auditor-roles");
   let names;
   try {
-    names = await readdir4(childDirectory);
+    names = await readdir5(childDirectory);
   } catch (error) {
-    if (isMissingPathError2(error)) return void 0;
+    if (isMissingPathError3(error)) return void 0;
     throw sessionReadFailure(error, "failed to read bound auditor session directory");
   }
   const valid = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join16(childDirectory, file));
+      entries = await readBoundSessionEntries(join17(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord10(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord11(header) || header.parentSession !== sessionFile) continue;
     const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
-    const bindingParent = isRecord10(bindingEntry?.data) && isRecord10(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
+    const bindingParent = isRecord11(bindingEntry?.data) && isRecord11(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
@@ -21828,11 +21971,11 @@ function complianceFailureFromAuditorVolumes(volumes) {
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
       const entry = entries[i];
-      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord10(entry.data)) continue;
-      const parent = isRecord10(entry.data.parent) ? entry.data.parent : void 0;
-      const failure = isRecord10(entry.data.failure) ? entry.data.failure : void 0;
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord11(entry.data)) continue;
+      const parent = isRecord11(entry.data.parent) ? entry.data.parent : void 0;
+      const failure = isRecord11(entry.data.failure) ? entry.data.failure : void 0;
       if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider" && failure?.cause !== "unrecognized") continue;
-      const identity = isRecord10(failure.identity) ? failure.identity : void 0;
+      const identity = isRecord11(failure.identity) ? failure.identity : void 0;
       return {
         cause: failure.cause === "provider" ? "provider" : "unrecognized",
         ...identity === void 0 ? {} : { identity: {
@@ -21840,7 +21983,7 @@ function complianceFailureFromAuditorVolumes(volumes) {
           ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
         } },
         ...typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {},
-        ...isRecord10(failure.details) ? { details: failure.details } : {}
+        ...isRecord11(failure.details) ? { details: failure.details } : {}
       };
     }
   }
@@ -21887,9 +22030,9 @@ function typedFailedTerminatingToolKnownFailure(entries) {
     if (classification.kind !== "infrastructure") continue;
     if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
     if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
-    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord10(part) && part.type === "text" && typeof part.text === "string") : void 0;
-    const diagnostic = isRecord10(textPart) ? textPart.text : void 0;
-    const details = isRecord10(message.details) ? message.details : classification.fact;
+    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord11(part) && part.type === "text" && typeof part.text === "string") : void 0;
+    const diagnostic = isRecord11(textPart) ? textPart.text : void 0;
+    const details = isRecord11(message.details) ? message.details : classification.fact;
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
@@ -21938,7 +22081,7 @@ async function resolveAuditedRunnerFailureResolution(input) {
     );
     if (terminatingFailure !== void 0) return resolutionOf(terminatingFailure);
   } catch (error) {
-    if (!isMissingPathError2(error)) {
+    if (!isMissingPathError3(error)) {
       const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
       return resolutionOf({
         cause: "session",
@@ -22047,7 +22190,7 @@ function controlledFailureInputFromResolution(resolution) {
     } : {}
   };
 }
-function isRecord10(value) {
+function isRecord11(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function safelyRead(object, key) {
@@ -22074,7 +22217,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   const statusBase = judgeStatus;
   if (statusBase === "continue") {
     const fix = safelyRead(verdict, "fix");
-    if (fix.readable && isRecord10(fix.value)) {
+    if (fix.readable && isRecord11(fix.value)) {
       const summary = safelyRead(fix.value, "summary");
       if (summary.readable && typeof summary.value === "string") {
         facts.fixSummary = summary.value;
@@ -22084,7 +22227,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
     if (classes.readable && Array.isArray(classes.value)) {
       try {
         facts.classes = classes.value.map((entry) => {
-          if (!isRecord10(entry)) throw new Error("unreadable Judge class");
+          if (!isRecord11(entry)) throw new Error("unreadable Judge class");
           return {
             name: entry.name,
             owner: entry.owner,
@@ -22099,7 +22242,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   }
   if (statusBase === "escalate") {
     const gate = safelyRead(verdict, "decisionGate");
-    if (gate.readable && isRecord10(gate.value)) {
+    if (gate.readable && isRecord11(gate.value)) {
       const question = safelyRead(gate.value, "question");
       const options = safelyRead(gate.value, "options");
       if (question.readable && typeof question.value === "string") {
@@ -22145,7 +22288,7 @@ function fixerDecisiveFacts(output) {
     facts.reason = reason.value;
   }
   const blockerRead = safelyRead(candidate, "blocker");
-  if (statusBase === "refused" && blockerRead.readable && isRecord10(blockerRead.value)) {
+  if (statusBase === "refused" && blockerRead.readable && isRecord11(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
     if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
     const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
@@ -22157,13 +22300,13 @@ function fixerDecisiveFacts(output) {
     const blockers = [];
     try {
       for (const entry of classResults.value) {
-        if (!isRecord10(entry)) throw new Error("unreadable class result");
+        if (!isRecord11(entry)) throw new Error("unreadable class result");
         const name = safelyRead(entry, "name");
         const disposition = safelyRead(entry, "disposition");
         if (!name.readable || !disposition.readable) throw new Error("unreadable class result");
         rows.push({ name: name.value, disposition: disposition.value });
         const blocker = safelyRead(entry, "blocker");
-        if (disposition.value === "refused" && blocker.readable && isRecord10(blocker.value)) blockers.push(blocker.value);
+        if (disposition.value === "refused" && blocker.readable && isRecord11(blocker.value)) blockers.push(blocker.value);
       }
       facts.classResultCount = rows.length;
       facts.classDispositions = rows;
@@ -22196,7 +22339,7 @@ function collectorDecisiveFacts(receipt) {
   if (groups.readable && Array.isArray(groups.value)) {
     try {
       facts.groups = groups.value.map((group) => {
-        if (!isRecord10(group)) throw new Error("unreadable Collector group");
+        if (!isRecord11(group)) throw new Error("unreadable Collector group");
         const identity = safelyRead(group, "identity");
         const attendance = safelyRead(group, "attendance");
         const materials = safelyRead(group, "materials");
@@ -22230,7 +22373,7 @@ function doctorDecisiveFacts(output) {
     return facts;
   }
   const caseValue = safelyRead(candidate, "case");
-  if (caseValue.readable && isRecord10(caseValue.value)) {
+  if (caseValue.readable && isRecord11(caseValue.value)) {
     const issueNumber = safelyRead(caseValue.value, "issueNumber");
     const runsPath = safelyRead(caseValue.value, "runsPath");
     if (issueNumber.readable && issueNumber.value !== void 0) facts.issueNumber = issueNumber.value;
@@ -22241,7 +22384,7 @@ function doctorDecisiveFacts(output) {
   return facts;
 }
 function reviewerAxes(value) {
-  if (!isRecord10(value)) return [];
+  if (!isRecord11(value)) return [];
   return ["standards", "spec"].filter((axis) => {
     const projected = safelyRead(value, axis);
     return projected.readable && projected.value !== void 0;
@@ -22356,14 +22499,6 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
     );
   }
 }
-function auditToolNameForRole(role) {
-  switch (role) {
-    case "judge":
-      return JUDGE_AUDIT_TOOL_NAME;
-    case "doctor":
-      return DOCTOR_AUDIT_TOOL_NAME;
-  }
-}
 function boundRoleToolCallForResult(entries, resultIndex, message, outputToolName) {
   const callId = message.toolCallId;
   if (typeof callId !== "string" || callId.trim() === "") return void 0;
@@ -22374,7 +22509,7 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
     const candidateMessage = entries[index]?.message;
     if (candidateMessage?.role === "assistant" && Array.isArray(candidateMessage.content)) {
       for (const part of candidateMessage.content) {
-        if (!isRecord10(part) || part.type !== "toolCall" || part.id !== callId) {
+        if (!isRecord11(part) || part.type !== "toolCall" || part.id !== callId) {
           continue;
         }
         if (part.name !== outputToolName) return void 0;
@@ -22388,93 +22523,6 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
     }
   }
   return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex && calls[0].callIndex < resultIndex ? calls[0] : void 0;
-}
-function sameAuditValue(left, right) {
-  if (Object.is(left, right)) return true;
-  if (Array.isArray(left) && Array.isArray(right)) {
-    return left.length === right.length && left.every(
-      (value, index) => sameAuditValue(value, right[index])
-    );
-  }
-  if (isRecord10(left) && isRecord10(right)) {
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-    return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
-  }
-  return false;
-}
-function snapshotAuditDetails(details) {
-  const snapshot = /* @__PURE__ */ Object.create(null);
-  for (const key of Object.keys(details)) {
-    Object.defineProperty(snapshot, key, {
-      value: details[key],
-      enumerable: true,
-      configurable: true,
-      writable: true
-    });
-  }
-  return snapshot;
-}
-function boundAuditEscalationForResult(entries, resultIndex, message, role, outputToolName) {
-  const roleCall = boundRoleToolCallForResult(
-    entries,
-    resultIndex,
-    message,
-    outputToolName
-  );
-  if (roleCall === void 0) return void 0;
-  const retained = boundRetainedAuditResponse(
-    entries,
-    roleCall.callIndex,
-    resultIndex,
-    auditToolNameForRole(role)
-  );
-  if (retained === void 0) return void 0;
-  try {
-    const decision = readComplianceCandidate(retained.candidate);
-    if (decision.status !== "escalate") return void 0;
-    const details = message.details;
-    if (!isAuditEscalationResult(details) || !isRecord10(details)) return void 0;
-    const projectedDetails = snapshotAuditDetails(details);
-    const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
-    const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
-    if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
-    if (hasDecisionConflicts && !sameAuditValue(projectedDetails.conflicts, decision.conflicts)) return void 0;
-    const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
-    const hasDetailsGate = Object.hasOwn(projectedDetails, "auditDecisionGate");
-    if (hasDecisionGate !== hasDetailsGate) return void 0;
-    if (hasDecisionGate && !sameAuditValue(projectedDetails.auditDecisionGate, decision.decisionGate)) return void 0;
-    return { decision, details: projectedDetails };
-  } catch {
-    return void 0;
-  }
-}
-function isUnboundAuditEscalationFace(details) {
-  try {
-    if (isAuditEscalationResult(details)) return true;
-  } catch {
-  }
-  if (!isRecord10(details)) return false;
-  const kind = safelyRead(details, "kind");
-  return kind.readable && kind.value === "audit_escalation";
-}
-function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
-  const matches = [];
-  for (let index = callIndex + 1; index < resultIndex; index += 1) {
-    const entry = entries[index];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
-      continue;
-    }
-    if (!isRecord10(entry.data) || !isRecord10(entry.data.response)) continue;
-    const response = entry.data.response;
-    if (!Array.isArray(response.content)) continue;
-    const calls = response.content.filter(
-      (part) => isRecord10(part) && part.type === "toolCall"
-    );
-    if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
-    matches.push({ candidate: calls[0]?.arguments });
-  }
-  return matches.length === 1 ? matches[0] : void 0;
 }
 async function appendRunAttemptHistory(source, outcome) {
   const entries = await readBoundSessionEntries(source.sessionFile);
@@ -22519,47 +22567,6 @@ async function appendRunAttemptHistory(source, outcome) {
   } catch {
   }
 }
-function extractJudgeRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "judge",
-      JUDGE_OUTPUT_TOOL_NAME
-    );
-    if (escalation !== void 0) {
-      return {
-        kind: "audit_escalation",
-        role: "judge",
-        status: "audit_escalation",
-        decisiveFacts: { ...escalation.details }
-      };
-    }
-    if (isUnboundAuditEscalationFace(details)) continue;
-    if (!isRecord10(details)) continue;
-    const statusRead = safelyRead(details, "judgeStatus");
-    if (!statusRead.readable || typeof statusRead.value !== "string") continue;
-    const judgeStatus = statusRead.value;
-    const statusBase = judgeStatus;
-    if (statusBase !== "converged" && statusBase !== "continue" && statusBase !== "escalate") continue;
-    return {
-      kind: "accepted",
-      role: "judge",
-      status: judgeStatus,
-      decisiveFacts: judgeDecisiveFacts(details, judgeStatus)
-    };
-  }
-  return void 0;
-}
 function navigatorPhaseValue(value) {
   if (value === "plan" || value === "apply") return value;
   return null;
@@ -22574,7 +22581,7 @@ function parseNavigatorAttendanceDetails(details) {
   const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {};
   if (disposition === "recommendation") {
     const next = details.next;
-    if (!isRecord10(next) || typeof next.role !== "string") {
+    if (!isRecord11(next) || typeof next.role !== "string") {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -22582,7 +22589,7 @@ function parseNavigatorAttendanceDetails(details) {
       };
     }
     const reason = typeof details.reason === "string" ? details.reason : "";
-    const route = Array.isArray(details.route) ? details.route.filter(isRecord10).map((target) => ({
+    const route = Array.isArray(details.route) ? details.route.filter(isRecord11).map((target) => ({
       role: String(target.role),
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
@@ -22644,13 +22651,13 @@ function projectTerminalGateFact(rounds) {
 }
 async function extractGateFactFromSessionDirectory(sessionDirectory) {
   const rounds = await readAnalystGateCyclesFromAuditorRoles(
-    join16(sessionDirectory, "auditor-roles")
+    join17(sessionDirectory, "auditor-roles")
   );
   return projectTerminalGateFact(rounds);
 }
 async function withOptionalGateProjection(base, sessionDirectory) {
   const secondaryEvidence = base.roleOutcome.kind === "failure" ? base.roleOutcome.decisiveFacts.secondaryEvidence : void 0;
-  if (isRecord10(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
+  if (isRecord11(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
   const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
   return gate === void 0 ? base : { ...base, gate };
 }
@@ -22690,7 +22697,7 @@ function extractNavigatorFact(entries) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord10(details)) {
+      if (!isRecord11(details)) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -22723,7 +22730,7 @@ async function extractNavigatorFactFromAdmittedSession(sessionFile) {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractNavigatorFact(entries);
   } catch (error) {
-    if (isMissingPathError2(error)) {
+    if (isMissingPathError3(error)) {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -22740,8 +22747,8 @@ async function extractNavigatorFactFromAdmittedSession(sessionFile) {
 async function publishJudgeArtifacts(admitted, roleOutcome, coordinates) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join16(artifactsDir, "report.json");
-  const evidencePath = join16(artifactsDir, "evidence.json");
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -22785,8 +22792,8 @@ async function publishJudgeArtifacts(admitted, roleOutcome, coordinates) {
 async function publishCoderArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join16(artifactsDir, "report.json");
-  const evidencePath = join16(artifactsDir, "evidence.json");
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -22833,44 +22840,26 @@ async function publishCoderArtifacts(admitted, roleOutcome, coordinates, options
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractCoderRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      validateAcceptedDetails(CODER_OUTPUT_TOOL_NAME, message.details);
-      const output = validateAcceptedCoderDetails(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "coder",
-        status: output.status,
-        decisiveFacts: coderDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
 async function readLawfulSettlementEntries(sessionFile) {
   try {
     return await readBoundSessionEntries(sessionFile);
   } catch (error) {
-    if (isMissingPathError2(error)) return void 0;
+    if (isMissingPathError3(error)) return void 0;
     throw error instanceof Error && error.knownCause === "session" ? error : sessionReadFailure(error, "session unreadable");
   }
 }
 async function readLawfulJudgeRoleOutcome(admitted, authority) {
-  const { sessionFile } = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(sessionFile);
-  if (entries === void 0) return void 0;
-  return extractJudgeRoleOutcome(entries);
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role === "judge") {
+    const details = sealed.decisiveFacts;
+    return {
+      kind: "accepted",
+      role: "judge",
+      status: sealed.status,
+      decisiveFacts: judgeDecisiveFacts(details, sealed.status)
+    };
+  }
+  return auditEscalationLedgerOutcome(admitted, "judge");
 }
 async function hasLawfulJudgeTerminalResult(admitted, authority) {
   try {
@@ -22881,13 +22870,10 @@ async function hasLawfulJudgeTerminalResult(admitted, authority) {
   }
 }
 async function settleLawfulJudgeTerminalResult(admitted, authority) {
+  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority);
+  if (roleOutcome === void 0) return void 0;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(coordinates.sessionFile);
-  if (entries === void 0) return void 0;
-  const roleOutcome = extractJudgeRoleOutcome(entries);
-  if (roleOutcome === void 0) {
-    return void 0;
-  }
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishJudgeArtifacts(
     admitted,
@@ -22908,24 +22894,30 @@ async function trySettleJudgeTerminalResult(admitted, authority) {
   return settleLawfulJudgeTerminalResult(admitted, authority);
 }
 async function settleLawfulCoderTerminalResult(admitted, authority, options = {}) {
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "coder") return void 0;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(coordinates.sessionFile);
-  if (entries === void 0) return void 0;
-  const extracted = extractCoderRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const output = validateAcceptedCoderDetails(sealed.decisiveFacts);
+  const roleOutcome = {
+    kind: "accepted",
+    role: "coder",
+    status: sealed.status,
+    decisiveFacts: coderDecisiveFacts(output)
+  };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCoderArtifacts(
     admitted,
-    extracted.outcome,
+    roleOutcome,
     coordinates,
     {
-      coderOutput: extracted.output,
+      coderOutput: output,
       ...options.methodProvenance === void 0 ? {} : { methodProvenance: options.methodProvenance }
     }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId
@@ -22964,8 +22956,8 @@ function extractFixerMethodInvocations(entries, options) {
 async function publishFixerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join16(artifactsDir, "report.json");
-  const evidencePath = join16(artifactsDir, "evidence.json");
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -23017,40 +23009,19 @@ async function publishFixerArtifacts(admitted, roleOutcome, coordinates, options
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractFixerRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);
-      const output = validateFixerOutput(details);
-      const outcome = {
-        kind: "accepted",
-        role: "fixer",
-        status: output.status,
-        decisiveFacts: fixerDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
 async function settleLawfulFixerTerminalResult(admitted, authority, options) {
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "fixer") return void 0;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile);
-  if (entries === void 0) return void 0;
-  const extracted = extractFixerRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const output = validateFixerOutput(sealed.decisiveFacts);
+  const roleOutcome = {
+    kind: "accepted",
+    role: "fixer",
+    status: sealed.status,
+    decisiveFacts: fixerDecisiveFacts(output)
+  };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
@@ -23060,17 +23031,17 @@ async function settleLawfulFixerTerminalResult(admitted, authority, options) {
   });
   const artifacts = await publishFixerArtifacts(
     admitted,
-    extracted.outcome,
+    roleOutcome,
     coordinates,
     {
-      ...extracted.output === void 0 ? {} : { fixerOutput: extracted.output },
+      fixerOutput: output,
       methodProvenance: options.methodProvenance,
       methodInvocations
     }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId
@@ -23081,8 +23052,8 @@ async function settleLawfulFixerTerminalResult(admitted, authority, options) {
 async function publishCollectorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join16(artifactsDir, "report.json");
-  const evidencePath = join16(artifactsDir, "evidence.json");
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -23128,44 +23099,19 @@ async function publishCollectorArtifacts(admitted, roleOutcome, coordinates, opt
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractCollectorRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const receipt = validateAcceptedCollectorReceipt(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "collector",
-        status: "collected",
-        decisiveFacts: collectorDecisiveFacts(receipt)
-      };
-      return { receipt, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
 async function settleLawfulCollectorTerminalResult(admitted, authority) {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile);
-  if (entries === void 0) return void 0;
-  const extracted = extractCollectorRoleOutcome(entries);
-  if (extracted === void 0) {
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "collector") {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
       if (residual === void 0) continue;
       const candidate = residual.candidate;
-      const duration = isRecord10(candidate) ? candidate.durationMs : void 0;
+      const duration = isRecord11(candidate) ? candidate.durationMs : void 0;
       if (Number.isSafeInteger(duration) && duration >= 1 && duration <= 9e5) {
         continue;
       }
@@ -23182,17 +23128,24 @@ async function settleLawfulCollectorTerminalResult(admitted, authority) {
     }
     return void 0;
   }
-  assertCollectorReceiptMatchesAdmitted(extracted.receipt, admitted);
+  const receipt = validateAcceptedCollectorReceipt(roleOutcome.decisiveFacts);
+  assertCollectorReceiptMatchesAdmitted(receipt, admitted);
+  const accepted = {
+    kind: "accepted",
+    role: "collector",
+    status: roleOutcome.status,
+    decisiveFacts: collectorDecisiveFacts(receipt)
+  };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,
-    extracted.outcome,
+    accepted,
     coordinates,
-    { collectorReceipt: extracted.receipt }
+    { collectorReceipt: receipt }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts,
       runId: admitted.runId
@@ -23206,8 +23159,8 @@ async function trySettleCollectorTerminalResult(admitted, authority) {
 async function publishDoctorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join16(artifactsDir, "report.json");
-  const evidencePath = join16(artifactsDir, "evidence.json");
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -23253,58 +23206,34 @@ async function publishDoctorArtifacts(admitted, roleOutcome, coordinates, option
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractDoctorRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "doctor",
-      DOCTOR_OUTPUT_TOOL_NAME
-    );
-    if (escalation !== void 0) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "doctor",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details }
-        }
-      };
-    }
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      const output = validateRecordedDoctorOutput(details);
-      const outcome = {
-        kind: "accepted",
-        role: "doctor",
-        status: output.status,
-        decisiveFacts: doctorDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
 async function settleLawfulDoctorTerminalResult(admitted, authority) {
+  const sealed = await sealedLedgerOutcome(admitted);
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile);
-  if (entries === void 0) return void 0;
-  const extracted = extractDoctorRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
-  if (extracted.output !== void 0 && String(extracted.output.status) === "completed") {
-    const completedCase = extracted.output.case;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  if (sealed?.role !== "doctor") {
+    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor");
+    if (escalation === void 0) return void 0;
+    const artifacts2 = await publishDoctorArtifacts(admitted, escalation, coordinates);
+    return withOptionalGateProjection(
+      {
+        roleOutcome: escalation,
+        navigator: extractNavigatorFact(entries),
+        artifacts: artifacts2,
+        runId: admitted.runId
+      },
+      sessionDirectory
+    );
+  }
+  const output = validateRecordedDoctorOutput(sealed.decisiveFacts);
+  const roleOutcome = {
+    kind: "accepted",
+    role: "doctor",
+    status: sealed.status,
+    decisiveFacts: doctorDecisiveFacts(output)
+  };
+  if (String(output.status) === "completed") {
+    const completedCase = output.case;
     if (completedCase.issueNumber !== admitted.caseIdentity.issueNumber || completedCase.runsPath !== admitted.caseIdentity.runsPath) {
       const error = new Error(
         "Doctor receipt case identity does not match admitted case identity"
@@ -23317,13 +23246,13 @@ async function settleLawfulDoctorTerminalResult(admitted, authority) {
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishDoctorArtifacts(
     admitted,
-    extracted.outcome,
+    roleOutcome,
     coordinates,
-    extracted.output === void 0 ? {} : { doctorOutput: extracted.output }
+    { doctorOutput: output }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId
@@ -23334,37 +23263,12 @@ async function settleLawfulDoctorTerminalResult(admitted, authority) {
 async function trySettleDoctorTerminalResult(admitted, authority) {
   return settleLawfulDoctorTerminalResult(admitted, authority);
 }
-function extractNotaryRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== NOTARY_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const output = validateRecordedNotaryOutput(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "notary",
-        status: String(output.status),
-        decisiveFacts: notaryDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
 async function settleLawfulNotaryTerminalResult(admitted, authority) {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile);
-  if (entries === void 0) return void 0;
-  const extracted = extractNotaryRoleOutcome(entries);
-  if (extracted === void 0) {
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "notary") {
     let acceptedNonUsable;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
@@ -23399,10 +23303,17 @@ async function settleLawfulNotaryTerminalResult(admitted, authority) {
     }
     return void 0;
   }
+  const output = validateRecordedNotaryOutput(roleOutcome.decisiveFacts);
+  const accepted = {
+    kind: "accepted",
+    role: "notary",
+    status: roleOutcome.status,
+    decisiveFacts: notaryDecisiveFacts(output)
+  };
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts: [],
       runId: admitted.runId
@@ -23417,13 +23328,9 @@ async function trySettleCoderTerminalResult(admitted, authority, options = {}) {
   return settleLawfulCoderTerminalResult(admitted, authority, options);
 }
 async function hasLawfulCoderTerminalResult(admitted, authority) {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(sessionFile);
-    if (entries === void 0) return false;
-    const extracted = extractCoderRoleOutcome(entries);
-    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "coder";
   } catch {
     return false;
   }
@@ -23432,13 +23339,9 @@ async function trySettleFixerTerminalResult(admitted, authority, options) {
   return settleLawfulFixerTerminalResult(admitted, authority, options);
 }
 async function hasLawfulFixerTerminalResult(admitted, authority) {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(sessionFile);
-    if (entries === void 0) return false;
-    const extracted = extractFixerRoleOutcome(entries);
-    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "fixer";
   } catch {
     return false;
   }
@@ -23462,8 +23365,8 @@ function extractReviewerMethodInvocations(entries, options) {
 async function publishReviewerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join16(artifactsDir, "report.json");
-  const evidencePath = join16(artifactsDir, "evidence.json");
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -23515,39 +23418,19 @@ async function publishReviewerArtifacts(admitted, roleOutcome, coordinates, opti
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractReviewerRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      const receipt = validateRuntimeReviewerReceipt(details);
-      const outcome = {
-        kind: "accepted",
-        role: "reviewer",
-        status: receipt.status,
-        decisiveFacts: reviewerDecisiveFacts(receipt)
-      };
-      return { receipt, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
 async function settleLawfulReviewerTerminalResult(admitted, authority, options) {
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "reviewer") return void 0;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile);
-  if (entries === void 0) return void 0;
-  const extracted = extractReviewerRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const receipt = validateRuntimeReviewerReceipt(sealed.decisiveFacts);
+  const roleOutcome = {
+    kind: "accepted",
+    role: "reviewer",
+    status: sealed.status,
+    decisiveFacts: reviewerDecisiveFacts(receipt)
+  };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
@@ -23557,17 +23440,17 @@ async function settleLawfulReviewerTerminalResult(admitted, authority, options) 
   });
   const artifacts = await publishReviewerArtifacts(
     admitted,
-    extracted.outcome,
+    roleOutcome,
     coordinates,
     {
-      ...extracted.receipt === void 0 ? {} : { reviewerReceipt: extracted.receipt },
+      reviewerReceipt: receipt,
       methodProvenance: options.methodProvenance,
       methodInvocations
     }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId
@@ -23579,13 +23462,9 @@ async function trySettleReviewerTerminalResult(admitted, authority, options) {
   return settleLawfulReviewerTerminalResult(admitted, authority, options);
 }
 async function hasLawfulReviewerTerminalResult(admitted, authority) {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(sessionFile);
-    if (entries === void 0) return false;
-    const extracted = extractReviewerRoleOutcome(entries);
-    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "reviewer";
   } catch {
     return false;
   }
@@ -23622,8 +23501,8 @@ function extractMergerMethodInvocations(entries, options) {
 async function publishMergerArtifacts(admitted, roleOutcome, coordinates, options) {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join16(artifactsDir, "report.json");
-  const evidencePath = join16(artifactsDir, "evidence.json");
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
   await writeFile6(
     reportPath,
     `${JSON.stringify(
@@ -23671,48 +23550,27 @@ async function publishMergerArtifacts(admitted, roleOutcome, coordinates, option
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractMergerRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const output = validateMergerOutput(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "merger",
-        status: output.status,
-        decisiveFacts: mergerDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
 async function settleLawfulMergerTerminalResult(admitted, authority, options) {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile);
-  if (entries === void 0) return void 0;
-  const extracted = extractMergerRoleOutcome(entries);
-  if (extracted === void 0) {
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "merger") {
+    const latestOutcome = await readLatestSubmissionOutcome(
+      admitted.projectRoot,
+      admitted.runId,
+      sealedLedgerHome(admitted)
+    );
+    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "closed-batch") {
+      return void 0;
+    }
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === void 0) continue;
-      const callMessage = entries[residual.callIndex]?.message;
-      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord10(part) && part.type === "toolCall") : [];
-      const attemptId = isRecord10(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
-      if (calls.length !== 1 || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME || !attemptId.readable || attemptId.value !== admitted.runId) {
-        continue;
-      }
+      const attemptId = isRecord11(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
+      if (!attemptId.readable || attemptId.value !== admitted.runId) continue;
       try {
         validateMergerOutput(residual.candidate, admitted.runId);
       } catch {
@@ -23730,6 +23588,13 @@ async function settleLawfulMergerTerminalResult(admitted, authority, options) {
     }
     return void 0;
   }
+  const output = validateMergerOutput(roleOutcome.decisiveFacts, admitted.runId);
+  const accepted = {
+    kind: "accepted",
+    role: "merger",
+    status: roleOutcome.status,
+    decisiveFacts: mergerDecisiveFacts(output)
+  };
   const methodInvocations = extractMergerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -23740,17 +23605,17 @@ async function settleLawfulMergerTerminalResult(admitted, authority, options) {
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishMergerArtifacts(
     admitted,
-    extracted.outcome,
+    accepted,
     coordinates,
     {
-      mergerOutput: extracted.output,
+      mergerOutput: output,
       methodProvenance: options.methodProvenance,
       methodInvocations
     }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts,
       runId: admitted.runId
@@ -23762,13 +23627,9 @@ async function trySettleMergerTerminalResult(admitted, authority, options) {
   return settleLawfulMergerTerminalResult(admitted, authority, options);
 }
 async function hasLawfulMergerTerminalResult(admitted, authority) {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
   try {
-    const entries = await readLawfulSettlementEntries(sessionFile);
-    if (entries === void 0) return false;
-    const extracted = extractMergerRoleOutcome(entries);
-    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "merger";
   } catch {
     return false;
   }
@@ -23792,13 +23653,13 @@ function publicationAttemptFromError(path, error) {
 }
 function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   const dirs = [];
-  for (const dir of [baseDir, runDirectory, dirname8(runDirectory)]) {
+  for (const dir of [baseDir, runDirectory, dirname9(runDirectory)]) {
     if (!dirs.includes(dir)) dirs.push(dir);
   }
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join16(runDirectory, "artifacts");
+  const artifactsDir = join17(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -23814,7 +23675,7 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join16(dir, `${stem}.${randomUUID3()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join17(dir, `${stem}.${randomUUID3()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
@@ -23859,26 +23720,26 @@ async function publishFailureArtifacts(admitted, failure, authority) {
   } catch (error) {
     priorIssues.push(publicationAttemptFromError(sessionFile, error));
   }
-  const underArtifacts = baseDir === join16(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join17(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join16(baseDir, "error.json"),
-    join16(baseDir, "error.settlement.json"),
-    join16(admitted.runDirectory, "error.settlement.json")
+    join17(baseDir, "error.json"),
+    join17(baseDir, "error.settlement.json"),
+    join17(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join16(baseDir, "error.settlement.json"),
-    join16(baseDir, "error.json")
+    join17(baseDir, "error.settlement.json"),
+    join17(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join16(baseDir, "evidence.json"),
-    join16(baseDir, "evidence.settlement.json"),
-    join16(admitted.runDirectory, "evidence.settlement.json")
+    join17(baseDir, "evidence.json"),
+    join17(baseDir, "evidence.settlement.json"),
+    join17(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join16(baseDir, "evidence.settlement.json"),
-    join16(baseDir, "evidence.json")
+    join17(baseDir, "evidence.settlement.json"),
+    join17(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -24069,6 +23930,7 @@ var init_settlement = __esm({
     "use strict";
     init_analyst_gate_cycles_read();
     init_sitian_facade();
+    init_submission_ledger();
     init_audit_escalation();
     init_auditor_soul();
     init_doctor_auditor();
@@ -24090,7 +23952,6 @@ var init_settlement = __esm({
     init_method_skill();
     init_navigator_invocation_identity();
     init_receipt_delivery_policy();
-    init_durable_principal();
     init_invocation();
     init_terminal();
     CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
@@ -24183,7 +24044,7 @@ var init_public_run_credentials = __esm({
 import { constants as fsConstants } from "node:fs";
 import { randomUUID as randomUUID4 } from "node:crypto";
 import { lstat as lstat5, mkdir as mkdir4, open as open2 } from "node:fs/promises";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
     presentFailureTerminal(terminal, io);
@@ -24202,7 +24063,7 @@ async function finalizeExceptionRunBestEffort(runDirectory, io) {
   }
 }
 function runArtifactsDirectory(runDirectory) {
-  return join17(runDirectory, "artifacts");
+  return join18(runDirectory, "artifacts");
 }
 async function ensureRealArtifactsDirectory(runDirectory) {
   const runStat = await lstat5(runDirectory);
@@ -24216,7 +24077,7 @@ async function ensureRealArtifactsDirectory(runDirectory) {
       throw new Error("dispatch error retention: artifacts path is not a real directory");
     }
   } catch (error) {
-    if (!isMissingPathError3(error)) throw error;
+    if (!isMissingPathError4(error)) throw error;
     await mkdir4(artifactsDir, { recursive: true });
     const created = await lstat5(artifactsDir);
     if (created.isSymbolicLink() || !created.isDirectory()) {
@@ -24248,7 +24109,7 @@ function serializeThrownValue(value, depth = 0, seen = /* @__PURE__ */ new WeakS
   }
   return value;
 }
-function isMissingPathError3(error) {
+function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 function transferNestedValue(value, depth, seen) {
@@ -24285,7 +24146,7 @@ function jsonSafeReplacer() {
 }
 async function retainDispatchError(admitted, principalAuthority, sessionAppender, attempt, error) {
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-  const filePath = join17(
+  const filePath = join18(
     artifactsDir,
     `dispatch-error-attempt-${attempt}-${randomUUID4()}.json`
   );
@@ -24505,7 +24366,7 @@ var init_auto_resume = __esm({
 
 // src/public-cli/post-admission.ts
 import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 async function presentControlledFailure2(admitted, failureInput, adapters, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
@@ -24604,7 +24465,7 @@ async function dispatchPostAdmissionTurn(input) {
     }
     try {
       await writeFile7(
-        join18(admitted.runDirectory, "stderr.log"),
+        join19(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -25496,7 +25357,7 @@ var init_judge_run = __esm({
 
 // src/public-cli/merger-run.ts
 import { mkdir as mkdir5, writeFile as writeFile8 } from "node:fs/promises";
-import { join as join19, resolve as resolve8 } from "node:path";
+import { join as join20, resolve as resolve8 } from "node:path";
 function mergerMethods(packageRoot2) {
   return [
     {
@@ -25564,8 +25425,8 @@ async function admitMergerShellForActivationFailure(options) {
     expectedConflictPaths: [],
     resolutionScope: []
   };
-  const admittedRequestPath = join19(runDirectory, "admitted-request.json");
-  const mergerInputPath = join19(runDirectory, "merger-input.json");
+  const admittedRequestPath = join20(runDirectory, "admitted-request.json");
+  const mergerInputPath = join20(runDirectory, "merger-input.json");
   await writeFile8(
     admittedRequestPath,
     `${JSON.stringify(
@@ -26017,10 +25878,10 @@ var init_analyst_book_key = __esm({
 // src/atomic-write.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
 import { rename, rm, writeFile as writeFile9 } from "node:fs/promises";
-import { dirname as dirname9, join as join20 } from "node:path";
+import { dirname as dirname10, join as join21 } from "node:path";
 async function writeFileAtomically(destination, contents) {
-  const parent = dirname9(destination);
-  const temporary = join20(parent, `.atomic-write-${randomUUID5()}.tmp`);
+  const parent = dirname10(destination);
+  const temporary = join21(parent, `.atomic-write-${randomUUID5()}.tmp`);
   try {
     await writeFile9(temporary, contents);
     await rename(temporary, destination);
@@ -26036,8 +25897,8 @@ var init_atomic_write = __esm({
 });
 
 // src/analyst-index.ts
-import { open as open3, readFile as readFile14, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname10, join as join21 } from "node:path";
+import { open as open3, readFile as readFile15, unlink as unlink4 } from "node:fs/promises";
+import { dirname as dirname11, join as join22 } from "node:path";
 function sleep(ms) {
   return new Promise((resolve10) => {
     setTimeout(resolve10, ms);
@@ -26045,8 +25906,8 @@ function sleep(ms) {
 }
 async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   const indexPath = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname10(indexPath));
-  const lockPath = join21(dirname10(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  ensureRealDirectoryTree(ledgerHome, dirname11(indexPath));
+  const lockPath = join22(dirname11(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
@@ -26073,7 +25934,7 @@ async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   }
 }
 function analystLibraryIndexPath(ledgerHome) {
-  return join21(ledgerHome, "analyst", "library-index.json");
+  return join22(ledgerHome, "analyst", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -26164,7 +26025,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
   const path = analystLibraryIndexPath(ledgerHome);
   let raw;
   try {
-    raw = await readFile14(path, "utf8");
+    raw = await readFile15(path, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
       return void 0;
@@ -26182,7 +26043,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
 }
 async function writeAnalystLibraryIndexPage(ledgerHome, page) {
   const path = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname10(path));
+  ensureRealDirectoryTree(ledgerHome, dirname11(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -26364,142 +26225,6 @@ var init_analyst_cohort = __esm({
     init_analyst_index();
     init_analyst_median();
     ABSENT = { status: "absent" };
-  }
-});
-
-// src/run-terminal-artifacts.ts
-import { readdir as readdir5, readFile as readFile15 } from "node:fs/promises";
-import { basename as basename6, dirname as dirname11, join as join22 } from "node:path";
-function isMissingPathError4(error) {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
-}
-function errorText2(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-function isRecord11(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function readUsableTerminalArtifactBody(body) {
-  if (body === null) {
-    return { ok: false, reason: "terminal artifact JSON value is null" };
-  }
-  if (!isRecord11(body)) {
-    return {
-      ok: false,
-      reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`
-    };
-  }
-  if (typeof body.role !== "string" || body.role.trim() === "") {
-    return {
-      ok: false,
-      reason: "terminal artifact missing nonblank producer-owned role field"
-    };
-  }
-  return { ok: true, body };
-}
-async function readTerminalArtifactAtPath(path, file) {
-  let raw;
-  try {
-    raw = await readFile15(path, "utf8");
-  } catch (error) {
-    if (isMissingPathError4(error)) return void 0;
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason: errorText2(error)
-    };
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason: error instanceof Error ? error.message : `terminal artifact JSON parse failed: ${String(error)}`
-    };
-  }
-  const usable = readUsableTerminalArtifactBody(parsed);
-  if (!usable.ok) {
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason: usable.reason
-    };
-  }
-  return { status: "present", file, path, body: usable.body };
-}
-async function listUniqueErrorFallbackPaths(directories) {
-  const found = [];
-  for (const dir of directories) {
-    let names;
-    try {
-      names = await readdir5(dir);
-    } catch (error) {
-      if (isMissingPathError4(error)) continue;
-      throw error;
-    }
-    for (const name of names.sort((a, b) => a.localeCompare(b))) {
-      if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join22(dir, name));
-    }
-  }
-  return found;
-}
-function runIdFromRunDirectory(runDirectory) {
-  const name = basename6(runDirectory);
-  const at = name.lastIndexOf("@");
-  if (at <= 0 || at === name.length - 1) return void 0;
-  return name.slice(0, at);
-}
-function presentUniqueFallbackBoundToRun(body, expectedRunId) {
-  if (expectedRunId === void 0) return false;
-  return typeof body.runId === "string" && body.runId === expectedRunId;
-}
-async function readRunTerminalArtifact(runDirectory) {
-  const artifactsDir = join22(runDirectory, "artifacts");
-  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join22(artifactsDir, file);
-    const read3 = await readTerminalArtifactAtPath(path, file);
-    if (read3 !== void 0) return read3;
-  }
-  for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join22(runDirectory, relative3);
-    const read3 = await readTerminalArtifactAtPath(path, "error.json");
-    if (read3 !== void 0) return read3;
-  }
-  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
-    const read3 = await readTerminalArtifactAtPath(path, "error.json");
-    if (read3 !== void 0) return read3;
-  }
-  const expectedRunId = runIdFromRunDirectory(runDirectory);
-  for (const path of await listUniqueErrorFallbackPaths([dirname11(runDirectory)])) {
-    const read3 = await readTerminalArtifactAtPath(path, "error.json");
-    if (read3 === void 0) continue;
-    if (read3.status === "present") {
-      if (!presentUniqueFallbackBoundToRun(read3.body, expectedRunId)) continue;
-      return read3;
-    }
-  }
-  return { status: "absent" };
-}
-var RUN_TERMINAL_ARTIFACT_FILES, RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS, UNIQUE_ERROR_FALLBACK_NAME;
-var init_run_terminal_artifacts = __esm({
-  "src/run-terminal-artifacts.ts"() {
-    "use strict";
-    RUN_TERMINAL_ARTIFACT_FILES = [
-      "report.json",
-      "error.json",
-      "audit-incomplete.json"
-    ];
-    RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
-      "artifacts/error.settlement.json",
-      "error.settlement.json"
-    ];
-    UNIQUE_ERROR_FALLBACK_NAME = /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
   }
 });
 

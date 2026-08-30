@@ -18,6 +18,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -31,6 +32,7 @@ import {
   MERGER_OUTPUT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
+import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 
 const ENGINE = "kimi";
 
@@ -51,7 +53,15 @@ async function seedPrincipalSession(request: { principal: unknown }): Promise<st
   return sessionFile;
 }
 
-function seedTerminalSession(seat: Seat, sessionFile: string, runId?: string): Promise<void> {
+async function seedTerminalSession(input: {
+  seat: Seat;
+  sessionFile: string;
+  cwd: string;
+  home: string;
+  runId: string;
+  runDirectory: string;
+}): Promise<void> {
+  const { seat, sessionFile, cwd, home, runId, runDirectory } = input;
   const toolName =
     seat === "judge"
       ? JUDGE_OUTPUT_TOOL_NAME
@@ -66,10 +76,27 @@ function seedTerminalSession(seat: Seat, sessionFile: string, runId?: string): P
     seat === "judge"
       ? { judgeStatus: "converged" }
       : seat === "reviewer"
-        ? { status: "pass", findings: [] }
+        ? {
+            status: "completed",
+            version: 2,
+            outcomes: { standards: { status: "pass", findings: [] }, spec: { status: "pass", findings: [] } },
+            reports: { standards: "ok", spec: "ok" },
+          }
         : seat === "merger"
-          ? { status: "escalate", attemptId: runId ?? "run-merger", diagnosis: "need escalate", report: "merger proof" }
-          : { status: "completed", report: "engine proof" };
+          ? { status: "escalate", attemptId: runId, diagnosis: "need escalate", report: "merger proof" }
+          : seat === "fixer"
+            ? {
+                status: "completed",
+                report: "engine proof",
+                classResults: [{
+                  name: "engine-resume",
+                  disposition: "completed" as const,
+                  searchScope: "engine-resume",
+                  exceptions: [],
+                  commitSha: "0".repeat(40),
+                }],
+              }
+            : { status: "completed", report: "engine proof" };
   const entries = [];
   if (seat === "merger") {
     const skillPath = join(packageRoot, "resources/methods/resolving-merge-conflicts/SKILL.md");
@@ -91,11 +118,20 @@ function seedTerminalSession(seat: Seat, sessionFile: string, runId?: string): P
       details,
     },
   });
-  return writeFile(
+  await writeFile(
     sessionFile,
     entries.map((e) => JSON.stringify(e)).join("\n") + "\n",
     "utf8",
   );
+  await sealAcceptedSubmission({
+    cwd,
+    home,
+    runId,
+    runDirectory,
+    role: seat as TerminalRoleName,
+    details,
+    toolCallId: "r1",
+  });
 }
 
 function baseArgs(seat: Seat, project: string): string[] {
@@ -206,7 +242,14 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
           }
           // Second (auto-resume) dispatch: lawful accepted terminal.
           const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-          await seedTerminalSession(seat, sessionFile, `run-engine-auto-${seat}`);
+          await seedTerminalSession({
+            seat,
+            sessionFile,
+            cwd: request.cwd,
+            home: request.home,
+            runId: `run-engine-auto-${seat}`,
+            runDirectory: request.runDirectory,
+          });
           return { code: 0, stderr: "", timedOut: false };
         }),
       });
@@ -277,7 +320,14 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
           roleTurnHost: createMinimalHost(async (request) => {
             resumedEngine = request.engine;
             const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-            await seedTerminalSession(seat, sessionFile, runId);
+            await seedTerminalSession({
+              seat,
+              sessionFile,
+              cwd: request.cwd,
+              home: request.home,
+              runId,
+              runDirectory: request.runDirectory,
+            });
             return { code: 0, stderr: "", timedOut: false };
           }),
         });

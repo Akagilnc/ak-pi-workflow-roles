@@ -573,17 +573,63 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
             piRunner: async (args) => {
               const sessionFile = args[args.indexOf("--session") + 1]!;
               await mkdir(join(sessionFile, ".."), { recursive: true });
+              const toolCallId = `${row.role}-terminal`;
+              // Status-bearing details need a report for worker contracts; missing stays unsealed.
+              const sealDetails =
+                status === "missing"
+                  ? details
+                  : row.role === "fixer" && (status === "completed" || status === "partially_completed")
+                    ? {
+                        ...details,
+                        report: `${row.role} ${status}`,
+                        classResults: [{
+                          name: "discriminator",
+                          disposition: "completed" as const,
+                          searchScope: "discriminator",
+                          exceptions: [],
+                          commitSha: "0".repeat(40),
+                        }],
+                      }
+                    : row.role === "fixer" && status === "refused"
+                      ? {
+                          ...details,
+                          report: `${row.role} ${status}`,
+                          remainingScope: "blocked",
+                          blocker: { cause: "authority_violation" as const, evidence: "fixture" },
+                        }
+                      : row.role === "fixer" && status === "unfinished"
+                        ? {
+                            ...details,
+                            report: `${row.role} ${status}`,
+                            remainingScope: "left",
+                            reason: "prerequisite_unmet",
+                          }
+                        : { ...details, report: `${row.role} ${status}` };
               await writeFile(sessionFile, `${JSON.stringify({
                 type: "message",
                 message: {
                   role: "toolResult",
-                  toolCallId: `${row.role}-terminal`,
+                  toolCallId,
                   toolName: row.tool,
                   isError: false,
-                  details,
+                  details: sealDetails,
                 },
               })}\n`, "utf8");
-              return { code: 0, stderr: "", timedOut: false, args: [...args] };
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+                ...(status === "missing"
+                  ? {}
+                  : {
+                      sealedAcceptance: {
+                        role: row.role,
+                        details: sealDetails,
+                        toolCallId,
+                      },
+                    }),
+              };
             },
           }),
           },

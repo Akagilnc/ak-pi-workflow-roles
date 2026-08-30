@@ -409,6 +409,7 @@ test("lawful terminal result wins over typed 429 observation", async () => {
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "completed despite earlier 429" } },
           };
         },
         }),
@@ -666,6 +667,7 @@ test("lawful result with publication failure is not resumable even with attempt 
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "lawful despite later publication failure" } },
           };
         },
         }),
@@ -934,6 +936,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "resumed ok" } },
           };
         },
         }),
@@ -1146,6 +1149,7 @@ test("resume model precedence: explicit --model beats admitted.model; model-less
               stderr: "",
               timedOut: false,
               args: [...args],
+              sealedAcceptance: { role: "judge", details: { judgeStatus: "converged" } },
             };
           },
         }),
@@ -1195,6 +1199,7 @@ test("resume model precedence: explicit --model beats admitted.model; model-less
                 stderr: "",
                 timedOut: false,
                 args: [...args],
+                sealedAcceptance: { role: "judge", details: { judgeStatus: "converged" } },
               };
             },
           }),
@@ -1669,6 +1674,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           stderr: "",
           timedOut: false,
           args: [...args],
+          sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "principal ok" } },
         };
       },
       }),
