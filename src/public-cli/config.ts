@@ -208,10 +208,6 @@ export function resolveGateOfficerModelSelection(
  * Seats that own the labor-engine axis (#391: PUBLIC_CALLABLE_ROLES only).
  * Navigator is configurable for model but has no independent activation path.
  */
-export function isCallableAxisSeat(seat: string): seat is PublicCallableRole {
-  return isPublicCallableRole(seat);
-}
-
 /** Set or clear the persistent main-session host on a callable role seat. */
 export function setPersistentSeatHost(
   config: PublicCliConfig,
@@ -328,7 +324,7 @@ export function validatePublicCliConfigAxes(
 ): void {
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
-    if ((row?.engine !== undefined || row?.host !== undefined) && !isCallableAxisSeat(seat)) {
+    if ((row?.engine !== undefined || row?.host !== undefined) && !isPublicCallableRole(seat)) {
       throw new Error(
         `config seat ${seat} cannot persist call axes: no independent activation path; storing would be silently ineffective`,
       );
@@ -554,7 +550,7 @@ function attachEngineAxis(
   invocation?: InvocationModelOverride,
 ): UnhostedEffectiveSeat {
   // #391: engine axis is PUBLIC_CALLABLE_ROLES only (single callable-seat predicate).
-  if (!isCallableAxisSeat(seat.seat)) {
+  if (!isPublicCallableRole(seat.seat)) {
     return {
       ...seat,
       engineSource: "unconfigured",

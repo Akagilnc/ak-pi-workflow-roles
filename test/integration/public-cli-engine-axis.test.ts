@@ -26,7 +26,6 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  isCallableAxisSeat,
   loadPublicCliConfig,
   savePublicCliConfig,
   setPersistentSeatConfig,
@@ -1015,7 +1014,6 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
       await materializeConflictedRepo(mergerProject);
 
       for (const role of PUBLIC_CALLABLE_ROLES) {
-        assert.equal(isCallableAxisSeat(role), true, `${role} must be engine-axis seat`);
         const project = role === "merger" ? mergerProject : baseProject;
         const bookKey = resolveBookKeyFromGit(project);
 

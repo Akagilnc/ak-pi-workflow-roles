@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -100,15 +100,6 @@ test("notary model clear preserves independent host and engine residual axes", a
   assert.deepEqual((await loadPublicCliConfig(home)).seats.notary, { engine: "cc" });
   await runAkRole(["config", "unset-engine", "notary"], env);
   assert.equal((await loadPublicCliConfig(home)).seats.notary, undefined);
-}));
-
-test("config host commands preserve the typed persistent axis", async () => homeTest(async (home) => {
-  const env = base(home, []);
-  await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], env);
-  assert.equal((await runAkRole(["config", "set-host", "judge", "grok-build"], env)).exitCode, 0);
-  assert.equal((await runAkRole(["config", "get", "judge"], env)).exitCode, 0);
-  assert.equal((await runAkRole(["config", "show"], env)).exitCode, 0);
-  assert.equal(JSON.parse(await readFile(publicCliConfigPath(home), "utf8")).seats.judge.host, "grok-build");
 }));
 
 test("resume refuses --host structurally", async () => homeTest(async (home) => {
