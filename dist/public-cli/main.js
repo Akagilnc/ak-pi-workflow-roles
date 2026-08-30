@@ -16112,8 +16112,10 @@ async function createWriterLease(lockPath, runDirectory, reportCleanupFailure) {
 }
 async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
   const reportDiagnostic = (diagnostic) => {
+    const line2 = diagnostic.endsWith("\n") ? diagnostic : `${diagnostic}
+`;
     try {
-      onCleanupFailure?.(diagnostic);
+      onCleanupFailure?.(line2);
     } catch {
     }
   };

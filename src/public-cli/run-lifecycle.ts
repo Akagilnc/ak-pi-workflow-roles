@@ -537,9 +537,11 @@ export async function acquireRunWriterLease(
     // Single sink exit for every non-terminal writer-lease diagnostic (#556):
     // a throwing onCleanupFailure must not propagate through release() or
     // acquire() — both are best-effort by contract. Template wording stays at
-    // the call sites, never inside this wrapper.
+    // the call sites, never inside this wrapper. The default io.stderr writes
+    // raw, so this exit guarantees the line delimiter.
+    const line = diagnostic.endsWith("\n") ? diagnostic : `${diagnostic}\n`;
     try {
-      onCleanupFailure?.(diagnostic);
+      onCleanupFailure?.(line);
     } catch {
       // diagnostic-sink failure is itself best-effort; never break acquire()/release().
     }
