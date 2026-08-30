@@ -54,8 +54,8 @@ function createFiledOfficerRuntime(
   spec: {
     role: string;
     tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
+    acceptedText: string;
     soulTag: string;
-    submit?(parameters: unknown, toolCallId: string, ctx: ExtensionContext, hostActions: { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never }): AgentToolResult<unknown>;
   },
   dependencies: { loadSoul(): Promise<string> },
   hostActions: { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never },
@@ -77,7 +77,11 @@ function createFiledOfficerRuntime(
           parameters: spec.tool.parameters as never,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
-            return spec.submit!(parameters, toolCallId, ctx, hostActions);
+            return {
+              content: [{ type: "text" as const, text: spec.acceptedText }],
+              details: parameters,
+              terminate: true as const,
+            };
           },
         });
         pi.on("before_agent_start", (event) => {
@@ -104,6 +108,7 @@ export function createCountersignRoleRuntime(
     {
       role: "countersign",
       tool: COUNTERSIGN_TOOL_SPEC,
+      acceptedText: "给事中回执已接受",
       soulTag: "countersign",
     },
     dependencies,
