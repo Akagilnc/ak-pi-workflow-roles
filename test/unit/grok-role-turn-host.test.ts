@@ -177,7 +177,7 @@ test("grok host reports typed round closure failure instead of accepting no subm
     sessionIdentity,
     recordCapabilities: async () => {},
     connect: async () => connection,
-    inspect: async () => ({ privateActive: [], akActive: [] }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
     prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: false, failure: knownFailure }) }),
   });
   assert.deepEqual(await host.executeTurn(request), { code: null, stderr: "", timedOut: false, knownFailure });

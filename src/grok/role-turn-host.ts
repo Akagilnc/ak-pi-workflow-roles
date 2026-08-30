@@ -166,7 +166,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           });
         }
         const prepared = await config.prepare(request);
-        if (prepared.mcpServers.length === 0) {
+        if (inspected.akActive.length === 0 || prepared.mcpServers.length === 0) {
           return failure("activation", "UncontrolledGrokSession", "ak-config-missing");
         }
         const connection = await config.connect(request);
