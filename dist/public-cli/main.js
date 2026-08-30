@@ -17794,7 +17794,9 @@ function requireAuthorityRef(value) {
   return value;
 }
 function parseJudgeArgv(args) {
-  for (const token of args) {
+  const dd = args.indexOf("--");
+  const preDd = dd === -1 ? args : args.slice(0, dd);
+  for (const token of preDd) {
     if (isRejectedPublicSpelling("judge", token)) {
       throw new CliUsageError(
         "judge does not accept a public burden selector; Judge infers its own burden"

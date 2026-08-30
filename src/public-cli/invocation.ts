@@ -592,7 +592,10 @@ export function requireAuthorityRef(value: string | undefined): string {
  */
 export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
   // Judge owns burden inference — rejected spellings checked per-token.
-  for (const token of args) {
+  // `--` ends flag parsing: everything after is opaque instruction.
+  const dd = args.indexOf("--");
+  const preDd = dd === -1 ? args : args.slice(0, dd);
+  for (const token of preDd) {
     if (isRejectedPublicSpelling("judge", token)) {
       throw new CliUsageError(
         "judge does not accept a public burden selector; Judge infers its own burden",
