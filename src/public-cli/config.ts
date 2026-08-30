@@ -79,8 +79,8 @@ export type EffectiveSeat = {
   /** Selected engine name when configured; undefined = no engine (default path). */
   engine?: string;
   engineSource: EngineSource;
-  host?: string;
-  hostSource?: HostSource;
+  host: string;
+  hostSource: HostSource;
 };
 
 export type InvocationModelOverride = {
@@ -527,8 +527,10 @@ function pickStartupCandidate(
   return undefined;
 }
 
+type UnhostedEffectiveSeat = Omit<EffectiveSeat, "host" | "hostSource">;
+
 function attachHostAxis(
-  seat: EffectiveSeat,
+  seat: UnhostedEffectiveSeat,
   config: PublicCliConfig,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
@@ -539,10 +541,10 @@ function attachHostAxis(
 }
 
 function attachEngineAxis(
-  seat: EffectiveSeat,
+  seat: UnhostedEffectiveSeat,
   config: PublicCliConfig,
   invocation?: InvocationModelOverride,
-): EffectiveSeat {
+): UnhostedEffectiveSeat {
   // #391: engine axis is PUBLIC_CALLABLE_ROLES only (single isEngineAxisSeat predicate).
   if (!isEngineAxisSeat(seat.seat)) {
     return {
@@ -575,7 +577,7 @@ function resolveBaseSeat(
   config: PublicCliConfig,
   seat: PublicConfigurableSeat,
   credentials: CredentialProviders,
-): EffectiveSeat {
+): UnhostedEffectiveSeat {
   const automatic = isAutomaticConfigurableSeat(seat);
   // Engine-only residual is not a persistent model source (#453).
   const persistentModel = seatModelOnly(config.seats[seat]);
@@ -612,7 +614,7 @@ export function resolveEffectiveSeat(
     invocation !== undefined &&
     (invocation.model !== undefined || invocation.thinking !== undefined);
 
-  let modelSeat: EffectiveSeat;
+  let modelSeat: UnhostedEffectiveSeat;
   if (!hasModelInvocation || invocation === undefined) {
     modelSeat = resolveBaseSeat(config, seat, credentials);
   } else if (invocation.model !== undefined) {

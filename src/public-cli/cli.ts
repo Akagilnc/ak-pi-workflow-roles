@@ -262,7 +262,7 @@ function resolveRoleTurnHost(
     observeLaunchedRolePackageIdentity,
   });
   const adapters = env.hostAdapters ?? [{ name: "pi", create: () => ({ ok: true as const, host: piHost }) }];
-  const hostName = options.seat.host ?? "pi";
+  const hostName = options.seat.host;
   const adapter = adapters.find((candidate) => candidate.name === hostName);
   const model = options.seat.selection === undefined ? "unconfigured" : `${options.seat.selection.provider}/${options.seat.selection.model}`;
   if (adapter === undefined) throw new HostSelectionError({ kind: "host-unregistered", host: hostName, seat: options.role, model });
