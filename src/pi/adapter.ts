@@ -13,10 +13,13 @@ import type {
   HostGatekeeperActions,
   HostToolDefinition,
   HostToolResult,
+  RoleEnvelopeHost,
   RoleHost,
 } from "../host-contracts.ts";
+import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 
-export type PiRoleHostAdapter = {
+export type PiRoleHostAdapter = RoleEnvelopeHost & {
+  /** Compatibility alias for host-specific callers that only consume RoleHost. */
   readonly host: RoleHost;
 };
 
@@ -105,8 +108,9 @@ function toPiToolDefinition<S extends TSchema, D>(
 /** Pi composition boundary. Each consumed capability is adapted explicitly. */
 export function createPiRoleHostAdapter(
   pi: ExtensionAPI,
-  options: { transcriptFromContext?: (context: ExtensionContext) => string } = {},
+  options: { transcriptFromContext?: (context: ExtensionContext) => string; oauthKeepalive?: OAuthKeepaliveOptions } = {},
 ): PiRoleHostAdapter {
+  const keepalive = createOAuthKeepalive(options.oauthKeepalive);
   const host: RoleHost = {
     deliverSubmissionRejection(rejection) {
       pi.sendMessage({
@@ -205,5 +209,17 @@ export function createPiRoleHostAdapter(
     },
     ...(typeof pi.getCommands === "function" ? { getCommands: () => pi.getCommands().map(({ name }) => ({ name })) } : {}),
   };
-  return { host };
+  return {
+    host,
+    roleHost: host,
+    appendEntry: (customType, data) => pi.appendEntry(customType, data),
+    sendMessage: (message, sendOptions) => pi.sendMessage({
+      customType: message.customType,
+      content: message.content,
+      display: message.display ?? false,
+      details: message.details,
+    }, sendOptions),
+    startKeepalive: (context) => keepalive.start(toPiContext(context)),
+    stopKeepalive: () => keepalive.stop(),
+  };
 }

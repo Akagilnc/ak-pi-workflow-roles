@@ -244,14 +244,14 @@ export async function loadNavigatorWorkContext(
 
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner({ packageRoot });
-  const piHostAdapter = createPiRoleHostAdapter(pi, { transcriptFromContext });
+  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
+  const piHostAdapter = createPiRoleHostAdapter(pi, {
+    transcriptFromContext,
+    oauthKeepalive: { providers: oauthKeepaliveProviders },
+  });
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
-  // #351: static provider list from extension setting (default ["kimi-coding"]).
-  // Production root is the sole reader; keepalive never auto-detects providers.
-  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
   createRoleRuntimeExtension({
-    oauthKeepalive: { providers: oauthKeepaliveProviders },
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
@@ -307,5 +307,5 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext: (context) => context.transcript?.() ?? "",
     auditSoulCompliance: (options) => createPiJudgeAuditor()({ ...options, context: toPiContext(options.context) }),
-  }, piHostAdapter)(pi);
+  })(piHostAdapter);
 }
