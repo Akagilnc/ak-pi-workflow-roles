@@ -353,7 +353,7 @@ export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
 export * from "./navigator-attendance.ts";
-export { MERGER_INPUT_FLAG, MERGER_ACTIVE_TOOLS, createMergerRoleRuntime } from "./merger-role.ts";
+export { MERGER_INPUT_FLAG, createMergerRoleRuntime } from "./merger-role.ts";
 export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
 export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";
 export { createProductionMergerGitState } from "./merger-git-state.ts";
