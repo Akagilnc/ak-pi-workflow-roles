@@ -27,10 +27,16 @@ export type GrokPreparedTurn = Readonly<{
   >;
 }>;
 
+export type GrokCapabilityDeclaration = Readonly<{
+  nativeToolNarrowing: false;
+  preToolUseDeny: boolean;
+}>;
+
 export type GrokRoleTurnHostConfig = Readonly<{
   connect(request: RoleTurnRequest): Promise<GrokAcpConnection>;
   inspect(request: RoleTurnRequest): Promise<GrokControlledInspection>;
   prepare(request: RoleTurnRequest): Promise<GrokPreparedTurn>;
+  recordCapabilities?(request: RoleTurnRequest, declaration: GrokCapabilityDeclaration): void | Promise<void>;
 }>;
 
 function failure(cause: "activation" | "session" | "output", name: string, code: string, details?: Readonly<Record<string, unknown>>): RoleTurnResult {
@@ -146,7 +152,18 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             protocolVersion: 1,
             clientCapabilities: {},
           });
-          const modelState = (initialized._meta as { modelState?: { availableModels?: unknown } } | undefined)?.modelState;
+          const initializeMeta = initialized._meta as {
+            modelState?: { availableModels?: unknown };
+            "x.ai/hooks"?: { blockingEvents?: unknown; decisions?: unknown };
+          } | undefined;
+          const hooks = initializeMeta?.["x.ai/hooks"];
+          await config.recordCapabilities?.(request, {
+            nativeToolNarrowing: false,
+            preToolUseDeny:
+              Array.isArray(hooks?.blockingEvents) && hooks.blockingEvents.includes("pre_tool_use") &&
+              Array.isArray(hooks.decisions) && hooks.decisions.includes("deny"),
+          });
+          const modelState = initializeMeta?.modelState;
           const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
           if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
             typeof entry === "object" && entry !== null && (entry as { modelId?: unknown }).modelId === request.model?.model)) {
