@@ -7,7 +7,7 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 const request = {
   principal: {}, activation: { role: "judge" }, methods: [],
   continuation: { kind: "initial", prompt: "decide" },
-  model: { provider: "xai", model: "grok-build" }, cwd: "/work", home: "/home/user",
+  model: { provider: "xai", model: "grok-4.5" }, cwd: "/work", home: "/home/user",
   agentDir: "/agent", runDirectory: "/run",
 } as RoleTurnRequest;
 
@@ -37,6 +37,33 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
   assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/cancel"]);
   assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
+});
+
+test("grok host serializes concurrent ACP prompts", async () => {
+  let activePrompts = 0;
+  let maxActivePrompts = 0;
+  let session = 0;
+  const host = createGrokRoleTurnHost({
+    connect: async () => ({
+      async request(method) {
+        if (method === "session/new") return { sessionId: `s${++session}` };
+        if (method === "session/prompt") {
+          maxActivePrompts = Math.max(maxActivePrompts, ++activePrompts);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          activePrompts--;
+          return { stopReason: "end_turn" };
+        }
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
+  });
+
+  await Promise.all([host.executeTurn(request), host.executeTurn(request)]);
+  assert.equal(maxActivePrompts, 1);
 });
 
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
