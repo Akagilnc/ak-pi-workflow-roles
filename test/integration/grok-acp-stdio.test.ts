@@ -19,10 +19,12 @@ test("ACP stdio pairs framed replies and closes one real child", async () => {
   try {
     const executable = join(root, "grok-faux.mjs");
     const events = join(root, "events.jsonl");
+    const launch = join(root, "launch.json");
     await writeFile(executable, `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 const events = process.env.FAUX_EVENTS;
+writeFileSync(process.env.FAUX_LAUNCH, JSON.stringify({ args: process.argv.slice(2), config: process.env.GROK_CONFIG }));
 createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   appendFileSync(events, JSON.stringify({ method: message.method, params: message.params }) + "\\n");
@@ -33,7 +35,15 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `);
   await chmod(executable, 0o755);
-  const connection = await connectGrokAcpStdio({ binary: executable, cwd: root, env: { ...process.env, FAUX_EVENTS: events } });
+  const connection = await connectGrokAcpStdio({
+    binary: executable,
+    cwd: root,
+    env: { ...process.env, FAUX_EVENTS: events, FAUX_LAUNCH: launch },
+    model: "grok-4.5",
+    tools: ["read", "bash"],
+    deny: ["Shell(rm:*)", "Shell(git clean:*)"],
+    toolset: "coding",
+  });
   const [first, second] = await Promise.all([
     connection.request("first", { order: 1 }),
     connection.request("second", { order: 2 }),
@@ -43,6 +53,10 @@ process.on("SIGTERM", () => process.exit(0));
   connection.notify("session/cancel", { sessionId: "s1" });
   await connection.close();
     assert.deepEqual((await readFile(events, "utf8")).trim().split("\n").map((line) => JSON.parse(line).method), ["first", "second", "session/cancel"]);
+    assert.deepEqual(JSON.parse(await readFile(launch, "utf8")), {
+      args: ["agent", "--model", "grok-4.5", "--tools", "read,bash", "--deny", "Shell(rm:*)", "--deny", "Shell(git clean:*)", "--always-approve", "stdio"],
+      config: JSON.stringify({ toolset: "coding" }),
+    });
     await assert.rejects(connection.request("after-close", {}), /closed/i);
     assert.throws(() => connection.notify("after-close", {}), /closed/i);
   } finally {

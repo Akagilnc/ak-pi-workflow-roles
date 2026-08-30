@@ -60,9 +60,22 @@ export function connectGrokAcpStdio(options: {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly model?: string;
+  readonly tools?: readonly string[];
+  readonly deny?: readonly string[];
+  readonly toolset?: string;
 }): Promise<GrokAcpConnection> {
-  const args = ["agent", ...(options.model === undefined ? [] : ["--model", options.model]), "--always-approve", "stdio"];
-  const child = spawn(options.binary, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"] });
+  const args = [
+    "agent",
+    ...(options.model === undefined ? [] : ["--model", options.model]),
+    ...(options.tools === undefined ? [] : ["--tools", options.tools.join(",")]),
+    ...(options.deny?.flatMap((rule) => ["--deny", rule]) ?? []),
+    "--always-approve",
+    "stdio",
+  ];
+  const env = options.toolset === undefined
+    ? options.env
+    : { ...options.env, GROK_CONFIG: JSON.stringify({ toolset: options.toolset }) };
+  const child = spawn(options.binary, args, { cwd: options.cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map<number, { resolve(value: Readonly<Record<string, unknown>>): void; reject(error: Error): void }>();
   let nextId = 0;
   let closed = false;
