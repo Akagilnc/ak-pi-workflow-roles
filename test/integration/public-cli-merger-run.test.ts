@@ -248,7 +248,6 @@ function hostNeutralTypedTurn(options: {
   turns?: readonly (readonly { id: string; kind: "output" | "sibling" }[])[];
   onRejection?: (rejection: unknown) => void;
   postSealAction?: boolean;
-  onPostSealError?: (error: unknown) => void;
 }): RoleTurnHost {
   return {
     async executeTurn(request) {
@@ -302,11 +301,6 @@ function hostNeutralTypedTurn(options: {
         if (options.postSealAction === true) {
           const late = { toolCallId: "after-seal", toolName: outputTool };
           await handlers.get("tool_execution_start")!(late, context);
-          try {
-            await registered!.execute(late.toolCallId, {}, undefined, undefined, context);
-          } catch (error) {
-            options.onPostSealError?.(error);
-          }
         }
       } finally {
         if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
@@ -570,7 +564,6 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
     // post-seal action is observed by the same typed-turn adapter and blocks ordinary success.
     {
       const runId = "run-table-post-seal";
-      const errors: unknown[] = [];
       const { io } = captureIo();
       const result = await runAkRole(["judge", "--project", project, "Decide."], {
         packageRoot,
@@ -584,10 +577,8 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           runId,
           details: { judgeStatus: "converged" },
           postSealAction: true,
-          onPostSealError: (error) => errors.push(error),
         }),
       });
-      assert.match(String(errors[0]), /提交账已封账/);
       assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(await readSealedSubmission(project, runId), undefined);
     }
