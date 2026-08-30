@@ -1,22 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
 
+import { requireGatekeeperPass } from "../gatekeeper-role.ts";
 import type {
   HostContext,
   HostEventRegistration,
+  HostSkillExpansionEvidence,
   HostToolDefinition,
+  RoleEnvelopeHost,
   RoleHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "../host-contracts.ts";
 import { packagedRoleInputFlag, packagedRolePhaseFlag } from "../packaged-role-registry.ts";
+import { stripSkillFrontmatter } from "../package-resources/method-skill.ts";
 import {
-  configureRoleRuntimeEnvelope,
+  createRoleRuntimeExtension,
   type RoleRuntimeDependencies,
-  type RoleRuntimeEnvelope,
 } from "../role-runtime.ts";
 import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import {
@@ -28,6 +31,13 @@ import {
 type Handler = HostEventRegistration[1];
 type RpcRequest = { readonly id: number; readonly token: string; readonly method: string; readonly params?: Record<string, unknown> };
 type ToolCallParams = { readonly name?: unknown; readonly arguments?: unknown };
+
+/** Parse the canonical Skill invocation produced by the shared input transform. */
+function parseCanonicalSkillInvocation(prompt: string): { readonly name: string; readonly userMessage: string } | undefined {
+  const match = /^\/skill:([A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/s.exec(prompt.trim());
+  if (match === null) return undefined;
+  return { name: match[1]!, userMessage: (match[2] ?? "").trim() };
+}
 
 export function projectGrokActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
   const activation = request.activation;
@@ -95,10 +105,21 @@ export async function prepareGrokRoleEnvelope(options: {
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
+  const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
+  let builtinTools = new Set<string>();
   let rejection: { readonly code: string; readonly toolCallIds: readonly string[] } | undefined;
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID();
   await mkdir(request.runDirectory, { recursive: true });
+
+  // Canonical Skill expansion consumes RoleTurnRequest.methods (typed true source).
+  for (const method of request.methods) {
+    if (method.kind !== "skill") continue;
+    const name = basename(dirname(method.path));
+    const raw = await readFile(method.path, "utf8");
+    methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
+  }
+
   let sessionFile = join(request.runDirectory, "grok-envelope.jsonl");
   const context: HostContext = {
     cwd: request.cwd,
@@ -116,32 +137,6 @@ export async function prepareGrokRoleEnvelope(options: {
     },
     abort() {},
   };
-  const host: RoleHost = {
-    deliverSubmissionRejection(value) { rejection = value; },
-    registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
-    getFlag(name) { return flags.get(name); },
-    registerTool(tool) { tools.set(tool.name, tool); },
-    getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
-    // Grok receives tool choice as role guidance; every tool registered for the
-    // seat remains reachable through MCP.
-    setActiveTools(names) { preferredTools = [...names]; },
-    getActiveTools() { return [...preferredTools]; },
-    on(...registration: HostEventRegistration) {
-      const [event, handler] = registration;
-      const list = handlers.get(event) ?? [];
-      list.push(handler);
-      handlers.set(event, list);
-    },
-  };
-  const envelope: RoleRuntimeEnvelope = {
-    appendEntry(customType: string, data?: unknown) { customEntries.push({ customType, data }); },
-    async sendMessage(message) {
-      if (typeof message === "object" && message !== null && "content" in message && typeof message.content === "string") {
-        customEntries.push({ customType: "message", data: message.content });
-      }
-    },
-  } as RoleRuntimeEnvelope;
-  configureRoleRuntimeEnvelope(options.dependencies, host, envelope);
 
   const emit = async (event: string, value: unknown): Promise<unknown[]> => {
     const results: unknown[] = [];
@@ -150,18 +145,66 @@ export async function prepareGrokRoleEnvelope(options: {
     }
     return results;
   };
-  await emit("session_start", { reason: request.continuation.kind });
-  await emit("input", { text: request.continuation.prompt, source: "interactive" });
-  const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
-  const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
-  const promptResults = await emit("before_agent_start", {
-    prompt: request.continuation.prompt,
-    systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
-    systemPromptOptions: {},
-  });
-  const systemPrompt = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
-    typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
-    ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+
+  const host: RoleHost = {
+    deliverSubmissionRejection(value) { rejection = value; },
+    capabilities: {
+      skillExpansion(prompt): HostSkillExpansionEvidence | undefined {
+        const parsed = parseCanonicalSkillInvocation(prompt);
+        if (parsed === undefined) return undefined;
+        const method = methodSkills.get(parsed.name);
+        if (method === undefined) return undefined;
+        return Object.freeze({
+          name: parsed.name,
+          location: method.path,
+          content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
+          userMessage: parsed.userMessage,
+        });
+      },
+    },
+    registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
+    getFlag(name) { return flags.get(name); },
+    registerTool(tool) { tools.set(tool.name, tool); },
+    // Real surface: AK tools plus the host's observed builtin names (reported as
+    // observed, never echoed from role-requested names). Builtins are only
+    // observable after session/new, so they join post-activation.
+    getAllTools() { return [...new Set([...tools.keys(), ...builtinTools])].map((name) => ({ name })); },
+    // Grok receives tool choice as role guidance; every tool registered for the
+    // seat remains reachable through MCP.
+    setActiveTools(names) { preferredTools = [...names]; },
+    getActiveTools() { return [...preferredTools]; },
+    async requireGatekeeperPass(options) {
+      await requireGatekeeperPass({
+        context: options.context,
+        subject: options.subject,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        hostActions: {
+          failInfrastructure: (error, _context, toolCallId) =>
+            options.hostActions.failInfrastructure(error, options.context, toolCallId),
+          bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
+        },
+        toolCallId: options.toolCallId,
+      });
+    },
+    on(...registration: HostEventRegistration) {
+      const [event, handler] = registration;
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    },
+  };
+  const envelope: RoleEnvelopeHost = {
+    host,
+    appendEntry(customType: string, data?: unknown) { customEntries.push({ customType, data }); },
+    async sendMessage(message) {
+      if (typeof message === "object" && message !== null && "content" in message && typeof message.content === "string") {
+        customEntries.push({ customType: "message", data: message.content });
+      }
+    },
+    startKeepalive() {},
+    stopKeepalive() {},
+  };
+  createRoleRuntimeExtension(options.dependencies)(envelope);
 
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
@@ -205,7 +248,7 @@ export async function prepareGrokRoleEnvelope(options: {
             if (blocked) throw new Error(`AK tool blocked: ${name}`);
             try {
               const result = await tool.execute(toolCallId, (params?.arguments ?? {}) as never, undefined, undefined, context);
-              let projected = { content: result.content, details: result.details, isError: false };
+              let projected: { content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>; details: unknown; isError: boolean } = { content: result.content, details: result.details, isError: false };
               for (const value of await emit("tool_result", { toolCallId, toolName: name, ...projected })) {
                 if (typeof value !== "object" || value === null) continue;
                 projected = {
@@ -217,17 +260,24 @@ export async function prepareGrokRoleEnvelope(options: {
               await emit("tool_execution_end", { toolCallId, toolName: name, isError: projected.isError });
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
-              const details = rejection === undefined
-                ? { cause: "infrastructure", code: "ak-tool-execution-failed" }
-                : { cause: "rejection", code: rejection.code, toolCallIds: rejection.toolCallIds };
-              const projected = {
+              // The shared envelope's tool_result handler is the sole classifier:
+              // it projects either the structured submission non-pass (correctable
+              // rejection) or the typed infrastructure fact onto the reply.
+              let projected: { content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>; details: unknown; isError: boolean } = {
                 content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
-                details,
+                details: { cause: "infrastructure" as const, code: "ak-tool-execution-failed" },
                 isError: true,
               };
-              await emit("tool_result", { toolCallId, toolName: name, ...projected });
-              await emit("tool_execution_end", { toolCallId, toolName: name, isError: true });
-              reply(socket, rpc.id, { content: projected.content, structuredContent: details, isError: true });
+              for (const value of await emit("tool_result", { toolCallId, toolName: name, ...projected })) {
+                if (typeof value !== "object" || value === null) continue;
+                projected = {
+                  content: "content" in value && Array.isArray(value.content) ? value.content as typeof projected.content : projected.content,
+                  details: "details" in value ? value.details : projected.details,
+                  isError: "isError" in value && value.isError === true,
+                };
+              }
+              await emit("tool_execution_end", { toolCallId, toolName: name, isError: projected.isError });
+              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             }
           } catch (error) { reply(socket, rpc.id, undefined, error); }
         })();
@@ -243,6 +293,49 @@ export async function prepareGrokRoleEnvelope(options: {
     await emit("session_shutdown", {});
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };
+
+  const closeRound: GrokPreparedTurn["closeRound"] = async (input) => {
+    await emit("turn_end", { turnIndex: 0, calls: [...calls] });
+    let closure: { customType: string; data: unknown } | undefined;
+    for (let index = customEntries.length - 1; index >= 0; index -= 1) {
+      if (customEntries[index]?.customType === "ak-role-submission-closure") { closure = customEntries[index]; break; }
+    }
+    calls.length = 0;
+    if (closure !== undefined) return { accepted: true as const };
+    if (rejection !== undefined) {
+      const retry = { code: rejection.code, toolCallIds: rejection.toolCallIds };
+      rejection = undefined;
+      return { accepted: false as const, retry };
+    }
+    const failure: RoleTurnKnownFailure = {
+      cause: "output",
+      identity: { name: "MissingSubmission", code: "round-ended-without-submission" },
+    };
+    return { accepted: false as const, failure };
+  };
+
+  // Shared envelope activation. systemPrompt must be ready before session/new
+  // (ACP delivers it there), so activation runs during prepare; the host's builtin
+  // surface is observed later and only joins getAllTools post-activation.
+  await emit("session_start", { reason: request.continuation.kind });
+  const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });
+  let prompt = request.continuation.prompt;
+  for (const value of inputResults) {
+    if (typeof value !== "object" || value === null) continue;
+    const record = value as Record<string, unknown>;
+    if (record.action === "transform" && typeof record.text === "string") prompt = record.text;
+  }
+  const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
+  const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
+  const promptResults = await emit("before_agent_start", {
+    prompt,
+    systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
+    systemPromptOptions: {},
+  });
+  const systemPrompt = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
+    typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
+    ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+
   return {
     mcpServers: [{
       name: `ak-${request.activation.role}`,
@@ -254,25 +347,9 @@ export async function prepareGrokRoleEnvelope(options: {
       ],
     }],
     systemPrompt,
-    async closeRound() {
-      await emit("turn_end", { turnIndex: 0, calls: [...calls] });
-      let closure: { customType: string; data: unknown } | undefined;
-      for (let index = customEntries.length - 1; index >= 0; index -= 1) {
-        if (customEntries[index]?.customType === "ak-role-submission-closure") { closure = customEntries[index]; break; }
-      }
-      calls.length = 0;
-      if (closure !== undefined) return { accepted: true as const };
-      if (rejection !== undefined) {
-        const retry = { code: rejection.code, toolCallIds: rejection.toolCallIds };
-        rejection = undefined;
-        return { accepted: false as const, retry };
-      }
-      const failure: RoleTurnKnownFailure = {
-        cause: "output",
-        identity: { name: "MissingSubmission", code: "round-ended-without-submission" },
-      };
-      return { accepted: false as const, failure };
-    },
+    prompt,
+    closeRound,
     dispose,
+    observeBuiltinTools(names) { builtinTools = new Set(names); },
   };
 }

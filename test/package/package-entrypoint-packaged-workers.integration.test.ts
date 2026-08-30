@@ -425,8 +425,16 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.ok(acceptedResult?.type === "message");
         assert.equal(acceptedResult.message.role, "toolResult");
         assert.equal(acceptedResult.message.isError, false);
-        // Receipt details stay contract-pure — Navigator must not rewrite them.
+        // #575 sole-final barrier: execute projects a pending-round-closure candidate;
+        // sealed decisive facts stay contract-pure — Navigator must not rewrite them.
         assert.deepEqual(acceptedResult.message.details, {
+          submissionDisposition: "pending-round-closure",
+        });
+        const judgeClosure = sessionManager
+          .getEntries()
+          .filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+        assert.equal(judgeClosure.length, 1, "exactly one sealed Judge submission closure");
+        assert.deepEqual((judgeClosure[0] as { data?: { details?: unknown } }).data?.details, {
           judgeStatus: "converged",
         });
         const entries = sessionManager.getEntries();
@@ -566,22 +574,31 @@ test("packaged judge escalation emits one typed human decision", async () => {
         }
         const toolResult = result.message;
         assert.equal(toolResult.isError, false);
-        // Audit face + delivered judge verdict retained together (ADR 0055).
-        assert.equal(toolResult.details.kind, "audit_escalation");
-        assert.deepEqual(toolResult.details.conflicts, [
+        // #575 sole-final barrier: execute projects a pending-round-closure candidate;
+        // audit escalation face + delivered judge verdict arrive on the typed closure (ADR 0055).
+        assert.deepEqual(toolResult.details, { submissionDisposition: "pending-round-closure" });
+        const escalationClosure = sessionManager
+          .getEntries()
+          .filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+        assert.equal(escalationClosure.length, 1, "exactly one typed escalation closure");
+        const escalationDetails = (escalationClosure[0] as { data?: { details?: unknown } }).data?.details as {
+          kind?: unknown;
+          conflicts?: unknown;
+          auditDecisionGate?: unknown;
+          judgeStatus?: unknown;
+        };
+        assert.equal(escalationDetails.kind, "audit_escalation");
+        assert.deepEqual(escalationDetails.conflicts, [
           "Soul authority conflicts with controlling authority",
         ]);
-        assert.deepEqual(toolResult.details.auditDecisionGate, {
+        assert.deepEqual(escalationDetails.auditDecisionGate, {
           question: "Which authority governs this verdict?",
           options: ["Soul", "Controlling authority"],
         });
-        assert.equal(
-          (toolResult.details as { judgeStatus?: unknown }).judgeStatus,
-          "converged",
-        );
-        assert.equal(isAuditEscalationResult(toolResult.details), true);
+        assert.equal(escalationDetails.judgeStatus, "converged");
+        assert.equal(isAuditEscalationResult(escalationDetails), true);
         assert.throws(
-          () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),
+          () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, escalationDetails),
           (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
         );
       });
@@ -803,7 +820,10 @@ test("packaged coder apply proves canonical native tdd expansion including colli
               accepted.message.role === "toolResult",
           );
           assert.equal(accepted.message.isError, false);
-          assert.deepEqual(accepted.message.details, row.output);
+          assert.deepEqual(accepted.message.details, { submissionDisposition: "pending-round-closure" });
+          const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+          assert.equal(closure.length, 1, "exactly one sealed Coder submission closure");
+          assert.deepEqual((closure[0] as { data?: { details?: unknown } }).data?.details, row.output);
         });
         });
       },
@@ -994,7 +1014,14 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
             ),
             fauxAssistantMessage(`singleton rejection observed for ${phase}`),
           ]);
-          await session.prompt(`Reject a mixed final batch in ${phase}.`);
+          const previousExitCode = process.exitCode;
+          try {
+            await session.prompt(`Reject a mixed final batch in ${phase}.`);
+          } finally {
+            // In-process Pi simulates the print/json CLI subprocess exit code;
+            // the typed mixed-batch rejection must not leak into the test runner.
+            process.exitCode = previousExitCode;
+          }
           const mixed = sessionManager.getEntries().find(
             (entry) =>
               entry.type === "message" &&
@@ -1035,7 +1062,10 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               accepted.message.role === "toolResult",
           );
           assert.equal(accepted.message.isError, false);
-          assert.deepEqual(accepted.message.details, output);
+          assert.deepEqual(accepted.message.details, { submissionDisposition: "pending-round-closure" });
+          const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+          assert.equal(closure.length, 1, "exactly one sealed Fixer submission closure");
+          assert.deepEqual((closure[0] as { data?: { details?: unknown } }).data?.details, output);
         });
         });
       }

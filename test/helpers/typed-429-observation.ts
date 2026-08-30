@@ -4,7 +4,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 
 export async function observeTyped429ViaProductionHandler(input: {
   runDirectory: string;
@@ -29,9 +29,8 @@ export async function observeTyped429ViaProductionHandler(input: {
     },
     setActiveTools() {},
   };
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "",
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(pi as unknown as ExtensionAPI);
 

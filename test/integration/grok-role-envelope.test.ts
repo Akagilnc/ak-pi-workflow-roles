@@ -74,10 +74,8 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
       socketPath,
       dependencies: {
         loadJudgeSoul: async () => "JUDGE SOUL",
-        transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationTraceWriter: async () => {},
-        oauthKeepaliveContext: () => undefined,
       },
     });
     try {

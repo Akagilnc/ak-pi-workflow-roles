@@ -36,9 +36,9 @@ process.stdout.write(JSON.stringify({
 
 test("ACP stdio preserves spawn failure and rejects later writes", async () => {
   const connection = await connectGrokAcpStdio({ binary: join(tmpdir(), "missing-grok-binary"), cwd: tmpdir(), env: process.env });
-  await assert.rejects(connection.request("initialize", {}), /process error.*ENOENT/i);
-  await assert.rejects(connection.request("after-error", {}), /process error.*ENOENT/i);
-  assert.throws(() => connection.notify("after-error", {}), /process error.*ENOENT/i);
+  await assert.rejects(connection.request("initialize", {}), (error: Error & { code?: string }) => error.code === "acp-process-error");
+  await assert.rejects(connection.request("after-error", {}), (error: Error & { code?: string }) => error.code === "acp-process-error");
+  assert.throws(() => connection.notify("after-error", {}), (error: Error & { code?: string }) => error.code === "acp-process-error");
   await connection.close();
 });
 
@@ -58,9 +58,10 @@ process.on("SIGTERM", () => process.exit(0));
     const connection = await connectGrokAcpStdio({ binary: executable, cwd: root, env: process.env });
     const first = connection.request("first", {});
     const second = connection.request("second", {});
-    await assert.rejects(first, /Invalid Grok ACP JSON/);
-    await assert.rejects(second, /Invalid Grok ACP JSON/);
-    await assert.rejects(connection.request("after-malformed", {}), /Invalid Grok ACP JSON/);
+    const typed = (error: Error & { code?: string }) => error.code === "acp-invalid-json";
+    await assert.rejects(first, typed);
+    await assert.rejects(second, typed);
+    await assert.rejects(connection.request("after-malformed", {}), typed);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -133,8 +134,8 @@ process.on("SIGTERM", () => process.exit(0));
       args: ["agent", "--model", "grok-4.5", "stdio"],
       config: JSON.stringify({ toolset: "coding" }),
     });
-    await assert.rejects(connection.request("after-close", {}), /closed/i);
-    assert.throws(() => connection.notify("after-close", {}), /closed/i);
+    await assert.rejects(connection.request("after-close", {}), (error: Error & { code?: string }) => error.code === "acp-connection-closed");
+    assert.throws(() => connection.notify("after-close", {}), (error: Error & { code?: string }) => error.code === "acp-connection-closed");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

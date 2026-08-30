@@ -13,6 +13,7 @@ import {
   type ActivationTraceRecord,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import {
   activationBookKeyFor,
   activationExtensionContext,
@@ -78,9 +79,9 @@ function runtimeHarness(options: {
   const traces: ActivationTraceRecord[] = [];
   let aborts = 0;
   const { handlers } = captureExtensionHandlers(
-    (pi) => createRoleRuntimeExtension({
+    (pi) => createPiRoleRuntimeExtension({
       loadJudgeSoul: options.activate ?? (async () => { throw new TypeError("soul unavailable"); }),
-      transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }),
+      auditSoulCompliance: async () => ({ status: "pass" }),
       activationClock: options.clock ?? (() => "2025-01-01T00:00:00.000Z"),
       activationTraceWriter: options.writeTrace ?? ((record) => { traces.push(record); }),
     })(pi),
@@ -109,12 +110,11 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     let soulLoads = 0;
     const judgeDeps = () => ({
       loadJudgeSoul: async () => { soulLoads += 1; return "LAW"; },
-      transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" as const }),
       activationTraceWriter: () => {},
     });
     const { handlers } = captureExtensionHandlers(
-      (pi) => createRoleRuntimeExtension(judgeDeps())(pi),
+      (pi) => createPiRoleRuntimeExtension(judgeDeps())(pi),
       { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
     );
     // Hermetic home is intentionally not a git repo (generic withHermeticHome has no git substrate).
@@ -149,7 +149,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       soulLoads = 0;
       const beforeFacts = readAcceptedActivationFacts(home, bookKey).length;
       const { handlers: roleHandlers } = captureExtensionHandlers(
-        (pi) => createRoleRuntimeExtension(judgeDeps())(pi),
+        (pi) => createPiRoleRuntimeExtension(judgeDeps())(pi),
         { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
       );
       const rejectCtx = activationExtensionContext({
@@ -220,9 +220,8 @@ test("append failure preserves original cause and aborts nonzero", async () => {
     let aborts = 0;
     try {
       const { handlers } = captureExtensionHandlers(
-        (pi) => createRoleRuntimeExtension({
+        (pi) => createPiRoleRuntimeExtension({
           loadJudgeSoul: async () => "LAW",
-          transcriptFromContext: () => "",
           auditSoulCompliance: async () => ({ status: "pass" }),
           activationTraceWriter: () => {},
         })(pi),
@@ -297,9 +296,8 @@ test("shared role runtime registers tool observation only after admitted activat
   await withActivationHome({ prefix: "ak-act-obs-" }, async ({ home }) => {
     const observations: ToolExecutionObservationRecord[] = [];
     const { handlers } = captureExtensionHandlers(
-      (pi) => createRoleRuntimeExtension({
+      (pi) => createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "LAW",
-        transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationClock: () => "2025-01-01T00:00:00.000Z",
         activationTraceWriter: () => {},

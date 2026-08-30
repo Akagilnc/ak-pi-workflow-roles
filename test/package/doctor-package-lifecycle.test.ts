@@ -182,7 +182,14 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         );
         assert.equal(outputResults.length, 1);
         assert.equal(outputResults[0].message.isError, false);
-        const output = validateRecordedDoctorOutput(outputResults[0].message.details);
+        // #575 sole-final barrier: execute projects a pending-round-closure candidate;
+        // the audited decisive facts seal onto the typed closure.
+        assert.deepEqual(outputResults[0].message.details, { submissionDisposition: "pending-round-closure" });
+        const closureRows = sessionRows.filter(
+          (row) => row.type === "custom" && row.customType === "ak-role-submission-closure",
+        );
+        assert.equal(closureRows.length, 1, "single typed closure after Doctor output");
+        const output = validateRecordedDoctorOutput(closureRows[0]?.data?.details);
         assert.equal(output.status, "completed");
         assert.deepEqual(output.case, { issueNumber: 58, runsPath: caseIdentityPath });
         assert.deepEqual(output.findings, []);

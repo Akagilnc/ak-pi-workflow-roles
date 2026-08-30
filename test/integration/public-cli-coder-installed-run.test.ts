@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import {
   installPackedArtifactIntoPiNpm,
   packageRoot,
@@ -370,7 +371,14 @@ test(
         );
         assert.ok(coderReceipt, "session must retain accepted Coder receipt");
         assert.equal(coderReceipt.message?.isError, false);
-        assert.equal(coderReceipt.message?.details?.status, "completed");
+        const closureEntry = sessionLines.find(
+          (entry) => (entry as any).type === "custom" && (entry as any).customType === "ak-role-submission-closure",
+        );
+        assert.ok(closureEntry, "session must retain accepted Coder closure");
+        assert.equal((closureEntry as any).data?.details?.status, "completed");
+        const sealed = await readSealedSubmission(project, runId, home);
+        assert.ok(sealed, "sealed submission must be recorded");
+        assert.equal(sealed.status, "completed");
       },
     );
   },

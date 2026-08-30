@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classifyGrokInspection, controlledGrokChildEnv, createGrokRoleTurnHost, type GrokAcpConnection } from "../../src/grok/role-turn-host.ts";
+import { classifyGrokInspection, controlledGrokChildEnv, createGrokRoleTurnHost, type GrokAcpConnection, type GrokPreparedTurn } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 const sessionIds = new WeakMap<object, string>();
@@ -16,6 +16,15 @@ const request = {
   model: { provider: "xai", model: "grok-4.5" }, cwd: "/work", home: "/home/user",
   agentDir: "/agent", runDirectory: "/run",
 } as RoleTurnRequest;
+
+function prepared(closeRound: GrokPreparedTurn["closeRound"], mcpServers: Readonly<Record<string, unknown>>[] = [{}]): GrokPreparedTurn {
+  return {
+    mcpServers,
+    systemPrompt: "law",
+    prompt: "decide",
+    closeRound,
+  };
+}
 
 test("grok host closes an accepted ACP turn through the typed round boundary", async () => {
   const calls: Array<[string, unknown]> = [];
@@ -38,11 +47,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
     installPreToolUseDeny: async () => {},
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({
-      mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }],
-      systemPrompt: "law",
-      closeRound: async () => ({ accepted: true }),
-    }),
+    prepare: async () => prepared(async () => ({ accepted: true }), [{ name: "ak-role", command: "node", args: ["server.js"] }]),
   });
 
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
@@ -67,7 +72,7 @@ test("grok session identity is bound by its authority and decoded for resume", a
       async close() {},
     }),
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
+    prepare: async () => prepared(async () => ({ accepted: true })),
   });
 
   await host.executeTurn(durableRequest);
@@ -91,7 +96,7 @@ test("grok host rejects a model absent from typed ACP capabilities", async () =>
       async close() {},
     }),
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
+    prepare: async () => prepared(async () => ({ accepted: true })),
   });
 
   assert.deepEqual(await host.executeTurn(request), {
@@ -128,7 +133,7 @@ test("grok host serializes concurrent ACP prompts", async () => {
       async close() {},
     }),
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
+    prepare: async () => prepared(async () => ({ accepted: true })),
   });
 
   const first = host.executeTurn(request);
@@ -156,7 +161,7 @@ test("grok refusal is a typed failure and cancels instead of closing as accepted
       async close() {},
     }),
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => assert.fail("refusal must not close the ledger round") }),
+    prepare: async () => prepared(async () => assert.fail("refusal must not close the ledger round")),
   });
 
   const result = await host.executeTurn(request);
@@ -181,12 +186,9 @@ test("grok host delivers a typed rejection and resubmits in the same ACP session
       async close() {},
     }),
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({
-      mcpServers: [{}], systemPrompt: "law",
-      closeRound: async () => ++rounds === 1
-        ? { accepted: false, retry: { code: "non-sole-round", toolCallIds: ["bad"] } }
-        : { accepted: true },
-    }),
+    prepare: async () => prepared(async () => ++rounds === 1
+      ? { accepted: false, retry: { code: "non-sole-round", toolCallIds: ["bad"] } }
+      : { accepted: true }),
   });
 
   assert.equal((await host.executeTurn(request)).code, 0);
@@ -210,9 +212,42 @@ test("grok host reports typed round closure failure instead of accepting no subm
     recordCapabilities: async () => {},
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: false, failure: knownFailure }) }),
+    prepare: async () => prepared(async () => ({ accepted: false, failure: knownFailure })),
   });
   assert.deepEqual(await host.executeTurn(request), { code: null, stderr: "", timedOut: false, knownFailure });
+});
+
+test("grok host observes the typed builtin surface and reports it to the envelope", async () => {
+  const observed: Array<readonly string[]> = [];
+  const notificationHandlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method) {
+        if (method === "session/new") return { sessionId: "s1" };
+        if (method === "session/prompt") return { stopReason: "end_turn" };
+        return {};
+      },
+      notify() {},
+      async close() {},
+      onNotification(handler) { notificationHandlers.push(handler); },
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => ({
+      ...prepared(async () => ({ accepted: true })),
+      observeBuiltinTools(names) { observed.push(names); },
+    }),
+  });
+
+  const execution = host.executeTurn(request);
+  // Simulate the ACP seam delivering the typed tool-surface notification.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  for (const handler of notificationHandlers) {
+    handler("session/update", { update: { sessionUpdate: "available_commands_update", _meta: { tools: ["run_terminal_command", "read_file", "write"] } } });
+  }
+  assert.deepEqual(await execution, { code: 0, stderr: "", timedOut: false });
+  assert.deepEqual(observed, [["run_terminal_command", "read_file", "write"]]);
 });
 
 test("structured inspect classifies builtin, AK, and private sources by provenance", () => {
@@ -264,7 +299,7 @@ test("grok host rejects an uncontrolled personalized session before model work",
     recordCapabilities: async () => {},
     connect: async () => { connected = true; throw new Error("must not connect"); },
     inspect: async () => ({ privateActive: ["user-plugin"], akActive: [] }),
-    prepare: async () => ({ mcpServers: [], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
+    prepare: async () => prepared(async () => ({ accepted: true })),
   });
   assert.deepEqual(await host.executeTurn(request), {
     code: null, stderr: "", timedOut: false,

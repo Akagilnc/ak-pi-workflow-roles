@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { HostEventRegistration, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
-import { configureRoleRuntimeEnvelope } from "../../src/role-runtime.ts";
+import type { HostEventRegistration, HostToolDefinition, RoleEnvelopeHost, RoleHost } from "../../src/host-contracts.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 
 test("shared envelope configures every public seat on a non-Pi host", () => {
   const tools = new Map<string, HostToolDefinition>();
@@ -18,15 +18,18 @@ test("shared envelope configures every public seat on a non-Pi host", () => {
     getActiveTools() { return active; },
     on(...registration: HostEventRegistration) { handlers.push(registration); },
   };
-
-  configureRoleRuntimeEnvelope({
-    loadJudgeSoul: async () => "judge",
-    transcriptFromContext: () => "",
-    auditSoulCompliance: async () => ({ status: "pass" }),
-  }, host, {
+  const envelopeHost: RoleEnvelopeHost = {
+    host,
     appendEntry() {},
     async sendMessage() {},
-  } as never);
+    startKeepalive() {},
+    stopKeepalive() {},
+  };
+
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "judge",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(envelopeHost);
 
   assert.ok(flags.has("ak-role"));
   assert.ok(handlers.some(([event]) => event === "session_start"));
