@@ -1,19 +1,10 @@
 /**
  * Public Collector Role run: admit a structured PR target → explicit Internal activate
- * → settle Terminal result (#112). One-shot; no resume path (Collector rejects
- * session resume/fork/reload). Failure settlement reuses the #107 shared owner.
+ * → settle Terminal result (#112 / #517). One-shot; no resume path (Collector rejects
+ * session resume/fork/reload). Lifecycle is the shared post-admission coordinator.
  */
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { applyEngineChildEnv } from "../engine-detour.ts";
+import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCollectorInvocation,
@@ -22,300 +13,43 @@ import {
   type ParseCollectorArgvResult,
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
-  type CredentialProviders,
-  type SeatModelConfig,
-} from "./config.ts";
+  runPostAdmissionOneShot,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
+import { markRunAdmitted } from "./run-lifecycle.ts";
 import {
-  missingCredentialPreDispatchFailure,
-  postRunMissingCredentialFailure,
-} from "./public-run-credentials.ts";
-import {
-  acquireRunWriterLease,
-  clearTypedProviderHttpObservation,
-  markRunAdmitted,
-  markRunRunning,
-  markRunTerminal,
-  RunWriterLeaseHeldError,
-  type RunWriterLease,
-} from "./run-lifecycle.ts";
-import {
-  classifyPostAdmissionFailure,
-  exitCodeForTerminalOutcome,
-  formatTerminalResult,
-  inspectJudgeSession,
-  presentFailureTerminal,
   presentStructuralRejection,
-  explicitInternalKnownFailureClassificationInput,
   readCollectorInfrastructureFailure,
-  resolveAuditedRunnerKnownFailure,
-  settleFailureTerminalResult,
   trySettleCollectorTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type {
-  ControlledFailureCause,
-  TerminalResult,
-} from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
 
-export type CollectorRunEnv = {
-  home: string;
-  agentDir: string;
-  packageRoot: string;
-  cwd: string;
-  correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
-  model?: SeatModelConfig;
-  /** Optional labor engine name (config→activation; session material + env signal). */
-  engine?: string;
-  credentials?: CredentialProviders;
+export type CollectorRunEnv = PostAdmissionEnv & {
   createRunId?: () => string;
-  extraPiArgs?: readonly string[];
-  timeoutMs?: number;
 };
 
-
-/**
- * Build Internal activation extra-args for an admitted Collector run.
- * Always --no-skills (Collector forbids every Skill). Session under #78 book.
- */
-export function buildCollectorActivationExtraArgs(
+/** Project admitted invocation onto the host-neutral turn request. */
+export function buildCollectorTurnRequest(
   admitted: AdmittedCollectorInvocation,
-  options: {
-    model?: SeatModelConfig;
-    engine?: string;
-    packageRoot?: string;
-    extraPiArgs?: readonly string[];
-  } = {},
-): string[] {
-  const prompt = buildCollectorTransportPrompt(
+  options: RoleTurnRequestProjectionOptions,
+): RoleTurnRequest {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "collector",
-    "--ak-collector-repo",
-    admitted.repository.display,
-    "--ak-collector-pr",
-    String(admitted.prNumber),
-    ...(admitted.requestManifestPath === undefined
-      ? []
-      : ["--ak-collector-request-manifest", admitted.requestManifestPath]),
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
-}
-
-async function presentControlledFailure(
-  admitted: AdmittedCollectorInvocation,
-  failureInput: {
-    timedOut: boolean;
-    code: number | null;
-    stderr: string;
-    thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
-    knownCause?: ControlledFailureCause;
-    knownIdentity?: {
-      readonly name?: string;
-      readonly code?: string | number;
-    };
-    knownDiagnostic?: string;
-  },
-  io: CliIo,
-): Promise<{
-  exitCode: number;
-  admitted: AdmittedCollectorInvocation;
-  terminal: TerminalResult;
-}> {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session =
-    !hasThrown &&
-    !failureInput.timedOut &&
-    failureInput.knownFailure === undefined &&
-    failureInput.knownCause === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
-      : undefined;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
-    ...(failureInput.knownCause === undefined
-      ? {}
-      : { knownCause: failureInput.knownCause }),
-    ...(failureInput.knownIdentity === undefined
-      ? {}
-      : { knownIdentity: failureInput.knownIdentity }),
-    ...(failureInput.knownDiagnostic === undefined
-      ? {}
-      : { knownDiagnostic: failureInput.knownDiagnostic }),
-    ...(session === undefined ? {} : { session }),
-  });
-
-  // Collector does not support resume/fork/reload — always terminal.
-  await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-
-  const terminal = await settleFailureTerminalResult(admitted, failure);
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal,
-  };
-}
-
-async function dispatchAdmittedCollector(input: {
-  admitted: AdmittedCollectorInvocation;
-  env: CollectorRunEnv;
-  io: CliIo;
-  extraArgs: string[];
-  lease: RunWriterLease;
-  effectiveEngine?: string;
-}): Promise<{
-  exitCode: number;
-  admitted: AdmittedCollectorInvocation;
-  terminal?: TerminalResult;
-}> {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials,
-    );
-    if (missingCredential !== undefined) {
-      return await presentControlledFailure(
-        admitted,
-        missingCredential,
-        io,
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== undefined && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
-    try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-        },
-        io,
-      );
-    }
-
-    try {
-      await writeFile(
-        join(admitted.runDirectory, "stderr.log"),
-        result.stderr,
-        "utf8",
-      );
-    } catch {
-      // continue to lawful / controlled-failure settlement
-    }
-
-    let lawful: TerminalResult | undefined;
-    try {
-      lawful = await trySettleCollectorTerminalResult(admitted);
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: result.code,
-          stderr: result.stderr,
-          thrown: error,
-        },
-        io,
-      );
-    }
-    if (lawful !== undefined) {
-      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful,
-      };
-    }
-
-    // Prefer Collector infrastructure tool failure already on the session principal
-    // (e.g. observe HTTP 404) over a later secondary provider-stop after abort.
-    const infrastructureFailure = await readCollectorInfrastructureFailure(
-      admitted.sessionFile,
-    );
-    const credentialFailure = postRunMissingCredentialFailure(
-      result,
-      env.model,
-      env.credentials,
-    );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
-      runner:
-        result.knownFailure ??
-        (infrastructureFailure === undefined
-          ? undefined
-          : {
-              cause: infrastructureFailure.cause,
-              diagnostic: infrastructureFailure.diagnostic,
-              ...(infrastructureFailure.identity === undefined
-                ? {}
-                : { identity: infrastructureFailure.identity }),
-            }),
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory,
-    });
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...(knownFailure === undefined ? {} : { knownFailure }),
+    {
+      activation: {
+        role: "collector" as const,
+        repo: admitted.repository.display,
+        pr: String(admitted.prNumber),
+        ...(admitted.requestManifestPath === undefined ? {} : { requestManifestPath: admitted.requestManifestPath }),
       },
-      io,
-    );
-  } finally {
-    await lease.release();
-  }
+    },
+    options,
+  );
 }
 
 export async function runPublicCollector(
@@ -333,6 +67,7 @@ export async function runPublicCollector(
     const parsed = parseCollectorArgv(argv);
     admitted = await admitCollectorInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       prNumber: parsed.prNumber,
       instruction: parsed.instruction,
@@ -351,35 +86,48 @@ export async function runPublicCollector(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const extraArgs = buildCollectorActivationExtraArgs(admitted, {
+  const turnRequest = buildCollectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "initial",
+      prompt: buildCollectorTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...(env.engine === undefined ? {} : { engine: env.engine }), packageRoot: env.packageRoot })),
+    },
   });
 
-  return await dispatchAdmittedCollector({
+  return await runPostAdmissionOneShot({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
+    env,
     io,
-    extraArgs,
-    lease,
+    request: turnRequest,
+    adapters: {
+      trySettle: (admitted, authority) => trySettleCollectorTerminalResult(admitted, authority),
+      shouldPresentSettled: () => true,
+      resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
+        const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
+        return (
+          result.knownFailure ??
+          (infrastructureFailure === undefined
+            ? undefined
+            : {
+                cause: infrastructureFailure.cause,
+                diagnostic: infrastructureFailure.diagnostic,
+                ...(infrastructureFailure.identity === undefined
+                  ? {}
+                  : { identity: infrastructureFailure.identity }),
+              })
+        );
+      },
+    },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

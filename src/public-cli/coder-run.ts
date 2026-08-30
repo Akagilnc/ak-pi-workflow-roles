@@ -1,24 +1,20 @@
 /**
- * Public Coder Role run: admit → explicit Internal activate → settle Terminal result.
+ * Public Coder Role run: admit → post-admission coordinator → settle Terminal result (#109 / #517).
  * #109: package-owned TDD method, default apply / explicit plan, shared #106 success interface.
- * Controlled-failure settlement reuses the #107 shared owner (no new failure classes).
+ * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { applyEngineChildEnv } from "../engine-detour.ts";
+import type {
+  DurablePrincipalAuthority,
+  MethodBinding,
+  RoleTurnKnownFailure,
+  RoleTurnRequest,
+} from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCoderInvocation,
@@ -26,392 +22,73 @@ import {
   type AdmittedCoderInvocation,
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
-  type CredentialProviders,
-  type SeatModelConfig,
-} from "./config.ts";
-import {
-  missingCredentialPreDispatchFailure,
-  postRunMissingCredentialFailure,
-} from "./public-run-credentials.ts";
-import {
-  acquireRunWriterLease,
-  clearTypedProviderHttpObservation,
-  isSessionPrincipalAvailable,
-  isV1ResumableFailure,
   loadResumableCoderRun,
   markRunAdmitted,
-  markRunResumable,
-  markRunRunning,
-  markRunTerminal,
-  renderResumeCommand,
-  type PublicResumeRequest,
   selectResumeContinuationPrompt,
-  RunWriterLeaseHeldError,
-  type RunWriterLease,
-  type TypedProviderHttpObservation,
+  type PublicResumeRequest,
 } from "./run-lifecycle.ts";
-import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
-  classifyPostAdmissionFailure,
-  exitCodeForTerminalOutcome,
-  formatCliDiagnostic,
-  formatTerminalResult,
   hasLawfulCoderTerminalResult,
-  inspectJudgeSession,
-  isLawfulTypedTerminalOutcome,
-  presentFailureTerminal,
   presentStructuralRejection,
-  explicitInternalKnownFailureClassificationInput,
-  resolveAuditedRunnerFailureResolution,
-  resolveControlledFailureResumeObservation,
-  controlledFailureInputFromResolution,
-  settleFailureTerminalResult,
   trySettleCoderTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type {
-  ControlledFailureCause,
-  TerminalResult,
-} from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+import {
+  presentControlledFailure,
+  runPostAdmissionManualResume,
+  runPostAdmissionResumable,
+  type PostAdmissionAdapters,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
 
-export type CoderRunEnv = {
-  home: string;
-  agentDir: string;
-  packageRoot: string;
-  cwd: string;
-  correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
-  model?: SeatModelConfig;
-  /** Optional labor engine name (config→activation; session material + env signal). */
-  engine?: string;
-  credentials?: CredentialProviders;
+export type CoderRunEnv = PostAdmissionEnv & {
   createRunId?: () => string;
-  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
-  autoResumeLimit?: number;
-  extraPiArgs?: readonly string[];
-  timeoutMs?: number;
 };
 
-
-/**
- * Build Internal activation extra-args for an admitted Coder run.
- * Apply phase pins the package-owned TDD Skill via --skill (no ambient home).
- * Plan phase keeps --no-skills without a method Skill.
- */
-export function buildCoderActivationExtraArgs(
-  admitted: AdmittedCoderInvocation,
-  options: {
-    packageRoot: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    extraPiArgs?: readonly string[];
-  },
-): string[] {
-  const prompt = buildCoderTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  const skillArgs =
-    admitted.phase === "apply"
-      ? [
-          "--skill",
-          resolvePackagedMethodSkillPath(options.packageRoot, "tdd"),
-        ]
-      : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
+function coderMethods(
+  phase: string,
+  packageRoot: string,
+): readonly MethodBinding[] {
+  return phase === "apply"
+    ? [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "tdd") }]
+    : [];
 }
 
-/**
- * Reopen the exact Coder Pi session for resume. Preserves admitted phase and
- * package TDD binding; does not resubmit the original instruction.
- */
-export function buildCoderResumeActivationExtraArgs(
+/** Project admitted Coder invocation onto the host-neutral turn request. */
+export function buildCoderTurnRequest(
   admitted: AdmittedCoderInvocation,
-  options: {
-    packageRoot: string;
-    model?: SeatModelConfig;
-    extraPiArgs?: readonly string[];
-    message?: string;
-  },
-): string[] {
-  const skillArgs =
-    admitted.phase === "apply"
-      ? [
-          "--skill",
-          resolvePackagedMethodSkillPath(options.packageRoot, "tdd"),
-        ]
-      : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message),
-  ];
-}
-
-async function presentControlledFailure(
-  admitted: AdmittedCoderInvocation,
-  failureInput: {
-    timedOut: boolean;
-    code: number | null;
-    stderr: string;
-    thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
-    knownCause?: ControlledFailureCause;
-    knownIdentity?: {
-      readonly name?: string;
-      readonly code?: string | number;
-    };
-    knownDiagnostic?: string;
-    typedHttpObservationSettled?: true;
-    typedHttpObservation?: TypedProviderHttpObservation;
-  },
-  io: CliIo,
-): Promise<{
-  exitCode: number;
-  admitted: AdmittedCoderInvocation;
-  terminal: TerminalResult;
-}> {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...(failureInput.typedHttpObservationSettled === true
-      ? {
-        typedHttpObservationSettled: true as const,
-        ...(failureInput.typedHttpObservation === undefined
-          ? {}
-          : { typedHttpObservation: failureInput.typedHttpObservation }),
-      }
-      : {}),
-  });
-  const knownFailure =
-    failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session =
-    !hasThrown &&
-    !failureInput.timedOut &&
-    knownFailure === undefined &&
-    failureInput.knownCause === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
-      : undefined;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
-    ...(failureInput.knownCause === undefined
-      ? {}
-      : { knownCause: failureInput.knownCause }),
-    ...(failureInput.knownIdentity === undefined
-      ? {}
-      : { knownIdentity: failureInput.knownIdentity }),
-    ...(failureInput.knownDiagnostic === undefined
-      ? {}
-      : { knownDiagnostic: failureInput.knownDiagnostic }),
-    ...(session === undefined ? {} : { session }),
-  });
-
-  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
-  const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile,
-  );
-  const resumable =
-    sessionPrincipalAvailable &&
-    isV1ResumableFailure({
-      hasLawfulTerminalResult,
-      ...(typedHttp429 === undefined ? {} : { typedHttp429 }),
-    });
-  if (resumable && typedHttp429 !== undefined) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-  }
-
-  // #107 owns generic controlled-failure settlement — consume, do not re-own.
-  const terminal = await settleFailureTerminalResult(
+  options: RoleTurnRequestProjectionOptions,
+): RoleTurnRequest {
+  return projectRoleTurnRequest(
     admitted,
-    failure,
-    resumable
-      ? { resume: { command: renderResumeCommand(admitted.runId) } }
-      : {},
-  );
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal,
-  };
-}
-
-async function dispatchAdmittedCoder(input: {
-  admitted: AdmittedCoderInvocation;
-  env: CoderRunEnv;
-  io: CliIo;
-  extraArgs: string[];
-  lease: RunWriterLease;
-  methodProvenance?: PackagedMethodSkillProvenance;
-  /** Mechanical engine provenance for initial Coder dispatch only. */
-  effectiveEngine?: string;
-}): Promise<{
-  exitCode: number;
-  admitted: AdmittedCoderInvocation;
-  terminal?: TerminalResult;
-}> {
-  const { admitted, env, io, extraArgs, lease, methodProvenance, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials,
-    );
-    if (missingCredential !== undefined) {
-      return await presentControlledFailure(
-        admitted,
-        missingCredential,
-        io,
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== undefined && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
-    try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-        },
-        io,
-      );
-    }
-
-    try {
-      await writeFile(
-        join(admitted.runDirectory, "stderr.log"),
-        result.stderr,
-        "utf8",
-      );
-    } catch {
-      // continue to lawful / controlled-failure settlement
-    }
-
-    let lawful: TerminalResult | undefined;
-    try {
-      lawful = await trySettleCoderTerminalResult(admitted, {
-        ...(methodProvenance === undefined
-          ? {}
-          : { methodProvenance }),
-      });
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: result.code,
-          stderr: result.stderr,
-          thrown: error,
-        },
-        io,
-      );
-    }
-    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful,
-      };
-    }
-
-    const credentialFailure = postRunMissingCredentialFailure(
-      result,
-      env.model,
-      env.credentials,
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result.knownFailure,
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory,
-    });
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...controlledFailureInputFromResolution(resolution),
+    {
+      activation: {
+        role: "coder",
+        phase: admitted.phase,
+        taskPath: admitted.taskPath,
       },
-      io,
-    );
-  } finally {
-    await lease.release();
-  }
+      methods: coderMethods(admitted.phase, options.packageRoot),
+    },
+    options,
+  );
+}
+
+function coderAdapters(
+  methodProvenance?: PackagedMethodSkillProvenance,
+): PostAdmissionAdapters<AdmittedCoderInvocation> {
+  return {
+    trySettle: (admitted, authority) =>
+      trySettleCoderTerminalResult(admitted, authority, {
+        ...(methodProvenance === undefined ? {} : { methodProvenance }),
+      }),
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulCoderTerminalResult(admitted, authority),
+    isResumableRole: true,
+  };
 }
 
 export async function runPublicCoder(
@@ -434,6 +111,7 @@ export async function runPublicCoder(
     const parsed = parseCoderArgv(argv);
     admitted = await admitCoderInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -450,8 +128,7 @@ export async function runPublicCoder(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
-  // #416 scope = single LLM call: call-local retry counter, no persistence.
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodProvenance: PackagedMethodSkillProvenance | undefined;
   if (admitted.phase === "apply") {
@@ -462,7 +139,7 @@ export async function runPublicCoder(
       );
       methodProvenance = material.provenance;
     } catch (error) {
-      return await presentControlledFailure(
+      return (await presentControlledFailure(
         admitted,
         {
           timedOut: false,
@@ -471,42 +148,57 @@ export async function runPublicCoder(
           thrown: error,
           knownCause: "activation",
         },
+        coderAdapters(),
+        env.principalAuthority,
         io,
-      );
+      )) as { exitCode: number; admitted: AdmittedCoderInvocation; terminal: TerminalResult };
     }
   }
 
-  return runWithAutoResumeLoop({
+  return await runPostAdmissionResumable({
     admitted,
+    env,
     io,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () =>
-      buildCoderActivationExtraArgs(admitted, {
+    buildInitialRequest: () =>
+      buildCoderTurnRequest(admitted, {
         packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-      }),
-    buildResumeArgs: () =>
-      buildCoderResumeActivationExtraArgs(admitted, {
-        packageRoot: env.packageRoot,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-      }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
-      dispatchAdmittedCoder({
-        admitted,
-        env: {
-          ...env,
-          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "initial",
+          prompt: buildCoderTransportPrompt(
+            admitted,
+            engineSessionMaterialFromOptions({
+              ...(env.engine === undefined ? {} : { engine: env.engine }),
+              packageRoot: env.packageRoot,
+            }),
+          ),
         },
-        io: attemptIo,
-        extraArgs,
-        lease,
-        ...(methodProvenance === undefined ? {} : { methodProvenance }),
-        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
       }),
+    buildResumeRequest: () =>
+      buildCoderTurnRequest(admitted, {
+        packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "resume",
+          prompt: selectResumeContinuationPrompt(),
+        },
+      }),
+    adapters: coderAdapters(methodProvenance),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
@@ -525,7 +217,7 @@ export async function runPublicCoderResume(
 }> {
   let loaded;
   try {
-    loaded = await loadResumableCoderRun(env.home, request.runId);
+    loaded = await loadResumableCoderRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -536,18 +228,6 @@ export async function runPublicCoderResume(
 
   const { admitted } = loaded;
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      // Concurrent resume: reject without second writer or dispatch.
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
-
   let methodProvenance: PackagedMethodSkillProvenance | undefined;
   if (admitted.phase === "apply") {
     try {
@@ -557,8 +237,7 @@ export async function runPublicCoderResume(
       );
       methodProvenance = material.provenance;
     } catch (error) {
-      await lease.release();
-      return await presentControlledFailure(
+      return (await presentControlledFailure(
         admitted,
         {
           timedOut: false,
@@ -567,34 +246,37 @@ export async function runPublicCoderResume(
           thrown: error,
           knownCause: "activation",
         },
+        coderAdapters(),
+        env.principalAuthority,
         io,
-      );
+      )) as { exitCode: number; admitted: AdmittedCoderInvocation; terminal: TerminalResult };
     }
   }
 
-  const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
+  const turnRequest = buildCoderTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    ...(request.message === undefined ? {} : { message: request.message }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message),
+    },
   });
 
-  const result = await dispatchAdmittedCoder({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
+    env,
     io,
-    extraArgs,
-    lease,
-    ...(methodProvenance === undefined ? {} : { methodProvenance }),
+    request: turnRequest,
+    adapters: coderAdapters(methodProvenance),
   });
-  if (result.terminal !== undefined) {
-    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
-  }
-  return result;
 }
 
 // Re-export for tests that assert typed credential failure channel shape.
-export type { ExplicitInternalKnownFailure };
+export type { RoleTurnKnownFailure, PackagedMethodSkillProvenance };

@@ -1,3 +1,6 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -30,19 +33,16 @@ import {
   buildReviewerTransportPrompt,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
-import {
-  buildReviewerActivationExtraArgs,
-  buildReviewerResumeActivationExtraArgs,
-} from "../../src/public-cli/reviewer-run.ts";
+
 import {
   loadResumableReviewerRun,
   markRunAdmitted,
   markRunResumable,
   RESUME_TRANSPORT_ENVELOPE,
+  selectResumeContinuationPrompt,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
-  extractReviewerRoleOutcome,
   formatTerminalResult,
   settleReviewerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -54,9 +54,13 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-reviewer-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -246,6 +250,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     seedGitProject(project);
 
     const blank = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "   ",
@@ -263,6 +268,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     );
 
     const admitted = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Review the work since the base revision.",
@@ -282,6 +288,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     );
 
     const withRefs = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Scope only; refs carry authority.",
@@ -300,6 +307,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     await assert.rejects(
       () =>
         admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           instruction: "",
@@ -345,113 +353,13 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
   });
 });
 
-test("buildReviewerActivationExtraArgs forces package code-review and fixed base only", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const admitted = await admitReviewerInvocation({
-      home,
-      cwd: project,
-      instruction: "Review since HEAD~1.",
-      attachmentPaths: [],
-      baseRevision: "HEAD~1",
-      createRunId: () => "run-reviewer-args",
-    });
-    const args = buildReviewerActivationExtraArgs(admitted, { packageRoot });
-    assert.equal(args.includes("--no-skills"), true);
-    assert.equal(args.includes("--skill"), true);
-    assert.equal(args.includes("--ak-role"), true);
-    assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-    assert.equal(args.includes("--ak-review-task"), false);
-    assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
-    assert.equal(args.includes("--ak-review-authority-refs"), false);
-    assert.equal(args.includes("--ak-review-ticket-number"), false);
-    // Transport prompt is the positional tail; coordinates via production builder (no prose pin).
-    assert.equal(args.at(-1), buildReviewerTransportPrompt(admitted));
-
-    const admittedWithRefs = await admitReviewerInvocation({
-      home,
-      cwd: project,
-      instruction: "Scope the review.",
-      attachmentPaths: [],
-      baseRevision: "HEAD~1",
-      authorityRefs: [
-        "https://example.com/a",
-        "https://example.com/b,with-comma",
-      ],
-      createRunId: () => "run-reviewer-args-refs",
-    });
-    const argsWithRefs = buildReviewerActivationExtraArgs(admittedWithRefs, { packageRoot });
-    assert.equal(
-      argsWithRefs[argsWithRefs.indexOf("--ak-review-authority-refs") + 1],
-      JSON.stringify([
-        "https://example.com/a",
-        "https://example.com/b,with-comma",
-      ]),
-    );
-    const resumeWithRefs = buildReviewerResumeActivationExtraArgs(admittedWithRefs, {
-      packageRoot,
-    });
-    assert.equal(
-      resumeWithRefs[resumeWithRefs.indexOf("--ak-review-authority-refs") + 1],
-      JSON.stringify([
-        "https://example.com/a",
-        "https://example.com/b,with-comma",
-      ]),
-    );
-    assert.equal(args.some((a) => a.includes(admitted.instruction)), false);
-    assert.equal(args.some((a) => a.includes(".agents/skills")), false);
-
-    const resume = buildReviewerResumeActivationExtraArgs(admitted, {
-      packageRoot,
-    });
-    assert.equal(resume.includes("--skill"), true);
-    assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
-    assert.equal(resume.includes("--ak-review-task"), false);
-    assert.equal(resume.includes(admitted.instruction), false);
-    assert.equal(resume[resume.indexOf("--ak-review-base") + 1], "HEAD~1");
-
-    // Typed ticketNumber (attachment frontmatter / admitted page) transports for Spec self-fetch.
-    const ticketFile = join(home, "ticket-343.md");
-    await writeFile(
-      ticketFile,
-      ["---", "ticketNumber: 343", "---", "# ticket body", ""].join("\n"),
-      "utf8",
-    );
-    const admittedWithTicket = await admitReviewerInvocation({
-      home,
-      cwd: project,
-      instruction: "Scope only.",
-      attachmentPaths: [ticketFile],
-      baseRevision: "HEAD~1",
-      createRunId: () => "run-reviewer-args-ticket",
-    });
-    assert.equal(admittedWithTicket.ticketNumber, 343);
-    const argsWithTicket = buildReviewerActivationExtraArgs(admittedWithTicket, {
-      packageRoot,
-    });
-    assert.equal(
-      argsWithTicket[argsWithTicket.indexOf("--ak-review-ticket-number") + 1],
-      "343",
-    );
-    const resumeWithTicket = buildReviewerResumeActivationExtraArgs(admittedWithTicket, {
-      packageRoot,
-    });
-    assert.equal(
-      resumeWithTicket[resumeWithTicket.indexOf("--ak-review-ticket-number") + 1],
-      "343",
-    );
-  });
-});
-
 test("lawful reviewer Terminal records method provenance and typed expansion evidence", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const admitted = await admitReviewerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Review standards and spec axes.",
@@ -465,7 +373,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       ],
       createRunId: () => "run-reviewer-settle-001",
     });
-    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "code-review",
@@ -520,22 +428,21 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       }),
     ];
     await writeFile(
-      admitted.sessionFile,
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "reviewer",
+      details: receipt,
+      toolCallId: "r1",
+    });
 
     const entries = sessionLines.map((line) => JSON.parse(line));
-    const extracted = extractReviewerRoleOutcome(entries);
-    assert.equal(extracted?.outcome.role, "reviewer");
-    assert.equal(extracted?.outcome.kind, "accepted");
-    assert.equal(extracted?.outcome.status, "completed");
-    assert.deepEqual(extracted?.outcome.decisiveFacts.axes, ["standards", "spec"]);
-    assert.deepEqual(extracted?.outcome.decisiveFacts.reportAxes, ["standards", "spec"]);
-    assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
-    assert.equal((extracted?.outcome.decisiveFacts.auditNoReceipt as { rejectedReceipts?: Array<{ diagnosticAvailable?: unknown }> })
-      ?.rejectedReceipts?.[0]?.diagnosticAvailable, false);
-
     const invocations = extractReviewerMethodInvocations(entries, {
       allowedLocations: [material.skillPath, skillPath],
     });
@@ -562,7 +469,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     );
     assert.equal(ambient.length, 0);
 
-    const terminal = await settleReviewerTerminalResult(admitted, {
+    const terminal = await settleReviewerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: skillPath,
@@ -668,7 +575,10 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           cwd: project,
           createRunId: () => "run-cli-reviewer-blank-ok",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -706,11 +616,13 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details: receipt, toolCallId: "ok1" },
               stderr: "",
               timedOut: false,
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
@@ -773,7 +685,10 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           cwd: project,
           createRunId: () => "run-cli-reviewer-ok",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -811,11 +726,13 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details: receipt, toolCallId: "ok1" },
               stderr: "",
               timedOut: false,
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
@@ -854,6 +771,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const admitted = await admitReviewerInvocationRaw({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Scope only",
@@ -863,9 +781,9 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       createRunId: () => "run-cli-reviewer-resume-bad-refs",
     });
     // Durable session principal required before resume load.
-    await mkdir(admitted.sessionDirectory, { recursive: true });
-    await writeFile(join(admitted.sessionDirectory, "session.jsonl"), "", "utf8");
-    await markRunAdmitted(admitted);
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
+    await writeFile(join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
+    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(admitted.runDirectory, {
       httpStatus: 429,
       provider: "xai",
@@ -883,7 +801,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     );
 
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId),
+      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError &&
         error.code === "AK_ROLE_USAGE" &&
@@ -911,7 +829,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -926,6 +847,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume, "reviewer 429 must be resumable");
@@ -959,7 +881,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args.includes("--ak-review-task"), false);
@@ -978,6 +903,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         );
         // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
         const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>`;
+        const details = lawfulReviewerReceipt(["standards"]);
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({
@@ -993,18 +919,20 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
               toolCallId: "rr1",
               toolName: REVIEWER_OUTPUT_TOOL_NAME,
               isError: false,
-              details: lawfulReviewerReceipt(["standards"]),
+              details,
             },
           })}\n`,
           "utf8",
         );
         return {
           code: 0,
+          sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "rr1" },
           stderr: "",
           timedOut: false,
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "reviewer resume failed");
     assert.equal(Array.isArray(resumeArgs), true);

@@ -53,7 +53,6 @@ import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
@@ -65,6 +64,7 @@ import {
   machineLedgerHome,
   withActivationHome,
   withHermeticHome,
+  withAgentDirProviderFixture,
   withInProcessPi,
   withColdInstalledPackage,
   writeTestSkill,
@@ -288,18 +288,20 @@ test("cold-installed live help follows the loaded extension and changes on the n
           luna.setResponses(Array.from({ length: 8 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
-          await withInProcessPi({
-            activationLedgerSession: true,
-            cwd: issueRoot,
-            agentDir: coldAgentDir,
-            faux: luna,
-            model: lunaModel,
-            additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")],
-            systemPrompt: `COLD INSTALLED ${label}`,
-            mode: "json",
-            flags: { "ak-role": "judge" },
-            noTools: "builtin",
-          }, async ({ session, sessionManager }) => {
+          await withAgentDirProviderFixture(luna, coldAgentDir, () =>
+            withInProcessPi({
+              activationLedgerSession: true,
+              cwd: issueRoot,
+              agentDir: coldAgentDir,
+              faux: luna,
+              model: lunaModel,
+              modelsPath: null,
+              additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")],
+              systemPrompt: `COLD INSTALLED ${label}`,
+              mode: "json",
+              flags: { "ak-role": "judge" },
+              noTools: "builtin",
+            }, async ({ session, sessionManager }) => {
             await session.prompt(`ordinary cold-installed attendance ${label}`);
             const visible = sessionManager.getEntries().find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
             event = visible?.type === "custom_message" ? visible.details : undefined;
@@ -317,7 +319,8 @@ test("cold-installed live help follows the loaded extension and changes on the n
             timestamps = { preparedAt, settledAt, persistedVisibleAt };
             assert.ok(Date.parse(preparedAt) <= Date.parse(settledAt), `${label} preparation must complete before settlement`);
             if (event?.disposition === "recommendation") assert.ok(Date.parse(persistedVisibleAt) - Date.parse(settledAt) <= 1000, `${label} settlement-to-visible latency exceeded 1s`);
-          });
+          })
+          );
           lifecycle.push({ label, event, ...(timestamps === undefined ? {} : { timestamps }) });
         };
         try {

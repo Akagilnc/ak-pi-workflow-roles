@@ -1,13 +1,18 @@
 /**
- * Session opening materials (#443): factory constitution + role soul + role-owned
- * extras, composed at the three existing loader seams. Missing files fail as
- * native readFile errors — no exists/hash/empty guards, no second loader.
- *
- * Auditor composition stays owned by loadAuditorSoul (blank-soul identity);
- * main roles and gatekeeper family share joinPackageMaterials here.
+ * Session opening materials (#443 / #524). Missing files fail as native readFile
+ * errors. Main-role materials derive from PUBLIC_ROLE_RECORDS; gatekeeper seats
+ * stay independent except notary (shared NOTARY_SESSION_MATERIALS). Navigator is
+ * name-only here, not a public role record. Auditor composition stays in
+ * loadAuditorSoul; loaders share joinPackageMaterials.
  */
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+
+import {
+  NOTARY_SESSION_MATERIALS,
+  PUBLIC_ROLE_RECORDS,
+  type PackagedRole,
+} from "./packaged-role-registry.ts";
 
 const packageRootUrl = new URL("..", import.meta.url);
 
@@ -27,39 +32,19 @@ export async function joinPackageMaterials(
   return chunks.join("\n\n");
 }
 
-/** Nine public main roles + Navigator. Ticket #443 injection roster. */
+type PublicRoleMaterials = {
+  readonly [Role in PackagedRole]: Extract<
+    (typeof PUBLIC_ROLE_RECORDS)[number],
+    { role: Role }
+  >["sessionMaterials"];
+};
+
+/** Derived projection: public records + navigator name-only materials. */
 export const MAIN_ROLE_SESSION_MATERIALS = {
-  judge: [
-    "CLAUDE.md",
-    "souls/judge.md",
-    "souls/audit-law.md",
-    "souls/quality-law.md",
-    "souls/judge-output-guide.md",
-  ],
-  fixer: [
-    "CLAUDE.md",
-    "souls/fixer.md",
-    "souls/quality-law.md",
-    "souls/fixer-output-guide.md",
-  ],
-  coder: [
-    "CLAUDE.md",
-    "souls/coder.md",
-    "souls/quality-law.md",
-    "souls/coder-output-guide.md",
-  ],
-  reviewer: [
-    "CLAUDE.md",
-    "souls/reviewer.md",
-    "souls/audit-law.md",
-    "souls/quality-law.md",
-  ],
-  collector: ["CLAUDE.md", "souls/collector.md"],
-  doctor: ["CLAUDE.md", "souls/doctor.md"],
-  merger: ["CLAUDE.md", "souls/merger.md"],
-  notary: ["CLAUDE.md", "souls/notary.md", "souls/gate-output-guide.md"],
-  countersign: ["CLAUDE.md", "souls/countersign.md"],
-  navigator: ["CLAUDE.md", "souls/navigator.md"],
+  ...(Object.fromEntries(
+    PUBLIC_ROLE_RECORDS.map((record) => [record.role, record.sessionMaterials]),
+  ) as PublicRoleMaterials),
+  navigator: ["CLAUDE.md", "souls/navigator.md"] as const,
 } as const;
 
 export type MainRoleSession = keyof typeof MAIN_ROLE_SESSION_MATERIALS;
@@ -70,7 +55,7 @@ export function loadMainRoleSessionMaterials(
   return joinPackageMaterials(MAIN_ROLE_SESSION_MATERIALS[role]);
 }
 
-/** Gatekeeper province + Inspector/Notary officer sessions. */
+/** Gatekeeper province; notary reuses the public notary materials definition. */
 export const GATEKEEPER_SESSION_MATERIALS = {
   gatekeeper: [
     "CLAUDE.md",
@@ -84,7 +69,7 @@ export const GATEKEEPER_SESSION_MATERIALS = {
     "souls/quality-law.md",
     "souls/gate-output-guide.md",
   ],
-  notary: ["CLAUDE.md", "souls/notary.md", "souls/gate-output-guide.md"],
+  notary: NOTARY_SESSION_MATERIALS,
 } as const;
 
 export type GatekeeperSessionRole = keyof typeof GATEKEEPER_SESSION_MATERIALS;

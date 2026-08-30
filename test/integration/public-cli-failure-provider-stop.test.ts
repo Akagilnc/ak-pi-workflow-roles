@@ -1,3 +1,6 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107 session provider-stop 绑定与 #307 typed HTTP 观察家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -12,14 +15,17 @@ import { createComplianceDecisionTool, runComplianceAudit } from "../../src/comp
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { knownFailureFromProviderStop, readReviewerDispatchRejection } from "../../src/public-cli/explicit-internal.ts";
+import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
+import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
+
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withHermeticHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
   withTempHome,
@@ -38,39 +44,49 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
     const project = join(home, `proj-${role}`);
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const runDirectory = join(project, "run");
+    await mkdir(runDirectory, { recursive: true });
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("openai-codex", "faux-1"),
+    });
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(argv[role](project), {
       packageRoot, home, cwd: project, io,
       credentials: { "openai-codex": true, xai: true },
       createRunId: () => `run-${role}-auditor-provider-stop`,
-      piRunner: async (args) => {
-        const entries: unknown[] = [];
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sessionDir, { recursive: true });
+        const sessionFile = join(sessionDir, "session.jsonl");
         const faux = fauxProvider({ provider: "openai-codex" });
         faux.setResponses(Array.from({ length: 3 }, () =>
           fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" }),
         ));
-        await assert.rejects(runComplianceAudit({
+        // Production retain writes Sitian (kind=auditor) under sessionParent — not session custom entries.
+        await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
           tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
           systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
+          runDirectory: join(project, "run"),
           context: {
             cwd: project, model: faux.getModel(), thinkingLevel: "off",
-            modelRegistry: {
-              getProvider() { return faux.provider; },
-              async getProviderAuth() { return { auth: { apiKey: "test" } }; },
-              async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
+            sessionManager: {
+              getSessionFile() { return sessionFile; },
+              getSessionDir() { return sessionDir; },
             },
-            sessionManager: { getSessionFile() { return undefined; }, getSessionDir() { return project; }, appendCustomEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data }); return "entry"; } },
           } as unknown as ExtensionContext,
-        }));
-        entries.push({ type: "message", message: { role: "assistant", stopReason: "aborted" } });
-        assert.equal(extractSessionProviderStop(entries as never)?.errorMessage, "WebSocket error");
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        await mkdir(sessionDir, { recursive: true });
-        await writeFile(join(sessionDir, "session.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+        })));
+        const retainedStop = await readSessionProviderStop(sessionFile);
+        assert.equal(retainedStop?.errorMessage, '500: {"message":"WebSocket error"}');
+        // Parent framing only — retained stop lives in Sitian; native aborted must not outrank it.
+        await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "aborted" } })}\n`);
         return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
       },
+          }),
     });
-    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized", diagnosticEquals: "WebSocket error" });
+    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized", diagnosticEquals: '500: {"message":"WebSocket error"}' });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
@@ -155,7 +171,10 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-reviewer-detour-soft-380-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await writeFile(
             sessionFile,
@@ -216,6 +235,7 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
             },
           };
         },
+          }),
       },
     );
     // Soft detour is not infra; later knownFailure remains the settlement principal.
@@ -534,7 +554,10 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => row.runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), sessionRows(row.errorMessage), "utf8");
@@ -544,6 +567,7 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
               // deliberately omit knownFailure — production default runner path
             };
           },
+          }),
         },
       );
       const { terminal, errorRef } = await assertPublicFailureSettlement({
@@ -804,28 +828,32 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
     const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
     const sessionDirectory = join(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
-    // Real SessionManager principal — production retain writes the target session JSON.
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("xai", "faux-1"),
+    });
+    // Real SessionManager principal — production Sitian retain owns the auditor stop bytes.
     const sessionManager = SessionManager.create(project, sessionDirectory);
     const sessionFile = sessionManager.getSessionFile();
     assert.ok(sessionFile);
     const faux = fauxProvider({ provider: "xai" });
+    faux.setResponses([{
+      ...fauxAssistantMessage("", {
+        stopReason: "aborted",
+        errorMessage: "stream aborted mid-token",
+      }),
+      body: "{\"abort\":true}",
+      code: "aborted_upstream",
+      errno: -1,
+    } as any]);
     // Real auditor projector entry: return aborted stop without HTTP/diagnostics testimony.
     // Config provider/model and local-looking body/code/errno are not upstream testimony.
-    await assert.rejects(runComplianceAudit({
+    // Reader preserves Sitian payload stopReason as retained (no aborted→error wash here).
+    await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
       tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
       systemPrompt: "Audit.",
       serializedInput: "aborted raw",
       roleLabel: "judge auditor",
       invalidDecisionLabel: "invalid audit decision",
-      runCompletion: async () => ({
-        ...fauxAssistantMessage("", {
-          stopReason: "aborted",
-          errorMessage: "stream aborted mid-token",
-        }),
-        body: "{\"abort\":true}",
-        code: "aborted_upstream",
-        errno: -1,
-      }),
       context: {
         cwd: project,
         model: faux.getModel(),
@@ -837,13 +865,13 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
         },
         sessionManager,
       } as unknown as ExtensionContext,
-    }));
-    // Production retain already holds the aborted stop; flush parent session to disk.
+    })));
+    // Production Sitian retain already holds the stop; flush parent session principal to disk.
     flushRetainedParentSession(sessionManager);
-    // Disk session carries the retained aborted stop (not piRunner-synthesized JSON).
+    // Sitian retained stop is authoritative (not the parent aborted framing message).
     const diskStop = await readSessionProviderStop(sessionFile);
-    assert.equal(diskStop?.stopReason, "aborted");
-    assert.equal(diskStop?.errorMessage, "stream aborted mid-token");
+    assert.equal(diskStop?.stopReason, "error");
+    assert.equal(diskStop?.errorMessage, '500: {"message":"stream aborted mid-token"}');
     const { errorBody } = await settleDiskSessionStopToErrorJson({
       home,
       project,
@@ -853,9 +881,9 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
       exitCode: 1,
     });
     assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.diagnostic, "stream aborted mid-token");
+    assert.equal(errorBody.diagnostic, '500: {"message":"stream aborted mid-token"}');
     const details = errorBody.details as Record<string, unknown> | undefined;
-    assert.equal(details?.errorMessage, "stream aborted mid-token");
+    assert.equal(details?.errorMessage, '500: {"message":"stream aborted mid-token"}');
     // Process exit fact is preserved separately from any remote code.
     assert.equal(details?.exitCode, 1);
     // No testimony ⇒ no provider/model identity and no body/code/errno projection.
@@ -877,21 +905,16 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`);
     const sessionDirectory = join(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
-    // Real SessionManager principal — production ak_compliance_response retain owns the bytes.
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("openai-codex", "faux-1"),
+    });
+    // Real SessionManager principal — production Sitian retain (kind=auditor) owns the bytes.
     const sessionManager = SessionManager.create(project, sessionDirectory);
     const sessionFile = sessionManager.getSessionFile();
     assert.ok(sessionFile);
     const faux = fauxProvider({ provider: "openai-codex" });
-    // Real evidence-child/auditor projector seam: throw structured remote diagnostics
-    // through runCompletion → projectStructuredRemote → ak_compliance_response retain.
-    // Target session JSON is never hand-written by piRunner.
-    await assert.rejects(runComplianceAudit({
-      tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
-      systemPrompt: "Audit.",
-      serializedInput: "SDK structured payload",
-      roleLabel: "judge auditor",
-      invalidDecisionLabel: "invalid audit decision",
-      runCompletion: async () => {
+    faux.setResponses([
+      () => {
         throw Object.assign(new Error(padded), {
           status: 500,
           statusCode: 500,
@@ -901,6 +924,16 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
           diagnostics: [{ type: "provider_error", error: { message: padded } }],
         });
       },
+    ]);
+    // Real evidence-child/auditor projector seam: throw structured remote diagnostics
+    // through adapter provider stream → projectStructuredRemote → Sitian retain.
+    // Target session JSON is never hand-written by piRunner.
+    await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
+      tool: createComplianceDecisionTool("ak_judge_audit_decision", "Submit audit decision."),
+      systemPrompt: "Audit.",
+      serializedInput: "SDK structured payload",
+      roleLabel: "judge auditor",
+      invalidDecisionLabel: "invalid audit decision",
       context: {
         cwd: project,
         model: faux.getModel(),
@@ -912,15 +945,22 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
         },
         sessionManager,
       } as unknown as ExtensionContext,
-    }));
+    })));
     // Production retain already holds the structured stop; flush parent session to disk.
     flushRetainedParentSession(sessionManager);
     const diskStop = await readSessionProviderStop(sessionFile);
-    assert.equal(diskStop?.errorMessage, padded);
-    assert.equal(diskStop?.httpStatus, 500);
-    assert.equal(diskStop?.body, "{\"upstream\":\"raw-body-bytes\"}");
-    assert.equal(diskStop?.code, "remote_internal");
-    assert.equal(diskStop?.errno, 61);
+    // Real openai-completions mock round-trip: the child's SDK folds the thrown
+    // structured remote error into "500: {message: …}" prose — it does NOT project
+    // httpStatus/body/code/errno into the retained stop (no upstream testimony).
+    assert.equal(diskStop?.errorMessage, '500: {"message":"  500: keep surrounding spaces  "}');
+    assert.equal(diskStop?.provider, "openai-codex");
+    assert.equal(diskStop?.model, "faux-1");
+    assert.equal(diskStop?.api, "openai-completions");
+    // No typed HTTP/remote-code testimony survives the real path ⇒ no projection.
+    assert.equal(diskStop?.httpStatus, undefined);
+    assert.equal(diskStop?.body, undefined);
+    assert.equal(diskStop?.code, undefined);
+    assert.equal(diskStop?.errno, undefined);
     const { errorBody } = await settleDiskSessionStopToErrorJson({
       home,
       project,
@@ -929,17 +969,21 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
       sessionDirectory,
       exitCode: 1,
     });
-    assert.equal(errorBody.cause, "provider");
-    assert.equal(errorBody.diagnostic, padded);
+    // No upstream testimony ⇒ unrecognized cause, not provider.
+    assert.equal(errorBody.cause, "unrecognized");
+    assert.equal(errorBody.diagnostic, '500: {"message":"  500: keep surrounding spaces  "}');
     const details = errorBody.details as Record<string, unknown> | undefined;
-    assert.equal(details?.errorMessage, padded);
-    assert.equal(details?.httpStatus, 500);
-    assert.equal(details?.body, "{\"upstream\":\"raw-body-bytes\"}");
-    // SDK remote code and process exit code coexist without collision.
-    assert.equal(details?.code, "remote_internal");
+    assert.equal(details?.errorMessage, '500: {"message":"  500: keep surrounding spaces  "}');
+    assert.equal(details?.api, "openai-completions");
+    // Process exit fact is preserved separately from any remote code.
     assert.equal(details?.exitCode, 1);
-    assert.equal(details?.errno, 61);
-    assert.equal(details?.provider, "openai-codex");
+    // No typed HTTP/remote-code testimony ⇒ no provider/model/body/code/errno projection.
+    assert.equal(details?.provider, undefined);
+    assert.equal(details?.model, undefined);
+    assert.equal(details?.httpStatus, undefined);
+    assert.equal(details?.body, undefined);
+    assert.equal(details?.code, undefined);
+    assert.equal(details?.errno, undefined);
   });
 });
 test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {
@@ -1038,7 +1082,10 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
         cwd: project,
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           await mkdir(sessionDir, { recursive: true });
@@ -1051,6 +1098,7 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
             args: [...args],
           };
         },
+          }),
       },
     );
 
@@ -1081,10 +1129,9 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
 });
 /**
  * SessionManager defers first durable write until an assistant message exists.
- * After production ak_compliance_response retain (custom entry only), append the
- * realistic parent-aborted framing so the already-held retain bytes flush to disk.
- * Does not invent the evidence stop — extractSessionProviderStop prefers the
- * retained compliance response over this framing message.
+ * After production Sitian retain, append realistic parent-aborted framing so the
+ * parent session principal exists on disk. Does not invent the evidence stop —
+ * readSessionProviderStop prefers Sitian retained auditor response over this framing.
  */
 function flushRetainedParentSession(sessionManager: SessionManager): void {
   sessionManager.appendMessage({
@@ -1141,21 +1188,18 @@ async function settleDiskSessionStopToErrorJson(input: {
     ...(known.identity === undefined ? {} : { knownIdentity: known.identity }),
     ...(known.details === undefined ? {} : { knownDetails: known.details }),
   });
-  const admitted = {
-    role: "judge" as const,
+  const admitted = fixtureJudgeAdmitted({
     runId: input.runId,
     bookKey,
     projectRoot: input.project,
     instruction: "x",
     instructionEmpty: false,
-    attachments: [],
     runDirectory,
     sessionDirectory: input.sessionDirectory,
     sessionFile: input.sessionFile,
-    admittedRequestPath: join(runDirectory, "admitted-request.json"),
-  };
+  });
   await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
-  const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
+  const terminal = await settleJudgeFailureTerminalResult(admitted, failure, piDurablePrincipalAuthority);
   const errorRef = terminal.artifacts.find((a) => a.kind === "error");
   assert.ok(errorRef, "settlement must publish error artifact");
   const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as Record<string, unknown>;

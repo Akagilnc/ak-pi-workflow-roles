@@ -13,7 +13,6 @@ const entries = [
   "activation-ledger-git",
   "activation-ledger-topology",
   "activation-reconciliation",
-  "archivist-role-run-coordinates",
   "archivist-record-entry",
   "typed-provider-http",
   "upstream-error-testimony",

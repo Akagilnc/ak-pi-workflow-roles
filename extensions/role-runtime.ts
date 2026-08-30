@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
+import { createPiRoleRuntimeExtension, toPiContext } from "../src/pi/adapter.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
@@ -36,7 +37,6 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
   createProductionMergerGitState,
-  createRoleRuntimeExtension,
   ROLE_FLAG,
 } from "../src/role-runtime.ts";
 import {
@@ -243,13 +243,10 @@ export async function loadNavigatorWorkContext(
 
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner({ packageRoot });
+  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
-  // #351: static provider list from extension setting (default ["kimi-coding"]).
-  // Production root is the sole reader; keepalive never auto-detects providers.
-  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
-  createRoleRuntimeExtension({
-    oauthKeepalive: { providers: oauthKeepaliveProviders },
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
@@ -263,14 +260,14 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     collectorPackageExtensionPath: extensionPath,
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
-    auditDoctorCompliance: createPiDoctorAuditor(),
+    auditDoctorCompliance: (options) => createPiDoctorAuditor()({ ...options, context: toPiContext(options.context) }),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
-    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
+    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, { ...options, context: toPiContext(options.context) }),
     createNavigatorAttendance: (options) => {
       return createNavigatorAttendance({
-        context: options.context,
+        context: toPiContext(options.context),
         role: options.role,
         phase: options.phase,
         subjectKey: options.subjectKey,
@@ -302,9 +299,11 @@ export default function roleRuntime(pi: ExtensionAPI): void {
       }
       return loadHomeCanonicalSkillBinding(name);
     },
-    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
+    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, { ...options, context: toPiContext(options.context) }),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
+    auditSoulCompliance: (options) => createPiJudgeAuditor()({ ...options, context: toPiContext(options.context) }),
+  }, {
     transcriptFromContext,
-    auditSoulCompliance: createPiJudgeAuditor(),
+    oauthKeepalive: { providers: oauthKeepaliveProviders },
   })(pi);
 }

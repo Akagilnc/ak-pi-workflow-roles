@@ -1,7 +1,8 @@
 /**
- * Public Countersign Role run: admit ticket materials → shared one-shot dispatch
- * → settle Terminal result (#572 / ADR 0074). One-shot: 署/封驳/上呈，无 resume。
+ * Public Countersign Role run: admit ticket materials → shared post-admission
+ * coordinator → settle Terminal result (#572 / ADR 0074). One-shot: 署/封驳/上呈，无 resume.
  */
+import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -11,55 +12,38 @@ import {
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
-  type SeatModelConfig,
-} from "./config.ts";
-import {
-  runAdmittedOneShotRole,
-  type OneShotRunEnv,
-} from "./one-shot-dispatch.ts";
+  runPostAdmissionOneShot,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
+import { markRunAdmitted } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleCountersignTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult } from "./terminal.ts";
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
 
-export type CountersignRunEnv = OneShotRunEnv & {
+export type CountersignRunEnv = PostAdmissionEnv & {
+  principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
-  extraPiArgs?: readonly string[];
 };
 
-export function buildCountersignActivationExtraArgs(
+/** Project admitted invocation onto the host-neutral turn request. */
+export function buildCountersignTurnRequest(
   admitted: AdmittedCountersignInvocation,
-  options: {
-    model?: SeatModelConfig;
-    engine?: string;
-    packageRoot?: string;
-    extraPiArgs?: readonly string[];
-  } = {},
-): string[] {
-  const prompt = buildCountersignTransportPrompt(
+  options: RoleTurnRequestProjectionOptions,
+): RoleTurnRequest {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options),
+    {
+      activation: { role: "countersign" as const },
+    },
+    options,
   );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "countersign",
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
 }
 
 export async function runPublicCountersign(
@@ -77,6 +61,7 @@ export async function runPublicCountersign(
     const parsed = parseCountersignArgv(argv);
     admitted = await admitCountersignInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -93,20 +78,37 @@ export async function runPublicCountersign(
     throw error;
   }
 
-  const extraArgs = buildCountersignActivationExtraArgs(admitted, {
+  await markRunAdmitted(admitted, env.principalAuthority);
+
+  const turnRequest = buildCountersignTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(env.correlationId === undefined || env.correlationId.trim() === ""
+      ? {}
+      : { correlationId: env.correlationId }),
+    continuation: {
+      kind: "initial",
+      prompt: buildCountersignTransportPrompt(
+        admitted,
+        engineSessionMaterialFromOptions({
+          ...(env.engine === undefined ? {} : { engine: env.engine }),
+          packageRoot: env.packageRoot,
+        }),
+      ),
+    },
   });
 
-  return await runAdmittedOneShotRole({
+  return await runPostAdmissionOneShot({
     admitted,
     env,
     io,
-    extraArgs,
+    request: turnRequest,
     adapters: {
-      trySettle: trySettleCountersignTerminalResult,
+      trySettle: (admitted, authority) => trySettleCountersignTerminalResult(admitted, authority),
       // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true,
     },

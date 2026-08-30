@@ -70,6 +70,9 @@ Gate submission gate: on completing-side submissions the package may spawn the G
 The examples below are usage sketches; option identity, aliases, requiredness, and mode faces are owned by `ak-role help <command>`, not by a second flag contract here.
 
 ```bash
+# countersign — ticket-court review before work starts; one-shot
+ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"
+
 # judge — adjudicate the supplied materials
 ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."
 
@@ -109,6 +112,108 @@ Roles are named after Tang/Song offices; the full roster and naming rule live in
 ## Codex fast tier
 
 Enable fast tier with `echo "fast_mode = on" > ~/.pi-codex-fast`; disable it with `echo "fast_mode = off" > ~/.pi-codex-fast` (or delete the file). The change takes effect on the next request without a restart. Fast tier costs more than the default tier.
+
+<!-- BEGIN GENERATED: public-cli-options -->
+## Public CLI options (generated)
+
+Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <command>`. Do not hand-edit this section.
+
+### `global`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--model` | — | `provider/model` | no | no | option | — | Override the effective seat model for this invocation (before or after the command). |
+| `--thinking` | — | `level` | no | no | option | — | Override thinking level: off\|minimal\|low\|medium\|high\|xhigh\|max. |
+| `--engine` | — | `name` | no | no | option | — | Optional labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role). |
+| `--host` | — | `name` | no | no | option | — | Select the named main-session host adapter for this invocation. |
+| `--help` | `-h` | — | no | no | option | — | Show public CLI help and exit. |
+
+### `judge`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+
+### `coder`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `plan\|apply` | `plan`, `apply` | — | no | no | positional | phases=plan\|apply; default=apply | Optional phase token before the instruction; defaults to apply. |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+
+### `fixer`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `plan\|apply` | `plan`, `apply` | — | no | no | positional | phases=plan\|apply; default=apply | Optional phase token before the instruction; defaults to apply. |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+| `--prerequisites` | — | `path` | no | no | option | — | JSON array of {id, requirement} prerequisite objects. |
+
+### `reviewer`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--base` | — | `revision` | yes | no | option | — | Required fixed-point revision for the pinned review target. |
+| `--authority-ref` | — | `ref` | no | yes | option | — | Durable authority reference/URL (repeatable; refs only, not inline prose). |
+
+### `collector`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+| `--pr` | — | `number` | yes | no | option | — | Required positive GitHub pull request number. |
+| `--repo` | — | `owner/repo` | no | no | option | — | GitHub owner/repo override (defaults from origin when github.com). |
+| `--request-manifest` | — | `path` | no | no | option | — | Optional request manifest JSON path ({requests:[{id,body}]}). |
+
+### `doctor`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+| `--issue` | — | `number` | yes | no | option | — | Required positive issue number for the retained case. |
+| `--runs` | — | `path` | no | no | option | — | Optional project-relative .ak-roles/books/<book>/issues/<n>/runs override matching --issue. |
+
+### `merger`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root with one ordinary in-progress merge (defaults to cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+
+### `notary`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--source-run` | — | `runId@role\|path` | yes | no | option | — | Required source run locator (runId@role under the book home, or path to that run directory). Zero prompt/attachment projection. |
+
+
+### `countersign`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+
+### `analyst`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sweep` | — | — | no | no | positional | modes=sweep | Optional sweep mode token (at most once; no other positionals). |
+| `--ticket` | — | `number` | no | no | option | modes=issue | Ticket/issue number; live filter by invocation.ticketNumber inside the cwd book (git common-dir). Bare call = whole book. No library-index bootstrap. |
+| `--attach` | — | `path` | when:sweep | yes | option | modes=sweep; max=sweep:1 | Sweep-mode attachment path; required exactly once in sweep; payload is the attachment body. |
+| `--cohort` | — | — | no | no | option | modes=cohort | Select cohort mode. |
+| `--group-a-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group A label (required in cohort mode). |
+| `--group-a-issues` | — | `N\|book:N[,...]` | when:cohort | no | option | modes=cohort | Cohort group A issues: bare N joins cwd book; book:N selects another book; escape a literal comma/backslash in a book key as \, / \\ (required in cohort mode). |
+| `--group-b-label` | — | `label` | when:cohort | no | option | modes=cohort | Cohort group B label (required in cohort mode). |
+| `--group-b-issues` | — | `N\|book:N[,...]` | when:cohort | no | option | modes=cohort | Cohort group B issues: bare N joins cwd book; book:N selects another book; escape a literal comma/backslash in a book key as \, / \\ (required in cohort mode). |
+<!-- END GENERATED: public-cli-options -->
 
 ## Normative pointers
 

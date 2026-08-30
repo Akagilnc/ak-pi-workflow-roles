@@ -155,8 +155,9 @@ async function listUniqueErrorFallbackPaths(
 /**
  * Publisher run-directory face is `<runId>@<role>`. Parent-directory unique
  * fallbacks are shared across sibling runs, so binding uses this runId only.
+ * Sole authority for runDirectory → runId (last `@` split).
  */
-function runIdFromRunDirectory(runDirectory: string): string | undefined {
+export function runIdFromRunDirectory(runDirectory: string): string | undefined {
   const name = basename(runDirectory);
   const at = name.lastIndexOf("@");
   if (at <= 0 || at === name.length - 1) return undefined;

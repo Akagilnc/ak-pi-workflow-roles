@@ -28,7 +28,7 @@ export class ActivationLedgerError extends Error {
  * homes would split the family and can write into a consumer repository.
  * Process home must already be absolute; relative HOME is rejected before any write.
  */
-export function resolveActivationLedgerHome(home: () => string = homedir): string {
+export function resolveActivationLedgerHome(home: () => string = () => process.env.HOME ?? homedir()): string {
   const processHome = home();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
     throw new ActivationLedgerError(

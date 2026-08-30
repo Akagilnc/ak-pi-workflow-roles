@@ -5,8 +5,6 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
 import { JUDGE_OUTPUT_TOOL_NAME as JUDGE_OUTPUT_TOOL } from "./package-contracts/judge-output.ts";
 
 export const JUDGE_OUTPUT_TOOL_NAME = JUDGE_OUTPUT_TOOL;
@@ -71,24 +69,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Judge subjects must already be on the parent session books before audit starts:
  * assignment (user message) + candidate verdict (sole judge output tool call).
  */
-export function readJudgeAuditSubjects(context: ExtensionContext): SubjectResolution {
+type AuditSubjectContext = { sessionManager: { getEntries?(): Iterable<unknown> } };
+
+export function readJudgeAuditSubjects(context: AuditSubjectContext): SubjectResolution {
   const entries = context.sessionManager.getEntries?.() ?? [];
   let hasAssignment = false;
   let hasCandidate = false;
   for (const entry of entries) {
-    if (entry.type !== "message") continue;
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) continue;
     const message = entry.message;
     if (message.role === "user") {
       const text = typeof message.content === "string"
         ? message.content
         : Array.isArray(message.content)
-          ? message.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+          ? message.content.map((part) => (isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : "")).join("")
           : "";
       if (text.trim().length > 0) hasAssignment = true;
     }
     if (message.role === "assistant" && Array.isArray(message.content)) {
       for (const part of message.content) {
-        if (part.type === "toolCall" && part.name === JUDGE_OUTPUT_TOOL_NAME && isRecord(part.arguments)) {
+        if (isRecord(part) && part.type === "toolCall" && part.name === JUDGE_OUTPUT_TOOL_NAME && isRecord(part.arguments)) {
           hasCandidate = true;
         }
       }
@@ -106,10 +106,10 @@ export function readJudgeAuditSubjects(context: ExtensionContext): SubjectResolu
 /**
  * Doctor candidate testimony must be recorded before audit.
  */
-export function readDoctorAuditSubjects(context: ExtensionContext): SubjectResolution {
+export function readDoctorAuditSubjects(context: AuditSubjectContext): SubjectResolution {
   const entries = context.sessionManager.getEntries?.() ?? [];
   for (const entry of entries) {
-    if (entry.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
+    if (isRecord(entry) && entry.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
       return { status: "ok" };
     }
   }

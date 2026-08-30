@@ -1,18 +1,10 @@
-import { StringEnum } from "@earendil-works/pi-ai";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  AgentToolResult,
-} from "@earendil-works/pi-coding-agent";
+import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
+import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
-import {
-  failOnInfrastructureFailureDeclaration,
-  withInfrastructureFailureDeclaration,
-} from "./package-contracts/terminating-infrastructure.ts";
+import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 import {
   JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
@@ -28,7 +20,7 @@ export type { JudgeVerdict };
 export const judgeVerdictSchema = withInfrastructureFailureDeclaration(
   Type.Object(
     {
-      judgeStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
+      judgeStatus: stringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
       fix: Type.Optional(
         Type.Object(
           { summary: Type.String({ minLength: 1, description: "continue 时的补救摘要" }) },
@@ -65,36 +57,19 @@ export type SoulAuditResult = ComplianceDecision;
 export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
   auditSoulCompliance(
-    options: { context: ExtensionContext; signal?: AbortSignal },
+    options: { context: HostContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
 };
 
-export type JudgeRoleHostActions = GatekeeperPassHostActions;
+export type JudgeRoleHostActions = HostGatekeeperActions;
 
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
 }
 
-function requireSingletonSubmissionCall(
-  toolCallId: string,
-  ctx: ExtensionContext,
-): void {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("大理寺回执非唯一终局工具调用");
-  }
-  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
-  const call = calls[0];
-  if (
-    calls.length !== 1 || call === undefined || call.id !== toolCallId ||
-    call.name !== JUDGE_OUTPUT_TOOL_NAME
-  ) {
-    throw new Error("大理寺回执非唯一终局工具调用");
-  }
-}
 
 export function createJudgeRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: JudgeRoleDependencies,
   hostActions: JudgeRoleHostActions,
 ): { activate(): Promise<void> } {
@@ -113,17 +88,13 @@ export function createJudgeRoleRuntime(
           description: "提交大理寺终局判词；受理前经审刑院审计。",
           promptSnippet: "提交大理寺终局判词",
           parameters: judgeVerdictSchema,
-          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
-            // #541: infra declaration fails via the shared host seam before any
-            // Gatekeeper + audit courtyard work.
-            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
-            requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
             // Gatekeeper runs after the draft is booked and before existing auditor.
-            await requireGatekeeperPass({
+            await pi.requireGatekeeperPass!({
               context: ctx,
               subject: { kind: "judge_draft", material: JSON.stringify(verdict) },
               ...(signal === undefined ? {} : { signal }),
@@ -141,7 +112,7 @@ export function createJudgeRoleRuntime(
               hostActions.failInfrastructure(error, ctx, toolCallId);
             }
             const acceptedDetails = verdict;
-            return disposeComplianceDecision<AgentToolResult<unknown>>(
+            return disposeComplianceDecision<HostToolResult<unknown>>(
               audit,
               {
                 pass: (usage) => ({

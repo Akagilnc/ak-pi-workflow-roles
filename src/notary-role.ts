@@ -1,12 +1,8 @@
+import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 /**
  * Public Notary role runtime — direct officer seat (not through Gatekeeper province).
  * Caller supplies only a source-run locator; Notary self-fetches authoritative materials.
  */
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
 
 import {
   NOTARY_ACCEPTED_TEXT,
@@ -17,9 +13,6 @@ import {
   retainNotarySubmission,
   type NotarySourceRunLocator,
 } from "./notary-contracts.ts";
-import {
-  failOnInfrastructureFailureDeclaration,
-} from "./package-contracts/terminating-infrastructure.ts";
 
 export {
   NOTARY_ACCEPTED_TEXT,
@@ -35,31 +28,14 @@ export type NotaryRoleDependencies = {
 export type NotaryRoleHostActions = {
   failInfrastructure(
     error: unknown,
-    ctx: ExtensionContext,
+    ctx: HostContext,
     toolCallId?: string,
   ): never;
 };
 
-function requireSingletonSubmissionCall(
-  toolCallId: string,
-  ctx: ExtensionContext,
-): void {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("符宝郎回执非唯一终局工具调用");
-  }
-  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
-  if (
-    calls.length !== 1 ||
-    calls[0]?.id !== toolCallId ||
-    calls[0]?.name !== NOTARY_OUTPUT_TOOL_NAME
-  ) {
-    throw new Error("符宝郎回执非唯一终局工具调用");
-  }
-}
 
 export function createNotaryRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: NotaryRoleDependencies,
   host: NotaryRoleHostActions,
 ) {
@@ -91,22 +67,13 @@ export function createNotaryRoleRuntime(
           description: "提交引文保真与票面对齐的 typed pass/bounce 决议。",
           promptSnippet: "提交符宝郎决议",
           parameters: notaryOutputSchema,
-          async execute(
-            toolCallId,
-            parameters,
-            _signal,
-            _onUpdate,
-            ctx,
-          ): Promise<AgentToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext, ): Promise<HostToolResult<unknown>> {
             if (activation === undefined) {
               throw new Error("符宝郎未激活");
             }
-            // #541: infra declaration fails via the shared host seam before any
-            // pass/bounce projection.
-            failOnInfrastructureFailureDeclaration(parameters, host, ctx, toolCallId);
             // Unique submission + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055): lawful pass/bounce projected; else params as-is.
-            requireSingletonSubmissionCall(toolCallId, ctx);
+            // #541 infra declaration + sole-final barrier are ledger-owned (#575).
             const lawful = projectLawfulNotaryOutput(parameters);
             const details = lawful ?? retainNotarySubmission(parameters);
             return {

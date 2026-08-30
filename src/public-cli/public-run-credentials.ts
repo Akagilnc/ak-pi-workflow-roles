@@ -8,7 +8,7 @@ import {
   type CredentialProviders,
   type SeatModelConfig,
 } from "./config.ts";
-import type { ExplicitInternalKnownFailure } from "./explicit-internal.ts";
+import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 
 /**
  * Production-owned provider failure when the selected public seat provider has
@@ -18,7 +18,7 @@ import type { ExplicitInternalKnownFailure } from "./explicit-internal.ts";
 export function knownFailureForMissingProviderCredential(
   model: SeatModelConfig | undefined,
   credentials: CredentialProviders | undefined,
-): ExplicitInternalKnownFailure | undefined {
+): RoleTurnKnownFailure | undefined {
   if (model === undefined || credentials === undefined) return undefined;
   // Only the public credential catalog is fail-closed here; offline/test providers
   // are not represented in auth.json shape and must not be washed into MissingProviderCredential.
@@ -40,7 +40,7 @@ export type MissingCredentialPreDispatchFailure = Readonly<{
   timedOut: false;
   code: 1;
   stderr: string;
-  knownFailure: ExplicitInternalKnownFailure;
+  knownFailure: RoleTurnKnownFailure;
 }>;
 
 export function missingCredentialPreDispatchFailure(
@@ -65,7 +65,7 @@ export function postRunMissingCredentialFailure(
   result: Readonly<{ timedOut: boolean; code: number | null }>,
   model: SeatModelConfig | undefined,
   credentials: CredentialProviders | undefined,
-): ExplicitInternalKnownFailure | undefined {
+): RoleTurnKnownFailure | undefined {
   if (!(result.timedOut || result.code !== 0)) return undefined;
   return knownFailureForMissingProviderCredential(model, credentials);
 }

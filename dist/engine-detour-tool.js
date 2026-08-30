@@ -1,5 +1,12 @@
+/**
+ * Package-owned engine detour tool (#357 T2 / #378 / #380).
+ * Registered by shared role-runtime when any role + engine activation signal is present.
+ * Evidence-child legs install the same definition via customTools (no spawn in role modules).
+ * Engine process failures stop through the host infrastructure-failure seam.
+ * Caller AbortSignal cancellation propagates unchanged.
+ */
 import { Type } from "typebox";
-import { ENGINE_DETOUR_TOOL_NAME, engineDetourFailureDiagnostic, engineNameFromEnv, isEngineDetourFailure, runEngineDetourOnce, } from "./engine-detour.js";
+import { ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC, ENGINE_DETOUR_TOOL_NAME, engineDetourFailureDiagnostic, engineNameFromEnv, isEngineDetourFailure, runEngineDetourOnce, } from "./engine-detour.js";
 const engineDetourArgsSchema = Type.Object({
     argv: Type.Array(Type.String({ minLength: 1 }), {
         minItems: 1,
@@ -18,20 +25,26 @@ function isCallerCancellation(error, signal) {
     return false;
 }
 /**
- * Build one detour tool definition for a configured engine name.
+ * Build one once-latch detour tool definition for a configured engine name.
+ * `latch` is shared so parent registration can reset between activations.
  * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only.
  * Engine process failures (nonzero/empty/spawn) stop via `fail` with their cause.
  * Caller AbortSignal cancellation propagates unchanged.
  */
 export function createEngineDetourToolDefinition(input) {
+    const latch = input.latch ?? { used: false };
     const engineName = input.engineName;
     return {
         name: ENGINE_DETOUR_TOOL_NAME,
         label: "劳务引擎",
-        description: `运行一次劳务引擎子进程（engine=${engineName}），stdout 返回本 session。`,
+        description: `运行一次劳务引擎子进程（engine=${engineName}），stdout 返回本 session；每次激活至多一次。`,
         promptSnippet: "运行配置的劳务引擎一次并返回 stdout",
         parameters: engineDetourArgsSchema,
         async execute(toolCallId, params, signal, _onUpdate, ctx) {
+            if (latch.used) {
+                input.fail(new Error(ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC), toolCallId, ctx);
+            }
+            latch.used = true;
             const args = params;
             const argv = Array.isArray(args.argv) ? args.argv : [];
             if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
@@ -61,7 +74,6 @@ export function createEngineDetourToolDefinition(input) {
                 details: {
                     tool: ENGINE_DETOUR_TOOL_NAME,
                     code: result.code,
-                    stderr: result.stderr,
                 },
             };
         },
@@ -70,18 +82,31 @@ export function createEngineDetourToolDefinition(input) {
 /**
  * Register the engine-generic detour tool once for this process when any role has
  * an engine activation signal. Returns whether registration occurred.
+ * Once-latch is activation-scoped via the returned reset handle.
  */
-export function registerEngineDetourTool(pi, hostActions) {
+export function registerEngineDetourTool(roleHost, hostActions) {
     const engineName = engineNameFromEnv();
     if (engineName === undefined) {
-        return false;
+        return {
+            registered: false,
+            resetLatch() {
+                /* no-op when unregistered */
+            },
+        };
     }
+    const latch = { used: false };
     const definition = createEngineDetourToolDefinition({
         engineName,
+        latch,
         fail(error, toolCallId, ctx) {
             hostActions.failInfrastructure(error, ctx, toolCallId);
         },
     });
-    pi.registerTool(definition);
-    return true;
+    roleHost.registerTool(definition);
+    return {
+        registered: true,
+        resetLatch() {
+            latch.used = false;
+        },
+    };
 }

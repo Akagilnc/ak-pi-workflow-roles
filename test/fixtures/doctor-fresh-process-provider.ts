@@ -7,11 +7,12 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
 
-export default function doctorFreshProcessProvider(pi: ExtensionAPI): void {
+export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Promise<void> {
   const runsPath = process.env.AK_DOCTOR_FRESH_CASE_PATH;
   const issueNumber = Number(process.env.AK_DOCTOR_FRESH_ISSUE);
   if (typeof runsPath !== "string" || !runsPath || !Number.isInteger(issueNumber)) {
@@ -24,6 +25,7 @@ export default function doctorFreshProcessProvider(pi: ExtensionAPI): void {
     provider: "ak-doctor-fresh",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
   let captured = false;
   const capture = (context: Context) => {
     if (captured || typeof capturePath !== "string" || capturePath.trim() === "") return;
@@ -69,6 +71,6 @@ export default function doctorFreshProcessProvider(pi: ExtensionAPI): void {
   };
   pi.registerProvider(provider);
   pi.on("session_shutdown", () => {
-    console.error(`DOCTOR_FRESH_PROVIDER_CALLS=${faux.state.callCount}`);
+    void seeded.close();
   });
 }

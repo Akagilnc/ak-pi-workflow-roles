@@ -1,7 +1,7 @@
 /**
- * #443 / #495 S4 — session opening materials: ticket-oracle path rosters at the
- * three loader families (no soul-prose byte pin). Pack/default-wiring real entries
- * live in package + gatekeeper integration trunks.
+ * #443 / #495 S4 / #524 — session opening materials: ticket-oracle path rosters
+ * at the three loader families (no soul-prose byte pin). Pack/default-wiring
+ * real entries live in package + gatekeeper integration trunks.
  */
 import assert from "node:assert/strict";
 import test from "node:test";

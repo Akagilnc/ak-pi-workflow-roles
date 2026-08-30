@@ -51,6 +51,8 @@ const TICKET_HEAVYWEIGHT = [
   "test/package/package-entrypoint-navigator.integration.test.ts",
   "test/package/package-entrypoint-observation.integration.test.ts",
   "test/package/package-entrypoint-packaged-workers.integration.test.ts",
+  "test/package/doctor-package-lifecycle.test.ts",
+  "test/package/public-cli-install.test.ts",
 ] as const;
 
 type ChildRecord = {

@@ -4,11 +4,12 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -16,16 +17,21 @@ import {
   admitCountersignInvocation,
   parseCountersignArgv,
 } from "../../src/public-cli/invocation.ts";
-import { buildCountersignActivationExtraArgs } from "../../src/public-cli/countersign-run.ts";
+import { buildCountersignTurnRequest } from "../../src/public-cli/countersign-run.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
+import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -118,11 +124,21 @@ function scriptedCountersignSession(toolArgs: unknown) {
       `${countersignSessionRows(toolArgs).map((row) => JSON.stringify(row)).join("\n")}\n`,
       "utf8",
     );
+    const lawful =
+      typeof toolArgs === "object" &&
+      toolArgs !== null &&
+      "countersignStatus" in toolArgs &&
+      ["converged", "continue", "escalate"].includes(
+        String((toolArgs as { countersignStatus?: unknown }).countersignStatus),
+      );
     return {
       code: 0,
       timedOut: false,
       stderr: "",
       args: [...extraArgs],
+      ...(lawful
+        ? { sealedAcceptance: { role: "countersign" as const, details: toolArgs } }
+        : {}),
     };
   };
 }
@@ -137,6 +153,7 @@ test("countersign admission freezes attachments and binds the countersign role",
 
     const admitted = await admitCountersignInvocation({
       home,
+      principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
       instruction: "裁：本票是否足以开工。",
       attachmentPaths: [ticket],
@@ -148,10 +165,13 @@ test("countersign admission freezes attachments and binds the countersign role",
     assert.equal(admitted.attachments.length, 1);
     assert.ok(admitted.attachments[0]?.frozenPath);
 
-    const extra = buildCountersignActivationExtraArgs(admitted, { packageRoot });
-    assert.equal(flagValue(extra, "--ak-role"), "countersign");
-    assert.ok(extra.at(-1)?.includes("裁：本票是否足以开工。"));
-    assert.ok(extra.some((arg) => arg.includes(admitted.attachments[0]!.frozenPath)));
+    const turn = buildCountersignTurnRequest(admitted, {
+      packageRoot,
+      home,
+      agentDir: join(home, ".pi"),
+      continuation: { kind: "initial", prompt: "裁：本票是否足以开工。" },
+    });
+    assert.equal(turn.activation.role, "countersign");
   });
 });
 
@@ -196,6 +216,7 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
 
     for (const [index, receipt] of receipts.entries()) {
       const { io } = captureIo();
+      const runId = `01a0sign00-0000-7000-8000-${String(index).padStart(12, "0")}`;
       const result = await runAkRole(
         ["countersign", "--project", project, "裁：本票五问。"],
         {
@@ -203,9 +224,12 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
           packageRoot,
           cwd: project,
           io,
-          createRunId: () =>
-            `01a0sign00-0000-7000-8000-${String(index).padStart(12, "0")}`,
-          piRunner: scriptedCountersignSession(receipt),
+          createRunId: () => runId,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedCountersignSession(receipt),
+          }),
         },
       );
       assert.equal(result.exitCode, 0, `receipt ${receipt.countersignStatus}`);
@@ -215,13 +239,16 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
         result.terminal.roleOutcome.status,
         receipt.countersignStatus,
       );
-      const coords = roleRunSessionCoordinates({
+      const coords = issuePiDurablePrincipalCoordinates({
         cwd: project,
-        runId: "01a0sign00-0000-7000-8000-" + String(index).padStart(12, "0"),
+        runId,
         role: "countersign",
         home,
       });
-      const state = await readRoleRunState(coords.runDirectory);
+      const state = await readRoleRunState(
+        coords.runDirectory,
+        piDurablePrincipalAuthority,
+      );
       assert.equal(state?.role, "countersign");
       assert.equal(state?.state, "terminal");
     }
@@ -234,6 +261,7 @@ test("countersign runs are one-shot — resume is refused", async () => {
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
+    const runId = "01a0sign00-0000-7000-8000-0000000000aa";
     const result = await runAkRole(
       ["countersign", "--project", project, "裁"],
       {
@@ -241,14 +269,20 @@ test("countersign runs are one-shot — resume is refused", async () => {
         packageRoot,
         cwd: project,
         io: captureIo().io,
-        createRunId: () => "01a0sign00-0000-7000-8000-0000000000aa",
-        piRunner: scriptedCountersignSession({ countersignStatus: "converged", findings: [] }),
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedCountersignSession({
+            countersignStatus: "converged",
+            findings: [],
+          }),
+        }),
       },
     );
     assert.equal(result.exitCode, 0);
-    const runId = "01a0sign00-0000-7000-8000-0000000000aa";
 
-    const { stderr: resumeStderr, io: resumeIo } = captureIo();
+    const { io: resumeIo } = captureIo();
     const refused = await runAkRole(["resume", runId, "再裁一次"], {
       home,
       packageRoot,

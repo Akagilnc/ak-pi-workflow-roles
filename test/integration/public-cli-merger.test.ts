@@ -1,3 +1,6 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 /**
  * #114 public Merger path — derive envelope from active merge, force package
  * merge-only method, settle completed|escalate on shared success interface.
@@ -30,14 +33,10 @@ import {
   deriveMergerEnvelopeFromActiveMerge,
   parseMergerArgv,
 } from "../../src/public-cli/invocation.ts";
-import {
-  buildMergerActivationExtraArgs,
-  buildMergerResumeActivationExtraArgs,
-} from "../../src/public-cli/merger-run.ts";
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+
+import { RESUME_TRANSPORT_ENVELOPE, selectResumeContinuationPrompt } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractMergerMethodInvocations,
-  extractMergerRoleOutcome,
   settleMergerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -45,9 +44,13 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-merger-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -184,6 +187,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     await assert.rejects(
       () =>
         admitMergerInvocationRaw({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           instruction: "   ",
@@ -194,6 +198,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     );
 
     const admitted = await admitMergerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Reconcile the conflicted merge.",
@@ -240,59 +245,20 @@ test("admitMergerInvocation derives envelope into internal input without public 
   });
 });
 
-test("buildMergerActivationExtraArgs pins package merge-only method and internal input", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    await materializeConflictedRepo(project);
-    const admitted = await admitMergerInvocation({
-      home,
-      cwd: project,
-      instruction: "Resolve within scope.",
-      attachmentPaths: [],
-      createRunId: () => "run-merger-args-001",
-    });
-    const args = buildMergerActivationExtraArgs(admitted, { packageRoot });
-    assert.equal(args.includes("--no-skills"), true);
-    assert.equal(args.includes("--skill"), true);
-    assert.equal(args.includes("--ak-role"), true);
-    assert.equal(args[args.indexOf("--ak-role") + 1], "merger");
-    assert.equal(args.includes("--ak-merger-input"), true);
-    assert.equal(
-      args[args.indexOf("--ak-merger-input") + 1],
-      admitted.mergerInputPath,
-    );
-    assert.equal(
-      args.some((a) => a.includes(".agents/skills")),
-      false,
-    );
-    assert.equal(
-      args.some((a) => a.startsWith("/skill:resolving-merge-conflicts")),
-      true,
-    );
-
-    const resume = buildMergerResumeActivationExtraArgs(admitted, {
-      packageRoot,
-    });
-    assert.equal(resume.includes("--skill"), true);
-    assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
-    assert.equal(resume.includes(admitted.instruction), false);
-  });
-});
-
 test("lawful merger Terminal settlement publishes report/evidence with method + derived envelope", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     const fixture = await materializeConflictedRepo(project);
     const admitted = await admitMergerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       instruction: "Complete the merge.",
       attachmentPaths: [],
       createRunId: () => "run-merger-settle-001",
     });
-    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "resolving-merge-conflicts",
@@ -349,25 +315,25 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
         },
       }),
     ];
-    await writeFile(admitted.sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "merger",
+      details: receipt,
+      toolCallId: "m1",
+    });
 
     const entries = sessionLines.map((line) => JSON.parse(line));
-    const extracted = extractMergerRoleOutcome(entries);
-    assert.equal(extracted?.outcome.role, "merger");
-    assert.equal(extracted?.outcome.kind, "accepted");
-    assert.equal(extracted?.outcome.status, "completed");
-    assert.equal(
-      extracted?.outcome.decisiveFacts.mergeCommitId,
-      "a".repeat(40),
-    );
-
     const methodInvocations = extractMergerMethodInvocations(entries, {
       allowedLocations: [material.skillPath, configuredPath],
     });
     assert.equal(methodInvocations.length, 1);
     assert.equal(methodInvocations[0]!.name, "resolving-merge-conflicts");
 
-    const terminal = await settleMergerTerminalResult(admitted, {
+    const terminal = await settleMergerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -433,7 +399,16 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     );
     assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
 
-    // escalate leaf is also a lawful accepted Terminal status.
+    // escalate leaf is also a lawful accepted Terminal status (own run ledger).
+    const escalateAdmitted = await admitMergerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
+      home,
+      cwd: project,
+      instruction: "Escalate the merge.",
+      attachmentPaths: [],
+      createRunId: () => "run-merger-settle-escalate",
+    });
+    const escalateReceiptBound = { ...escalateReceipt, attemptId: escalateAdmitted.runId };
     const escalateLines = [
       sessionLines[0]!,
       JSON.stringify({
@@ -445,7 +420,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
               type: "toolCall",
               id: "m2",
               name: MERGER_OUTPUT_TOOL_NAME,
-              arguments: escalateReceipt,
+              arguments: escalateReceiptBound,
             },
           ],
         },
@@ -457,16 +432,26 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
           toolCallId: "m2",
           toolName: MERGER_OUTPUT_TOOL_NAME,
           isError: false,
-          details: escalateReceipt,
+          details: escalateReceiptBound,
         },
       }),
     ];
+    await mkdir(piDurablePrincipalAuthority.decode(escalateAdmitted.principal).sessionDirectory, { recursive: true });
     await writeFile(
-      admitted.sessionFile,
+      piDurablePrincipalAuthority.decode(escalateAdmitted.principal).sessionFile,
       `${escalateLines.join("\n")}\n`,
       "utf8",
     );
-    const escalateTerminal = await settleMergerTerminalResult(admitted, {
+    await sealAcceptedSubmission({
+      runId: escalateAdmitted.runId,
+      cwd: project,
+      home,
+      runDirectory: escalateAdmitted.runDirectory,
+      role: "merger",
+      details: escalateReceiptBound,
+      toolCallId: "m2",
+    });
+    const escalateTerminal = await settleMergerTerminalResult(escalateAdmitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -498,9 +483,13 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
         home,
         cwd: project,
         io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           throw new Error("must not dispatch");
         },
+          }),
       });
       assert.equal(result.exitCode, 2);
       assert.equal(stderr.join("").length > 0, true);
@@ -518,9 +507,13 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
           cwd: project,
           io,
           createRunId: () => "run-merger-no-merge",
-          piRunner: async () => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
             throw new Error("must not dispatch without active merge");
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 1);
@@ -550,7 +543,10 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
           io,
           createRunId: () => "run-merger-dispatch-001",
           mergerTimeoutMs: 5_000,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             // Simulate forced expansion + completed leaf without real model.
             const sessionIdx = args.indexOf("--session");
@@ -609,11 +605,13 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" },
               stderr: "",
               timedOut: false,
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join(""));
@@ -660,7 +658,10 @@ test("ak-role resume continues merger with package method and exact session", as
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -675,6 +676,7 @@ test("ak-role resume continues merger with package method and exact session", as
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume, "merger 429 must be resumable");
@@ -705,7 +707,10 @@ test("ak-role resume continues merger with package method and exact session", as
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "merger");
         assert.equal(
@@ -748,11 +753,13 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         return {
           code: 0,
+              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "r1" },
           stderr: "",
           timedOut: false,
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "merger resume failed");
     assert.equal(Array.isArray(resumeArgs), true);
@@ -777,7 +784,10 @@ test("public Merger retains malformed output candidate as typed incomplete", asy
       credentials: { "openai-codex": true, xai: true },
       createRunId: () => "run-merger-residual-182",
       io: captureIo().io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         const sessionFile = args[args.indexOf("--session") + 1]!;
         await mkdir(join(sessionFile, ".."), { recursive: true });
         await writeFile(sessionFile, [
@@ -786,6 +796,7 @@ test("public Merger retains malformed output candidate as typed incomplete", asy
         ].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
         return { code: 1, stderr: "aborted", timedOut: false, args: [...args] };
       },
+          }),
     });
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "incomplete");

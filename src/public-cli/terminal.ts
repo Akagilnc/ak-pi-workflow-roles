@@ -8,6 +8,9 @@
 import { renderPublicAkRoleCommand } from "./command-renderer.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
+import type { ControlledFailureCause } from "../host-contracts.ts";
+
+export type { ControlledFailureCause } from "../host-contracts.ts";
 
 /** Encode one free-text Terminal cell. JSON string form cannot embed raw tab/newline. */
 export function encodeTerminalField(value: string): string {
@@ -19,15 +22,6 @@ export type TerminalArtifactRef = {
   /** Openable local reference (path). Layout is private; the ref value is the contract. */
   path: string;
 };
-
-/** Controlled post-admission failure classes (ADR 0052 / #107). */
-export type ControlledFailureCause =
-  | "activation"
-  | "provider"
-  | "session"
-  | "output"
-  | "timeout"
-  | "unrecognized";
 
 /** Public callable roles that currently produce Terminal outcomes. */
 export type TerminalRoleName =
