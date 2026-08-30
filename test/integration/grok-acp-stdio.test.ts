@@ -66,6 +66,32 @@ process.on("SIGTERM", () => process.exit(0));
   }
 });
 
+test("ACP stdio answers host permission requests without bypassing root deny rules", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-permission-"));
+  try {
+    const executable = join(root, "grok-permission.mjs");
+    await writeFile(executable, `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 90, method: "session/request_permission", params: { options: [{ optionId: "once", kind: "allow_once" }] } }) + "\\n");
+  } else if (message.id === 90) {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: message.result }) + "\\n");
+  }
+});
+process.on("SIGTERM", () => process.exit(0));
+`);
+    await chmod(executable, 0o755);
+    const connection = await connectGrokAcpStdio({ binary: executable, cwd: root, env: process.env });
+    assert.deepEqual(await connection.request("initialize", {}), { outcome: { outcome: "selected", optionId: "once" } });
+    await connection.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ACP stdio pairs framed replies and closes one real child", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-faux-"));
   try {
@@ -106,7 +132,7 @@ process.on("SIGTERM", () => process.exit(0));
   await connection.close();
     assert.deepEqual((await readFile(events, "utf8")).trim().split("\n").map((line) => JSON.parse(line).method), ["first", "second", "session/cancel"]);
     assert.deepEqual(JSON.parse(await readFile(launch, "utf8")), {
-      args: ["--tools", "read,bash", "--deny", "Shell(rm:*)", "--deny", "Shell(git clean:*)", "agent", "--model", "grok-4.5", "--always-approve", "stdio"],
+      args: ["--tools", "read,bash", "--deny", "Shell(rm:*)", "--deny", "Shell(git clean:*)", "agent", "--model", "grok-4.5", "stdio"],
       config: JSON.stringify({ toolset: "coding" }),
     });
     await assert.rejects(connection.request("after-close", {}), /closed/i);

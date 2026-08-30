@@ -28,6 +28,7 @@ export type GrokPreparedTurn = Readonly<{
     | { readonly accepted: true }
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
+  dispose?(): Promise<void>;
 }>;
 
 export type GrokCapabilityDeclaration = Readonly<{
@@ -61,7 +62,7 @@ function failure(cause: "activation" | "session" | "output", name: string, code:
   };
 }
 
-type RpcReply = { readonly id?: unknown; readonly result?: unknown; readonly error?: unknown };
+type RpcReply = { readonly id?: unknown; readonly method?: unknown; readonly params?: unknown; readonly result?: unknown; readonly error?: unknown };
 
 /** One ACP JSON-RPC stdio process. Natural close/SIGTERM are its only lifecycle exits. */
 export function connectGrokAcpStdio(options: {
@@ -72,13 +73,13 @@ export function connectGrokAcpStdio(options: {
   readonly tools?: readonly string[];
   readonly deny?: readonly string[];
   readonly toolset?: string;
+  readonly onNotification?: (method: string, params: Readonly<Record<string, unknown>>) => void;
 }): Promise<GrokAcpConnection> {
   const args = [
     ...(options.tools === undefined ? [] : ["--tools", options.tools.join(",")]),
     ...(options.deny?.flatMap((rule) => ["--deny", rule]) ?? []),
     "agent",
     ...(options.model === undefined ? [] : ["--model", options.model]),
-    "--always-approve",
     "stdio",
   ];
   const env = options.toolset === undefined
@@ -106,6 +107,30 @@ export function connectGrokAcpStdio(options: {
       settleClosed(new Error(`Invalid Grok ACP JSON: ${String(error)}`, { cause: error }));
       child.stdin.end();
       child.kill("SIGTERM");
+      return;
+    }
+    if (typeof message.method === "string") {
+      const params = typeof message.params === "object" && message.params !== null
+        ? message.params as Readonly<Record<string, unknown>> : {};
+      options.onNotification?.(message.method, params);
+      if (typeof message.id === "number") {
+        if (message.method !== "session/request_permission") {
+          settleClosed(new Error(`Unsupported Grok ACP client request: ${message.method}`));
+          child.stdin.end();
+          child.kill("SIGTERM");
+          return;
+        }
+        const choices = Array.isArray(params.options) ? params.options : [];
+        const selected = choices.find((value) =>
+          typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "allow_once") as { optionId?: unknown } | undefined;
+        if (typeof selected?.optionId !== "string") {
+          settleClosed(new Error("Grok ACP permission request omitted allow_once"));
+          child.stdin.end();
+          child.kill("SIGTERM");
+          return;
+        }
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "selected", optionId: selected.optionId } } })}\n`);
+      }
       return;
     }
     if (typeof message.id !== "number") return;
@@ -206,7 +231,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               ...(resumedSessionId === undefined ? {} : { sessionId: resumedSessionId }),
               cwd: request.cwd,
               mcpServers: prepared.mcpServers,
-              _meta: { systemPromptOverride: prepared.systemPrompt },
+              _meta: { systemPromptOverride: prepared.systemPrompt, yoloMode: false },
             },
           );
           const sessionId = resumedSessionId ?? session.sessionId;
@@ -233,6 +258,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           return { code: 0, stderr: "", timedOut: false };
         } finally {
           await connection.close();
+          await prepared.dispose?.();
         }
       });
       serial = execution.then(() => undefined, () => undefined);

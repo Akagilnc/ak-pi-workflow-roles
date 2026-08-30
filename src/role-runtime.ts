@@ -634,7 +634,7 @@ export async function projectClosedSubmissionLifecycle(
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
 
-type RoleRuntimeEnvelope = Pick<ExtensionAPI, "appendEntry" | "sendMessage">;
+export type RoleRuntimeEnvelope = Pick<ExtensionAPI, "appendEntry" | "sendMessage">;
 
 /** Host-neutral shared envelope composition used by every main-session adapter. */
 export function configureRoleRuntimeEnvelope(
