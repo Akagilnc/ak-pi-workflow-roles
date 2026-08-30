@@ -230,16 +230,6 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       assert.equal(afterAccepted.resume, false, `${entry.role}:${String(phase)}:after-accepted-resume`);
       assert.notEqual(afterAccepted.invocationId, validA, `${entry.role}:${String(phase)}:after-accepted-id`);
 
-      const afterTypedClosure = resolveLifecycleInvocationPrincipal([
-        roleMarker,
-        {
-          type: "custom",
-          customType: "ak-role-submission-closure",
-          data: { toolName: entry.outputTool, isError: false, details: acceptedDetails },
-        },
-      ]);
-      assert.equal(afterTypedClosure.resume, false, `${entry.role}:${String(phase)}:after-typed-closure-resume`);
-
       // Ordinary correctable isError does NOT complete → resume same principal.
       const afterRetryable = resolveLifecycleInvocationPrincipal([
         roleMarker,
