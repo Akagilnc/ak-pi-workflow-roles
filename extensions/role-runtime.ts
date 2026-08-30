@@ -265,6 +265,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
+    loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {

@@ -78,6 +78,12 @@ import {
   type NotaryOutput,
 } from "../notary-contracts.ts";
 import {
+  COUNTERSIGN_OUTPUT_TOOL_NAME,
+  countersignDecisiveFacts,
+  validateRecordedCountersignOutput,
+  type CountersignOutput,
+} from "../countersign-contracts.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -99,6 +105,7 @@ import {
   type AdmittedCollectorInvocation,
   type AdmittedDoctorInvocation,
   type AdmittedFixerInvocation,
+  type AdmittedCountersignInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
   type AdmittedNotaryInvocation,
@@ -3065,6 +3072,14 @@ export type LawfulNotaryRoleOutcome = {
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
 
+/** Lawful Countersign accepted outcome (署/封驳/上呈, #572 / ADR 0074). */
+export type LawfulCountersignRoleOutcome = {
+  kind: "accepted";
+  role: "countersign";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
 export function extractNotaryRoleOutcome(
   entries: readonly SessionEntry[],
 ): { outcome: LawfulNotaryRoleOutcome; output: NotaryOutput } | undefined {
@@ -3163,6 +3178,113 @@ export async function settleNotaryTerminalResult(
     );
   }
   return settled;
+}
+
+export function extractCountersignRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulCountersignRoleOutcome; output: CountersignOutput } | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== COUNTERSIGN_OUTPUT_TOOL_NAME) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
+    try {
+      const output = validateRecordedCountersignOutput(message.details);
+      const outcome: LawfulCountersignRoleOutcome = {
+        kind: "accepted",
+        role: "countersign",
+        status: String(output.countersignStatus),
+        decisiveFacts: countersignDecisiveFacts(output),
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function settleLawfulCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractCountersignRoleOutcome(entries);
+  if (extracted === undefined) {
+    // No usable Countersign verdict → existing non-zero failure channel with candidate (#475 / ADR 0055).
+    // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
+    let acceptedNonUsable: unknown | undefined;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(
+        entries,
+        index,
+        message,
+        COUNTERSIGN_OUTPUT_TOOL_NAME,
+      );
+      if (residual !== undefined) {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false },
+        });
+      }
+      if (
+        acceptedNonUsable === undefined &&
+        message.toolName === COUNTERSIGN_OUTPUT_TOOL_NAME &&
+        isAcceptedPackagedRoleTerminalResult(message)
+      ) {
+        // Accepted once but not a lawful 署/封驳/上呈 — hold as fallback.
+        try {
+          validateRecordedCountersignOutput(message.details);
+        } catch {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== undefined) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: "给事中回执无显式 署/封驳/上呈",
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
+      });
+    }
+    return undefined;
+  }
+  const navigator = extractNavigatorFact(entries);
+  return withOptionalGateProjection(
+    {
+      roleOutcome: extracted.outcome,
+      navigator,
+      artifacts: [],
+      runId: admitted.runId,
+    },
+    admitted.sessionDirectory,
+  );
+}
+
+/** Settle a lawful Countersign Terminal from the admitted session. */
+export async function settleCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulCountersignTerminalResult(admitted);
+  if (settled === undefined) {
+    throw new Error(
+      "Countersign Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Countersign Terminal; undefined only for genuine absence. */
+export async function trySettleCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulCountersignTerminalResult(admitted);
 }
 
 /** Try to settle a lawful Notary Terminal; undefined only for genuine absence. */

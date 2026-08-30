@@ -27,7 +27,7 @@ export async function joinPackageMaterials(
   return chunks.join("\n\n");
 }
 
-/** Seven public main roles + Navigator. Ticket #443 injection roster. */
+/** Nine public main roles + Navigator. Ticket #443 injection roster. */
 export const MAIN_ROLE_SESSION_MATERIALS = {
   judge: [
     "CLAUDE.md",
@@ -58,6 +58,7 @@ export const MAIN_ROLE_SESSION_MATERIALS = {
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],
   notary: ["CLAUDE.md", "souls/notary.md", "souls/gate-output-guide.md"],
+  countersign: ["CLAUDE.md", "souls/countersign.md", "souls/countersign-output-guide.md"],
   navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
 

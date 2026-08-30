@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-为 [Pi](https://pi.dev) 打包的工作流角色：大理寺（judge）、修内司（fixer）、将作监（coder）、御史台（reviewer）、通进司（collector）、太医署（doctor）、校书郎（merger）、符宝郎（notary）、太史（analyst）。English: [README.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.md)。
+为 [Pi](https://pi.dev) 打包的工作流角色：大理寺（judge）、给事中（countersign）、修内司（fixer）、将作监（coder）、御史台（reviewer）、通进司（collector）、太医署（doctor）、校书郎（merger）、符宝郎（notary）、太史（analyst）。English: [README.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.md)。
 
 ## 安装
 
@@ -115,8 +115,9 @@ ak-role resume <runId> "<裁定>"
 | **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；Standards／Spec 两条取证腿由 runtime 代跑，本席收腿报告出薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
 | **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
-| **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **质量保证省。** 交卷时判断受审物、够不够审、该谁审，派给事中或符宝郎；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。 |
-| **给事中** | inspector（无独立 CLI；可由门下省派发） | **复杂度与测试质量两轴质检。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。 |
+| **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **审署诏敕与质量保证的省。** 交卷时判断受审物、够不够审、该谁审，派察院或符宝郎；给事中票庭由调用者开工前传召；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
+| **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
+| **察院** | inspector（无独立 CLI；可由门下省派发） | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。原给事中，ADR 0074 分立。 |
 | **符宝郎** | notary | **引语真伪与票面对齐。** 受审物是大理寺拟判等文书；可被门下省派发，也可 `ak-role notary` 单独调。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
