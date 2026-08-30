@@ -20,7 +20,7 @@ import { doctorSubmissionSchema } from "../../src/doctor-contracts.ts";
 import { mergerOutputSchema } from "../../src/merger-contracts.ts";
 import { notaryOutputSchema } from "../../src/notary-contracts.ts";
 
-const EIGHT = [
+const NINE = [
   ["Judge", judgeVerdictSchema],
   ["Fixer", fixerOutputSchema],
   ["Coder", coderOutputSchema],
@@ -29,6 +29,7 @@ const EIGHT = [
   ["Doctor", doctorSubmissionSchema],
   ["Merger", mergerOutputSchema],
   ["Notary", notaryOutputSchema],
+  "countersign",
 ] as const;
 
 type Declared = {
