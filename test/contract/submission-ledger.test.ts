@@ -33,13 +33,16 @@ function registerTool(
   let registered: HostToolDefinition | undefined;
   const handlers = new Map<string, (...args: any[]) => unknown>();
   const deliveredRejections: unknown[] = [];
+  const closedSubmissions: unknown[] = [];
   let terminalRoundCalls: Array<{ toolCallId: string; toolName: string }> = [];
   const host = {
     deliverSubmissionRejection(rejection: unknown) { deliveredRejections.push(rejection); },
     registerTool(tool: HostToolDefinition) { registered = tool; },
     on(event: string, handler: (...args: any[]) => unknown) { handlers.set(event, handler); },
   } as RoleHost;
-  const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, role]]));
+  const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, role]]), undefined, async (projection) => {
+    closedSubmissions.push(projection);
+  });
   pipeline.registerTool({ name: outputTool, label: "output", description: "", parameters: Type.Object({}), execute });
   const context = {
     cwd: root,
@@ -51,6 +54,7 @@ function registerTool(
   return {
     context,
     deliveredRejections,
+    closedSubmissions,
     tool: () => registered!,
     start: async (id: string, name = JUDGE_OUTPUT_TOOL_NAME) => {
       terminalRoundCalls.push({ toolCallId: id, toolName: name });
@@ -102,12 +106,14 @@ test("host-neutral round closure seals only a sole terminal candidate", async ()
 
     await f.close();
     assert.deepEqual((await ledgerRecords(f.root)).map((record) => record.kind), ["candidate", "roundContext", "sealed"]);
-    assert.deepEqual(await readSealedSubmission(f.root, "run-ledger"), {
+    const projection = {
       kind: "accepted",
       role: "judge",
       status: "converged",
       decisiveFacts: { judgeStatus: "converged" },
-    });
+    };
+    assert.deepEqual(await readSealedSubmission(f.root, "run-ledger"), projection);
+    assert.deepEqual(f.closedSubmissions, [projection]);
 
     const resumed = registerTool(f.root);
     await resumed.start("after-seal", "read");
@@ -211,6 +217,7 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
     assert.equal(projection?.kind, "audit_escalation");
     assert.equal(projection?.role, "judge");
     assert.equal(projection?.decisiveFacts.kind, "audit_escalation");
+    assert.deepEqual(escalating.closedSubmissions, [projection]);
   });
 });
 
