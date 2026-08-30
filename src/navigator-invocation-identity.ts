@@ -212,6 +212,12 @@ export function classifyPackagedRoleTerminalResult(
   if (typeof message.toolName !== "string") return { kind: "nonterminal" };
   if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
 
+  if (
+    typeof message.details === "object" &&
+    message.details !== null &&
+    (message.details as { submissionDisposition?: unknown }).submissionDisposition === "pending-round-closure"
+  ) return { kind: "nonterminal" };
+
   // Base identity is enough; durable details may carry typed failure evidence (#475).
   const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
   const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : undefined;

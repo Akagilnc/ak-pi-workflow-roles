@@ -698,6 +698,7 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
         gatekeeper: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
         inspector: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
       });
+      let rejectionObservedByModel = false;
       faux.setResponses([
         fauxAssistantMessage(
           [
@@ -714,10 +715,13 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
           fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-1" }),
           { stopReason: "toolUse" },
         ),
-        fauxAssistantMessage(
-          [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
-          { stopReason: "toolUse" },
-        ),
+        async (context: any) => {
+          rejectionObservedByModel = context.messages.filter((message: any) => message.role === "user").length > 1;
+          return fauxAssistantMessage(
+            [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
+            { stopReason: "toolUse" },
+          );
+        },
         fauxAssistantMessage(
           fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-2" }),
           { stopReason: "toolUse" },
@@ -756,14 +760,7 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
             { submissionDisposition: "pending-round-closure" },
             `${row.role} remains pending until typed turn closure`,
           );
-          const rejection = entries.find(
-            (entry) => entry.type === "custom" && entry.customType === "ak-role-submission-rejection",
-          );
-          assert.deepEqual(rejection?.data, {
-            kind: "correctable-rejection",
-            code: "non-sole-round",
-            toolCallIds: ["output"],
-          }, `${row.role} receives the case-specific typed rejection`);
+          assert.equal(rejectionObservedByModel, true, `${row.role} receives the rejection before retrying`);
           const headerId = sessionManager.getHeader?.()?.id;
           const sealed = headerId === undefined ? undefined : await readSealedSubmission(work, headerId);
           assert.equal(sealed?.role, row.role, `${row.role} retry on the same durable session seals`);

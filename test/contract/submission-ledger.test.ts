@@ -4,6 +4,7 @@ import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
+import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
@@ -17,7 +18,6 @@ import {
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { Type } from "typebox";
 
 function registerTool(
@@ -27,16 +27,20 @@ function registerTool(
     details: { judgeStatus: "converged" },
     terminate: true,
   }),
+  outputTool = JUDGE_OUTPUT_TOOL_NAME,
+  role: TerminalRoleName = "judge",
 ) {
   let registered: HostToolDefinition | undefined;
   const handlers = new Map<string, (...args: any[]) => unknown>();
+  const deliveredRejections: unknown[] = [];
   let terminalRoundCalls: Array<{ toolCallId: string; toolName: string }> = [];
   const host = {
+    deliverSubmissionRejection(rejection: unknown) { deliveredRejections.push(rejection); },
     registerTool(tool: HostToolDefinition) { registered = tool; },
     on(event: string, handler: (...args: any[]) => unknown) { handlers.set(event, handler); },
   } as RoleHost;
-  const pipeline = createSubmissionLedgerHost(host, new Map([[JUDGE_OUTPUT_TOOL_NAME, "judge"]]));
-  pipeline.registerTool({ name: JUDGE_OUTPUT_TOOL_NAME, label: "output", description: "", parameters: Type.Object({}), execute });
+  const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, role]]));
+  pipeline.registerTool({ name: outputTool, label: "output", description: "", parameters: Type.Object({}), execute });
   const context = {
     cwd: root,
     mode: "json",
@@ -46,6 +50,7 @@ function registerTool(
   } as HostContext;
   return {
     context,
+    deliveredRejections,
     tool: () => registered!,
     start: async (id: string, name = JUDGE_OUTPUT_TOOL_NAME) => {
       terminalRoundCalls.push({ toolCallId: id, toolName: name });
@@ -126,6 +131,13 @@ test("mixed and double-output rounds reject typed candidates before a legal retr
       const rejected = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
       assert.equal(rejected.length, row.label === "double-output" ? 2 : 1, row.label);
       assert.equal((rejected[0]?.payload as { code?: string }).code, "non-sole-round", row.label);
+      assert.deepEqual(f.deliveredRejections, [{
+        kind: "correctable-rejection",
+        code: "non-sole-round",
+        toolCallIds: row.label === "double-output"
+          ? ["double-output-0", "double-output-1"]
+          : ["sibling-0"],
+      }], row.label);
 
       await f.start(`${row.label}-retry`);
       await f.tool().execute(`${row.label}-retry`, {}, undefined, undefined, f.context);
@@ -232,13 +244,17 @@ test("eight packaged roles seal through the production ledger host", async () =>
   for (const row of rows) {
     await withLedgerFixture(async (f) => {
       process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-${row.role}@${row.role}`;
-      await sealAcceptedSubmission({
-        cwd: f.root,
-        home: f.root,
-        runId: `run-${row.role}`,
-        role: row.role,
-        details: row.details,
-      });
+      const outputTool = packagedRoleOutputTool(row.role)!;
+      const alternateHost = registerTool(
+        f.root,
+        async () => ({ content: [], details: row.details, terminate: true }),
+        outputTool,
+        row.role,
+      );
+      await alternateHost.start(`${row.role}-output`, outputTool);
+      const pending = await alternateHost.tool().execute(`${row.role}-output`, {}, undefined, undefined, alternateHost.context);
+      assert.deepEqual(pending.details, { submissionDisposition: "pending-round-closure" }, row.role);
+      await alternateHost.close();
       const sealed = await readSealedSubmission(f.root, `run-${row.role}`);
       assert.equal(sealed?.kind, "accepted", row.role);
       assert.equal(sealed?.role, row.role);

@@ -195,7 +195,11 @@ export function createSubmissionLedgerHost(
       const sole = calls.length === 1 && candidates.length === 1 && calls[0]?.id === candidates[0]?.toolCallId;
       if (!sole) {
         for (const candidate of candidates) appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "correctable-rejection", code: "non-sole-round" });
-        context.sessionManager.appendCustomEntry?.("ak-role-submission-rejection", {
+        if (host.deliverSubmissionRejection === undefined) {
+          throw new Error("宿主未提供模型可见的交卷封驳接缝");
+        }
+        context.abort();
+        await host.deliverSubmissionRejection({
           kind: "correctable-rejection",
           code: "non-sole-round",
           toolCallIds: candidates.map(({ toolCallId }) => toolCallId),
