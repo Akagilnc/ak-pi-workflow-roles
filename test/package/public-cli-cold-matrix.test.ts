@@ -407,6 +407,18 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       PI_OFFLINE: "1",
     };
 
+    // Inspector — cold-installed executable reaches its isolated internal seat.
+    {
+      await runAkRoleBin(
+        installed.akRoleBin,
+        ["inspector", "--project", project, "Review this material."],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "inspector");
+      assert.equal(args.includes("--no-skills"), true);
+    }
+
     // judge — retained role gate: Internal --ak-role judge, no ambient skills.
     {
       const result = await runAkRoleBin(
