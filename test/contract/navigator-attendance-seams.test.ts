@@ -19,6 +19,7 @@ import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
 import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
+import type { RoleEnvelopeHost, RoleHost } from "../../src/host-contracts.ts";
 import {
   context,
   candidate,
@@ -627,7 +628,7 @@ test("public admitted-request projects typed subject/authority; missing/malforme
   }
 });
 
-test("role-runtime passes admitted-request subject/authority into Navigator attendance", async () => {
+test("host-neutral envelope drives shared registration and session lifecycle", async () => {
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
 
@@ -665,17 +666,28 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
           return [];
         },
         setActiveTools() {},
+        getActiveTools() { return []; },
         appendEntry(customType: string, data?: unknown) {
           appendedEntries.push({ customType, data });
         },
       };
 
-      const piHostAdapter = createPiRoleHostAdapter(pi as never);
+      const envelopeHost: RoleEnvelopeHost = {
+        host: pi as RoleHost,
+        appendEntry: pi.appendEntry,
+        sendMessage() {},
+        startKeepalive() {},
+        stopKeepalive() {},
+      };
       createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
-        transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
-        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, { ...options, context: toPiContext(options.context) }),
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: `${runDir}/admitted-request.json`,
+          subject: prose,
+          authority: prose,
+          subjectProvenance: "role_input",
+        }),
         createNavigatorAttendance: (options) => {
           observed = {
             subject: options.subject,
@@ -691,7 +703,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
             dispose() {},
           };
         },
-      })(piHostAdapter);
+      })(envelopeHost);
 
       const sessionDir = join(runDir, "session");
       await mkdir(sessionDir, { recursive: true });
@@ -753,7 +765,6 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
 
     createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
-      transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
       // Production soft miss: session_start has no materials yet (no throw/poison).
       loadNavigatorWorkContext: async () => ({

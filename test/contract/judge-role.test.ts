@@ -610,16 +610,15 @@ async function startJudge(
   auditSoulCompliance: Parameters<
     typeof createPiRoleRuntimeExtension
   >[0]["auditSoulCompliance"],
-  transcriptFromContext: (ctx: HostContext) => string = () =>
+  transcriptFromContext: (ctx: ExtensionContext) => string = () =>
     "review evidence and adjudication",
 ) {
   return withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     const harness = extensionHarness("judge");
     createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
-      transcriptFromContext,
       auditSoulCompliance,
-    })(harness.pi as ExtensionAPI);
+    }, { transcriptFromContext })(harness.pi as ExtensionAPI);
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
     assert.ok(tool);
@@ -635,7 +634,6 @@ test("stable factory registers the complete typed role flag set and stays inert 
     loadFixerSoul: async () => { loads += 1; return "fixer"; },
     loadCoderSoul: async () => { loads += 1; return "coder"; },
     loadReviewerSoul: async () => { loads += 1; return "reviewer"; },
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
 
@@ -695,7 +693,6 @@ test("after_provider_response production handler writes typed 429 into resumable
     const harness = extensionHarness(undefined);
     createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "judge",
-      transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
     })(harness.pi as ExtensionAPI);
 
@@ -804,7 +801,6 @@ test("unsupported role fails with the frozen diagnostic before any loader runs",
     loadFixerSoul: async () => { loads += 1; return "fixer"; },
     loadCoderSoul: async () => { loads += 1; return "coder"; },
     loadReviewerSoul: async () => { loads += 1; return "reviewer"; },
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
 
@@ -1127,7 +1123,6 @@ test("packaged infrastructure failure silence correlates the exact output call i
     const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
     const extension = createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
-      transcriptFromContext: () => "record",
       auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
       loadNavigatorWorkContext: async () => ({ subjectKey: "/repo/.ak/work/issues/28", subject: "issue 28", authority: "owner authority", subjectProvenance: "role_input" as const }),
       createNavigatorAttendance: async (options) => {
@@ -1209,7 +1204,6 @@ test("judge role fails before adjudication when its soul is empty", async () => 
   const harness = extensionHarness("judge");
   const extension = createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "   \n",
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   });
 
@@ -1240,7 +1234,6 @@ test("coder plan loads its task without construction skill and returns planned",
       bindingLoads += 1;
       return tddBinding();
     },
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
 
@@ -1291,7 +1284,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
     loadCanonicalSkillBinding: async () => tddBinding(),
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -1345,7 +1337,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
     loadCanonicalSkillBinding: async () => tddBinding(),
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness2.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -1382,7 +1373,6 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
   const harness = extensionHarness("judge");
   createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-gatekeeper-tool-result-" }, async ({ home }) => {
@@ -2200,7 +2190,6 @@ test("coder missing skill-expansion evidence persists typed non-pass on real hos
           loadCoderSoul: async () => "CODER LAW",
           loadCoderTask: async (path) => readFile(path, "utf8"),
           loadCanonicalSkillBinding: async () => tddBinding(),
-          transcriptFromContext: () => "",
           auditSoulCompliance: async () => ({ status: "pass" }),
         }),
       ],
@@ -2270,7 +2259,6 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
       loadJudgeSoul: async () => "judge",
       loadFixerSoul: async () => "fixer",
       loadFixPacket: async () => row.packet,
-      transcriptFromContext: () => "record",
       auditSoulCompliance: async () => ({ status: "pass" }),
     })(harness.pi as ExtensionAPI);
     await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -2287,8 +2275,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
 test("undeclared prerequisite submissions are rejected; declared references pass structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   createPiRoleRuntimeExtension({
-    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
-    transcriptFromContext: () => "record", auditSoulCompliance: async () => ({ status: "pass" }),
+    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n", auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -2337,8 +2324,7 @@ test("declared plan refusal passes structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "plan" });
   createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer",
-    loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
-    transcriptFromContext: () => "plan-record", auditSoulCompliance: async () => ({ status: "pass" }),
+    loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n", auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -2363,7 +2349,6 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
       loadedPaths.push(path);
       return instructionBytes;
     },
-    transcriptFromContext: () => "invocation record",
     auditSoulCompliance: async () => ({ status: "pass" }),
   });
 
@@ -2422,7 +2407,6 @@ test("fixer activation leaves its tool surface unchanged", async () => {
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
     loadFixPacket: async () => emptyFixPacket,
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
 
@@ -2471,7 +2455,6 @@ test(
 
       const extension = createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
-        transcriptFromContext: () => "record",
         auditSoulCompliance: async () => ({ status: "pass" }),
         loadNavigatorWorkContext: async () => ({
           subjectKey: "/repo/.ak/work/issues/106",

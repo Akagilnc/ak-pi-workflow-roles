@@ -32,8 +32,6 @@ import {
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
-import type { OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
-
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
@@ -518,7 +516,6 @@ export type RoleRuntimeDependencies = {
     options: { context: HostContext; signal?: AbortSignal },
   ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;
-  transcriptFromContext(ctx: HostContext): string;
   auditSoulCompliance(
     options: { context: HostContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
@@ -529,12 +526,6 @@ export type RoleRuntimeDependencies = {
   /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
   toolExecutionObservationMonoNow?(): number;
   toolExecutionObservationWriter?: ToolExecutionObservationWriter;
-  /**
-   * #351 OAuth keepalive: providers/interval/scheduler.
-   * Production extension root reads oauth-keepalive.json and passes providers here
-   * (default ["kimi-coding"] when the setting file is absent). Tests may inject.
-   */
-  oauthKeepalive?: OAuthKeepaliveOptions;
 };
 
 function abortContext(ctx: { abort(): void }): void {
@@ -639,7 +630,7 @@ export function createRoleRuntimeExtension(
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
-      envelopeHost.roleHost,
+      envelopeHost.host,
       new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
       failInfrastructure,
       async (projection, context) => projectClosedSubmission(projection, context),

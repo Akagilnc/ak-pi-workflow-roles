@@ -49,7 +49,7 @@ async function runRealCollector(options: { request?: boolean; wait?: number }) {
     let receipt: any;
     await withInProcessPi({
       activationLedgerSession: true, cwd: home, agentDir, faux, modelsPath: null,
-      extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }) })],
+      extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
       noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
       flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1", ...(options.request ? { "ak-collector-request-manifest": manifest } : {}) },
     }, async ({ session, sessionManager }) => {
@@ -90,7 +90,7 @@ test("ak-role Collector rejects output that is not the sole final call", async (
       fauxAssistantMessage("done"),
       fauxAssistantMessage("still no receipt"),
     ]);
-    await withInProcessPi({ activationLedgerSession: true, cwd: home, agentDir, faux, modelsPath: null, extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: clock, transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }) })], noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin", flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1" } }, async ({ session, sessionManager }) => {
+    await withInProcessPi({ activationLedgerSession: true, cwd: home, agentDir, faux, modelsPath: null, extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: clock, auditSoulCompliance: async () => ({ status: "pass" }) })], noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin", flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1" } }, async ({ session, sessionManager }) => {
       await session.prompt("start");
       const entries = sessionManager.getEntries() as any[];
       const output = entries.find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL);
