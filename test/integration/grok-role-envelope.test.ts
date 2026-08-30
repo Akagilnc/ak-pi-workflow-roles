@@ -8,13 +8,12 @@ import test from "node:test";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
 
-async function listThroughMcp(server: {
-  command: string;
-  args: string[];
-  env: Array<{ name: string; value: string }>;
-}): Promise<Record<string, unknown>> {
+type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
+
+async function listThroughMcp(server: McpServer): Promise<Record<string, unknown>> {
   const child = spawn(server.command, server.args, {
     env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
     stdio: ["pipe", "pipe", "inherit"],
@@ -29,6 +28,25 @@ async function listThroughMcp(server: {
     const response = JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
     assert.equal(response.error, undefined);
     return response.result ?? {};
+  } finally {
+    child.stdin.end();
+    child.kill("SIGTERM");
+  }
+}
+
+async function callThroughMcp(server: McpServer, name: string, args: unknown): Promise<{ result?: Record<string, unknown>; error?: unknown }> {
+  const child = spawn(server.command, server.args, {
+    env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  try {
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    await replies.next();
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })}\n`);
+    const line = await replies.next();
+    assert.equal(line.done, false);
+    return JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
   } finally {
     child.stdin.end();
     child.kill("SIGTERM");
@@ -80,9 +98,51 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
     });
     try {
       assert.equal(typeof prepared.systemPrompt, "string");
-      const server = prepared.mcpServers[0] as { command: string; args: string[]; env: Array<{ name: string; value: string }> };
+      const server = prepared.mcpServers[0] as McpServer;
       const listed = await listThroughMcp(server) as { tools?: Array<{ name: string }> };
       assert.deepEqual(listed.tools?.map(({ name }) => name), [JUDGE_OUTPUT_TOOL_NAME]);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok MCP projection executes a terminal submission through the single ledger gate to typed closure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const socketPath = join(root, "mcp.sock");
+    const request = {
+      principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
+      continuation: { kind: "initial", prompt: "attest" },
+      model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "notary-run"),
+    } as RoleTurnRequest;
+    const prepared = await prepareGrokRoleEnvelope({
+      request,
+      socketPath,
+      dependencies: {
+        loadNotarySoul: async () => "NOTARY SOUL",
+        loadNotarySourceRun: async () => ({ runDirectory: root, runId: "run-1", role: "notary" }),
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      const server = prepared.mcpServers[0] as McpServer;
+      const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      assert.equal(reply.error, undefined);
+      assert.equal((reply.result as { isError?: boolean })?.isError, undefined);
+      const closure = await prepared.closeRound({ sessionId: "s1", promptResult: { stopReason: "end_turn" } });
+      assert.deepEqual(closure, { accepted: true });
     } finally {
       await prepared.dispose?.();
     }
