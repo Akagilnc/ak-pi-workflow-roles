@@ -45,16 +45,29 @@ test("host priority is flag > persistent > pi default, and explicit pi equals de
 }));
 
 test("host selection failures are typed and stop before role turn", async () => homeTest(async (home) => {
-  let calls = 0;
-  const pi: NamedRoleTurnHostAdapter = { name: "pi", create() { calls++; return { ok: true, host: stoppedHost }; } };
+  let turnCalls = 0;
+  const countingHost: RoleTurnHost = {
+    executeTurn: async () => {
+      turnCalls++;
+      throw new Error("host selection failure must stop before executeTurn");
+    },
+  };
+  const pi: NamedRoleTurnHostAdapter = { name: "pi", create() { return { ok: true, host: countingHost }; } };
   const missing = await runAkRole(["judge", "--host", "missing", "x"], base(home, [pi]));
   assert.equal(missing.exitCode, 1);
   assert.deepEqual(missing.hostFailure, { kind: "host-unregistered", host: "missing", seat: "judge", model: "openai-codex/gpt-5.6-sol" });
-  assert.equal(calls, 0);
-  const mismatch = await runAkRole(["judge", "--host", "grok-build", "x"], base(home, [pi, adapter("grok-build", [], false)]));
+  assert.equal(turnCalls, 0);
+  const mismatchAdapter: NamedRoleTurnHostAdapter = {
+    name: "grok-build",
+    create({ role, model }) {
+      void countingHost;
+      return { ok: false, failure: { kind: "host-model-mismatch", host: "grok-build", seat: role, model: `${model?.provider}/${model?.model}` } };
+    },
+  };
+  const mismatch = await runAkRole(["judge", "--host", "grok-build", "x"], base(home, [pi, mismatchAdapter]));
   assert.equal(mismatch.exitCode, 1);
   assert.deepEqual(mismatch.hostFailure, { kind: "host-model-mismatch", host: "grok-build", seat: "judge", model: "openai-codex/gpt-5.6-sol" });
-  assert.equal(calls, 0);
+  assert.equal(turnCalls, 0);
 }));
 
 test("resume refuses --host structurally", async () => homeTest(async (home) => {

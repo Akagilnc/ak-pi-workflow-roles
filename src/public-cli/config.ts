@@ -210,13 +210,7 @@ export function isEngineAxisSeat(seat: string): seat is PublicCallableRole {
   return isPublicCallableRole(seat);
 }
 
-/**
- * Set or clear persistent engine on a callable role seat (#356 / #378 / #391 / #453).
- * First engine still requires an existing seat row (model, or notary engine residual).
- * Clearing engine from a notary engine-only residual drops the empty row; clearing
- * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
- * (navigator excluded at the type boundary).
- */
+/** Set or clear the persistent main-session host on a callable role seat. */
 export function setPersistentSeatHost(
   config: PublicCliConfig,
   seat: PublicCallableRole,
@@ -233,6 +227,13 @@ export function setPersistentSeatHost(
   return { ...config, seats: { ...config.seats, [seat]: { ...previous, host } } };
 }
 
+/**
+ * Set or clear persistent engine on a callable role seat (#356 / #378 / #391 / #453).
+ * First engine still requires an existing seat row (model, or notary engine residual).
+ * Clearing engine from a notary engine-only residual drops the empty row; clearing
+ * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
+ * (navigator excluded at the type boundary).
+ */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
   seat: PublicCallableRole,
