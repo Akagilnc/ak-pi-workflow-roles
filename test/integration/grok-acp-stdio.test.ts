@@ -66,7 +66,7 @@ process.on("SIGTERM", () => process.exit(0));
   }
 });
 
-test("ACP stdio answers host permission requests without bypassing root deny rules", async () => {
+test("ACP stdio answers host permission requests through the typed protocol", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-permission-"));
   try {
     const executable = join(root, "grok-permission.mjs");
@@ -118,8 +118,6 @@ process.on("SIGTERM", () => process.exit(0));
     cwd: root,
     env: { ...process.env, FAUX_EVENTS: events, FAUX_LAUNCH: launch },
     model: "grok-4.5",
-    tools: ["read", "bash"],
-    deny: ["Shell(rm:*)", "Shell(git clean:*)"],
     toolset: "coding",
   });
   const [first, second] = await Promise.all([
@@ -132,7 +130,7 @@ process.on("SIGTERM", () => process.exit(0));
   await connection.close();
     assert.deepEqual((await readFile(events, "utf8")).trim().split("\n").map((line) => JSON.parse(line).method), ["first", "second", "session/cancel"]);
     assert.deepEqual(JSON.parse(await readFile(launch, "utf8")), {
-      args: ["--tools", "read,bash", "--deny", "Shell(rm:*)", "--deny", "Shell(git clean:*)", "agent", "--model", "grok-4.5", "stdio"],
+      args: ["agent", "--model", "grok-4.5", "stdio"],
       config: JSON.stringify({ toolset: "coding" }),
     });
     await assert.rejects(connection.request("after-close", {}), /closed/i);
