@@ -75,6 +75,7 @@ function isAuditEscalationTerminalProjection(
 
 export type SealedSubmissionProjection = Extract<SubmissionLedgerEvent, { type: "sealed" }>["projection"];
 export type AuditEscalationSubmissionProjection = Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
+export type ClosedSubmissionProjection = SealedSubmissionProjection | AuditEscalationSubmissionProjection;
 
 function submissionRecordFile(cwd: string, runId: string): string {
   return resolveSitianRecordPath({ level: "event", kind: "candidate", subject: { runId }, cwd }).recordFile;
@@ -157,6 +158,7 @@ export function createSubmissionLedgerHost(
   host: RoleHost,
   outputTools: ReadonlyMap<string, TerminalRoleName>,
   failInfrastructure: (error: unknown, context: HostContext) => never = (error) => { throw error; },
+  projectClosure: (projection: ClosedSubmissionProjection, context: HostContext) => void | Promise<void> = () => undefined,
 ): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
   type PendingCandidate = { toolCallId: string; toolName: TerminatingToolName; role: TerminalRoleName; result: HostToolResult<unknown>; context: HostContext; auditProjection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> };
@@ -209,6 +211,7 @@ export function createSubmissionLedgerHost(
       const candidate = candidates[0]!;
       if (candidate.auditProjection !== undefined) {
         appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "audit-escalation", projection: candidate.auditProjection });
+        await projectClosure(candidate.auditProjection, context);
         context.abort();
         return;
       }
@@ -218,6 +221,7 @@ export function createSubmissionLedgerHost(
       const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role: candidate.role, status, decisiveFacts: details };
       appendFor(state, candidate.context, runId, attemptId, { type: "sealed", attemptId, toolCallId: candidate.toolCallId, accepted: candidate.result.details, projection });
       state.sealed = true;
+      await projectClosure(projection, context);
       context.abort();
     } catch (error) {
       failInfrastructure(error, context);
