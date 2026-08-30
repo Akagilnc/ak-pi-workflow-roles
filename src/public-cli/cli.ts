@@ -14,7 +14,6 @@ import {
   clearPersistentSeatConfig,
   effectiveSeatConfigurations,
   formatModelSpec,
-  isEngineAxisSeat,
   isGateOfficerSeat,
   loadCredentialProviders,
   loadPublicCliConfig,
@@ -26,7 +25,7 @@ import {
   setPersistentSeatConfig,
   setPersistentSeatEngine,
   setPersistentSeatHost,
-  validatePublicCliConfigEngines,
+  validatePublicCliConfigAxes,
   type CredentialProviders,
   type EffectiveSeat,
   type InvocationModelOverride,
@@ -180,7 +179,7 @@ export type NamedRoleTurnHostAdapter = {
   readonly name: string;
   readonly create: (input: { role: PublicCallableRole; model: EffectiveSeat["selection"] }) =>
     | { readonly ok: true; readonly host: RoleTurnHost }
-    | { readonly ok: false; readonly failure: HostSelectionFailure };
+    | { readonly ok: false };
 };
 
 class HostSelectionError extends Error {
@@ -267,7 +266,9 @@ function resolveRoleTurnHost(
   const model = options.seat.selection === undefined ? "unconfigured" : `${options.seat.selection.provider}/${options.seat.selection.model}`;
   if (adapter === undefined) throw new HostSelectionError({ kind: "host-unregistered", host: hostName, seat: options.role, model });
   const selected = adapter.create({ role: options.role, model: options.seat.selection });
-  if (!selected.ok) throw new HostSelectionError(selected.failure);
+  if (!selected.ok) {
+    throw new HostSelectionError({ kind: "host-model-mismatch", host: hostName, seat: options.role, model });
+  }
   return selected.host;
 }
 
@@ -543,21 +544,19 @@ function requireLegalEngineName(name: string): string {
   }
 }
 
-/**
- * Persistent engine axis gate (#391 E1): PUBLIC_CALLABLE_ROLES only.
- * Automatic seats are configurable for model but have no independent activation path.
- */
-function requireEngineAxisSeat(
+/** Callable seats own persistent call axes; automatic seats have no call path. */
+function requireCallableSeat(
   seat: string,
-  verb: "set-engine" | "unset-engine",
+  axis: "engine" | "host",
+  verb: "set-engine" | "unset-engine" | "set-host" | "unset-host",
 ): asserts seat is PublicCallableRole {
   if (isAutomaticConfigurableSeat(seat)) {
     throw new CliUsageError(
       `config ${verb} refuses ${seat}: no independent activation path; storing would be silently ineffective`,
     );
   }
-  if (!isEngineAxisSeat(seat)) {
-    throw new CliUsageError(`unknown engine-axis seat: ${seat}`);
+  if (!isPublicCallableRole(seat)) {
+    throw new CliUsageError(`unknown ${axis}-axis seat: ${seat}`);
   }
 }
 
@@ -574,7 +573,7 @@ function loadAndValidateConfig(
 ): Promise<PublicCliConfig> {
   return loadPublicCliConfig(home).then((config) => {
     try {
-      validatePublicCliConfigEngines(config, packageRoot);
+      validatePublicCliConfigAxes(config, packageRoot);
     } catch (error) {
       throw new CliUsageError(
         error instanceof Error ? error.message : String(error),
@@ -725,7 +724,7 @@ function renderPersistentSeatModel(selection: {
 }
 
 function renderConfig(config: PublicCliConfig): string {
-  const lines: string[] = ["seat\tmodel\tengine"];
+  const lines: string[] = ["seat\tmodel\tengine\thost"];
   const keys = Object.keys(config.seats) as (keyof typeof config.seats)[];
   if (keys.length === 0) {
     lines.push("(empty)");
@@ -734,7 +733,8 @@ function renderConfig(config: PublicCliConfig): string {
       const selection = config.seats[seat];
       if (selection === undefined) continue;
       const engine = selection.engine === undefined ? "-" : selection.engine;
-      lines.push(`${seat}\t${renderPersistentSeatModel(selection)}\t${engine}`);
+      const host = selection.host === undefined ? "-" : selection.host;
+      lines.push(`${seat}\t${renderPersistentSeatModel(selection)}\t${engine}\t${host}`);
     }
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
@@ -758,11 +758,9 @@ async function runConfigCommand(
       if (selection === undefined) {
         io.stdout(`${args[1]}\t(unconfigured)\n`);
       } else {
-        const engine =
-          selection.engine === undefined ? "-" : selection.engine;
-        io.stdout(
-          `${args[1]}\t${renderPersistentSeatModel(selection)}\t${engine}\n`,
-        );
+        const engine = selection.engine === undefined ? "-" : selection.engine;
+        const host = selection.host === undefined ? "-" : selection.host;
+        io.stdout(`${args[1]}\t${renderPersistentSeatModel(selection)}\t${engine}\t${host}\n`);
       }
       return 0;
     }
@@ -827,7 +825,7 @@ async function runConfigCommand(
       throw new CliUsageError(`usage: ak-role config ${args[0]} <seat>${unset ? "" : " <name>"}`);
     }
     const seat = args[1]!;
-    requireEngineAxisSeat(seat, unset ? "unset-engine" : "set-engine");
+    requireCallableSeat(seat, "host", unset ? "unset-host" : "set-host");
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
       config = setPersistentSeatHost(config, seat, unset ? undefined : args[2]!);
@@ -847,7 +845,7 @@ async function runConfigCommand(
     }
     const seat = args[1]!;
     const name = args[2]!;
-    requireEngineAxisSeat(seat, "set-engine");
+    requireCallableSeat(seat, "engine", "set-engine");
     requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
@@ -870,7 +868,7 @@ async function runConfigCommand(
       );
     }
     const seat = args[1]!;
-    requireEngineAxisSeat(seat, "unset-engine");
+    requireCallableSeat(seat, "engine", "unset-engine");
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
       config = setPersistentSeatEngine(config, seat, undefined);
@@ -941,6 +939,15 @@ export async function runAkRole(
     // #356 / #378 / #391: engine axis is every callable role (not resume / support).
     if (parsed.host !== undefined && parsed.command === "resume") {
       throw new CliUsageError("resume cannot change host");
+    }
+    if (
+      parsed.host !== undefined &&
+      !parsed.help &&
+      parsed.command !== undefined &&
+      parsed.command !== "help" &&
+      !isPublicCallableRole(parsed.command)
+    ) {
+      throw new CliUsageError(`host axis is role commands only; refused command ${parsed.command}`);
     }
     if (parsed.engine !== undefined) {
       requireLegalEngineName(parsed.engine);
@@ -1357,7 +1364,8 @@ export async function runAkRole(
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof HostSelectionError) {
-      io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}`));
+      const registered = (env.hostAdapters ?? [{ name: "pi" }]).map(({ name }) => name).join(", ");
+      io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}; registered: ${registered}`));
       return { exitCode: 1, hostFailure: error.failure };
     }
     if (error instanceof CliUsageError) {

@@ -40,10 +40,9 @@ export type CredentialProviders = {
 export type SeatModelConfig = ModelRef;
 
 /**
- * Persistent seat row (#356/#384/#453): model fields and engine are independent
- * axes. Engine-only residual is legal only for notary after model clear so direct
- * notary activation keeps its labor engine while province inheritance resumes.
- * All other seats keep the baseline provider/model required contract.
+ * Persistent seat row (#356/#384/#453/#522): model, engine, and host are
+ * independent axes. Axis-only residuals are legal only for notary after model
+ * clear; all other seats keep the baseline provider/model required contract.
  */
 export type PersistentSeatConfig = {
   provider?: string;
@@ -162,9 +161,9 @@ export function setPersistentSeatConfig(
 /**
  * Clear a gate officer's persistent model override (#453).
  * Scope is GateOfficerSeat only — non-province seats have no destructive clear seam.
- * Only notary may retain an engine-only residual so direct notary activation keeps
- * its labor engine while model resolution returns to startup / province inheritance.
- * gatekeeper/inspector drop the whole row. Already-absent seats are a no-op.
+ * Only notary may retain host/engine residual axes while model resolution returns
+ * to startup / province inheritance. gatekeeper/inspector drop the whole row.
+ * Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(
   config: PublicCliConfig,
@@ -172,13 +171,16 @@ export function clearPersistentSeatConfig(
 ): PublicCliConfig {
   const previous = config.seats[seat];
   if (previous === undefined) return config;
-  // Engine-only residual ownership is notary-only — never widen to other officers.
-  if (seat === "notary" && previous.engine !== undefined) {
+  // Axis-only residual ownership is notary-only — never widen to other officers.
+  if (seat === "notary" && (previous.engine !== undefined || previous.host !== undefined)) {
     return {
       ...config,
       seats: {
         ...config.seats,
-        notary: { engine: previous.engine },
+        notary: {
+          ...(previous.engine === undefined ? {} : { engine: previous.engine }),
+          ...(previous.host === undefined ? {} : { host: previous.host }),
+        },
       },
     };
   }
@@ -206,7 +208,7 @@ export function resolveGateOfficerModelSelection(
  * Seats that own the labor-engine axis (#391: PUBLIC_CALLABLE_ROLES only).
  * Navigator is configurable for model but has no independent activation path.
  */
-export function isEngineAxisSeat(seat: string): seat is PublicCallableRole {
+export function isCallableAxisSeat(seat: string): seat is PublicCallableRole {
   return isPublicCallableRole(seat);
 }
 
@@ -222,6 +224,10 @@ export function setPersistentSeatHost(
   }
   if (host === undefined) {
     const { host: _dropped, ...rest } = previous;
+    if (seatModelOnly(rest) === undefined && rest.engine === undefined) {
+      const { [seat]: _row, ...seats } = config.seats;
+      return { ...config, seats };
+    }
     return { ...config, seats: { ...config.seats, [seat]: rest } };
   }
   return { ...config, seats: { ...config.seats, [seat]: { ...previous, host } } };
@@ -247,8 +253,8 @@ export function setPersistentSeatEngine(
   }
   if (engine === undefined) {
     const { engine: _dropped, ...modelOnly } = previous;
-    // Engine-only residual with engine cleared → drop the empty row.
-    if (seatModelOnly(modelOnly) === undefined) {
+    // Drop the row only after the final independent axis is cleared.
+    if (seatModelOnly(modelOnly) === undefined && modelOnly.host === undefined) {
       const { [seat]: _row, ...seats } = config.seats;
       return { ...config, seats };
     }
@@ -311,24 +317,23 @@ export function seatModelOnly(
 }
 
 /**
- * Config-parse seam: engine axis is PUBLIC_CALLABLE_ROLES; engine names need only
- * path-safety syntax (no closed material catalog; #376 / #378 / #391 / ADR 0069).
- * Disk-handwritten navigator.engine is rejected (no independent activation → silent
- * ineffective would violate failure honesty). Call after load / before dispatch (#356).
- * Syntax authority = assertLegalEngineName (no injected duplicate).
+ * Config-parse seam: persistent call axes belong to PUBLIC_CALLABLE_ROLES;
+ * engine names need only path-safety syntax (no closed material catalog;
+ * #376 / #378 / #391 / ADR 0069). Disk-handwritten automatic-seat axes are
+ * rejected. Syntax authority = assertLegalEngineName (no injected duplicate).
  */
-export function validatePublicCliConfigEngines(
+export function validatePublicCliConfigAxes(
   config: PublicCliConfig,
   _packageRoot: string,
 ): void {
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
-    if (row?.engine === undefined) continue;
-    if (!isEngineAxisSeat(seat)) {
+    if ((row?.engine !== undefined || row?.host !== undefined) && !isCallableAxisSeat(seat)) {
       throw new Error(
-        `config seat ${seat} cannot persist engine: no independent activation path; storing would be silently ineffective`,
+        `config seat ${seat} cannot persist call axes: no independent activation path; storing would be silently ineffective`,
       );
     }
+    if (row?.engine === undefined) continue;
     try {
       assertLegalEngineName(row.engine);
     } catch (error) {
@@ -452,17 +457,20 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
   }
   if (raw.engine !== undefined && typeof raw.engine !== "string") {
     // Shape only: engine must be a string field. Path-safety syntax is deferred to
-    // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
+    // validatePublicCliConfigAxes → assertLegalEngineName (single authority).
     throw new Error(`config seat ${seat} engine must be a string`);
   }
-  // #453: engine-only residual is legal only for notary after model clear.
+  // #453/#522: host/engine residual axes are legal only for notary after model clear.
   // All other seats keep the baseline provider/model required contract.
   if (!hasProvider) {
-    if (seat === "notary" && typeof raw.engine === "string") {
+    if (seat === "notary" && (typeof raw.engine === "string" || typeof raw.host === "string")) {
       if (raw.thinking !== undefined) {
         throw new Error(`config seat ${seat} thinking requires provider/model`);
       }
-      return { engine: raw.engine };
+      return {
+        ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
+        ...(raw.host === undefined ? {} : { host: raw.host as string }),
+      };
     }
     throw new Error(`config seat ${seat} requires provider`);
   }
@@ -545,8 +553,8 @@ function attachEngineAxis(
   config: PublicCliConfig,
   invocation?: InvocationModelOverride,
 ): UnhostedEffectiveSeat {
-  // #391: engine axis is PUBLIC_CALLABLE_ROLES only (single isEngineAxisSeat predicate).
-  if (!isEngineAxisSeat(seat.seat)) {
+  // #391: engine axis is PUBLIC_CALLABLE_ROLES only (single callable-seat predicate).
+  if (!isCallableAxisSeat(seat.seat)) {
     return {
       ...seat,
       engineSource: "unconfigured",

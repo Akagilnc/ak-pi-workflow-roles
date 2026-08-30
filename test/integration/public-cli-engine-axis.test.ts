@@ -26,12 +26,12 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  isEngineAxisSeat,
+  isCallableAxisSeat,
   loadPublicCliConfig,
   savePublicCliConfig,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
-  validatePublicCliConfigEngines,
+  validatePublicCliConfigAxes,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
 import {
@@ -126,7 +126,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
     );
     // Validate accepts any path-safe name (no closed material catalog).
-    validatePublicCliConfigEngines(reloaded, packageRoot);
+    validatePublicCliConfigAxes(reloaded, packageRoot);
 
     // Legacy config without engine still loads.
     await savePublicCliConfig(
@@ -161,7 +161,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       "utf8",
     );
     const reviewerCfg = await loadPublicCliConfig(home);
-    validatePublicCliConfigEngines(reviewerCfg, packageRoot);
+    validatePublicCliConfigAxes(reviewerCfg, packageRoot);
     assert.equal(reviewerCfg.seats.reviewer?.engine, "cursor");
 
     // Non-judge seat engine field is accepted at validate seam (#391 all roles).
@@ -180,7 +180,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       "utf8",
     );
     const coderCfg = await loadPublicCliConfig(home);
-    validatePublicCliConfigEngines(coderCfg, packageRoot);
+    validatePublicCliConfigAxes(coderCfg, packageRoot);
     assert.equal(coderCfg.seats.coder?.engine, "opus");
 
     // Syntax-illegal engine name in on-disk judge config is rejected at validate seam.
@@ -200,7 +200,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     );
     const bad = await loadPublicCliConfig(home);
     assert.throws(
-      () => validatePublicCliConfigEngines(bad, packageRoot),
+      () => validatePublicCliConfigAxes(bad, packageRoot),
       /config seat judge engine is illegal: has\/slash/,
     );
 
@@ -220,7 +220,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       "utf8",
     );
     const freeName = await loadPublicCliConfig(home);
-    validatePublicCliConfigEngines(freeName, packageRoot);
+    validatePublicCliConfigAxes(freeName, packageRoot);
     assert.equal(freeName.seats.judge?.engine, "ghost-engine");
 
     // unset-engine clears a persistent judge engine through the public CLI
@@ -1015,7 +1015,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
       await materializeConflictedRepo(mergerProject);
 
       for (const role of PUBLIC_CALLABLE_ROLES) {
-        assert.equal(isEngineAxisSeat(role), true, `${role} must be engine-axis seat`);
+        assert.equal(isCallableAxisSeat(role), true, `${role} must be engine-axis seat`);
         const project = role === "merger" ? mergerProject : baseProject;
         const bookKey = resolveBookKeyFromGit(project);
 
@@ -1219,7 +1219,7 @@ test("#391 E4 negative table: navigator / analyst / resume / illegal / model-bef
         );
         const loaded = await loadPublicCliConfig(home);
         assert.throws(
-          () => validatePublicCliConfigEngines(loaded, packageRoot),
+          () => validatePublicCliConfigAxes(loaded, packageRoot),
           /no independent activation/,
         );
         // CLI load path surfaces the same refusal.
