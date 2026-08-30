@@ -48,6 +48,7 @@ export type GrokRoleTurnHostConfig = Readonly<{
   inspect(request: RoleTurnRequest): Promise<GrokControlledInspection>;
   prepare(request: RoleTurnRequest): Promise<GrokPreparedTurn>;
   recordCapabilities(request: RoleTurnRequest, declaration: GrokCapabilityDeclaration): void | Promise<void>;
+  installPreToolUseDeny?(request: RoleTurnRequest): void | Promise<void>;
 }>;
 
 function failure(cause: "activation" | "session" | "output", name: string, code: string, details?: Readonly<Record<string, unknown>>): RoleTurnResult {
@@ -188,11 +189,14 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           });
         }
         const prepared = await config.prepare(request);
-        if (inspected.akActive.length === 0 || prepared.mcpServers.length === 0) {
-          return failure("activation", "UncontrolledGrokSession", "ak-config-missing");
-        }
-        const connection = await config.connect(request);
+        let connection: GrokAcpConnection | undefined;
+        let sessionId: string | undefined;
+        let accepted = false;
         try {
+          if (inspected.akActive.length === 0 || prepared.mcpServers.length === 0) {
+            return failure("activation", "UncontrolledGrokSession", "ak-config-missing");
+          }
+          connection = await config.connect(request);
           const initialized = await connection.request("initialize", {
             protocolVersion: 1,
             clientCapabilities: {},
@@ -200,12 +204,15 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           const initializeMeta = initialized._meta as {
             modelState?: { availableModels?: unknown };
           } | undefined;
-          // Grok's handshake declares hook protocol support, not an installed AK
-          // PreToolUse policy. Do not claim a seatbelt until the adapter owns one.
-          await config.recordCapabilities(request, {
-            nativeToolNarrowing: false,
-            preToolUseDeny: false,
-          });
+          const hookMeta = initialized._meta as { "x.ai/hooks"?: { blockingEvents?: unknown; decisions?: unknown } } | undefined;
+          const hookCapability = hookMeta?.["x.ai/hooks"];
+          const canDeny = Array.isArray(hookCapability?.blockingEvents)
+            && hookCapability.blockingEvents.includes("pre_tool_use")
+            && Array.isArray(hookCapability.decisions)
+            && hookCapability.decisions.includes("deny");
+          const preToolUseDeny = canDeny && config.installPreToolUseDeny !== undefined;
+          if (preToolUseDeny) await config.installPreToolUseDeny?.(request);
+          await config.recordCapabilities(request, { nativeToolNarrowing: false, preToolUseDeny });
           const modelState = initializeMeta?.modelState;
           const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
           if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
@@ -231,8 +238,8 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               _meta: { systemPromptOverride: prepared.systemPrompt, yoloMode: false },
             },
           );
-          const sessionId = resumedSessionId ?? session.sessionId;
-          if (typeof sessionId !== "string" || sessionId === "") {
+          sessionId = resumedSessionId ?? (typeof session.sessionId === "string" ? session.sessionId : undefined);
+          if (sessionId === undefined || sessionId === "") {
             return failure("session", "GrokAcpSessionFailure", "session-id-missing");
           }
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
@@ -252,6 +259,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               // Wait for ACP's typed close acknowledgement before tearing down the
               // process; Stop hooks and fire-and-forget cancellation are not closure.
               await connection.request("session/close", { sessionId });
+              accepted = true;
               return { code: 0, stderr: "", timedOut: false };
             }
             if ("failure" in closure) {
@@ -261,7 +269,13 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           }
           return failure("output", "GrokAcpRoundLimit", "round-retry-limit", { sessionId });
         } finally {
-          await connection.close();
+          if (connection !== undefined) {
+            if (sessionId !== undefined && !accepted) {
+              try { connection.notify("session/cancel", { sessionId }); }
+              catch { /* Preserve the original turn result or failure. */ }
+            }
+            await connection.close();
+          }
           await prepared.dispose?.();
         }
       });
@@ -290,6 +304,13 @@ type InspectItem = {
 export function classifyGrokInspection(document: Readonly<Record<string, unknown>>, packageRoot: string): GrokControlledInspection {
   const privateActive = new Set<string>();
   const akActive = new Set<string>();
+  const externalCompat = document.externalCompat as { cells?: unknown } | undefined;
+  if (Array.isArray(externalCompat?.cells)) {
+    for (const cell of externalCompat.cells as Array<{ vendor?: unknown; surface?: unknown; enabled?: unknown }>) {
+      if (cell.enabled !== true) continue;
+      privateActive.add(`externalCompat:${String(cell.vendor)}:${String(cell.surface)}`);
+    }
+  }
   for (const section of ["skills", "agents", "plugins", "mcpServers", "hooks", "projectInstructions"] as const) {
     const items = document[section];
     if (!Array.isArray(items)) continue;

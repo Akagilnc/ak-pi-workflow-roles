@@ -95,7 +95,7 @@ export async function prepareGrokRoleEnvelope(options: {
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
-  let activeTools: string[] = [];
+  let preferredTools: string[] = [];
   let rejection: { readonly code: string; readonly toolCallIds: readonly string[] } | undefined;
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID();
   await mkdir(request.runDirectory, { recursive: true });
@@ -122,8 +122,10 @@ export async function prepareGrokRoleEnvelope(options: {
     getFlag(name) { return flags.get(name); },
     registerTool(tool) { tools.set(tool.name, tool); },
     getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
-    setActiveTools(names) { activeTools = [...names]; },
-    getActiveTools() { return [...activeTools]; },
+    // Grok receives tool choice as role guidance; every tool registered for the
+    // seat remains reachable through MCP.
+    setActiveTools(names) { preferredTools = [...names]; },
+    getActiveTools() { return [...preferredTools]; },
     on(...registration: HostEventRegistration) {
       const [event, handler] = registration;
       const list = handlers.get(event) ?? [];
@@ -163,7 +165,10 @@ export async function prepareGrokRoleEnvelope(options: {
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
   function reply(socket: Socket, id: number, result?: unknown, error?: unknown): void {
-    socket.write(`${JSON.stringify({ id, ...(error === undefined ? { result } : { error: error instanceof Error ? error.message : String(error) }) })}\n`);
+    const rpcError = error instanceof Error
+      ? { code: "ak-relay-failure", name: error.name, message: error.message }
+      : { code: "ak-relay-failure", name: "RelayFailure", message: String(error) };
+    socket.write(`${JSON.stringify({ id, ...(error === undefined ? { result } : { error: rpcError }) })}\n`);
   }
   function serveSocket(socket: Socket): void {
     let buffer = "";
@@ -175,14 +180,13 @@ export async function prepareGrokRoleEnvelope(options: {
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
         void (async () => {
           let rpc: RpcRequest;
-          try { rpc = JSON.parse(line) as RpcRequest; } catch (error) { return; }
+          try { rpc = JSON.parse(line) as RpcRequest; }
+          catch (error) { reply(socket, -1, undefined, error); return; }
           if (rpc.token !== token) { reply(socket, rpc.id, undefined, "unauthorized relay"); return; }
           try {
             if (rpc.method === "tools/list") {
-              const visible = activeTools.length === 0 ? [...tools.keys()] : activeTools;
-              reply(socket, rpc.id, { tools: visible.flatMap((name) => {
-                const tool = tools.get(name);
-                return tool === undefined ? [] : [{ name: tool.name, description: tool.description, inputSchema: tool.parameters }];
+              reply(socket, rpc.id, { tools: [...tools.values()].map((tool) => {
+                return { name: tool.name, description: tool.description, inputSchema: tool.parameters };
               }) });
               return;
             }
@@ -191,7 +195,7 @@ export async function prepareGrokRoleEnvelope(options: {
             const name = params?.name;
             if (typeof name !== "string") throw new Error("MCP tool name is missing");
             const tool = tools.get(name);
-            if (tool === undefined || (activeTools.length !== 0 && !activeTools.includes(name))) throw new Error(`Inactive AK tool: ${name}`);
+            if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
             const toolCallId = randomUUID();
             calls.push({ toolCallId, toolName: name });
             await emit("tool_execution_start", { toolCallId, toolName: name });
@@ -212,8 +216,17 @@ export async function prepareGrokRoleEnvelope(options: {
               await emit("tool_execution_end", { toolCallId, toolName: name, isError: projected.isError });
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
+              const details = rejection === undefined
+                ? { cause: "infrastructure", code: "ak-tool-execution-failed" }
+                : { cause: "rejection", code: rejection.code, toolCallIds: rejection.toolCallIds };
+              const projected = {
+                content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
+                details,
+                isError: true,
+              };
+              await emit("tool_result", { toolCallId, toolName: name, ...projected });
               await emit("tool_execution_end", { toolCallId, toolName: name, isError: true });
-              reply(socket, rpc.id, { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true });
+              reply(socket, rpc.id, { content: projected.content, structuredContent: details, isError: true });
             }
           } catch (error) { reply(socket, rpc.id, undefined, error); }
         })();
