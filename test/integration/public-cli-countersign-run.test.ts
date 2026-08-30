@@ -201,15 +201,13 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
     seedGitProject(project);
 
     const receipts = [
-      { countersignStatus: "converged", findings: [] as string[] },
+      { countersignStatus: "converged" as const, note: "署" },
       {
-        countersignStatus: "continue",
-        findings: ["票面授权无可溯真源"],
-        disposition: "rewrite",
+        countersignStatus: "continue" as const,
+        fix: { summary: "票面授权无可溯真源" },
       },
       {
-        countersignStatus: "escalate",
-        findings: [] as string[],
+        countersignStatus: "escalate" as const,
         decisionGate: { question: "本票走哪条路？", options: ["a", "b"] },
       },
     ] as const;
@@ -239,6 +237,21 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
         result.terminal.roleOutcome.status,
         receipt.countersignStatus,
       );
+      const facts = result.terminal.roleOutcome.decisiveFacts as Record<
+        string,
+        unknown
+      >;
+      assert.equal(facts.countersignStatus, receipt.countersignStatus);
+      if (receipt.countersignStatus === "continue") {
+        assert.equal(facts.fixSummary, receipt.fix.summary);
+      }
+      if (receipt.countersignStatus === "escalate") {
+        assert.equal(facts.decisionQuestion, receipt.decisionGate.question);
+        assert.deepEqual(facts.decisionOptions, [...receipt.decisionGate.options]);
+      }
+      if (receipt.countersignStatus === "converged") {
+        assert.equal(facts.note, receipt.note);
+      }
       const coords = issuePiDurablePrincipalCoordinates({
         cwd: project,
         runId,
