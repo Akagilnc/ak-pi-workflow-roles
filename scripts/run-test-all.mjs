@@ -13,6 +13,10 @@ import { isolatedTestProcessEnv } from "./test-process-env.mjs";
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
+  // #541: Judge engine-detour subprocess tracer (code0+error body) spawns a
+  // real CLI child (~41s); keep it concurrency=2 heavy, never duplicating the
+  // subprocess in an ordinary-tier sibling.
+  "test/integration/public-cli-judge-engine-detour.test.ts",
   // #319 Batch 4 R1: package-entrypoint split — all thematic files stay in heavy
   // manifest (庭定『先拆且全留 heavy』; Batch 5 R9: heavy child concurrency=2).
   "test/package/package-entrypoint-cold-help.integration.test.ts",

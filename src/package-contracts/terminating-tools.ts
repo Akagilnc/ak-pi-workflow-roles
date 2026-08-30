@@ -29,6 +29,7 @@ import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
+import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -61,6 +62,7 @@ export {
   validateRecordedDoctorOutput,
   validateMergerOutput,
   validateRecordedNotaryOutput,
+  validateRecordedCountersignOutput,
 };
 export type {
   CollectorReceipt,
@@ -72,6 +74,7 @@ export type {
   DoctorSubmission,
   MergerOutput,
   NotaryOutput,
+  CountersignVerdict,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -83,6 +86,7 @@ export const TERMINATING_TOOL_NAMES = [
   DOCTOR_OUTPUT_TOOL_NAME,
   MERGER_OUTPUT_TOOL_NAME,
   NOTARY_OUTPUT_TOOL_NAME,
+  COUNTERSIGN_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -94,7 +98,8 @@ export type AcceptedDetails =
   | CollectorReceipt
   | DoctorOutput
   | MergerOutput
-  | NotaryOutput;
+  | NotaryOutput
+  | CountersignVerdict;
 
 export function isTerminatingToolName(
   name: string,
@@ -120,6 +125,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return MERGER_ACCEPTED_TEXT;
     case NOTARY_OUTPUT_TOOL_NAME:
       return NOTARY_ACCEPTED_TEXT;
+    case COUNTERSIGN_OUTPUT_TOOL_NAME:
+      return COUNTERSIGN_ACCEPTED_TEXT;
   }
 }
 
@@ -157,7 +164,13 @@ export function validateAcceptedDetails(
       "audit escalation is not an accepted role receipt",
     );
   }
-  const discriminator = safeProperty(candidate, toolName === JUDGE_OUTPUT_TOOL_NAME ? "judgeStatus" : "status");
+  const statusKey =
+    toolName === JUDGE_OUTPUT_TOOL_NAME
+      ? "judgeStatus"
+      : toolName === COUNTERSIGN_OUTPUT_TOOL_NAME
+        ? "countersignStatus"
+        : "status";
+  const discriminator = safeProperty(candidate, statusKey);
   const lawfulStatuses: Readonly<Record<TerminatingToolName, readonly string[]>> = {
     [CODER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "unfinished"],
     [FIXER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "partially_completed", "unfinished"],
@@ -167,6 +180,7 @@ export function validateAcceptedDetails(
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
     [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+    [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;
@@ -197,6 +211,8 @@ export function validateAcceptedDetails(
       return validateMergerOutput(details);
     case NOTARY_OUTPUT_TOOL_NAME:
       return validateRecordedNotaryOutput(details);
+    case COUNTERSIGN_OUTPUT_TOOL_NAME:
+      return validateRecordedCountersignOutput(details);
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -243,6 +259,7 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case DOCTOR_OUTPUT_TOOL_NAME:
     case NOTARY_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
+    case COUNTERSIGN_OUTPUT_TOOL_NAME: return { status: (details as { countersignStatus: string }).countersignStatus };
     case MERGER_OUTPUT_TOOL_NAME: {
       const output = details as unknown as Record<string, unknown>;
       const status = output.status as string;

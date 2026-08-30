@@ -141,6 +141,7 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
     "doctor",
     "merger",
     "notary",
+    "countersign",
     "gatekeeper",
     "inspector",
     "navigator",

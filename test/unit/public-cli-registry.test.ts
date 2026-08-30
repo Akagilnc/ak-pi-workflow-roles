@@ -11,7 +11,7 @@ import {
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 
 /**
- * External metadata oracle — all 8 roles, every field, roster order (#524 验收 1).
+ * External metadata oracle — all public roles, every field, roster order (#524 验收 1 / #572 countersign).
  * Baseline string literals only: do not import production contract constants, or
  * constant drift would move expected and actual together and hide the failure.
  */
@@ -80,17 +80,26 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
   },
+  {
+    role: "countersign",
+    phases: [null],
+    outputTool: "ak_countersign_output",
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+  },
 ] as const;
 
 test("public registry exposes callable roles plus automatic configurable seats", () => {
-  // #524 验收 1: full metadata fields + order for all 8 roles (external oracle).
+  // #524 验收 1 / #572: full metadata fields + order for all public roles (external oracle).
   assert.deepEqual([...PACKAGED_ROLE_REGISTRY], [...EXPECTED_PACKAGED_ROLE_METADATA]);
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     EXPECTED_PACKAGED_ROLE_METADATA.map((entry) => entry.role),
   );
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
+  assert.equal(PUBLIC_CALLABLE_ROLES.length, EXPECTED_PACKAGED_ROLE_METADATA.length);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("countersign"), true);
   // #453: automatic gate seats join navigator as configurable-only (never caller commands).
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
@@ -152,6 +161,11 @@ test("help capabilities derive from typed public registry facts", () => {
 
 test("startup model candidates follow #11 package defaults per seat", () => {
   assert.deepEqual(publicStartupCandidates("judge"), [
+    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
+    { provider: "xai", model: "grok-4.5", thinking: "high" },
+  ]);
+  // #572 给事中 — same sol/high court tier as judge (ticket-court review).
+  assert.deepEqual(publicStartupCandidates("countersign"), [
     { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ]);

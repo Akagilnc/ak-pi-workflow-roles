@@ -43,6 +43,7 @@ import {
   parseAnalystArgv,
   parseCoderArgv,
   parseCollectorArgv,
+  parseCountersignArgv,
   parseDoctorArgv,
   parseFixerArgv,
   parseJudgeArgv,
@@ -64,6 +65,8 @@ import {
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
+import { runPublicCountersign } from "./countersign-run.ts";
+import { ONE_SHOT_ROLES } from "../packaged-role-registry.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicNotary } from "./notary-run.ts";
@@ -105,6 +108,7 @@ export type { CliIo } from "./cli-io.ts";
  */
 export const PUBLIC_ROLE_ARGV = {
   judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
+  countersign: { parse: parseCountersignArgv, options: optionsForOwner("countersign") },
   coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
   fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
   collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
@@ -285,7 +289,7 @@ function resolveRoleTurnHost(
 }
 
 type RoleEnvironmentOptions = {
-  role: "judge" | "coder" | "fixer" | "reviewer" | "merger" | "collector" | "doctor" | "notary";
+  role: "judge" | "coder" | "fixer" | "reviewer" | "merger" | "collector" | "doctor" | "notary" | "countersign";
   home: string;
   agentDir: string;
   cwd: string;
@@ -1028,14 +1032,10 @@ export async function runAkRole(
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const resumeRequest = parseResumeRequest(parsed.args);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
-      if (resumeRole === "collector") {
+      // One-shot seats refuse resume — single typed owner, not a per-role chain.
+      if (resumeRole !== undefined && ONE_SHOT_ROLES.includes(resumeRole)) {
         throw new CliUsageError(
-          "collector role runs are one-shot and cannot be resumed",
-        );
-      }
-      if (resumeRole === "doctor") {
-        throw new CliUsageError(
-          "doctor role runs are one-shot and cannot be resumed",
+          `${resumeRole} role runs are one-shot and cannot be resumed`,
         );
       }
       const resumeSeatRole =
@@ -1177,6 +1177,31 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.judge.parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Countersign ticket-court run path (#572 / ADR 0074) — one-shot.
+    if (parsed.command === "countersign") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "countersign",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicCountersign(
+        parsed.args,
+        createRoleEnvironment(env, { role: "countersign", home, agentDir, cwd, credentials, seat, config }),
+        io,
+        PUBLIC_ROLE_ARGV.countersign.parse,
       );
       return {
         exitCode: result.exitCode,

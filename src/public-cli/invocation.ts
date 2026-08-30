@@ -121,6 +121,10 @@ export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
   readonly role: "judge";
 };
 
+export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "countersign";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -199,6 +203,7 @@ export type AdmittedMergerInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
+  | AdmittedCountersignInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -483,11 +488,60 @@ export async function recordLaunchedRolePackageIdentity(
   });
 }
 
-export type ParseJudgeArgvResult = {
+export type ParseInstructionArgvResult = {
   instruction: string;
   attachmentPaths: string[];
   project?: string;
 };
+
+/** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
+export type ParseJudgeArgvResult = ParseInstructionArgvResult;
+export type ParseCountersignArgvResult = ParseInstructionArgvResult;
+
+/** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
+function parseInstructionArgv(
+  args: readonly string[],
+  owner: "judge" | "countersign",
+): ParseInstructionArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+  const definitions = roleOptions(owner);
+  const options = createTypedOptionConsumer(definitions);
+
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      positional.push(...tokens);
+      break;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== undefined) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+    }
+    const token = tokens.shift()!;
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown ${owner} option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  options.assertRequired();
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+  };
+}
 
 export type ParseCoderArgvResult = {
   phase: CoderPhase;
@@ -649,50 +703,22 @@ export function requireAuthorityRef(value: string | undefined): string {
  * Spellings from PUBLIC_OPTION_TABLE.judge; rejects burden family (#342).
  */
 export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("judge");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown judge option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    // Judge owns burden inference — rejected spellings from REJECTED_PUBLIC_SPELLINGS.
+  // Judge owns burden inference — rejected spellings checked per-token.
+  // `--` ends flag parsing: everything after is opaque instruction.
+  const dd = args.indexOf("--");
+  const preDd = dd === -1 ? args : args.slice(0, dd);
+  for (const token of preDd) {
     if (isRejectedPublicSpelling("judge", token)) {
       throw new CliUsageError(
         "judge does not accept a public burden selector; Judge infers its own burden",
       );
     }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown judge option: ${token}`);
-    }
-    positional.push(token);
   }
+  return parseInstructionArgv(args, "judge");
+}
 
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-  };
+export function parseCountersignArgv(args: readonly string[]): ParseCountersignArgvResult {
+  return parseInstructionArgv(args, "countersign");
 }
 
 /**
@@ -958,9 +984,9 @@ export async function admitJudgeInvocation(
   };
 }
 
-/** Build the Pi prompt transport for an admitted Judge request. */
-export function buildJudgeTransportPrompt(
-  admitted: AdmittedJudgeInvocation,
+/** Shared prompt transport for instruction-seat roles (judge/countersign). */
+function buildInstructionTransportPrompt(
+  admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
   engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
@@ -972,6 +998,117 @@ export function buildJudgeTransportPrompt(
     }
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+
+/** Build the Pi prompt transport for an admitted Judge request. */
+export function buildJudgeTransportPrompt(
+  admitted: AdmittedJudgeInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+
+export type AdmitCountersignInvocationOptions = {
+  home: string;
+  cwd: string;
+  instruction: string;
+  attachmentPaths: readonly string[];
+  project?: string;
+  /** Injectable clock/id for tests. */
+  createRunId?: () => string;
+  principalAuthority: DurablePrincipalAuthority;
+  /** Effective model for this invocation — written onto invocation.json. */
+  model?: InvocationEffectiveModel;
+  correlationId?: string;
+};
+
+/**
+ * Atomically admit a Countersign Role run: freeze Attachments, persist the
+ * request, write the invocation ledger (#572 / ADR 0074).
+ */
+export async function admitCountersignInvocation(
+  options: AdmitCountersignInvocationOptions,
+): Promise<AdmittedCountersignInvocation> {
+  // Same shared freeze/coordinate body as judge but role: "countersign" so
+  // the ledger and session coordinates use the correct role from the start.
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "countersign",
+    home: options.home,
+  });
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "countersign" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    principal,
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+    ...ticketFields,
+    instruction,
+    instructionEmpty,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+
+  return {
+    role: "countersign",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    principal,
+    admittedRequestPath,
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+    ...ticketFields,
+  };
+}
+
+/** Build the Pi prompt transport for an admitted Countersign request. */
+export function buildCountersignTransportPrompt(
+  admitted: AdmittedCountersignInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 
 /** Load admitted-request.json written at admission (Navigator work-context seam). */

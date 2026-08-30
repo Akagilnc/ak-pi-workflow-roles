@@ -6,6 +6,7 @@ import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "./package-contra
 import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
+import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 
 /** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
@@ -113,10 +114,27 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     sessionMaterials: NOTARY_SESSION_MATERIALS,
   },
+  {
+    role: "countersign",
+    phases: [null],
+    outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: ["CLAUDE.md", "souls/countersign.md"],
+  },
 ] as const;
 
 export type PublicRoleRecord = (typeof PUBLIC_ROLE_RECORDS)[number];
 export type PackagedRole = PublicRoleRecord["role"];
+
+/** One-shot seats: runs terminate and refuse resume — single typed owner (#572 判词送修 5). */
+export const ONE_SHOT_ROLES: readonly PackagedRole[] = [
+  "collector",
+  "doctor",
+  "notary",
+  "countersign",
+];
 
 /**
  * Read-only metadata projection (no sessionMaterials).

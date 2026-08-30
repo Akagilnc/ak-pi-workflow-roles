@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Sole stamp+publish body for publish-registry workflow (and its contract tests).
 # CHANNEL arrives only via process env — never expanded into shell source.
+# Routing (main→latest / allowlist branch→next) belongs to publish-registry.yml;
+# this script owns version stamping and idempotent dist-tag only.
 set -euo pipefail
 
 npm --version
-if [ "${GITHUB_REF_NAME:-}" != "main" ] && [ "${CHANNEL:-}" = "latest" ]; then
-  echo "refuse: non-main ref must name a non-latest channel" >&2
-  exit 1
-fi
 VERSION="0.1.$(git rev-list --count HEAD)"
 if [ "${CHANNEL:-}" != "latest" ]; then
   VERSION="$VERSION-$CHANNEL.$(git rev-parse --short=7 HEAD)"

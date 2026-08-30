@@ -2,6 +2,7 @@ import { writeSync } from "node:fs";
 import {
   ExplicitInternalActivationError,
   type HostContext,
+  type HostToolResult,
   type RoleEnvelopeHost,
   type RoleHost,
 } from "./host-contracts.ts";
@@ -45,6 +46,11 @@ import {
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { createNotaryRoleRuntime } from "./notary-role.ts";
+import {
+  COUNTERSIGN_TOOL_SPEC,
+  type CountersignRuntimeDependencies,
+} from "./countersign-role.ts";
+import { COUNTERSIGN_ACCEPTED_TEXT } from "./countersign-contracts.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -378,6 +384,7 @@ type ActivationRuntime = {
   collector: { activate(context: HostContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
   notary: { activate(): Promise<void> };
+  countersign: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -415,6 +422,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
     case "notary": return { id: "load-and-install", run: async () => runtime.notary.activate() };
+    case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -498,6 +506,7 @@ export type RoleRuntimeDependencies = {
   loadDoctorSoul?(): Promise<string>;
   loadNotarySoul?(): Promise<string>;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
+  loadCountersignSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -598,7 +607,8 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   }
   const status = typeof details.status === "string"
     ? details.status
-    : typeof details.judgeStatus === "string" ? details.judgeStatus : undefined;
+    : typeof details.judgeStatus === "string" ? details.judgeStatus
+    : typeof details.countersignStatus === "string" ? details.countersignStatus : undefined;
   if (status !== undefined && status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
@@ -620,6 +630,77 @@ export async function projectClosedSubmissionLifecycle(
   };
   context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
+}
+
+/**
+ * Shared registration envelope for filed officers (ADR 0018 / #572):
+ * activate, tool register, before_agent_start prompt, inventory check.
+ * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
+ */
+function createFiledOfficerRuntime(
+  roleHost: RoleHost,
+  spec: {
+    role: string;
+    tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
+    acceptedText: string;
+    soulTag: string;
+  },
+  dependencies: { loadSoul(): Promise<string> },
+) {
+  let soul: string | undefined;
+  let registered = false;
+  return {
+    async activate() {
+      const loaded = (await dependencies.loadSoul()).trim();
+      if (loaded.length === 0) throw new Error(`${spec.role} soul is empty`);
+      soul = loaded;
+      if (!registered) {
+        registered = true;
+        roleHost.registerTool({
+          name: spec.tool.name,
+          label: spec.tool.label,
+          description: spec.tool.description,
+          promptSnippet: spec.tool.promptSnippet,
+          parameters: spec.tool.parameters as never,
+          async execute(_toolCallId, parameters, _signal, _onUpdate, _ctx): Promise<HostToolResult<unknown>> {
+            if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+            // Accept-as-is + terminate only. Shape is not an admission gate
+            // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
+            return {
+              content: [{ type: "text" as const, text: spec.acceptedText }],
+              details: parameters,
+              terminate: true as const,
+            };
+          },
+        });
+        roleHost.on("before_agent_start", (event) => {
+          if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+          const tail = `\n\n<${spec.soulTag}_soul>\n${soul}\n</${spec.soulTag}_soul>`;
+          return { systemPrompt: `${event.systemPrompt}${tail}` };
+        });
+      }
+      const all = roleHost.getAllTools().map((tool) => tool.name);
+      if (all.filter((name) => name === spec.tool.name).length !== 1) {
+        throw new Error(`${spec.role} required tool collision or missing: ${spec.tool.name}`);
+      }
+    },
+  };
+}
+
+export function createCountersignRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: CountersignRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "countersign",
+      tool: COUNTERSIGN_TOOL_SPEC,
+      acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
+      soulTag: "countersign",
+    },
+    dependencies,
+  );
 }
 
 export function createRoleRuntimeExtension(
@@ -1049,6 +1130,12 @@ export function createRoleRuntimeExtension(
         return dependencies.loadNotarySourceRun(path);
       },
     }, hostActions);
+    const countersign = createCountersignRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadCountersignSoul) throw new Error("Countersign runtime dependencies are not configured");
+        return dependencies.loadCountersignSoul();
+      },
+    });
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1189,6 +1276,7 @@ export function createRoleRuntimeExtension(
         collector,
         doctor,
         notary,
+        countersign,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);

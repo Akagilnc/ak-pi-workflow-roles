@@ -2,8 +2,8 @@
  * #342 — sole typed public CLI option-definition source.
  *
  * PUBLIC_ROLE_ARGV rows reference these definitions. Production parsers and
- * `help <command>` consume this table; README flag inventory is generated from
- * it. Do not maintain a parallel spelling set in parsers, help, or docs.
+ * `help <command>` consume this table. Do not maintain a parallel spelling set
+ * in parsers, help, or docs.
  *
  * Dashed-option take, positional selector match, role-phase resolution,
  * `repeatable` enforcement, and unconditional `required` checks share one
@@ -22,6 +22,7 @@ export type RolePhase = "plan" | "apply";
 export type OptionOwner =
   | "global"
   | "judge"
+  | "countersign"
   | "coder"
   | "fixer"
   | "reviewer"
@@ -215,7 +216,7 @@ export function evaluateAnalystModeOptionContract(
 
 /**
  * Rejected / internal spellings retained by parsers for explicit refusal.
- * Must never appear in public help or README projections.
+ * Must never appear in public help.
  */
 export type RejectedSpelling = {
   readonly owner: OptionOwner;
@@ -381,6 +382,11 @@ function bindOwner(
 const JUDGE_OPTIONS = [
   bindOwner("judge", SHARED_PROJECT_SEMANTICS),
   bindOwner("judge", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
+const COUNTERSIGN_OPTIONS = [
+  bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
+  bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const CODER_OPTIONS = [
@@ -728,6 +734,7 @@ const ANALYST_OPTIONS = [
 export const PUBLIC_OPTION_TABLE = {
   global: GLOBAL_OPTIONS,
   judge: JUDGE_OPTIONS,
+  countersign: COUNTERSIGN_OPTIONS,
   coder: CODER_OPTIONS,
   fixer: FIXER_OPTIONS,
   reviewer: REVIEWER_OPTIONS,
@@ -743,6 +750,7 @@ export type PublicRoleOptionOwner = Exclude<OptionOwner, "global">;
 /** Role/deterministic owners that appear on PUBLIC_ROLE_ARGV. */
 export const PUBLIC_ROLE_OPTION_OWNERS = [
   "judge",
+  "countersign",
   "coder",
   "fixer",
   "reviewer",
@@ -1052,6 +1060,15 @@ const ROLE_COMMAND_HELP = {
       'ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."',
     ],
   },
+  countersign: {
+    command: "countersign",
+    summary: "Ticket-court review before work starts; five questions, 署/封驳/上呈.",
+    usage: ["ak-role countersign [options] [instruction]"],
+    examples: [
+      'ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"',
+      'ak-role countersign --attach ./plan.md --attach ./adr.md "裁：方案五问。"',
+    ],
+  },
   coder: {
     command: "coder",
     summary: "First implementation; phase defaults to apply.",
@@ -1234,137 +1251,4 @@ export function renderHumanOwnerOptionLines(
     lines.push(`  ${spelling}${tagText}  ${desc}`);
   }
   return lines;
-}
-
-const README_BEGIN = "<!-- BEGIN GENERATED: public-cli-options -->";
-const README_END = "<!-- END GENERATED: public-cli-options -->";
-
-export const PUBLIC_CLI_OPTIONS_README_MARKERS = {
-  begin: README_BEGIN,
-  end: README_END,
-} as const;
-
-/** Escape `|` so GFM table cells keep their column count (including inside code spans). */
-function escapeMarkdownTableCell(value: string): string {
-  return value.replaceAll("|", "\\|");
-}
-
-/** Markdown flag inventory for README generation (EN or ZH). */
-export function renderReadmeOptionsMarkdown(locale: "en" | "zh"): string {
-  const lines: string[] = [];
-  if (locale === "zh") {
-    lines.push("## 公开 CLI 选项（生成）");
-    lines.push("");
-    lines.push(
-      "本表由 `src/public-cli/option-definitions.ts` 生成；以 `ak-role help <command>` 为准。勿手改本区。",
-    );
-  } else {
-    lines.push("## Public CLI options (generated)");
-    lines.push("");
-    lines.push(
-      "Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <command>`. Do not hand-edit this section.",
-    );
-  }
-  lines.push("");
-
-  const owners: OptionOwner[] = ["global", ...PUBLIC_ROLE_OPTION_OWNERS];
-  for (const owner of owners) {
-    lines.push(locale === "zh" ? `### \`${owner}\`` : `### \`${owner}\``);
-    lines.push("");
-    lines.push(
-      locale === "zh"
-        ? "| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |"
-        : "| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |",
-    );
-    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
-    for (const opt of projectOwnerOptions(owner)) {
-      const aliasesRaw =
-        opt.aliases.length === 0 ? "—" : opt.aliases.join(", ");
-      const aliases =
-        aliasesRaw === "—"
-          ? aliasesRaw
-          : aliasesRaw
-              .split(", ")
-              .map((a) => `\`${escapeMarkdownTableCell(a)}\``)
-              .join(", ");
-      const valueRaw = opt.valueMetavar ?? "—";
-      const value =
-        valueRaw === "—"
-          ? valueRaw
-          : `\`${escapeMarkdownTableCell(valueRaw)}\``;
-      const requiredRaw = opt.required
-        ? locale === "zh"
-          ? "是"
-          : "yes"
-        : opt.requiredInModes !== undefined
-          ? locale === "zh"
-            ? `条件:${opt.requiredInModes.join("|")}`
-            : `when:${opt.requiredInModes.join("|")}`
-          : locale === "zh"
-            ? "否"
-            : "no";
-      const required = escapeMarkdownTableCell(requiredRaw);
-      const repeatable = escapeMarkdownTableCell(
-        opt.repeatable
-          ? locale === "zh"
-            ? "是"
-            : "yes"
-          : locale === "zh"
-            ? "否"
-            : "no",
-      );
-      const modePhase = escapeMarkdownTableCell(
-        [
-          opt.modes === undefined ? "" : `modes=${opt.modes.join("|")}`,
-          opt.phases === undefined ? "" : `phases=${opt.phases.join("|")}`,
-          opt.exclusiveWith === undefined
-            ? ""
-            : `xor=${opt.exclusiveWith.join("|")}`,
-          opt.maxCountByMode === undefined
-            ? ""
-            : `max=${Object.entries(opt.maxCountByMode)
-                .map(([m, n]) => `${m}:${n}`)
-                .join(",")}`,
-          opt.defaultValue === undefined ? "" : `default=${opt.defaultValue}`,
-        ]
-          .filter((part) => part !== "")
-          .join("; ") || "—",
-      );
-      const desc = escapeMarkdownTableCell(
-        locale === "zh" ? opt.description.zh : opt.description.en,
-      );
-      const spelling = `\`${escapeMarkdownTableCell(opt.canonical)}\``;
-      const form = escapeMarkdownTableCell(opt.form);
-      lines.push(
-        `| ${spelling} | ${aliases} | ${value} | ${required} | ${repeatable} | ${form} | ${modePhase} | ${desc} |`,
-      );
-    }
-    lines.push("");
-  }
-  return `${lines.join("\n").trimEnd()}\n`;
-}
-
-/**
- * Replace the generated region inside a README body, or append one.
- * Returns the full file text.
- */
-export function applyReadmeOptionsSection(
-  readmeText: string,
-  locale: "en" | "zh",
-): string {
-  const section = `${README_BEGIN}\n${renderReadmeOptionsMarkdown(locale)}${README_END}\n`;
-  const beginIdx = readmeText.indexOf(README_BEGIN);
-  const endIdx = readmeText.indexOf(README_END);
-  if (beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx) {
-    const afterEnd = endIdx + README_END.length;
-    // Consume a single trailing newline after the end marker when present.
-    const tailStart =
-      readmeText[afterEnd] === "\n" ? afterEnd + 1 : afterEnd;
-    return (
-      readmeText.slice(0, beginIdx) + section + readmeText.slice(tailStart)
-    );
-  }
-  // No markers yet — append before EOF.
-  const base = readmeText.endsWith("\n") ? readmeText : `${readmeText}\n`;
-  return `${base}\n${section}`;
 }

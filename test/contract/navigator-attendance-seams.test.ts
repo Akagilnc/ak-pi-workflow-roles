@@ -15,6 +15,7 @@ import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/packag
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
@@ -360,6 +361,7 @@ test("advice command derives phase token from registry metadata for every packag
         { role: "doctor", outputTool: DOCTOR_OUTPUT_TOOL_NAME },
         { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
         { role: "notary", outputTool: NOTARY_OUTPUT_TOOL_NAME },
+        { role: "countersign", outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME },
       ],
     );
 

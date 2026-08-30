@@ -1,6 +1,6 @@
 /**
  * #357 T2 — scripted session LLM for engine detour acceptance.
- * Mock only at LLM I/O: calls package detour tool once when registered,
+ * Mock only at LLM I/O: calls package detour tool twice in one activation when registered,
  * then existing typed Judge submission. Zero production hooks.
  */
 import {
@@ -21,13 +21,18 @@ import {
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
+/** Fake engine body that exits 0 yet signals an upstream failure (#541 code0 gap). */
+export const CODE0_ERROR_BODY = "upstream-engine-failure-541";
+/** The infra diagnostic the model declares when it recognizes the engine failure. */
+export const CODE0_INFRA_DIAGNOSTIC = `劳务引擎以 code 0 携带错误体退出：${CODE0_ERROR_BODY}`;
+
 export default function fixture(pi: ExtensionAPI): void {
   const faux = fauxProvider({
     api: "ak-engine-detour",
     provider: "ak-engine-detour",
     tokenSize: { min: 1000, max: 1000 },
   });
-  let detourIssued = false;
+  let detourCount = 0;
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     // Scripted Gatekeeper → Notary pass before auditor (officer choice is fixture, not oracle).
@@ -69,17 +74,42 @@ export default function fixture(pi: ExtensionAPI): void {
         { stopReason: "toolUse" },
       );
     }
+    // #541: a code0 + non-empty error body returns as a successful detour result
+    // (detour predicate treats code0+nonempty as success); the model must
+    // recognize the engine failure and declare infra via the Judge output tool
+    // before any business receipt.
+    if (names.includes(ENGINE_DETOUR_TOOL_NAME)) {
+      const lastDetour = [...context.messages]
+        .reverse()
+        .find((message) => message.role === "toolResult" && message.toolName === ENGINE_DETOUR_TOOL_NAME) as
+        | { content?: unknown }
+        | undefined;
+      const detourText = Array.isArray(lastDetour?.content)
+        ? lastDetour.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+        : typeof lastDetour?.content === "string" ? lastDetour.content : "";
+      if (detourText.includes(CODE0_ERROR_BODY)) {
+        return fauxAssistantMessage(
+          fauxToolCall(
+            JUDGE_OUTPUT_TOOL_NAME,
+            { infrastructureFailure: { diagnostic: CODE0_INFRA_DIAGNOSTIC } },
+            { id: "engine-detour-infra-out" },
+          ),
+          { stopReason: "toolUse" },
+        );
+      }
+    }
     // Prefer the detour tool when registered (Judge+engine activation).
-    if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !detourIssued) {
-      detourIssued = true;
+    if (names.includes(ENGINE_DETOUR_TOOL_NAME) && detourCount < 2) {
+      detourCount += 1;
+      const index = detourCount;
       return fauxAssistantMessage(
         fauxToolCall(
           ENGINE_DETOUR_TOOL_NAME,
           {
             // argv first element resolves via PATH (test injects fake `kimi`).
-            argv: ["kimi", "--fixture-detour"],
+            argv: ["kimi", "--call", index === 1 ? "first" : "second"],
           },
-          { id: "engine-detour-1" },
+          { id: `engine-detour-${index}` },
         ),
         { stopReason: "toolUse" },
       );
