@@ -3079,12 +3079,7 @@ export type LawfulCountersignRoleOutcome = {
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
 
-/** Shared officer extractor: same settlement body for notary/countersign. */
-function extractOfficerRoleOutcome(
-  entries: readonly SessionEntry[],
-  outputToolName: string,
-  role: "notary" | "countersign",
-  validate: (details: unknown) => { status?: string; countersignStatus?: string },
+,
   buildFacts: (output: unknown) => Record<string, unknown>,
 ): { outcome: { kind: "accepted"; role: typeof role; status: string; decisiveFacts: Record<string, unknown> }; output: unknown } | undefined {
   if (!isReceiptSettlementBindingClear(entries)) return undefined;
