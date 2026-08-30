@@ -606,6 +606,11 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       assert.equal(result.terminal?.roleOutcome.kind, "failure");
       if (result.terminal?.roleOutcome.kind !== "failure") throw new Error("expected failure outcome");
       assert.equal(result.terminal.roleOutcome.cause, "session");
+      assert.equal(
+        result.terminal.roleOutcome.decisiveFacts.errorName,
+        "AlternateHostSessionFailure",
+      );
+      assert.equal(result.terminal.roleOutcome.decisiveFacts.errorCode, "candidate-unclosed");
       assert.equal(await readSealedSubmission(project, "run-table-infrastructure"), undefined);
       process.exitCode = undefined;
     }
