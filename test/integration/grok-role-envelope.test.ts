@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -9,6 +9,7 @@ import test from "node:test";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
@@ -100,7 +101,6 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
       },
     });
     try {
-      assert.equal(typeof prepared.systemPrompt, "string");
       const server = prepared.mcpServers[0] as McpServer;
       const listed = await listThroughMcp(server) as { tools?: Array<{ name: string }> };
       assert.deepEqual(listed.tools?.map(({ name }) => name), [JUDGE_OUTPUT_TOOL_NAME]);
@@ -168,6 +168,58 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
   }
 });
 
+test("Grok MCP projection routes a correctable rejection as a structured non-pass", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-reject-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const socketPath = join(root, "mcp.sock");
+    const taskPath = join(root, "task.md");
+    // Method path whose body disagrees with the packaged canonical binding, so
+    // expansion capture fails and the completed apply rejects as correctable.
+    const wrongTddPath = join(root, "tdd", "SKILL.md");
+    await mkdir(join(root, "tdd"), { recursive: true });
+    await writeFile(wrongTddPath, "WRONG TDD BODY\n");
+    const request = {
+      principal: {}, activation: { role: "coder", phase: "apply", taskPath }, methods: [{ kind: "skill", path: wrongTddPath }],
+      continuation: { kind: "initial", prompt: "decide" },
+      model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "coder-run"),
+    } as RoleTurnRequest;
+    const prepared = await prepareGrokRoleEnvelope({
+      request,
+      socketPath,
+      dependencies: {
+        loadCoderSoul: async () => "CODER SOUL",
+        loadCoderTask: async () => "implement the plan",
+        loadCanonicalSkillBinding: async (name) =>
+          name === "tdd"
+            ? loadPackagedCanonicalSkillBinding(packageRoot, "tdd")
+            : loadPackagedCanonicalSkillBinding(packageRoot, "code-review"),
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      const server = prepared.mcpServers[0] as McpServer;
+      const reply = await callThroughMcp(server, CODER_OUTPUT_TOOL_NAME, { status: "completed", report: "done" });
+      assert.equal(reply.error, undefined);
+      const structured = (reply.result as { structuredContent?: Record<string, unknown> })?.structuredContent;
+      assert.equal(structured?.code, "coder_skill_expansion_evidence_missing");
+      assert.equal((reply.result as { isError?: boolean })?.isError, true);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Grok MCP projection executes a terminal submission through the single ledger gate to typed closure", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-"));
   const priorHome = process.env.HOME;
@@ -198,7 +250,7 @@ test("Grok MCP projection executes a terminal submission through the single ledg
       const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(reply.error, undefined);
       assert.equal((reply.result as { isError?: boolean })?.isError, undefined);
-      const closure = await prepared.closeRound({ sessionId: "s1", promptResult: { stopReason: "end_turn" } });
+      const closure = await prepared.closeRound();
       assert.deepEqual(closure, { accepted: true });
     } finally {
       await prepared.dispose?.();

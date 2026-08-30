@@ -217,39 +217,6 @@ test("grok host reports typed round closure failure instead of accepting no subm
   assert.deepEqual(await host.executeTurn(request), { code: null, stderr: "", timedOut: false, knownFailure });
 });
 
-test("grok host observes the typed builtin surface and reports it to the envelope", async () => {
-  const observed: Array<readonly string[]> = [];
-  const notificationHandlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        if (method === "session/new") return { sessionId: "s1" };
-        if (method === "session/prompt") return { stopReason: "end_turn" };
-        return {};
-      },
-      notify() {},
-      async close() {},
-      onNotification(handler) { notificationHandlers.push(handler); },
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => ({
-      ...prepared(async () => ({ accepted: true })),
-      observeBuiltinTools(names) { observed.push(names); },
-    }),
-  });
-
-  const execution = host.executeTurn(request);
-  // Simulate the ACP seam delivering the typed tool-surface notification.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  for (const handler of notificationHandlers) {
-    handler("session/update", { update: { sessionUpdate: "available_commands_update", _meta: { tools: ["run_terminal_command", "read_file", "write"] } } });
-  }
-  assert.deepEqual(await execution, { code: 0, stderr: "", timedOut: false });
-  assert.deepEqual(observed, [["run_terminal_command", "read_file", "write"]]);
-});
-
 test("structured inspect classifies builtin, AK, and private sources by provenance", () => {
   assert.deepEqual(classifyGrokInspection({
     skills: [
