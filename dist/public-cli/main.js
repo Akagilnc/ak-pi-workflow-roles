@@ -14389,6 +14389,44 @@ var init_open_tool_schema = __esm({
   }
 });
 
+// src/package-contracts/terminating-infrastructure.ts
+function withInfrastructureFailureDeclaration(schema) {
+  const baseProperties = schema.properties;
+  const properties = {
+    ...baseProperties ?? {},
+    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: infrastructureFailureDeclarationSchema.properties[INFRASTRUCTURE_FAILURE_DECLARATION_KEY]
+  };
+  const object = typebox_exports.Object(properties, { additionalProperties: true });
+  object.required = [];
+  return object;
+}
+var INFRASTRUCTURE_FAILURE_DECLARATION_KEY, INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY, infrastructureFailureDeclarationSchema;
+var init_terminating_infrastructure = __esm({
+  "src/package-contracts/terminating-infrastructure.ts"() {
+    "use strict";
+    init_build();
+    INFRASTRUCTURE_FAILURE_DECLARATION_KEY = "infrastructureFailure";
+    INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic";
+    infrastructureFailureDeclarationSchema = typebox_exports.Object(
+      {
+        [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: typebox_exports.Object(
+          {
+            [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: typebox_exports.String({
+              minLength: 1,
+              description: "\u975E\u7A7A\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u8BCA\u65AD"
+            })
+          },
+          {
+            additionalProperties: true,
+            description: "\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u58F0\u660E"
+          }
+        )
+      },
+      { additionalProperties: true }
+    );
+  }
+});
+
 // src/package-contracts/fixer-output.ts
 function validateFixerOutput(value, _phase) {
   return value;
@@ -14400,6 +14438,7 @@ var init_fixer_output = __esm({
     init_build();
     init_fixer_packet();
     init_open_tool_schema();
+    init_terminating_infrastructure();
     FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
     nonblankTransportString = typebox_exports.String({ minLength: 1 });
     authorityBlockerSchema = typebox_exports.Object({ cause: typebox_exports.Literal("authority_violation"), evidence: nonblankTransportString });
@@ -14434,7 +14473,9 @@ var init_fixer_output = __esm({
       typebox_exports.Object({ status: typebox_exports.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u62D2\u7EDD\u7ED3\u7B97" }) }),
       typebox_exports.Object({ status: typebox_exports.Literal("partially_completed", { description: "partially_completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: typebox_exports.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u5B8C\u6210\u6216\u62D2\u7EDD\u7ED3\u7B97" }), testEvidence: typebox_exports.Optional(testEvidenceSchema) })
     ]);
-    fixerOutputSchema = openToolObjectFromUnion(fixerOutputVariants);
+    fixerOutputSchema = withInfrastructureFailureDeclaration(
+      openToolObjectFromUnion(fixerOutputVariants)
+    );
   }
 });
 
@@ -14493,6 +14534,7 @@ var init_doctor_contracts = __esm({
     init_build();
     init_canonical_json();
     init_open_tool_schema();
+    init_terminating_infrastructure();
     DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
     DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
     nonblank = typebox_exports.String({ minLength: 1, pattern: "\\S" });
@@ -14543,7 +14585,9 @@ var init_doctor_contracts = __esm({
         missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "\u5982\u5B9E\u8BC1\u8BCD\u6240\u9700\u800C\u5C1A\u7F3A\u7684\u8BC1\u636E" })
       }, { additionalProperties: false, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" })
     ]);
-    doctorSubmissionSchema = openToolObjectFromUnion(doctorSubmissionVariants);
+    doctorSubmissionSchema = withInfrastructureFailureDeclaration(
+      openToolObjectFromUnion(doctorSubmissionVariants)
+    );
     doctorOutputSchema = typebox_exports.Union([
       typebox_exports.Object({ status: typebox_exports.Literal("completed"), case: caseIdentity, findings: typebox_exports.Array(finding), cost }, { additionalProperties: false }),
       doctorSubmissionVariants.anyOf[1]
@@ -14649,6 +14693,7 @@ var init_merger_contracts = __esm({
     init_exact_utf8();
     init_sha256();
     init_open_tool_schema();
+    init_terminating_infrastructure();
     oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
     materialSchema = typebox_exports.Object({ bytesBase64: typebox_exports.String(), sha256: typebox_exports.String() }, { additionalProperties: false });
     checkSchema = typebox_exports.Object({ name: typebox_exports.String({ minLength: 1 }), argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
@@ -14666,7 +14711,9 @@ var init_merger_contracts = __esm({
       typebox_exports.Object({ status: typebox_exports.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: typebox_exports.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), mergeCommitId: typebox_exports.String({ pattern: oidPattern, description: "\u5DF2\u6838\u9A8C\u7684\u5B8C\u6210\u5408\u5E76 commit object ID" }) }, { additionalProperties: false }),
       typebox_exports.Object({ status: typebox_exports.Literal("escalate", { description: "escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: typebox_exports.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), diagnosis: typebox_exports.String({ minLength: 1, description: "\u5408\u5E76\u5B8C\u6210\u9700\u5347\u7EA7\u7684\u539F\u56E0" }), report: typebox_exports.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }, { additionalProperties: false })
     ]);
-    mergerOutputSchema = openToolObjectFromUnion(mergerOutputVariants);
+    mergerOutputSchema = withInfrastructureFailureDeclaration(
+      openToolObjectFromUnion(mergerOutputVariants)
+    );
     MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
     record = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
     blank = (v) => typeof v !== "string" || v.trim().length === 0;
@@ -14728,23 +14775,53 @@ var init_notary_contracts = __esm({
     "use strict";
     init_build();
     init_open_tool_schema();
+    init_terminating_infrastructure();
     NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
     NOTARY_FIXED_KICKOFF = "\u7B26\u5B9D\u90CE\u6848\u5377\u5DF2\u53D7\u7406\uFF1B\u6765\u6E90 run \u5B9A\u4F4D\u89C1\u4F1A\u8BDD\u6750\u6599\u3002";
-    notaryOutputSchema = openToolObject(
-      typebox_exports.Object({
-        status: typebox_exports.Unknown({
-          description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
-        }),
-        findings: typebox_exports.Unknown({
-          description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58"
+    notaryOutputSchema = withInfrastructureFailureDeclaration(
+      openToolObject(
+        typebox_exports.Object({
+          status: typebox_exports.Unknown({
+            description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
+          }),
+          findings: typebox_exports.Unknown({
+            description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58"
+          })
         })
-      })
+      )
     );
   }
 });
 
+// src/countersign-contracts.ts
+function validateRecordedCountersignOutput(verdict) {
+  if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) {
+    throw new Error("Countersign verdict has no execution discriminator");
+  }
+  let countersignStatus;
+  try {
+    countersignStatus = verdict.countersignStatus;
+  } catch {
+    throw new Error("Countersign verdict has no execution discriminator");
+  }
+  if (typeof countersignStatus !== "string") {
+    throw new Error("Countersign verdict has no execution discriminator");
+  }
+  if (["converged", "continue", "escalate"].includes(countersignStatus)) {
+    return verdict;
+  }
+  throw new Error("Countersign verdict has no execution discriminator");
+}
+var COUNTERSIGN_OUTPUT_TOOL_NAME;
+var init_countersign_contracts = __esm({
+  "src/countersign-contracts.ts"() {
+    "use strict";
+    COUNTERSIGN_OUTPUT_TOOL_NAME = "ak_countersign_output";
+  }
+});
+
 // src/packaged-role-registry.ts
-var NOTARY_SESSION_MATERIALS, PUBLIC_ROLE_RECORDS, PACKAGED_ROLE_REGISTRY;
+var NOTARY_SESSION_MATERIALS, PUBLIC_ROLE_RECORDS, ONE_SHOT_ROLES, PACKAGED_ROLE_REGISTRY;
 var init_packaged_role_registry = __esm({
   "src/packaged-role-registry.ts"() {
     "use strict";
@@ -14755,6 +14832,7 @@ var init_packaged_role_registry = __esm({
     init_doctor_contracts();
     init_merger_contracts();
     init_notary_contracts();
+    init_countersign_contracts();
     NOTARY_SESSION_MATERIALS = [
       "CLAUDE.md",
       "souls/notary.md",
@@ -14854,7 +14932,22 @@ var init_packaged_role_registry = __esm({
         phaseFlag: void 0,
         activationStage: "load-and-install",
         sessionMaterials: NOTARY_SESSION_MATERIALS
+      },
+      {
+        role: "countersign",
+        phases: [null],
+        outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
+        inputFlag: void 0,
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: ["CLAUDE.md", "souls/countersign.md"]
       }
+    ];
+    ONE_SHOT_ROLES = [
+      "collector",
+      "doctor",
+      "notary",
+      "countersign"
     ];
     PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
   }
@@ -14928,6 +15021,10 @@ var init_registry2 = __esm({
     ];
     STARTUP_CANDIDATES = {
       judge: [
+        { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" }
+      ],
+      countersign: [
         { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
         { provider: "xai", model: "grok-4.5", thinking: "high" }
       ],
@@ -15731,6 +15828,8 @@ function buildActivationFlagArgs(activation) {
       return ["--ak-role", "doctor", "--ak-doctor-case", activation.casePath];
     case "notary":
       return ["--ak-role", "notary", "--ak-notary-source-run", activation.sourceRun];
+    case "countersign":
+      return ["--ak-role", "countersign"];
     default: {
       const _exhaustive = activation;
       return _exhaustive;
@@ -16064,7 +16163,8 @@ function validateAcceptedDetails(toolName, details) {
       "audit escalation is not an accepted role receipt"
     );
   }
-  const discriminator = safeProperty(candidate, toolName === JUDGE_OUTPUT_TOOL_NAME ? "judgeStatus" : "status");
+  const statusKey = toolName === JUDGE_OUTPUT_TOOL_NAME ? "judgeStatus" : toolName === COUNTERSIGN_OUTPUT_TOOL_NAME ? "countersignStatus" : "status";
+  const discriminator = safeProperty(candidate, statusKey);
   const lawfulStatuses = {
     [CODER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "unfinished"],
     [FIXER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "partially_completed", "unfinished"],
@@ -16073,7 +16173,8 @@ function validateAcceptedDetails(toolName, details) {
     [COLLECTOR_OUTPUT_TOOL]: [],
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
-    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"]
+    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+    [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"]
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;
@@ -16099,6 +16200,8 @@ function validateAcceptedDetails(toolName, details) {
         return validateMergerOutput(details);
       case NOTARY_OUTPUT_TOOL_NAME:
         return validateRecordedNotaryOutput(details);
+      case COUNTERSIGN_OUTPUT_TOOL_NAME:
+        return validateRecordedCountersignOutput(details);
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -16115,6 +16218,8 @@ function acceptedFacts(toolName, details) {
       return { status: details.status };
     case JUDGE_OUTPUT_TOOL_NAME:
       return { status: details.judgeStatus };
+    case COUNTERSIGN_OUTPUT_TOOL_NAME:
+      return { status: details.countersignStatus };
     case MERGER_OUTPUT_TOOL_NAME: {
       const output = details;
       const status = output.status;
@@ -16136,6 +16241,7 @@ var init_terminating_tools = __esm({
     init_doctor_contracts();
     init_merger_contracts();
     init_notary_contracts();
+    init_countersign_contracts();
     init_worker_output();
     TERMINATING_TOOL_NAMES = [
       CODER_OUTPUT_TOOL_NAME,
@@ -16145,7 +16251,8 @@ var init_terminating_tools = __esm({
       COLLECTOR_OUTPUT_TOOL,
       DOCTOR_OUTPUT_TOOL_NAME,
       MERGER_OUTPUT_TOOL_NAME,
-      NOTARY_OUTPUT_TOOL_NAME
+      NOTARY_OUTPUT_TOOL_NAME,
+      COUNTERSIGN_OUTPUT_TOOL_NAME
     ];
     AcceptedDetailsContractError = class extends CorrectableSubmissionError {
       code = "accepted_details_contract";
@@ -16576,7 +16683,7 @@ async function readRoleRunStateDisk(runDirectory) {
   if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
     return void 0;
   }
-  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger" && record4.role !== "notary") {
+  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger" && record4.role !== "notary" && record4.role !== "countersign") {
     return void 0;
   }
   if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
@@ -17582,7 +17689,7 @@ function renderHumanOwnerOptionLines(owner, locale2 = "en") {
   }
   return lines;
 }
-var ANALYST_REQUIRE_ANY_OF, ANALYST_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, NOTARY_OPTIONS, MERGER_OPTIONS, ANALYST_OPTIONS, PUBLIC_OPTION_TABLE, PUBLIC_NAVIGATOR_HELP_NOTE, TOP_LEVEL_HELP, ROLE_COMMAND_HELP, SUPPORT_COMMAND_HELP, PUBLIC_COMMAND_HELP;
+var ANALYST_REQUIRE_ANY_OF, ANALYST_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, COUNTERSIGN_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, NOTARY_OPTIONS, MERGER_OPTIONS, ANALYST_OPTIONS, PUBLIC_OPTION_TABLE, PUBLIC_NAVIGATOR_HELP_NOTE, TOP_LEVEL_HELP, ROLE_COMMAND_HELP, SUPPORT_COMMAND_HELP, PUBLIC_COMMAND_HELP;
 var init_option_definitions = __esm({
   "src/public-cli/option-definitions.ts"() {
     "use strict";
@@ -17724,6 +17831,10 @@ var init_option_definitions = __esm({
     JUDGE_OPTIONS = [
       bindOwner("judge", SHARED_PROJECT_SEMANTICS),
       bindOwner("judge", SHARED_ATTACH_SEMANTICS)
+    ];
+    COUNTERSIGN_OPTIONS = [
+      bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
+      bindOwner("countersign", SHARED_ATTACH_SEMANTICS)
     ];
     CODER_OPTIONS = [
       {
@@ -18058,6 +18169,7 @@ var init_option_definitions = __esm({
     PUBLIC_OPTION_TABLE = {
       global: GLOBAL_OPTIONS,
       judge: JUDGE_OPTIONS,
+      countersign: COUNTERSIGN_OPTIONS,
       coder: CODER_OPTIONS,
       fixer: FIXER_OPTIONS,
       reviewer: REVIEWER_OPTIONS,
@@ -18088,6 +18200,15 @@ var init_option_definitions = __esm({
         examples: [
           'ak-role judge --attach ./plan.md "Review this plan."',
           'ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."'
+        ]
+      },
+      countersign: {
+        command: "countersign",
+        summary: "Ticket-court review before work starts; five questions, \u7F72/\u5C01\u9A73/\u4E0A\u5448.",
+        usage: ["ak-role countersign [options] [instruction]"],
+        examples: [
+          'ak-role countersign --attach ./ticket.md "\u88C1\uFF1A\u672C\u7968\u662F\u5426\u8DB3\u4EE5\u5F00\u5DE5\u3002"',
+          'ak-role countersign --attach ./plan.md --attach ./adr.md "\u88C1\uFF1A\u65B9\u6848\u4E94\u95EE\u3002"'
         ]
       },
       coder: {
@@ -18427,6 +18548,44 @@ async function recordLaunchedRolePackageIdentity(runDirectory, identity) {
     entryMode: identity.entryMode
   });
 }
+function parseInstructionArgv(args, owner) {
+  const attachmentPaths = [];
+  let project;
+  const positional = [];
+  const tokens = [...args];
+  const definitions = roleOptions(owner);
+  const options = createTypedOptionConsumer(definitions);
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      positional.push(...tokens);
+      break;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== void 0) {
+      if (taken.def.id === "attach") {
+        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+        continue;
+      }
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+    }
+    const token = tokens.shift();
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown ${owner} option: ${token}`);
+    }
+    positional.push(token);
+  }
+  options.assertRequired();
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project }
+  };
+}
 function requireOptionPath(flag, value) {
   if (value === void 0 || value.trim() === "") {
     throw new CliUsageError(
@@ -18459,47 +18618,19 @@ function requireAuthorityRef(value) {
   return value;
 }
 function parseJudgeArgv(args) {
-  const attachmentPaths = [];
-  let project;
-  const positional = [];
-  const tokens = [...args];
-  const definitions = roleOptions("judge");
-  const options = createTypedOptionConsumer(definitions);
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== void 0) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown judge option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift();
+  const dd = args.indexOf("--");
+  const preDd = dd === -1 ? args : args.slice(0, dd);
+  for (const token of preDd) {
     if (isRejectedPublicSpelling("judge", token)) {
       throw new CliUsageError(
         "judge does not accept a public burden selector; Judge infers its own burden"
       );
     }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown judge option: ${token}`);
-    }
-    positional.push(token);
   }
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...project === void 0 ? {} : { project }
-  };
+  return parseInstructionArgv(args, "judge");
+}
+function parseCountersignArgv(args) {
+  return parseInstructionArgv(args, "countersign");
 }
 function parseCoderArgv(args) {
   const attachmentPaths = [];
@@ -18706,7 +18837,7 @@ async function admitJudgeInvocation(options) {
     ...ticketFields
   };
 }
-function buildJudgeTransportPrompt(admitted, engineMaterial) {
+function buildInstructionTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -18716,6 +18847,81 @@ function buildJudgeTransportPrompt(admitted, engineMaterial) {
     }
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+function buildJudgeTransportPrompt(admitted, engineMaterial) {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+async function admitCountersignInvocation(options) {
+  if (options.project !== void 0) {
+    requireOptionPath("--project", options.project);
+  }
+  const projectRoot = resolve7(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "countersign",
+    home: options.home
+  });
+  const attachmentsDirectory = join12(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "countersign",
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    principal,
+    ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId },
+    ...ticketFields,
+    instruction,
+    instructionEmpty,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind
+    }))
+  };
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+  return {
+    role: "countersign",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    principal,
+    admittedRequestPath,
+    ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId },
+    ...ticketFields
+  };
+}
+function buildCountersignTransportPrompt(admitted, engineMaterial) {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 async function ensureRunArtifactsDir(runDirectory) {
   const dir = join12(runDirectory, "artifacts");
@@ -20946,6 +21152,7 @@ var init_submission_ledger = __esm({
     init_run_terminal_artifacts();
     init_sitian_facade();
     init_submission_correctable_error();
+    init_terminating_infrastructure();
   }
 });
 
@@ -21336,6 +21543,7 @@ var init_collector_tool_schemas = __esm({
     "use strict";
     init_build();
     init_collector_evidence();
+    init_terminating_infrastructure();
     collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
     collectorRequestArgsSchema = typebox_exports.Object({
       requestId: typebox_exports.String({ minLength: 1, description: "\u914D\u7F6E\u8BF7\u6C42\u8EAB\u4EFD" }),
@@ -21344,7 +21552,9 @@ var init_collector_tool_schemas = __esm({
     collectorWaitArgsSchema = typebox_exports.Object({
       durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "\u7B49\u5F85\u6BEB\u79D2\uFF1B\u5355\u6B21\u4E0A\u9650\u4E94\u5206\u949F\u4E14\u4E0D\u8D85\u5269\u4F59\u8D44\u683C" })
     }, { additionalProperties: false });
-    collectorOutputArgsSchema = typebox_exports.Object({}, { additionalProperties: true });
+    collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
+      typebox_exports.Object({}, { additionalProperties: true })
+    );
     collectorOutputArgsSchema.required = [];
   }
 });
@@ -22268,6 +22478,36 @@ function auditNoReceiptDecisiveFact(candidate) {
   } catch {
     return {};
   }
+}
+function countersignDecisiveFacts(verdict, countersignStatus) {
+  const facts = { countersignStatus };
+  if (countersignStatus === "continue") {
+    const fix = safelyRead(verdict, "fix");
+    if (fix.readable && isRecord11(fix.value)) {
+      const summary = safelyRead(fix.value, "summary");
+      if (summary.readable && typeof summary.value === "string") {
+        facts.fixSummary = summary.value;
+      }
+    }
+  }
+  if (countersignStatus === "escalate") {
+    const gate = safelyRead(verdict, "decisionGate");
+    if (gate.readable && isRecord11(gate.value)) {
+      const question = safelyRead(gate.value, "question");
+      const options = safelyRead(gate.value, "options");
+      if (question.readable && typeof question.value === "string") {
+        facts.decisionQuestion = question.value;
+      }
+      if (options.readable && Array.isArray(options.value)) {
+        facts.decisionOptions = [...options.value];
+      }
+    }
+  }
+  const note = safelyRead(verdict, "note");
+  if (note.readable && note.value !== void 0) facts.note = note.value;
+  const evidence = safelyRead(verdict, "evidence");
+  if (evidence.readable && evidence.value !== void 0) facts.evidence = evidence.value;
+  return facts;
 }
 function judgeDecisiveFacts(verdict, judgeStatus) {
   const facts = {
@@ -23384,6 +23624,67 @@ async function settleLawfulNotaryTerminalResult(admitted, authority) {
 async function trySettleNotaryTerminalResult(admitted, authority) {
   return settleLawfulNotaryTerminalResult(admitted, authority);
 }
+async function settleLawfulCountersignTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "countersign") {
+    let acceptedNonUsable;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(
+        entries,
+        index,
+        message,
+        COUNTERSIGN_OUTPUT_TOOL_NAME
+      );
+      if (residual !== void 0) {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false }
+        }, authority);
+      }
+      if (acceptedNonUsable === void 0 && message.toolName === COUNTERSIGN_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
+        try {
+          validateRecordedCountersignOutput(message.details);
+        } catch {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== void 0) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: "\u7ED9\u4E8B\u4E2D\u56DE\u6267\u65E0\u663E\u5F0F \u7F72/\u5C01\u9A73/\u4E0A\u5448",
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false }
+      }, authority);
+    }
+    return void 0;
+  }
+  const verdict = validateRecordedCountersignOutput(roleOutcome.decisiveFacts);
+  const accepted = {
+    kind: "accepted",
+    role: "countersign",
+    status: roleOutcome.status,
+    decisiveFacts: countersignDecisiveFacts(verdict, roleOutcome.status)
+  };
+  const navigator = extractNavigatorFact(entries);
+  return withOptionalGateProjection(
+    {
+      roleOutcome: accepted,
+      navigator,
+      artifacts: [],
+      runId: admitted.runId
+    },
+    sessionDirectory
+  );
+}
+async function trySettleCountersignTerminalResult(admitted, authority) {
+  return settleLawfulCountersignTerminalResult(admitted, authority);
+}
 async function trySettleCoderTerminalResult(admitted, authority, options = {}) {
   return settleLawfulCoderTerminalResult(admitted, authority, options);
 }
@@ -24009,6 +24310,7 @@ var init_settlement = __esm({
     init_reviewer_output();
     init_merger_contracts();
     init_notary_contracts();
+    init_countersign_contracts();
     init_method_skill();
     init_navigator_invocation_identity();
     init_receipt_delivery_policy();
@@ -24949,6 +25251,84 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
 }
 var init_collector_run = __esm({
   "src/public-cli/collector-run.ts"() {
+    "use strict";
+    init_engine_material();
+    init_cli_errors();
+    init_invocation();
+    init_post_admission();
+    init_run_lifecycle();
+    init_settlement();
+    init_turn_request();
+  }
+});
+
+// src/public-cli/countersign-run.ts
+function buildCountersignTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: { role: "countersign" }
+    },
+    options
+  );
+}
+async function runPublicCountersign(argv, env, io, parseCountersignArgv2) {
+  let admitted;
+  try {
+    const parsed = parseCountersignArgv2(argv);
+    admitted = await admitCountersignInvocation({
+      home: env.home,
+      principalAuthority: env.principalAuthority,
+      cwd: env.cwd,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model },
+      ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted, env.principalAuthority);
+  const turnRequest = buildCountersignTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...env.correlationId === void 0 || env.correlationId.trim() === "" ? {} : { correlationId: env.correlationId },
+    continuation: {
+      kind: "initial",
+      prompt: buildCountersignTransportPrompt(
+        admitted,
+        engineSessionMaterialFromOptions({
+          ...env.engine === void 0 ? {} : { engine: env.engine },
+          packageRoot: env.packageRoot
+        })
+      )
+    }
+  });
+  return await runPostAdmissionOneShot({
+    admitted,
+    env,
+    io,
+    request: turnRequest,
+    adapters: {
+      trySettle: (admitted2, authority) => trySettleCountersignTerminalResult(admitted2, authority),
+      // Accepted receipts and failure terminals both present via shared path.
+      shouldPresentSettled: () => true
+    },
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+  });
+}
+var init_countersign_run = __esm({
+  "src/public-cli/countersign-run.ts"() {
     "use strict";
     init_engine_material();
     init_cli_errors();
@@ -28548,14 +28928,9 @@ async function runAkRole(argv, env) {
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const resumeRequest = parseResumeRequest(parsed.args);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
-      if (resumeRole === "collector") {
+      if (resumeRole !== void 0 && ONE_SHOT_ROLES.includes(resumeRole)) {
         throw new CliUsageError(
-          "collector role runs are one-shot and cannot be resumed"
-        );
-      }
-      if (resumeRole === "doctor") {
-        throw new CliUsageError(
-          "doctor role runs are one-shot and cannot be resumed"
+          `${resumeRole} role runs are one-shot and cannot be resumed`
         );
       }
       const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : resumeRole === "reviewer" ? "reviewer" : resumeRole === "merger" ? "merger" : "judge";
@@ -28683,6 +29058,28 @@ async function runAkRole(argv, env) {
         createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.judge.parse
+      );
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
+    }
+    if (parsed.command === "countersign") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "countersign",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicCountersign(
+        parsed.args,
+        createRoleEnvironment(env, { role: "countersign", home, agentDir, cwd, credentials, seat, config }),
+        io,
+        PUBLIC_ROLE_ARGV.countersign.parse
       );
       return {
         exitCode: result2.exitCode,
@@ -28885,6 +29282,8 @@ var init_cli = __esm({
     init_option_definitions();
     init_coder_run();
     init_collector_run();
+    init_countersign_run();
+    init_packaged_role_registry();
     init_doctor_run();
     init_fixer_run();
     init_notary_run();
@@ -28899,6 +29298,7 @@ var init_cli = __esm({
     init_cli_errors();
     PUBLIC_ROLE_ARGV = {
       judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
+      countersign: { parse: parseCountersignArgv, options: optionsForOwner("countersign") },
       coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
       fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
       collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },

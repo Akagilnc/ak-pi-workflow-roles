@@ -2,6 +2,7 @@ import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } fro
 import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 import type {
   AnyCanonicalSkillBinding,
@@ -80,7 +81,9 @@ const coderOutputVariants = Type.Union([
     })),
   }, { additionalProperties: false }),
 ]);
-const coderOutputSchema = openToolObjectFromUnion(coderOutputVariants);
+export const coderOutputSchema = withInfrastructureFailureDeclaration(
+  openToolObjectFromUnion(coderOutputVariants),
+);
 export type { FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {
   packet: {

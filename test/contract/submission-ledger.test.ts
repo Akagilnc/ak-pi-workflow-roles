@@ -249,7 +249,7 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
   });
 });
 
-test("eight packaged roles seal through the production ledger host", async () => {
+test("every packaged role seals through the production ledger host", async () => {
   const rows = [
     { role: "judge" as const, details: { judgeStatus: "converged" }, status: "converged" },
     { role: "coder" as const, details: { status: "completed", report: "done" }, status: "completed" },
@@ -258,6 +258,7 @@ test("eight packaged roles seal through the production ledger host", async () =>
     { role: "doctor" as const, details: { status: "refused", reason: "missing", missingEvidence: [] }, status: "refused" },
     { role: "merger" as const, details: { status: "escalate", attemptId: "a", diagnosis: "d", report: "r" }, status: "escalate" },
     { role: "notary" as const, details: { status: "pass", findings: [] }, status: "pass" },
+    { role: "countersign" as const, details: { countersignStatus: "converged" }, status: "converged" },
     // acceptedFacts(Collector) → collected — never the fallback "accepted"
     { role: "collector" as const, details: { groups: [] }, status: "collected" },
   ];

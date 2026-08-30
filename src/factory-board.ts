@@ -194,7 +194,7 @@ function placeTicket(prepared: PreparedTicket): BoardPlacement {
   }
   if (latest.station === "coder") return "coder";
   if (latest.station === "fixer" || latest.station === "reviewer") return "marshal";
-  // ADR 0053: marshal-driven runs land in 刑部 once the seat ships (station maps now).
+  // ADR 0053: marshal-driven runs land in 尚书省 once the seat ships (station maps now).
   if (latest.station === "marshal") return "marshal";
   if (latest.station === "collector") return "collector";
   return `other:${latest.station}`;
@@ -399,7 +399,7 @@ const YAMEN_LABELS: Readonly<Record<string, string>> = {
   collector: "通进司",
   doctor: "太医署",
   merger: "校书郎",
-  marshal: "刑部",
+  marshal: "尚书省",
 };
 
 function latestKnownStation(runs: readonly TicketTrajectoryRun[]): string | undefined {
@@ -805,7 +805,7 @@ const COLUMN_LABELS: Readonly<Record<string, string>> = {
   pending: "待发",
   court: "大理寺 · 审票",
   coder: "将作监",
-  marshal: "刑部",
+  marshal: "尚书省",
   collector: "通进司",
   done: "已完成",
 };

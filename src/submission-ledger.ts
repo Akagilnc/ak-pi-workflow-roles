@@ -17,6 +17,7 @@ import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
 import { isCorrectableSubmissionError } from "./submission-correctable-error.ts";
+import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
@@ -262,6 +263,18 @@ export function createSubmissionLedgerHost(
           const state = await stateFor(context, runId);
           const append = (event: SubmissionLedgerEvent) => appendFor(state, context, runId, attemptId, event);
           if (state.sealed) throw new Error("提交账已封账");
+          // #541 / #575: shared infra-declaration fail lives on the ledger seam,
+          // before any role execute or sole-final work (one owner for every seat).
+          failOnInfrastructureFailureDeclaration(
+            params,
+            {
+              failInfrastructure(error, ctx) {
+                failInfrastructure(error, ctx);
+              },
+            },
+            context,
+            toolCallId,
+          );
           append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
           let result: HostToolResult<unknown>;
           try {

@@ -45,7 +45,7 @@ function gateSeatLabel(stage: "gatekeeper" | "inspector" | "notary"): string {
     case "gatekeeper":
       return "门下省";
     case "inspector":
-      return "给事中";
+      return "察院";
     case "notary":
       return "符宝郎";
   }

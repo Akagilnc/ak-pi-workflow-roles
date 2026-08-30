@@ -88,6 +88,10 @@ import {
   type NotaryOutput,
 } from "../notary-contracts.ts";
 import {
+  COUNTERSIGN_OUTPUT_TOOL_NAME,
+  validateRecordedCountersignOutput,
+} from "../countersign-contracts.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -117,6 +121,7 @@ import {
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
+  type AdmittedCountersignInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -1227,6 +1232,41 @@ function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> 
   } catch {
     return {};
   }
+}
+
+/** Countersign terminal projection — escalate keeps decisionGate; continue keeps fix (#572 / ADR 0074). */
+function countersignDecisiveFacts(
+  verdict: object,
+  countersignStatus: string,
+): Record<string, unknown> {
+  const facts: Record<string, unknown> = { countersignStatus };
+  if (countersignStatus === "continue") {
+    const fix = safelyRead(verdict, "fix");
+    if (fix.readable && isRecord(fix.value)) {
+      const summary = safelyRead(fix.value, "summary");
+      if (summary.readable && typeof summary.value === "string") {
+        facts.fixSummary = summary.value;
+      }
+    }
+  }
+  if (countersignStatus === "escalate") {
+    const gate = safelyRead(verdict, "decisionGate");
+    if (gate.readable && isRecord(gate.value)) {
+      const question = safelyRead(gate.value, "question");
+      const options = safelyRead(gate.value, "options");
+      if (question.readable && typeof question.value === "string") {
+        facts.decisionQuestion = question.value;
+      }
+      if (options.readable && Array.isArray(options.value)) {
+        facts.decisionOptions = [...options.value];
+      }
+    }
+  }
+  const note = safelyRead(verdict, "note");
+  if (note.readable && note.value !== undefined) facts.note = note.value;
+  const evidence = safelyRead(verdict, "evidence");
+  if (evidence.readable && evidence.value !== undefined) facts.evidence = evidence.value;
+  return facts;
 }
 
 function judgeDecisiveFacts(
@@ -3117,6 +3157,103 @@ export async function trySettleNotaryTerminalResult(
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulNotaryTerminalResult(admitted, authority);
+}
+
+/** Lawful Countersign accepted outcome (署/封驳/上呈, #572 / ADR 0074). */
+export type LawfulCountersignRoleOutcome = {
+  kind: "accepted";
+  role: "countersign";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "countersign") {
+    // No usable Countersign verdict → existing non-zero failure channel with candidate (#475 / ADR 0055).
+    let acceptedNonUsable: unknown | undefined;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(
+        entries,
+        index,
+        message,
+        COUNTERSIGN_OUTPUT_TOOL_NAME,
+      );
+      if (residual !== undefined) {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false },
+        }, authority);
+      }
+      if (
+        acceptedNonUsable === undefined &&
+        message.toolName === COUNTERSIGN_OUTPUT_TOOL_NAME &&
+        isAcceptedPackagedRoleTerminalResult(message)
+      ) {
+        try {
+          validateRecordedCountersignOutput(message.details);
+        } catch {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== undefined) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: "给事中回执无显式 署/封驳/上呈",
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
+      }, authority);
+    }
+    return undefined;
+  }
+  const verdict = validateRecordedCountersignOutput(roleOutcome.decisiveFacts);
+  const accepted: LawfulCountersignRoleOutcome = {
+    kind: "accepted",
+    role: "countersign",
+    status: roleOutcome.status,
+    decisiveFacts: countersignDecisiveFacts(verdict as object, roleOutcome.status),
+  };
+  const navigator = extractNavigatorFact(entries);
+  return withOptionalGateProjection(
+    {
+      roleOutcome: accepted,
+      navigator,
+      artifacts: [],
+      runId: admitted.runId,
+    },
+    sessionDirectory,
+  );
+}
+
+/** Settle a lawful Countersign Terminal from the admitted session. */
+export async function settleCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulCountersignTerminalResult(admitted, authority);
+  if (settled === undefined) {
+    throw new Error(
+      "Countersign Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Countersign Terminal; undefined only for genuine absence. */
+export async function trySettleCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulCountersignTerminalResult(admitted, authority);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

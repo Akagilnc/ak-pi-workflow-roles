@@ -6,6 +6,7 @@
 import { Type } from "typebox";
 
 import { openToolObject } from "./open-tool-schema.ts";
+import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export const NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
 export const NOTARY_ACCEPTED_TEXT = "符宝郎回执已接受";
@@ -21,15 +22,17 @@ export const NOTARY_SOURCE_RUN_FLAG = {
 export const NOTARY_FIXED_KICKOFF =
   "符宝郎案卷已受理；来源 run 定位见会话材料。";
 
-export const notaryOutputSchema = openToolObject(
-  Type.Object({
-    status: Type.Unknown({
-      description: "pass | bounce — 形状指引，非 schema 闸",
+export const notaryOutputSchema = withInfrastructureFailureDeclaration(
+  openToolObject(
+    Type.Object({
+      status: Type.Unknown({
+        description: "pass | bounce — 形状指引，非 schema 闸",
+      }),
+      findings: Type.Unknown({
+        description: "string[] findings，随 pass 或 bounce 留存",
+      }),
     }),
-    findings: Type.Unknown({
-      description: "string[] findings，随 pass 或 bounce 留存",
-    }),
-  }),
+  ),
 );
 
 export type NotarySourceRunLocator = {

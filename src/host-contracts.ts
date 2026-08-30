@@ -106,7 +106,8 @@ export type RoleTurnActivation =
       readonly requestManifestPath?: string;
     }
   | { readonly role: "doctor"; readonly casePath: string }
-  | { readonly role: "notary"; readonly sourceRun: string };
+  | { readonly role: "notary"; readonly sourceRun: string }
+  | { readonly role: "countersign" };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }

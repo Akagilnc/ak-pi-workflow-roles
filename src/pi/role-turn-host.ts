@@ -117,6 +117,8 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
       return ["--ak-role", "doctor", "--ak-doctor-case", activation.casePath];
     case "notary":
       return ["--ak-role", "notary", "--ak-notary-source-run", activation.sourceRun];
+    case "countersign":
+      return ["--ak-role", "countersign"];
     default: {
       const _exhaustive: never = activation;
       return _exhaustive;

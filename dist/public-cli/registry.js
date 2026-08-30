@@ -39,6 +39,10 @@ const STARTUP_CANDIDATES = {
         { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
         { provider: "xai", model: "grok-4.5", thinking: "high" },
     ],
+    countersign: [
+        { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
+        { provider: "xai", model: "grok-4.5", thinking: "high" },
+    ],
     reviewer: [
         { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
         { provider: "xai", model: "grok-4.5", thinking: "high" },

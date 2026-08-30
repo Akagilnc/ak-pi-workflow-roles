@@ -466,6 +466,12 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
     details: () => ({ status: "pass", findings: [] }),
   },
   {
+    role: "countersign",
+    status: "converged",
+    args: (project) => ["countersign", "--project", project, "裁：本票是否足以开工。"],
+    details: () => ({ countersignStatus: "converged", findings: [] }),
+  },
+  {
     role: "collector",
     status: "collected",
     args: (project) => [
@@ -481,7 +487,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
   },
 ];
 
-test("public-cli eight packaged roles accept via shared sealed→Terminal entry", { timeout: 180_000 }, async () => {
+test("public-cli every packaged role accepts via shared sealed→Terminal entry", { timeout: 180_000 }, async () => {
   await withSharedHome(async (home, project) => {
     for (const row of ACCEPTED_ROWS) {
       // Fresh project state per row when merger mutates the worktree.

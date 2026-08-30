@@ -95,7 +95,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const exec = async (_command: string, args: string[], options: { cwd?: string; timeout?: number }) => {
           assert.equal(args.at(-3), "--ak-role");
           assert.equal(args.at(-1), "--help");
-          assert.ok(["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger", "notary"].includes(args.at(-2) ?? ""));
+          assert.ok((WORKFLOW_ROLES as readonly string[]).includes(args.at(-2) ?? ""));
           assert.equal(options.timeout, runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS);
           observedHelpTimeouts.push(options.timeout as number);
           const result = await runPiSubprocess(args, {

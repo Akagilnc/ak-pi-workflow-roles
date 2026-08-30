@@ -73,6 +73,7 @@ export function createNotaryRoleRuntime(
             }
             // Unique submission + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055): lawful pass/bounce projected; else params as-is.
+            // #541 infra declaration + sole-final barrier are ledger-owned (#575).
             const lawful = projectLawfulNotaryOutput(parameters);
             const details = lawful ?? retainNotarySubmission(parameters);
             return {
