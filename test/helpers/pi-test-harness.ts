@@ -1048,6 +1048,8 @@ export interface MockProviderServerObservers {
   onModel?: (modelId: string, body: Record<string, unknown>) => void;
   /** Observe each inbound child HTTP request. Headers prove models.json auth was consumed. */
   onRequest?: (request: { headers: IncomingHttpHeaders }) => void;
+  /** Observe the real listener so lifecycle tests can assert its externally visible state. */
+  onServer?: (server: Server) => void;
 }
 
 export async function createMockProviderServer(
@@ -1229,6 +1231,7 @@ export async function createMockProviderServer(
       res.end(JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error) } }));
     }
   });
+  observers.onServer?.(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : 0;
