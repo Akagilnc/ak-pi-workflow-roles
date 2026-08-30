@@ -27,6 +27,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
   const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
   const {
     NAVIGATOR_INVOCATION_ENTRY,
+    bindCurrentDurableTerminalToMarker,
     buildNavigatorInfrastructureFailureFact,
     classifyPackagedRoleTerminalResult,
     currentInvocationPrincipalFromSession,
@@ -548,6 +549,17 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
+    // Real host execution persists its pending candidate toolResult before the
+    // ledger appends the authoritative typed closure for the same submission.
+    sessionManager.appendMessage({
+      role: "toolResult",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "judge-out",
+      isError: false,
+      content: [],
+      timestamp: Date.now(),
+      details: { submissionDisposition: "pending-round-closure" },
+    } as never);
     const closure = {
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
@@ -573,6 +585,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       ...roleSessionEntries.filter((entry) => entry.type === "custom_message"),
     ] as never);
     assert.equal(closureNavigator.disposition, "recommendation", "public Navigator consumes the same typed closure as restart");
+    assert.equal(bindCurrentDurableTerminalToMarker(sessionManager.getEntries()).kind, "bound", "pending toolResult plus its closure count as one terminal");
 
     // Same session after accepted role terminal is a new invocation → fresh principal.
     await handlers.get("session_start")?.({}, ctx);
