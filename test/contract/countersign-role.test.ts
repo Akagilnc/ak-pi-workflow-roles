@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   validateRecordedCountersignOutput,
@@ -73,5 +75,64 @@ test("Countersign runtime refuses empty soul", async () => {
     { failInfrastructure(error) { throw error; } },
   );
   await assert.rejects(runtime.activate());
+});
+
+test("Countersign execute rejects infrastructure failure and non-unique final before acceptance", async () => {
+  const h = countersignHarness();
+  let infraHostCalls = 0;
+  const runtime = createCountersignRoleRuntime(
+    h.pi as never,
+    { loadSoul: async () => "LAW" },
+    {
+      failInfrastructure(error: unknown, _ctx: unknown, id?: string) {
+        infraHostCalls += 1;
+        assert.equal(id, "infra");
+        throw error instanceof Error ? error : new Error(String(error));
+      },
+    },
+  );
+  await runtime.activate();
+  const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+
+  // (a) infrastructure-failure declaration reaches the host before any acceptance.
+  const infraSession = SessionManager.inMemory();
+  infraSession.appendMessage({
+    role: "assistant",
+    content: [{ type: "toolCall", id: "infra", name: COUNTERSIGN_OUTPUT_TOOL_NAME, arguments: {} }],
+    api: "openai-responses",
+    provider: "test",
+    model: "test",
+    usage,
+    stopReason: "toolUse",
+    timestamp: 0,
+  });
+  await assert.rejects(
+    tool.execute("infra", { infrastructureFailure: { diagnostic: "countersign engine down" } }, undefined, undefined, { sessionManager: infraSession }),
+    (error: unknown) => error instanceof Error && error.message === "countersign engine down",
+  );
+  assert.equal(infraHostCalls, 1, "infra declaration reaches the host exactly once");
+
+  // (b) non-unique final submission is rejected, never accepted.
+  const nonUniqueSession = SessionManager.inMemory();
+  nonUniqueSession.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "toolCall", id: "one", name: COUNTERSIGN_OUTPUT_TOOL_NAME, arguments: {} },
+      { type: "toolCall", id: "two", name: COUNTERSIGN_OUTPUT_TOOL_NAME, arguments: {} },
+    ],
+    api: "openai-responses",
+    provider: "test",
+    model: "test",
+    usage,
+    stopReason: "toolUse",
+    timestamp: 0,
+  });
+  await assert.rejects(
+    tool.execute("one", { countersignStatus: "continue" }, undefined, undefined, { sessionManager: nonUniqueSession }),
+    /非唯一终局/,
+  );
 });
 

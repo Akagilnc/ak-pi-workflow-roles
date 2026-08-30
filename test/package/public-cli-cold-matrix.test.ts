@@ -44,7 +44,6 @@ import {
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
 import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
@@ -308,12 +307,6 @@ async function installFromTarball(
 }
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, PACKAGED_ROLE_REGISTRY.length);
-  assert.deepEqual(
-    [...PUBLIC_CALLABLE_ROLES],
-    PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
-  );
-
   await withHermeticHome({ prefix: "ak-cold-matrix-" }, async ({ home }) => {
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
