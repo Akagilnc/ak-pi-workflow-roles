@@ -71,14 +71,10 @@ export function connectGrokAcpStdio(options: {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly model?: string;
-  readonly tools?: readonly string[];
-  readonly deny?: readonly string[];
   readonly toolset?: string;
   readonly onNotification?: (method: string, params: Readonly<Record<string, unknown>>) => void;
 }): Promise<GrokAcpConnection> {
   const args = [
-    ...(options.tools === undefined ? [] : ["--tools", options.tools.join(",")]),
-    ...(options.deny?.flatMap((rule) => ["--deny", rule]) ?? []),
     "agent",
     ...(options.model === undefined ? [] : ["--model", options.model]),
     "stdio",
