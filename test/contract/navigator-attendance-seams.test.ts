@@ -691,7 +691,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
             dispose() {},
           };
         },
-      }, piHostAdapter)(pi as never);
+      })(piHostAdapter);
 
       const sessionDir = join(runDir, "session");
       await mkdir(sessionDir, { recursive: true });

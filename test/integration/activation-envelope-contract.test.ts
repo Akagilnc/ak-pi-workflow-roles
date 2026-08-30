@@ -33,7 +33,8 @@ import {
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../../src/activation-trace.ts";
-import { createPiRoleRuntimeExtension as createRoleRuntimeExtension } from "../../src/pi/adapter.ts";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
   buildDispatchStubFact,
   reconcileInvocation,
@@ -327,7 +328,7 @@ test("packaged terminating tools expose the provider-open registration inventory
         ...admissionFlagsForRole(entry.role, fixtureRoot),
       }).map(([name, value]) => [name, String(value)]));
       let registrationApi: ExtensionAPI | undefined;
-      const productionFactory = createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot));
+      const productionFactory = createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot));
       await withInProcessPi({
         activationLedgerSession: true,
         cwd: home,
@@ -403,7 +404,7 @@ test("remaining support tools expose their actual registration inventory", async
         ? []
         : [(pi: ExtensionAPI) => {
             registrationApi = pi;
-            createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))(pi);
+            createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))(pi);
           }];
 
       await withInProcessPi({
@@ -471,7 +472,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
           systemPrompt: `ADMIT ${entry.role}`,
           mode: "print",
           flags: roleFlags,
-          extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))],
+          extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))],
         }, async ({ sessionManager }) => {
           const sessionFile = sessionManager.getSessionFile();
           assert.ok(typeof sessionFile === "string" && sessionFile.length > 0);
@@ -524,7 +525,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
         systemPrompt: "ADMIT ABSENT",
         mode: "print",
         flags: { "ak-role": "judge" },
-        extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
+        extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
       }, async () => {
         const afterAbsent = readAcceptedActivationFacts(home, bookKey);
         assert.equal(afterAbsent.length, beforeAbsent + 1);
@@ -542,7 +543,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
         systemPrompt: "ADMIT BARRIER",
         mode: "print",
         flags: { "ak-role": "judge" },
-        extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
+        extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
       }, async ({ session }) => {
         await session.extensionRunner.emitBeforeAgentStart("go", undefined, "BASE", { cwd: home });
       });
@@ -567,7 +568,7 @@ test("unselected role and unsupported role leave zero accepted-activation facts"
       systemPrompt: "UNSELECTED",
       mode: "print",
       flags: {},
-      extensionFactories: [createRoleRuntimeExtension({
+      extensionFactories: [createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "LAW",
         transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
@@ -587,7 +588,7 @@ test("unselected role and unsupported role leave zero accepted-activation facts"
       systemPrompt: "UNSUPPORTED",
       mode: "print",
       flags: { "ak-role": "router" },
-      extensionFactories: [createRoleRuntimeExtension({
+      extensionFactories: [createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "LAW",
         transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
@@ -626,7 +627,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
         systemPrompt: `REJECT ${entry.role}`,
         mode: "print",
         flags,
-        extensionFactories: [createRoleRuntimeExtension({
+        extensionFactories: [createPiRoleRuntimeExtension({
           loadJudgeSoul: reject,
           loadFixerSoul: reject,
           loadCoderSoul: reject,
@@ -1144,7 +1145,7 @@ test("observation writer failure aborts through real ExtensionRunner emit with o
         systemPrompt: "JUDGE",
         mode: "print",
         flags: { "ak-role": "judge" },
-        extensionFactories: [createRoleRuntimeExtension({
+        extensionFactories: [createPiRoleRuntimeExtension({
           loadJudgeSoul: async () => "LAW",
           transcriptFromContext: () => "",
           auditSoulCompliance: async () => ({ status: "pass" }),
@@ -1265,7 +1266,7 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
           "ak-role": "reviewer",
           "ak-review-base": "main~1",
         },
-        extensionFactories: [createRoleRuntimeExtension(deps)],
+        extensionFactories: [createPiRoleRuntimeExtension(deps)],
       }, async ({ session }) => {
         // Envelope owns input transform for package code-review invocation.
         const inputResult = await session.extensionRunner.emitInput(originalRequest, undefined, "interactive");
@@ -1308,7 +1309,7 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
           "ak-role": "reviewer",
           "ak-review-base": "main~1",
         },
-        extensionFactories: [createRoleRuntimeExtension(deps)],
+        extensionFactories: [createPiRoleRuntimeExtension(deps)],
       }, async ({ session }) => {
         await session.extensionRunner.emitInput(originalRequest, undefined, "interactive");
         // Do not re-bindExtensions here: that re-emits session_start and is a different seam.
