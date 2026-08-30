@@ -93,6 +93,7 @@ import {
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../inspector-contracts.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -100,6 +101,7 @@ import {
   type AdmittedDoctorInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedInspectorInvocation,
   type AdmittedMergerInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
@@ -3057,6 +3059,83 @@ export async function trySettleDoctorTerminalResult(
   return settleLawfulDoctorTerminalResult(admitted);
 }
 
+export function extractInspectorRoleOutcome(entries: readonly SessionEntry[]): TerminalResult["roleOutcome"] | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult" || message.toolName !== INSPECTOR_OUTPUT_TOOL_NAME) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
+    const details = message.details;
+    if (typeof details !== "object" || details === null) continue;
+    const status = Reflect.get(details, "status");
+    if (status !== "pass" && status !== "bounce") continue;
+    const findings = Reflect.get(details, "findings");
+    return { kind: "accepted", role: "inspector", status, decisiveFacts: { findings } };
+  }
+  return undefined;
+}
+
+type UnusableOutputReceipt = Readonly<{
+  candidate: unknown;
+  diagnostic: string;
+}>;
+
+function findUnusableOutputReceipt(
+  entries: readonly SessionEntry[],
+  toolName: string,
+  isUsable: (candidate: unknown) => boolean,
+  diagnostic: string,
+): UnusableOutputReceipt | undefined {
+  let acceptedNonUsable: unknown | undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult") continue;
+    const residual = boundErroredToolCandidate(entries, index, message, toolName);
+    if (residual !== undefined) {
+      return { candidate: residual.candidate, diagnostic: residual.diagnostic };
+    }
+    if (
+      acceptedNonUsable === undefined &&
+      message.toolName === toolName &&
+      isAcceptedPackagedRoleTerminalResult(message) &&
+      !isUsable(message.details)
+    ) {
+      acceptedNonUsable = message.details;
+    }
+  }
+  return acceptedNonUsable === undefined
+    ? undefined
+    : { candidate: acceptedNonUsable, diagnostic };
+}
+
+export async function trySettleInspectorTerminalResult(
+  admitted: AdmittedInspectorInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const outcome = extractInspectorRoleOutcome(entries);
+  if (outcome !== undefined) {
+    return withOptionalGateProjection({
+      roleOutcome: outcome,
+      navigator: extractNavigatorFact(entries), artifacts: [], runId: admitted.runId,
+    }, admitted.sessionDirectory);
+  }
+  const unusable = findUnusableOutputReceipt(
+    entries,
+    INSPECTOR_OUTPUT_TOOL_NAME,
+    (candidate) => isRecord(candidate) &&
+      (candidate.status === "pass" || candidate.status === "bounce"),
+    "给事中回执无显式 pass/bounce",
+  );
+  return unusable === undefined
+    ? undefined
+    : settleFailureTerminalResult(admitted, {
+      cause: "output",
+      diagnostic: unusable.diagnostic,
+      details: { candidate: unusable.candidate, acceptedReceipt: false },
+    });
+}
+
 /** Lawful Notary accepted outcome (pass/bounce). */
 export type LawfulNotaryRoleOutcome = {
   kind: "accepted";
@@ -3099,46 +3178,26 @@ async function settleLawfulNotaryTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === undefined) {
-    // No usable Notary release → existing non-zero failure channel with candidate (#475 / ADR 0055).
-    // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
-    let acceptedNonUsable: unknown | undefined;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(
-        entries,
-        index,
-        message,
-        NOTARY_OUTPUT_TOOL_NAME,
-      );
-      if (residual !== undefined) {
-        return settleFailureTerminalResult(admitted, {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details: { candidate: residual.candidate, acceptedReceipt: false },
-        });
-      }
-      if (
-        acceptedNonUsable === undefined &&
-        message.toolName === NOTARY_OUTPUT_TOOL_NAME &&
-        isAcceptedPackagedRoleTerminalResult(message)
-      ) {
-        // Accepted once but not a lawful pass/bounce — hold as fallback.
+    const unusable = findUnusableOutputReceipt(
+      entries,
+      NOTARY_OUTPUT_TOOL_NAME,
+      (candidate) => {
         try {
-          validateRecordedNotaryOutput(message.details);
+          validateRecordedNotaryOutput(candidate);
+          return true;
         } catch {
-          acceptedNonUsable = message.details;
+          return false;
         }
-      }
-    }
-    if (acceptedNonUsable !== undefined) {
-      return settleFailureTerminalResult(admitted, {
+      },
+      "符宝郎回执无显式 pass/bounce",
+    );
+    return unusable === undefined
+      ? undefined
+      : settleFailureTerminalResult(admitted, {
         cause: "output",
-        diagnostic: "符宝郎回执无显式 pass/bounce",
-        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
+        diagnostic: unusable.diagnostic,
+        details: { candidate: unusable.candidate, acceptedReceipt: false },
       });
-    }
-    return undefined;
   }
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(

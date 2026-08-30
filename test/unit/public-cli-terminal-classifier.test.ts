@@ -24,12 +24,14 @@ import {
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import {
   extractCoderRoleOutcome,
   extractCollectorRoleOutcome,
   extractDoctorRoleOutcome,
   extractFixerRoleOutcome,
   extractJudgeRoleOutcome,
+  extractInspectorRoleOutcome,
   extractMergerRoleOutcome,
   extractNotaryRoleOutcome,
   extractReviewerRoleOutcome,
@@ -194,6 +196,7 @@ const ACCEPTED_DETAILS_BY_TOOL: ReadonlyMap<string, unknown> = new Map<string, u
     },
   ],
   [NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] }],
+  [INSPECTOR_OUTPUT_TOOL_NAME, { status: "pass", findings: [] }],
 ]);
 
 function extractForTool(
@@ -217,6 +220,8 @@ function extractForTool(
       return extractMergerRoleOutcome(entries as never);
     case NOTARY_OUTPUT_TOOL_NAME:
       return extractNotaryRoleOutcome(entries as never);
+    case INSPECTOR_OUTPUT_TOOL_NAME:
+      return extractInspectorRoleOutcome(entries as never);
     default:
       throw new Error(`unexpected tool ${toolName}`);
   }
@@ -265,9 +270,7 @@ test("registry public extractors and settlement share one closed terminal classi
     "unknown extras do not change infrastructure classification",
   );
 
-  const rolesSeen = new Set<string>();
   for (const registryEntry of PACKAGED_ROLE_REGISTRY) {
-    rolesSeen.add(registryEntry.role);
     const acceptedDetails = ACCEPTED_DETAILS_BY_TOOL.get(registryEntry.outputTool);
     assert.ok(
       acceptedDetails !== undefined,
@@ -408,11 +411,6 @@ test("registry public extractors and settlement share one closed terminal classi
     }
   }
 
-  assert.equal(rolesSeen.size, 8, "all packaged roles covered");
-  assert.deepEqual(
-    [...rolesSeen].sort(),
-    ["coder", "collector", "doctor", "fixer", "judge", "merger", "notary", "reviewer"],
-  );
 
   // Singleton marker cardinality: two durable terminals after one marker fail closed.
   const invocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";

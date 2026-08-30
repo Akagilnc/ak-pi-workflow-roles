@@ -111,6 +111,10 @@ export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
   readonly role: "judge";
 };
 
+export type AdmittedInspectorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "inspector";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -189,6 +193,7 @@ export type AdmittedMergerInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
+  | AdmittedInspectorInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -377,6 +382,8 @@ export type ParseJudgeArgvResult = {
   project?: string;
 };
 
+export type ParseInspectorArgvResult = ParseJudgeArgvResult;
+
 export type ParseCoderArgvResult = {
   phase: CoderPhase;
   instruction: string;
@@ -536,51 +543,41 @@ export function requireAuthorityRef(value: string | undefined): string {
  * Parse Judge-specific argv after the `judge` token.
  * Spellings from PUBLIC_OPTION_TABLE.judge; rejects burden family (#342).
  */
-export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
+function parseStandardMaterialArgv(
+  owner: "judge" | "inspector",
+  args: readonly string[],
+): ParseJudgeArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
   const positional: string[] = [];
   const tokens = [...args];
-  const definitions = roleOptions("judge");
-  const options = createTypedOptionConsumer(definitions);
-
+  const options = createTypedOptionConsumer(roleOptions(owner));
   while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
+    if (tokens[0] === "--") { tokens.shift(); positional.push(...tokens); break; }
     const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown judge option: ${taken.def.canonical}`);
+      if (taken.def.id === "attach") attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+      else if (taken.def.id === "project") project = requireOptionPath(taken.def.canonical, taken.value);
+      else throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+      continue;
     }
     const token = tokens.shift()!;
-    // Judge owns burden inference — rejected spellings from REJECTED_PUBLIC_SPELLINGS.
-    if (isRejectedPublicSpelling("judge", token)) {
-      throw new CliUsageError(
-        "judge does not accept a public burden selector; Judge infers its own burden",
-      );
+    if (owner === "judge" && isRejectedPublicSpelling("judge", token)) {
+      throw new CliUsageError("judge does not accept a public burden selector; Judge infers its own burden");
     }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown judge option: ${token}`);
-    }
+    if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown ${owner} option: ${token}`);
     positional.push(token);
   }
-
   options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-  };
+  return { instruction: positional.join(" "), attachmentPaths, ...(project === undefined ? {} : { project }) };
+}
+
+export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
+  return parseStandardMaterialArgv("judge", args);
+}
+
+export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvResult {
+  return parseStandardMaterialArgv("inspector", args);
 }
 
 /**
@@ -771,66 +768,55 @@ export type AdmitJudgeInvocationOptions = {
  * Atomically admit a Judge Role run: freeze Attachments, persist the request,
  * and reserve session placement under the #78 ledger book.
  */
-export async function admitJudgeInvocation(
+async function admitStandardMaterialInvocation<R extends "judge" | "inspector">(
+  role: R,
   options: AdmitJudgeInvocationOptions,
-): Promise<AdmittedJudgeInvocation> {
-  // Empty project override must not reach resolve("") → cwd (silent default).
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
+): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
+  if (options.project !== undefined) requireOptionPath("--project", options.project);
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
   const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
+    roleRunSessionCoordinates({ cwd: projectRoot, runId, role, home: options.home });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
-  );
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(options.attachmentPaths, attachmentsDirectory);
   const ticketFields = ticketAdmissionFields(ticketNumber);
-
   const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
   const admitted = {
-    role: "judge" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-    ...ticketFields,
-    instruction,
-    instructionEmpty,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
+    role, runId, bookKey, projectRoot, runDirectory, sessionDirectory, sessionFile,
+    ...ticketFields, instruction, instructionEmpty: instruction.trim() === "",
+    attachments: attachments.map((attachment) => ({ ...attachment })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeRoleInvocationLedger(admitted, role, options.model);
+  return { ...admitted, attachments, admittedRequestPath };
+}
 
-  return {
-    role: "judge",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-    admittedRequestPath,
-    ...ticketFields,
-  };
+export async function admitJudgeInvocation(options: AdmitJudgeInvocationOptions): Promise<AdmittedJudgeInvocation> {
+  return admitStandardMaterialInvocation("judge", options);
+}
+
+export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions;
+
+export async function admitInspectorInvocation(options: AdmitInspectorInvocationOptions): Promise<AdmittedInspectorInvocation> {
+  return admitStandardMaterialInvocation("inspector", options);
+}
+
+function buildStandardMaterialTransportPrompt(
+  admitted: AdmittedJudgeInvocation | AdmittedInspectorInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
+  if (admitted.attachments.length > 0) {
+    lines.push("", "已受理附件（冻结快照路径）：", ...admitted.attachments.map((attachment) => `- ${attachment.frozenPath}`));
+  }
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+
+export function buildInspectorTransportPrompt(admitted: AdmittedInspectorInvocation, engineMaterial?: EngineSessionMaterial): string {
+  return buildStandardMaterialTransportPrompt(admitted, engineMaterial);
 }
 
 /** Build the Pi prompt transport for an admitted Judge request. */
@@ -838,15 +824,7 @@ export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return buildStandardMaterialTransportPrompt(admitted, engineMaterial);
 }
 
 /** Load admitted-request.json written at admission (Navigator work-context seam). */

@@ -25,6 +25,7 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { isAuditEscalationResult } from "../audit-escalation.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../inspector-contracts.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
@@ -82,6 +83,7 @@ export const TERMINATING_TOOL_NAMES = [
   DOCTOR_OUTPUT_TOOL_NAME,
   MERGER_OUTPUT_TOOL_NAME,
   NOTARY_OUTPUT_TOOL_NAME,
+  INSPECTOR_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -93,7 +95,8 @@ export type AcceptedDetails =
   | CollectorReceipt
   | DoctorOutput
   | MergerOutput
-  | NotaryOutput;
+  | NotaryOutput
+  | Readonly<Record<string, unknown>>;
 
 export function isTerminatingToolName(
   name: string,
@@ -119,6 +122,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return MERGER_ACCEPTED_TEXT;
     case NOTARY_OUTPUT_TOOL_NAME:
       return NOTARY_ACCEPTED_TEXT;
+    case INSPECTOR_OUTPUT_TOOL_NAME:
+      return "给事中回执已受理";
   }
 }
 
@@ -165,6 +170,7 @@ export function validateAcceptedDetails(
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
     [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+    [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;
@@ -195,6 +201,8 @@ export function validateAcceptedDetails(
       return validateMergerOutput(details);
     case NOTARY_OUTPUT_TOOL_NAME:
       return validateRecordedNotaryOutput(details);
+    case INSPECTOR_OUTPUT_TOOL_NAME:
+      return candidate as Readonly<Record<string, unknown>>;
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -239,7 +247,8 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case FIXER_OUTPUT_TOOL_NAME:
     case REVIEWER_OUTPUT_TOOL_NAME:
     case DOCTOR_OUTPUT_TOOL_NAME:
-    case NOTARY_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
+    case NOTARY_OUTPUT_TOOL_NAME:
+    case INSPECTOR_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
     case MERGER_OUTPUT_TOOL_NAME: {
       const output = details as unknown as Record<string, unknown>;

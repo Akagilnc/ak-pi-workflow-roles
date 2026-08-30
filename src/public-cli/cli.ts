@@ -40,6 +40,7 @@ import {
   parseDoctorArgv,
   parseFixerArgv,
   parseJudgeArgv,
+  parseInspectorArgv,
   parseMergerArgv,
   parseNotaryArgv,
   parseReviewerArgv,
@@ -60,6 +61,7 @@ import { runPublicCollector } from "./collector-run.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicNotary } from "./notary-run.ts";
+import { runPublicInspector } from "./inspector-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
@@ -104,6 +106,7 @@ export const PUBLIC_ROLE_ARGV = {
   doctor: { parse: parseDoctorArgv, options: optionsForOwner("doctor") },
   merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
   notary: { parse: parseNotaryArgv, options: optionsForOwner("notary") },
+  inspector: { parse: parseInspectorArgv, options: optionsForOwner("inspector") },
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
@@ -1315,6 +1318,23 @@ export async function runAkRole(
         exitCode: result.exitCode,
         ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
       };
+    }
+
+    if (parsed.command === "inspector") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials = env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(config, "inspector", credentials, invocationFromParsed(parsed));
+      const result = await runPublicInspector(parsed.args, {
+        home, agentDir, packageRoot: env.packageRoot, cwd, credentials,
+        ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+        ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+        ...(seat.selection === undefined ? {} : { model: seat.selection }),
+        ...projectSeatEngine(seat),
+        ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      }, io, PUBLIC_ROLE_ARGV.inspector.parse);
+      return { exitCode: result.exitCode, ...(result.terminal === undefined ? {} : { terminal: result.terminal }) };
     }
 
     // Merger public run path: derive active-merge envelope + forced merge-only method (#114).

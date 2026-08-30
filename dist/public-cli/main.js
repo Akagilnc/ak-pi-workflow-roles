@@ -14416,6 +14416,15 @@ var init_notary_contracts = __esm({
   }
 });
 
+// src/inspector-contracts.ts
+var INSPECTOR_OUTPUT_TOOL_NAME;
+var init_inspector_contracts = __esm({
+  "src/inspector-contracts.ts"() {
+    "use strict";
+    INSPECTOR_OUTPUT_TOOL_NAME = "ak_inspector_output";
+  }
+});
+
 // src/packaged-role-registry.ts
 var PACKAGED_ROLE_REGISTRY;
 var init_packaged_role_registry = __esm({
@@ -14428,6 +14437,7 @@ var init_packaged_role_registry = __esm({
     init_doctor_contracts();
     init_merger_contracts();
     init_notary_contracts();
+    init_inspector_contracts();
     PACKAGED_ROLE_REGISTRY = [
       { role: "judge", phases: [null], outputTool: JUDGE_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
       { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
@@ -14437,7 +14447,8 @@ var init_packaged_role_registry = __esm({
       { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
       { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
       { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" },
-      { role: "notary", phases: [null], outputTool: NOTARY_OUTPUT_TOOL_NAME, inputFlag: "ak-notary-source-run", phaseFlag: void 0, activationStage: "load-and-install" }
+      { role: "notary", phases: [null], outputTool: NOTARY_OUTPUT_TOOL_NAME, inputFlag: "ak-notary-source-run", phaseFlag: void 0, activationStage: "load-and-install" },
+      { role: "inspector", phases: [null], outputTool: INSPECTOR_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" }
     ];
   }
 });
@@ -14481,7 +14492,7 @@ function isPublicConfigurableSeat(value) {
 function isPublicCliSupportCommand(value) {
   return PUBLIC_CLI_SUPPORT_COMMANDS.includes(value);
 }
-var INTERNAL_ROLE_ENTRYPOINT_RELATIVE, PUBLIC_CALLABLE_ROLES, AUTOMATIC_NAVIGATOR_SEAT, AUTOMATIC_GATEKEEPER_SEAT, AUTOMATIC_INSPECTOR_SEAT, AUTOMATIC_CONFIGURABLE_SEATS, PUBLIC_CONFIGURABLE_SEATS, PUBLIC_CLI_SUPPORT_COMMANDS, STARTUP_CANDIDATES, PUBLIC_DETERMINISTIC_COMMANDS;
+var INTERNAL_ROLE_ENTRYPOINT_RELATIVE, PUBLIC_CALLABLE_ROLES, AUTOMATIC_NAVIGATOR_SEAT, AUTOMATIC_GATEKEEPER_SEAT, AUTOMATIC_CONFIGURABLE_SEATS, PUBLIC_CONFIGURABLE_SEATS, PUBLIC_CLI_SUPPORT_COMMANDS, STARTUP_CANDIDATES, PUBLIC_DETERMINISTIC_COMMANDS;
 var init_registry2 = __esm({
   "src/public-cli/registry.ts"() {
     "use strict";
@@ -14492,10 +14503,8 @@ var init_registry2 = __esm({
     );
     AUTOMATIC_NAVIGATOR_SEAT = "navigator";
     AUTOMATIC_GATEKEEPER_SEAT = "gatekeeper";
-    AUTOMATIC_INSPECTOR_SEAT = "inspector";
     AUTOMATIC_CONFIGURABLE_SEATS = [
       AUTOMATIC_GATEKEEPER_SEAT,
-      AUTOMATIC_INSPECTOR_SEAT,
       AUTOMATIC_NAVIGATOR_SEAT
     ];
     PUBLIC_CONFIGURABLE_SEATS = [
@@ -14601,12 +14610,12 @@ function setPersistentSeatConfig(config, seat, selection) {
 function clearPersistentSeatConfig(config, seat) {
   const previous = config.seats[seat];
   if (previous === void 0) return config;
-  if (seat === "notary" && previous.engine !== void 0) {
+  if ((seat === "notary" || seat === "inspector") && previous.engine !== void 0) {
     return {
       ...config,
       seats: {
         ...config.seats,
-        notary: { engine: previous.engine }
+        [seat]: { engine: previous.engine }
       }
     };
   }
@@ -14767,7 +14776,7 @@ function parseSeatModelConfig(value, seat) {
     throw new Error(`config seat ${seat} engine must be a string`);
   }
   if (!hasProvider) {
-    if (seat === "notary" && typeof raw.engine === "string") {
+    if ((seat === "notary" || seat === "inspector") && typeof raw.engine === "string") {
       if (raw.thinking !== void 0) {
         throw new Error(`config seat ${seat} thinking requires provider/model`);
       }
@@ -15413,7 +15422,8 @@ function validateAcceptedDetails(toolName, details) {
     [COLLECTOR_OUTPUT_TOOL]: [],
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
-    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"]
+    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+    [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce"]
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;
@@ -15439,6 +15449,8 @@ function validateAcceptedDetails(toolName, details) {
         return validateMergerOutput(details);
       case NOTARY_OUTPUT_TOOL_NAME:
         return validateRecordedNotaryOutput(details);
+      case INSPECTOR_OUTPUT_TOOL_NAME:
+        return candidate;
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -15452,6 +15464,7 @@ function acceptedFacts(toolName, details) {
     case REVIEWER_OUTPUT_TOOL_NAME:
     case DOCTOR_OUTPUT_TOOL_NAME:
     case NOTARY_OUTPUT_TOOL_NAME:
+    case INSPECTOR_OUTPUT_TOOL_NAME:
       return { status: details.status };
     case JUDGE_OUTPUT_TOOL_NAME:
       return { status: details.judgeStatus };
@@ -15472,6 +15485,7 @@ var init_terminating_tools = __esm({
     init_judge_output();
     init_reviewer_output();
     init_audit_escalation();
+    init_inspector_contracts();
     init_doctor_contracts();
     init_merger_contracts();
     init_notary_contracts();
@@ -15484,7 +15498,8 @@ var init_terminating_tools = __esm({
       COLLECTOR_OUTPUT_TOOL,
       DOCTOR_OUTPUT_TOOL_NAME,
       MERGER_OUTPUT_TOOL_NAME,
-      NOTARY_OUTPUT_TOOL_NAME
+      NOTARY_OUTPUT_TOOL_NAME,
+      INSPECTOR_OUTPUT_TOOL_NAME
     ];
     AcceptedDetailsContractError = class extends Error {
       constructor(message, options) {
@@ -15914,7 +15929,7 @@ async function readRoleRunState(runDirectory) {
   if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
     return void 0;
   }
-  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger" && record4.role !== "notary") {
+  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger" && record4.role !== "notary" && record4.role !== "inspector") {
     return void 0;
   }
   if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
@@ -16937,7 +16952,7 @@ function renderHumanOwnerOptionLines(owner, locale2 = "en") {
   }
   return lines;
 }
-var ANALYST_REQUIRE_ANY_OF, ANALYST_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, NOTARY_OPTIONS, MERGER_OPTIONS, ANALYST_OPTIONS, PUBLIC_OPTION_TABLE, PUBLIC_NAVIGATOR_HELP_NOTE, TOP_LEVEL_HELP, ROLE_COMMAND_HELP, SUPPORT_COMMAND_HELP, PUBLIC_COMMAND_HELP;
+var ANALYST_REQUIRE_ANY_OF, ANALYST_DEFAULT_MODE, REJECTED_PUBLIC_SPELLINGS, GLOBAL_OPTIONS, SHARED_PROJECT_SEMANTICS, SHARED_ATTACH_SEMANTICS, JUDGE_OPTIONS, INSPECTOR_OPTIONS, CODER_OPTIONS, FIXER_OPTIONS, REVIEWER_OPTIONS, COLLECTOR_OPTIONS, DOCTOR_OPTIONS, NOTARY_OPTIONS, MERGER_OPTIONS, ANALYST_OPTIONS, PUBLIC_OPTION_TABLE, PUBLIC_NAVIGATOR_HELP_NOTE, TOP_LEVEL_HELP, ROLE_COMMAND_HELP, SUPPORT_COMMAND_HELP, PUBLIC_COMMAND_HELP;
 var init_option_definitions = __esm({
   "src/public-cli/option-definitions.ts"() {
     "use strict";
@@ -17065,6 +17080,10 @@ var init_option_definitions = __esm({
     JUDGE_OPTIONS = [
       bindOwner("judge", SHARED_PROJECT_SEMANTICS),
       bindOwner("judge", SHARED_ATTACH_SEMANTICS)
+    ];
+    INSPECTOR_OPTIONS = [
+      bindOwner("inspector", SHARED_PROJECT_SEMANTICS),
+      bindOwner("inspector", SHARED_ATTACH_SEMANTICS)
     ];
     CODER_OPTIONS = [
       {
@@ -17406,6 +17425,7 @@ var init_option_definitions = __esm({
       doctor: DOCTOR_OPTIONS,
       merger: MERGER_OPTIONS,
       notary: NOTARY_OPTIONS,
+      inspector: INSPECTOR_OPTIONS,
       analyst: ANALYST_OPTIONS
     };
     PUBLIC_NAVIGATOR_HELP_NOTE = "Navigator attends automatically on every run; configure with `ak-role config set navigator <provider/model[:thinking]>` (not a caller command).";
@@ -17489,6 +17509,12 @@ var init_option_definitions = __esm({
         examples: [
           "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge"
         ]
+      },
+      inspector: {
+        command: "inspector",
+        summary: "Direct complexity and test-quality inspection.",
+        usage: ["ak-role inspector [options] [instruction]"],
+        examples: ['ak-role inspector --attach ./change.patch "Review this material."']
       },
       analyst: {
         command: "analyst",
@@ -17689,13 +17715,12 @@ function requireAuthorityRef(value) {
   }
   return value;
 }
-function parseJudgeArgv(args) {
+function parseStandardMaterialArgv(owner, args) {
   const attachmentPaths = [];
   let project;
   const positional = [];
   const tokens = [...args];
-  const definitions = roleOptions("judge");
-  const options = createTypedOptionConsumer(definitions);
+  const options = createTypedOptionConsumer(roleOptions(owner));
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
@@ -17704,33 +17729,26 @@ function parseJudgeArgv(args) {
     }
     const taken = options.takeDashed(tokens);
     if (taken !== void 0) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown judge option: ${taken.def.canonical}`);
+      if (taken.def.id === "attach") attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
+      else if (taken.def.id === "project") project = requireOptionPath(taken.def.canonical, taken.value);
+      else throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+      continue;
     }
     const token = tokens.shift();
-    if (isRejectedPublicSpelling("judge", token)) {
-      throw new CliUsageError(
-        "judge does not accept a public burden selector; Judge infers its own burden"
-      );
+    if (owner === "judge" && isRejectedPublicSpelling("judge", token)) {
+      throw new CliUsageError("judge does not accept a public burden selector; Judge infers its own burden");
     }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown judge option: ${token}`);
-    }
+    if (token.startsWith("-") && token !== "-") throw new CliUsageError(`unknown ${owner} option: ${token}`);
     positional.push(token);
   }
   options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...project === void 0 ? {} : { project }
-  };
+  return { instruction: positional.join(" "), attachmentPaths, ...project === void 0 ? {} : { project } };
+}
+function parseJudgeArgv(args) {
+  return parseStandardMaterialArgv("judge", args);
+}
+function parseInspectorArgv(args) {
+  return parseStandardMaterialArgv("inspector", args);
 }
 function parseCoderArgv(args) {
   const attachmentPaths = [];
@@ -17870,25 +17888,19 @@ async function freezeAttachmentsWithTicketNumber(attachmentPaths, attachmentsDir
 function ticketAdmissionFields(ticketNumber) {
   return ticketNumber === void 0 ? {} : { ticketNumber };
 }
-async function admitJudgeInvocation(options) {
-  if (options.project !== void 0) {
-    requireOptionPath("--project", options.project);
-  }
+async function admitStandardMaterialInvocation(role, options) {
+  if (options.project !== void 0) requireOptionPath("--project", options.project);
   const projectRoot = resolve5(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
+  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role, home: options.home });
   const attachmentsDirectory = join9(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory
-  );
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(options.attachmentPaths, attachmentsDirectory);
   const ticketFields = ticketAdmissionFields(ticketNumber);
   const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
   const admitted = {
-    role: "judge",
+    role,
     runId,
     bookKey,
     projectRoot,
@@ -17897,44 +17909,33 @@ async function admitJudgeInvocation(options) {
     sessionFile,
     ...ticketFields,
     instruction,
-    instructionEmpty,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind
-    }))
+    instructionEmpty: instruction.trim() === "",
+    attachments: attachments.map((attachment) => ({ ...attachment }))
   };
   const admittedRequestPath = join9(runDirectory, "admitted-request.json");
   await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
 `, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
-  return {
-    role: "judge",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-    admittedRequestPath,
-    ...ticketFields
-  };
+  await writeRoleInvocationLedger(admitted, role, options.model);
+  return { ...admitted, attachments, admittedRequestPath };
 }
-function buildJudgeTransportPrompt(admitted, engineMaterial) {
+async function admitJudgeInvocation(options) {
+  return admitStandardMaterialInvocation("judge", options);
+}
+async function admitInspectorInvocation(options) {
+  return admitStandardMaterialInvocation("inspector", options);
+}
+function buildStandardMaterialTransportPrompt(admitted, engineMaterial) {
   const lines = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
+    lines.push("", "\u5DF2\u53D7\u7406\u9644\u4EF6\uFF08\u51BB\u7ED3\u5FEB\u7167\u8DEF\u5F84\uFF09\uFF1A", ...admitted.attachments.map((attachment) => `- ${attachment.frozenPath}`));
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+function buildInspectorTransportPrompt(admitted, engineMaterial) {
+  return buildStandardMaterialTransportPrompt(admitted, engineMaterial);
+}
+function buildJudgeTransportPrompt(admitted, engineMaterial) {
+  return buildStandardMaterialTransportPrompt(admitted, engineMaterial);
 }
 async function ensureRunArtifactsDir(runDirectory) {
   const dir = join9(runDirectory, "artifacts");
@@ -22665,6 +22666,60 @@ async function settleLawfulDoctorTerminalResult(admitted) {
 async function trySettleDoctorTerminalResult(admitted) {
   return settleLawfulDoctorTerminalResult(admitted);
 }
+function extractInspectorRoleOutcome(entries) {
+  if (!isReceiptSettlementBindingClear(entries)) return void 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult" || message.toolName !== INSPECTOR_OUTPUT_TOOL_NAME) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
+    const details = message.details;
+    if (typeof details !== "object" || details === null) continue;
+    const status = Reflect.get(details, "status");
+    if (status !== "pass" && status !== "bounce") continue;
+    const findings = Reflect.get(details, "findings");
+    return { kind: "accepted", role: "inspector", status, decisiveFacts: { findings } };
+  }
+  return void 0;
+}
+function findUnusableOutputReceipt(entries, toolName, isUsable, diagnostic) {
+  let acceptedNonUsable;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult") continue;
+    const residual = boundErroredToolCandidate(entries, index, message, toolName);
+    if (residual !== void 0) {
+      return { candidate: residual.candidate, diagnostic: residual.diagnostic };
+    }
+    if (acceptedNonUsable === void 0 && message.toolName === toolName && isAcceptedPackagedRoleTerminalResult(message) && !isUsable(message.details)) {
+      acceptedNonUsable = message.details;
+    }
+  }
+  return acceptedNonUsable === void 0 ? void 0 : { candidate: acceptedNonUsable, diagnostic };
+}
+async function trySettleInspectorTerminalResult(admitted) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const outcome = extractInspectorRoleOutcome(entries);
+  if (outcome !== void 0) {
+    return withOptionalGateProjection({
+      roleOutcome: outcome,
+      navigator: extractNavigatorFact(entries),
+      artifacts: [],
+      runId: admitted.runId
+    }, admitted.sessionDirectory);
+  }
+  const unusable = findUnusableOutputReceipt(
+    entries,
+    INSPECTOR_OUTPUT_TOOL_NAME,
+    (candidate) => isRecord8(candidate) && (candidate.status === "pass" || candidate.status === "bounce"),
+    "\u7ED9\u4E8B\u4E2D\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce"
+  );
+  return unusable === void 0 ? void 0 : settleFailureTerminalResult(admitted, {
+    cause: "output",
+    diagnostic: unusable.diagnostic,
+    details: { candidate: unusable.candidate, acceptedReceipt: false }
+  });
+}
 function extractNotaryRoleOutcome(entries) {
   if (!isReceiptSettlementBindingClear(entries)) return void 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -22694,39 +22749,24 @@ async function settleLawfulNotaryTerminalResult(admitted) {
   if (entries === void 0) return void 0;
   const extracted = extractNotaryRoleOutcome(entries);
   if (extracted === void 0) {
-    let acceptedNonUsable;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(
-        entries,
-        index,
-        message,
-        NOTARY_OUTPUT_TOOL_NAME
-      );
-      if (residual !== void 0) {
-        return settleFailureTerminalResult(admitted, {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details: { candidate: residual.candidate, acceptedReceipt: false }
-        });
-      }
-      if (acceptedNonUsable === void 0 && message.toolName === NOTARY_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
+    const unusable = findUnusableOutputReceipt(
+      entries,
+      NOTARY_OUTPUT_TOOL_NAME,
+      (candidate) => {
         try {
-          validateRecordedNotaryOutput(message.details);
+          validateRecordedNotaryOutput(candidate);
+          return true;
         } catch {
-          acceptedNonUsable = message.details;
+          return false;
         }
-      }
-    }
-    if (acceptedNonUsable !== void 0) {
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
-        details: { candidate: acceptedNonUsable, acceptedReceipt: false }
-      });
-    }
-    return void 0;
+      },
+      "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce"
+    );
+    return unusable === void 0 ? void 0 : settleFailureTerminalResult(admitted, {
+      cause: "output",
+      diagnostic: unusable.diagnostic,
+      details: { candidate: unusable.candidate, acceptedReceipt: false }
+    });
   }
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
@@ -23405,6 +23445,7 @@ var init_settlement = __esm({
     init_method_skill();
     init_navigator_invocation_identity();
     init_receipt_delivery_policy();
+    init_inspector_contracts();
     init_invocation();
     init_terminal();
     CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
@@ -25080,6 +25121,73 @@ async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
 }
 var init_notary_run = __esm({
   "src/public-cli/notary-run.ts"() {
+    "use strict";
+    init_engine_material();
+    init_cli_errors();
+    init_invocation();
+    init_config2();
+    init_one_shot_dispatch();
+    init_settlement();
+  }
+});
+
+// src/public-cli/inspector-run.ts
+function buildInspectorActivationExtraArgs(admitted, options = {}) {
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "inspector",
+    "--mode",
+    "json",
+    ...buildSeatModelCliArgs(options.model),
+    buildInspectorTransportPrompt(admitted, engineSessionMaterialFromOptions(options))
+  ];
+}
+async function runPublicInspector(argv, env, io, parse) {
+  let admitted;
+  try {
+    const parsed = parse(argv);
+    admitted = await admitInspectorInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+      ...env.model === void 0 ? {} : { model: env.model }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const extraArgs = buildInspectorActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return runAdmittedOneShotRole({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    adapters: { trySettle: trySettleInspectorTerminalResult, shouldPresentSettled: () => true },
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+  });
+}
+var init_inspector_run = __esm({
+  "src/public-cli/inspector-run.ts"() {
     "use strict";
     init_engine_material();
     init_cli_errors();
@@ -29329,6 +29437,26 @@ async function runAkRole(argv, env) {
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
     }
+    if (parsed.command === "inspector") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(config, "inspector", credentials, invocationFromParsed(parsed));
+      const result2 = await runPublicInspector(parsed.args, {
+        home,
+        agentDir,
+        packageRoot: env.packageRoot,
+        cwd,
+        credentials,
+        ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+        ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+        ...seat.selection === void 0 ? {} : { model: seat.selection },
+        ...projectSeatEngine(seat),
+        ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      }, io, PUBLIC_ROLE_ARGV.inspector.parse);
+      return { exitCode: result2.exitCode, ...result2.terminal === void 0 ? {} : { terminal: result2.terminal } };
+    }
     if (parsed.command === "merger") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
@@ -29405,6 +29533,7 @@ var init_cli = __esm({
     init_doctor_run();
     init_fixer_run();
     init_notary_run();
+    init_inspector_run();
     init_judge_run();
     init_merger_run();
     init_reviewer_run();
@@ -29422,6 +29551,7 @@ var init_cli = __esm({
       doctor: { parse: parseDoctorArgv, options: optionsForOwner("doctor") },
       merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
       notary: { parse: parseNotaryArgv, options: optionsForOwner("notary") },
+      inspector: { parse: parseInspectorArgv, options: optionsForOwner("inspector") },
       reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
       /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
       analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") }

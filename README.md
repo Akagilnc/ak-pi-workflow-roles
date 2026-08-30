@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev): `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `inspector`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
 
 ## Install
 
@@ -48,7 +48,7 @@ Seat and Gate-officer configuration:
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# Gate officers (automatic on submission; not caller commands except direct notary)
+# Gate officers (automatic on submission; inspector and notary also have direct commands)
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
@@ -94,6 +94,9 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
 # notary — document-fidelity check on one retained source run; one-shot
 ak-role notary --source-run <runId@role|path>
+
+# inspector — direct complexity and test-quality check
+ak-role inspector --attach ./change.patch "Review this material."
 
 # analyst — deterministic metrics; bare call = whole book
 ak-role analyst

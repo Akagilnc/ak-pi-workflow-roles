@@ -6,6 +6,7 @@ import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollect
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, } from "./reviewer-output.js";
 import { isAuditEscalationResult } from "../audit-escalation.js";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../inspector-contracts.js";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput } from "../notary-contracts.js";
@@ -20,6 +21,7 @@ export const TERMINATING_TOOL_NAMES = [
     DOCTOR_OUTPUT_TOOL_NAME,
     MERGER_OUTPUT_TOOL_NAME,
     NOTARY_OUTPUT_TOOL_NAME,
+    INSPECTOR_OUTPUT_TOOL_NAME,
 ];
 export function isTerminatingToolName(name) {
     return TERMINATING_TOOL_NAMES.includes(name);
@@ -42,6 +44,8 @@ export function acceptedTextFor(toolName) {
             return MERGER_ACCEPTED_TEXT;
         case NOTARY_OUTPUT_TOOL_NAME:
             return NOTARY_ACCEPTED_TEXT;
+        case INSPECTOR_OUTPUT_TOOL_NAME:
+            return "给事中回执已受理";
     }
 }
 export class AcceptedDetailsContractError extends Error {
@@ -82,6 +86,7 @@ export function validateAcceptedDetails(toolName, details) {
         [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
         [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
         [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+        [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
     };
     const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
     const baseDiscriminator = discriminator;
@@ -109,6 +114,8 @@ export function validateAcceptedDetails(toolName, details) {
                 return validateMergerOutput(details);
             case NOTARY_OUTPUT_TOOL_NAME:
                 return validateRecordedNotaryOutput(details);
+            case INSPECTOR_OUTPUT_TOOL_NAME:
+                return candidate;
         }
     }
     catch (error) {
@@ -146,7 +153,8 @@ export function acceptedFacts(toolName, details) {
         case FIXER_OUTPUT_TOOL_NAME:
         case REVIEWER_OUTPUT_TOOL_NAME:
         case DOCTOR_OUTPUT_TOOL_NAME:
-        case NOTARY_OUTPUT_TOOL_NAME: return { status: details.status };
+        case NOTARY_OUTPUT_TOOL_NAME:
+        case INSPECTOR_OUTPUT_TOOL_NAME: return { status: details.status };
         case JUDGE_OUTPUT_TOOL_NAME: return { status: details.judgeStatus };
         case MERGER_OUTPUT_TOOL_NAME: {
             const output = details;
