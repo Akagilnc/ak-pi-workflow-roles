@@ -1146,8 +1146,8 @@ test("packaged infrastructure failure silence correlates the exact output call i
         });
         return navigator;
       },
-    }, piHostAdapter);
-    extension(harness.pi as ExtensionAPI);
+    });
+    extension(piHostAdapter);
     await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
       const ctx = activationCtx(home, { mode: "print" });
       await harness.handlers.get("session_start")?.({}, ctx);
@@ -2508,8 +2508,8 @@ test(
           });
           return attendance;
         },
-      }, piHostAdapter);
-      extension(harness.pi as ExtensionAPI);
+      });
+      extension(piHostAdapter);
 
       await withActivationHome({ prefix: "ak-judge-grace-" }, async ({ home }) => {
         const ctx = activationCtx(home);

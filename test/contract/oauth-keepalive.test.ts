@@ -27,7 +27,7 @@ import {
   readOAuthKeepaliveProviders,
   type OAuthKeepaliveScheduler,
 } from "../../src/oauth-keepalive.ts";
-import { createPiRoleRuntimeExtension as createRoleRuntimeExtension } from "../../src/pi/adapter.ts";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import {
   flushEventLoopTurns,
   withHermeticHome,
@@ -177,7 +177,7 @@ test(
           mode: "print",
           flags: {},
           extensionFactories: [
-            createRoleRuntimeExtension(
+            createPiRoleRuntimeExtension(
               minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
             ),
           ],
@@ -265,7 +265,7 @@ test(
           mode: "print",
           flags: {},
           extensionFactories: [
-            createRoleRuntimeExtension(
+            createPiRoleRuntimeExtension(
               minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
             ),
           ],
@@ -314,7 +314,7 @@ test("#351 shutdown: session_shutdown then advance scheduler yields zero further
         // Emit production session_shutdown on teardown (same hook keepalive owns).
         reviewerShutdown: true,
         extensionFactories: [
-          createRoleRuntimeExtension(
+          createPiRoleRuntimeExtension(
             minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
           ),
         ],
@@ -371,7 +371,7 @@ test("#351 unexpired window: tick is no-op (zero network / zero oauth.refresh)",
         mode: "print",
         flags: {},
         extensionFactories: [
-          createRoleRuntimeExtension(
+          createPiRoleRuntimeExtension(
             minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
           ),
         ],
@@ -711,7 +711,7 @@ test(
           flags: {},
           extensionFactories: [
             // Same production seam: setting-read providers enter createRoleRuntimeExtension.
-            createRoleRuntimeExtension(
+            createPiRoleRuntimeExtension(
               minimalRoleDeps({ providers, scheduler }),
             ),
           ],

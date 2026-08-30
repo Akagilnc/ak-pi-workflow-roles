@@ -633,13 +633,8 @@ export async function projectClosedSubmissionLifecycle(
 
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
-  injectedEnvelopeHost?: RoleEnvelopeHost,
-): (host: unknown) => void {
-  return (host) => {
-    const envelopeHost = injectedEnvelopeHost ?? host as RoleEnvelopeHost;
-    if (envelopeHost?.roleHost === undefined) {
-      throw new Error("Shared role composition requires an explicit RoleEnvelopeHost");
-    }
+): (envelopeHost: RoleEnvelopeHost) => void {
+  return (envelopeHost) => {
     let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection, context: HostContext) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };

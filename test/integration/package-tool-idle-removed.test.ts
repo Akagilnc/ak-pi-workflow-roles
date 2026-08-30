@@ -224,7 +224,7 @@ test(
               loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
               transcriptFromContext: () => "adjudication evidence",
               auditSoulCompliance: (options) => auditSoulCompliance({ ...options, context: toPiContext(options.context) }),
-              }, piHostAdapter)(pi);
+              })(piHostAdapter);
             },
           ],
         }, async ({ session, sessionManager }) => {
