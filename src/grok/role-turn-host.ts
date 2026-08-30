@@ -129,10 +129,19 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
         }
         const connection = await config.connect(request);
         try {
-          await connection.request("initialize", {
+          const initialized = await connection.request("initialize", {
             protocolVersion: 1,
             clientCapabilities: {},
           });
+          const modelState = (initialized._meta as { modelState?: { availableModels?: unknown } } | undefined)?.modelState;
+          const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
+          if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
+            typeof entry === "object" && entry !== null && (entry as { modelId?: unknown }).modelId === request.model?.model)) {
+            return failure("activation", "GrokHostModelMismatch", "host-model-mismatch", {
+              provider: request.model.provider,
+              model: request.model.model,
+            });
+          }
           const continuation = request.continuation;
           const session = await connection.request(
             continuation.kind === "resume" ? "session/load" : "session/new",
