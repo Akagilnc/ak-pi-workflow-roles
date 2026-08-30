@@ -4,6 +4,12 @@ import test from "node:test";
 import { classifyGrokInspection, controlledGrokChildEnv, createGrokRoleTurnHost, type GrokAcpConnection } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
+const sessionIds = new WeakMap<object, string>();
+const sessionIdentity = {
+  async load(principal: object) { return sessionIds.get(principal); },
+  async bind(principal: object, sessionId: string) { sessionIds.set(principal, sessionId); },
+};
+
 const request = {
   principal: {}, activation: { role: "judge" }, methods: [],
   continuation: { kind: "initial", prompt: "decide" },
@@ -27,6 +33,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
     async close() {},
   };
   const host = createGrokRoleTurnHost({
+    sessionIdentity,
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
     recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
@@ -43,9 +50,34 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
 });
 
+test("grok session identity is bound by its authority and decoded for resume", async () => {
+  const durableRequest = { ...request, principal: {} } as RoleTurnRequest;
+  const sessionCalls: Array<[string, unknown]> = [];
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    connect: async () => ({
+      async request(method, params) {
+        sessionCalls.push([method, params]);
+        if (method === "session/new") return { sessionId: "durable-s1" };
+        return method === "session/prompt" ? { stopReason: "end_turn" } : {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
+  });
+
+  await host.executeTurn(durableRequest);
+  await host.executeTurn({ ...durableRequest, continuation: { kind: "resume", prompt: "again" } });
+  const load = sessionCalls.find(([method]) => method === "session/load");
+  assert.deepEqual(load, ["session/load", { sessionId: "durable-s1", cwd: "/work", mcpServers: [{}], _meta: { systemPromptOverride: "law" } }]);
+});
+
 test("grok host rejects a model absent from typed ACP capabilities", async () => {
   let prompted = false;
   const host = createGrokRoleTurnHost({
+    sessionIdentity,
     connect: async () => ({
       async request(method) {
         if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "grok-4.6" }] } } };
@@ -71,6 +103,7 @@ test("grok host serializes concurrent ACP prompts", async () => {
   let maxActivePrompts = 0;
   let session = 0;
   const host = createGrokRoleTurnHost({
+    sessionIdentity,
     connect: async () => ({
       async request(method) {
         if (method === "session/new") return { sessionId: `s${++session}` };
@@ -96,6 +129,7 @@ test("grok host serializes concurrent ACP prompts", async () => {
 test("grok refusal is a typed failure and never closes the session as accepted", async () => {
   const calls: string[] = [];
   const host = createGrokRoleTurnHost({
+    sessionIdentity,
     connect: async () => ({
       async request(method) {
         calls.push(method);
@@ -126,6 +160,7 @@ test("grok host reports typed round closure failure instead of accepting no subm
   };
   const knownFailure = { cause: "output", identity: { name: "MissingSubmission", code: "round-ended-without-submission" } } as const;
   const host = createGrokRoleTurnHost({
+    sessionIdentity,
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: [] }),
     prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: false, failure: knownFailure }) }),
@@ -164,6 +199,7 @@ test("controlled child env disables every compat source with one parameterized r
 test("grok host rejects an uncontrolled personalized session before model work", async () => {
   let connected = false;
   const host = createGrokRoleTurnHost({
+    sessionIdentity,
     connect: async () => { connected = true; throw new Error("must not connect"); },
     inspect: async () => ({ privateActive: ["user-plugin"], akActive: [] }),
     prepare: async () => ({ mcpServers: [], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),

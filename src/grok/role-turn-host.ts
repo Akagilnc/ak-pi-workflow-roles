@@ -32,7 +32,13 @@ export type GrokCapabilityDeclaration = Readonly<{
   preToolUseDeny: boolean;
 }>;
 
+export type GrokSessionIdentityAuthority = Readonly<{
+  load(principal: RoleTurnRequest["principal"]): Promise<string | undefined>;
+  bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;
+}>;
+
 export type GrokRoleTurnHostConfig = Readonly<{
+  sessionIdentity: GrokSessionIdentityAuthority;
   connect(request: RoleTurnRequest): Promise<GrokAcpConnection>;
   inspect(request: RoleTurnRequest): Promise<GrokControlledInspection>;
   prepare(request: RoleTurnRequest): Promise<GrokPreparedTurn>;
@@ -186,21 +192,26 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             });
           }
           const continuation = request.continuation;
+          const resumedSessionId = continuation.kind === "resume"
+            ? await config.sessionIdentity.load(request.principal)
+            : undefined;
+          if (continuation.kind === "resume" && resumedSessionId === undefined) {
+            return failure("session", "GrokAcpSessionFailure", "session-binding-missing");
+          }
           const session = await connection.request(
             continuation.kind === "resume" ? "session/load" : "session/new",
             {
-              ...(continuation.kind === "resume" ? { sessionId: String((request.principal as { sessionId?: unknown }).sessionId ?? "") } : {}),
+              ...(resumedSessionId === undefined ? {} : { sessionId: resumedSessionId }),
               cwd: request.cwd,
               mcpServers: prepared.mcpServers,
               _meta: { systemPromptOverride: prepared.systemPrompt },
             },
           );
-          const sessionId = continuation.kind === "resume"
-            ? String((request.principal as { sessionId?: unknown }).sessionId ?? "")
-            : session.sessionId;
+          const sessionId = resumedSessionId ?? session.sessionId;
           if (typeof sessionId !== "string" || sessionId === "") {
             return failure("session", "GrokAcpSessionFailure", "session-id-missing");
           }
+          if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
           const result = await connection.request("session/prompt", {
             sessionId,
             prompt: [{ type: "text", text: continuation.prompt }],
