@@ -123,6 +123,7 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
 }
 
 export class AcceptedDetailsContractError extends Error {
+  readonly code = "accepted_details_contract" as const;
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "AcceptedDetailsContractError";

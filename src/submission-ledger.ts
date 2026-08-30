@@ -1,8 +1,6 @@
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
-import { GatekeeperDecisionError } from "./gatekeeper-role.ts";
 import {
-  AcceptedDetailsContractError,
   acceptedFacts,
   isTerminatingToolName,
   type AcceptedDetails,
@@ -11,11 +9,6 @@ import {
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
-import {
-  WorkerCommitReminderError,
-  WorkerPrefixReminderError,
-  WorkerUnfinishedReasonReminderError,
-} from "./worker-submission-gates.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
@@ -39,13 +32,14 @@ export type SubmissionLedgerEvent =
 
 /** Typed bounce anchors owned by existing gates — never prose-classified. */
 function isTypedCorrectableRejection(error: unknown): boolean {
-  return (
-    error instanceof GatekeeperDecisionError ||
-    error instanceof WorkerUnfinishedReasonReminderError ||
-    error instanceof WorkerCommitReminderError ||
-    error instanceof WorkerPrefixReminderError ||
-    error instanceof AcceptedDetailsContractError
-  );
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return new Set([
+    "gatekeeper_decision",
+    "worker_unfinished_reason_reminder",
+    "worker_commit_reminder",
+    "worker_prefix_reminder",
+    "accepted_details_contract",
+  ]).has(error.code as string);
 }
 
 /**

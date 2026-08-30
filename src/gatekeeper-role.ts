@@ -61,6 +61,7 @@ function nonPassMessage(result: GatekeeperNonPassResult): string {
 
 /** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
 export class GatekeeperDecisionError extends Error {
+  readonly code = "gatekeeper_decision" as const;
   readonly result: GatekeeperNonPassResult;
   constructor(result: GatekeeperNonPassResult) {
     super(nonPassMessage(result));

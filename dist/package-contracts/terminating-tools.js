@@ -45,6 +45,7 @@ export function acceptedTextFor(toolName) {
     }
 }
 export class AcceptedDetailsContractError extends Error {
+    code = "accepted_details_contract";
     constructor(message, options) {
         super(message, options);
         this.name = "AcceptedDetailsContractError";
