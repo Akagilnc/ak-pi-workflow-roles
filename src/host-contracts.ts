@@ -188,7 +188,11 @@ type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<strin
 type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: HostToolResult["content"]; details: unknown };
 type SessionStartEvent = { reason: string };
 type ProviderResponseEvent = { status?: number };
-type AgentEndEvent = { messages: readonly HostEventMessage[] };
+type AgentEndEvent = {
+  messages: readonly HostEventMessage[];
+  /** Host-projected typed calls from the assistant round that just closed. */
+  terminalRoundCalls?: readonly ToolExecutionEvent[];
+};
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
 type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };

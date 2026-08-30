@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
+test.after(() => { process.exitCode = undefined; });
+
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -488,6 +490,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       assert.notEqual(result.exitCode, 0);
       assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(await readSealedSubmission(project, "run-table-infrastructure"), undefined);
+      process.exitCode = undefined;
     }
 
     // post-seal anomaly after public accepted seal on the same run ledger
@@ -498,9 +501,13 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       assert.ok(sealed);
 
       let registered: HostToolDefinition | undefined;
+      const handlers = new Map<string, (...args: any[]) => unknown>();
       const host = {
         registerTool(tool: HostToolDefinition) {
           registered = tool;
+        },
+        on(event: string, handler: (...args: any[]) => unknown) {
+          handlers.set(event, handler);
         },
       } as RoleHost;
       createSubmissionLedgerHost(host, new Map([[JUDGE_OUTPUT_TOOL_NAME, "judge"]])).registerTool({
@@ -520,26 +527,21 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       process.env.AK_ROLE_RUN_DIR = `${project}/runs/${runId}@judge`;
       // runDirectory may live under the ledger home book — use admitted path from first run when present
       try {
+        const context = {
+          cwd: project,
+          mode: "json",
+          model: undefined,
+          sessionManager: {
+            getHeader: () => ({ type: "session", id: `${runId}:attempt` }),
+          },
+          abort() {},
+        } as HostContext;
+        await handlers.get("tool_execution_start")!(
+          { toolCallId: "after-seal", toolName: JUDGE_OUTPUT_TOOL_NAME },
+          context,
+        );
         await assert.rejects(
-          registered!.execute(
-            "after-seal",
-            {},
-            undefined,
-            undefined,
-            {
-              cwd: project,
-              mode: "json",
-              model: undefined,
-              sessionManager: {
-                getHeader: () => ({ type: "session", id: `${runId}:attempt` }),
-              },
-              terminationBatch: {
-                batchClosed: true,
-                calls: [{ id: "after-seal", name: JUDGE_OUTPUT_TOOL_NAME }],
-              },
-              abort() {},
-            } as unknown as HostContext,
-          ),
+          registered!.execute("after-seal", {}, undefined, undefined, context),
           /提交账已封账/,
         );
       } finally {
@@ -548,8 +550,8 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
         if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
         else process.env.AK_ROLE_RUN_DIR = priorRun;
       }
-      // Original sealed projection remains the sole accepted fact.
-      assert.deepEqual(await readSealedSubmission(project, runId), sealed);
+      // The immutable seal remains on-ledger, but the typed anomaly blocks ordinary success consumption.
+      assert.equal(await readSealedSubmission(project, runId), undefined);
     }
   });
 });

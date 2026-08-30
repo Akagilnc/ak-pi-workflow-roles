@@ -111,6 +111,7 @@ export async function readSealedSubmission(cwd: string, runId: string): Promise<
   const { owned } = await readOwnedSubmissionRecords(cwd, runId);
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
+    if (record?.kind === "post-seal-anomaly") return undefined;
     if (record?.kind !== "sealed") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
     if (payload?.type === "sealed" && isAcceptedProjection(payload.projection)) return payload.projection;
@@ -169,10 +170,14 @@ async function restoreState(cwd: string, runId: string): Promise<LedgerState> {
 }
 
 /** Pipeline-owned sole-final state and durable projection. */
-export function createSubmissionLedgerHost(host: RoleHost, outputTools: ReadonlyMap<string, TerminalRoleName>): RoleHost {
+export function createSubmissionLedgerHost(
+  host: RoleHost,
+  outputTools: ReadonlyMap<string, TerminalRoleName>,
+  failInfrastructure: (error: unknown, context: HostContext) => never = (error) => { throw error; },
+): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
-  type PendingCandidate = { toolCallId: string; toolName: TerminatingToolName; role: TerminalRoleName; result: HostToolResult<unknown>; context: HostContext };
-  const rounds = new Map<string, { calls: SubmissionCall[]; candidates: PendingCandidate[] }>();
+  type PendingCandidate = { toolCallId: string; toolName: TerminatingToolName; role: TerminalRoleName; result: HostToolResult<unknown>; context: HostContext; auditProjection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> };
+  const rounds = new Map<string, PendingCandidate[]>();
   const stateFor = (context: HostContext, runId: string) => states.get(runId) ?? (() => {
     const pending = restoreState(context.cwd, runId);
     states.set(runId, pending);
@@ -185,37 +190,44 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
   };
 
   host.on("tool_execution_start", async ({ toolCallId, toolName }, context) => {
-    const runId = runIdentity(context);
-    const attemptId = attemptIdentity(context, runId);
-    const state = await stateFor(context, runId);
-    if (state.sealed) {
-      appendFor(state, context, runId, attemptId, { type: "post-seal-anomaly", attemptId, toolCallId, toolName });
-      return;
+    try {
+      const runId = runIdentity(context);
+      const attemptId = attemptIdentity(context, runId);
+      const state = await stateFor(context, runId);
+      if (state.sealed) appendFor(state, context, runId, attemptId, { type: "post-seal-anomaly", attemptId, toolCallId, toolName });
+    } catch (error) {
+      failInfrastructure(error, context);
     }
-    const round = rounds.get(attemptId) ?? { calls: [], candidates: [] };
-    round.calls.push({ id: toolCallId, name: toolName });
-    rounds.set(attemptId, round);
   });
-  host.on("agent_end", async (_event, context) => {
-    const runId = runIdentity(context);
-    const attemptId = attemptIdentity(context, runId);
-    const round = rounds.get(attemptId);
-    if (round === undefined) return;
-    rounds.delete(attemptId);
-    const state = await stateFor(context, runId);
-    appendFor(state, context, runId, attemptId, { type: "roundContext", attemptId, calls: round.calls });
-    const sole = round.calls.length === 1 && round.candidates.length === 1 && round.calls[0]?.id === round.candidates[0]?.toolCallId;
-    if (!sole) {
-      for (const candidate of round.candidates) appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "correctable-rejection", code: "non-sole-round" });
-      return;
+  host.on("agent_end", async (event, context) => {
+    try {
+      const runId = runIdentity(context);
+      const attemptId = attemptIdentity(context, runId);
+      const candidates = rounds.get(attemptId);
+      if (candidates === undefined) return;
+      rounds.delete(attemptId);
+      const state = await stateFor(context, runId);
+      const calls = (event.terminalRoundCalls ?? []).map(({ toolCallId: id, toolName: name }) => ({ id, name }));
+      appendFor(state, context, runId, attemptId, { type: "roundContext", attemptId, calls });
+      const sole = calls.length === 1 && candidates.length === 1 && calls[0]?.id === candidates[0]?.toolCallId;
+      if (!sole) {
+        for (const candidate of candidates) appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "correctable-rejection", code: "non-sole-round" });
+        return;
+      }
+      const candidate = candidates[0]!;
+      if (candidate.auditProjection !== undefined) {
+        appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "audit-escalation", projection: candidate.auditProjection });
+        return;
+      }
+      const details = typeof candidate.result.details === "object" && candidate.result.details !== null ? candidate.result.details as Record<string, unknown> : {};
+      const status = acceptedFacts(candidate.toolName, details as AcceptedDetails).status;
+      if (typeof status !== "string" || status.length === 0) throw new Error("提交账封账缺少 acceptedFacts.status");
+      const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role: candidate.role, status, decisiveFacts: details };
+      appendFor(state, candidate.context, runId, attemptId, { type: "sealed", attemptId, toolCallId: candidate.toolCallId, accepted: candidate.result.details, projection });
+      state.sealed = true;
+    } catch (error) {
+      failInfrastructure(error, context);
     }
-    const candidate = round.candidates[0]!;
-    const details = typeof candidate.result.details === "object" && candidate.result.details !== null ? candidate.result.details as Record<string, unknown> : {};
-    const status = acceptedFacts(candidate.toolName, details as AcceptedDetails).status;
-    if (typeof status !== "string" || status.length === 0) throw new Error("提交账封账缺少 acceptedFacts.status");
-    const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role: candidate.role, status, decisiveFacts: details };
-    appendFor(state, candidate.context, runId, attemptId, { type: "sealed", attemptId, toolCallId: candidate.toolCallId, accepted: candidate.result.details, projection });
-    state.sealed = true;
   });
 
   return {
@@ -257,18 +269,21 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
             throw error;
           }
           if (isAuditEscalationProjection(result.details)) {
-            append({
-              type: "outcome",
-              attemptId,
+            const candidates = rounds.get(attemptId) ?? [];
+            candidates.push({
               toolCallId,
-              outcome: "audit-escalation",
-              projection: {
+              toolName: tool.name as TerminatingToolName,
+              role,
+              result,
+              context,
+              auditProjection: {
                 kind: "audit_escalation",
                 role,
                 status: "audit_escalation",
                 decisiveFacts: result.details as Record<string, unknown>,
               },
             });
+            rounds.set(attemptId, candidates);
             return result;
           }
           if (result.terminate !== true) {
@@ -279,9 +294,9 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
             append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: `non-terminating tool ${tool.name}` });
             throw new Error("提交账只受理终止工具");
           }
-          const round = rounds.get(attemptId) ?? { calls: [], candidates: [] };
-          round.candidates.push({ toolCallId, toolName: tool.name, role, result, context });
-          rounds.set(attemptId, round);
+          const candidates = rounds.get(attemptId) ?? [];
+          candidates.push({ toolCallId, toolName: tool.name, role, result, context });
+          rounds.set(attemptId, candidates);
           return result;
         },
       });

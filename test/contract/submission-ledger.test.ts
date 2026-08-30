@@ -30,6 +30,7 @@ function registerTool(
 ) {
   let registered: HostToolDefinition | undefined;
   const handlers = new Map<string, (...args: any[]) => unknown>();
+  let terminalRoundCalls: Array<{ toolCallId: string; toolName: string }> = [];
   const host = {
     registerTool(tool: HostToolDefinition) { registered = tool; },
     on(event: string, handler: (...args: any[]) => unknown) { handlers.set(event, handler); },
@@ -46,8 +47,15 @@ function registerTool(
   return {
     context,
     tool: () => registered!,
-    start: async (id: string, name = JUDGE_OUTPUT_TOOL_NAME) => { await handlers.get("tool_execution_start")!({ toolCallId: id, toolName: name }, context); },
-    close: async () => { await handlers.get("agent_end")!({ messages: [] }, context); },
+    start: async (id: string, name = JUDGE_OUTPUT_TOOL_NAME) => {
+      terminalRoundCalls.push({ toolCallId: id, toolName: name });
+      await handlers.get("tool_execution_start")!({ toolCallId: id, toolName: name }, context);
+    },
+    close: async () => {
+      const calls = terminalRoundCalls;
+      terminalRoundCalls = [];
+      await handlers.get("agent_end")!({ messages: [], terminalRoundCalls: calls }, context);
+    },
   };
 }
 
@@ -169,9 +177,11 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
       { judgeStatus: "escalate" },
     );
     const escalating = registerTool(f.root, async () => ({ content: [], details, terminate: true }));
+    await escalating.start("esc");
     const result = await escalating.tool().execute("esc", {}, undefined, undefined, escalating.context);
     assert.equal(result.terminate, true);
     assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
+    await escalating.close();
     const projection = await readAuditEscalationSubmission(f.root, "run-ledger");
     assert.equal(projection?.kind, "audit_escalation");
     assert.equal(projection?.role, "judge");
