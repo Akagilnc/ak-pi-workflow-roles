@@ -6,7 +6,6 @@ import { isFullGitObjectId } from "./git-object-id.ts";
 
 export { MERGER_OUTPUT_TOOL_NAME };
 export const MERGER_INPUT_FLAG = { name: "ak-merger-input", definition: { description: "Path to an immutable digest-bound Merger v1 input JSON file", type: "string" as const } } as const;
-export const MERGER_ACTIVE_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit", MERGER_OUTPUT_TOOL_NAME] as const;
 export type MergerRoleDependencies = { loadSoul(): Promise<string>; loadInput(path: string): Promise<unknown>; gitState: MergerGitState };
 export type MergerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
@@ -50,10 +49,10 @@ export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDe
         } });
       pi.on("before_agent_start", (event) => { if (!activation) throw new Error("校书郎未激活"); const admitted = { attemptId: activation.input.attemptId, targetObjectId: activation.input.targetObjectId, sourceObjectId: activation.input.sourceObjectId, task: materialText(activation.input, "task"), authority: materialText(activation.input, "authority"), targetIntent: materialText(activation.input, "targetIntent"), sourceIntent: materialText(activation.input, "sourceIntent"), expectedConflictPaths: activation.input.expectedConflictPaths, resolutionScope: activation.input.resolutionScope, authorizedChecks: activation.input.authorizedChecks }; return { systemPrompt: `${event.systemPrompt}\n\n<merger_soul>\n${activation.soul}\n</merger_soul>\n\n<merger_assignment>\n${JSON.stringify(admitted)}\n</merger_assignment>` }; });
     }
+    // Host-neutral AK output only (ADR 0018 fail-closed); no host-builtin name hard-require.
     const all = pi.getAllTools().map(tool => tool.name);
-    for (const name of MERGER_ACTIVE_TOOLS) if (all.filter(item => item === name).length !== 1) throw new Error(`Merger required tool collision or missing: ${name}`);
-    pi.setActiveTools([...MERGER_ACTIVE_TOOLS]);
-    const active = pi.getActiveTools?.() ?? [...MERGER_ACTIVE_TOOLS];
-    if (!same(active, MERGER_ACTIVE_TOOLS)) throw new Error("Merger active tool narrowing failed");
+    if (all.filter(item => item === MERGER_OUTPUT_TOOL_NAME).length !== 1) {
+      throw new Error(`Merger required tool collision or missing: ${MERGER_OUTPUT_TOOL_NAME}`);
+    }
   } };
 }
