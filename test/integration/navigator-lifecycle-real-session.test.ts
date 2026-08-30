@@ -688,9 +688,8 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
 test("healthy Navigator preparation survives mid-turn agent_settled for later accepted terminal", async () => {
   const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-  const { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } = await import("../../src/role-runtime.ts");
-  const { createSubmissionLedgerHost } = await import("../../src/submission-ledger.ts");
-  const { Type } = await import("typebox");
+  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+  const { createPiRoleHostAdapter } = await import("../../src/pi/adapter.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
   const { JUDGE_OUTPUT_TOOL_NAME } = await import("../../src/package-contracts/judge-output.ts");
 
@@ -699,6 +698,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     const emit = async (name: string, event: unknown, ctx: unknown) => {
       for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
     };
+    let outputTool: { execute: (...args: any[]) => Promise<any> } | undefined;
     const pi = {
       registerFlag() {},
       getFlag(name: string) {
@@ -709,7 +709,9 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
         list.push(handler);
         handlers.set(name, list);
       },
-      registerTool() {},
+      registerTool(tool: { name: string; execute: (...args: any[]) => Promise<any> }) {
+        if (tool.name === JUDGE_OUTPUT_TOOL_NAME) outputTool = tool;
+      },
       getAllTools() {
         return [];
       },
@@ -719,7 +721,6 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     };
 
     let settleCount = 0;
-    let activeAttendance: ReturnType<typeof createNavigatorAttendance> | undefined;
     let prepareCount = 0;
     let releasePrep!: () => void;
     const prepGate = new Promise<void>((resolve) => { releasePrep = resolve; });
@@ -775,7 +776,6 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
             await options.onEvent(event, report);
           },
         });
-        activeAttendance = nav;
         const originalPrepare = nav.prepare.bind(nav);
         const originalSettle = nav.settle.bind(nav);
         return {
@@ -790,7 +790,10 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
           },
         };
       },
-    })(pi as never);
+    }, (() => {
+      const adapter = createPiRoleHostAdapter(pi as never);
+      return { ...adapter, host: { ...adapter.host, requireGatekeeperPass: async () => undefined } };
+    })() as never)(pi as never);
 
     await writeFile(join(home, "navigator-model.json"), JSON.stringify({ model: "provider/model" }));
     const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "survive", "session");
@@ -811,46 +814,29 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    let outputTool: { execute: (...args: any[]) => Promise<any> } | undefined;
-    const closureHandlers = new Map<string, (...args: any[]) => unknown>();
-    const closureHost = {
-      registerTool(tool: { execute: (...args: any[]) => Promise<any> }) { outputTool = tool; },
-      on(name: string, handler: (...args: any[]) => unknown) { closureHandlers.set(name, handler); },
-    } as never;
-    const ledger = createSubmissionLedgerHost(
-      closureHost,
-      new Map([[JUDGE_OUTPUT_TOOL_NAME, "judge"]]),
-      (error) => { throw error; },
-      async (projection, context) => projectClosedSubmissionLifecycle(
-        projection,
-        context,
-        null,
-        () => undefined,
-        async (settlement) => {
-          if (settlement !== undefined) {
-            settleCount += 1;
-            await activeAttendance!.settle(settlement);
-          }
-        },
-      ),
-    );
-    ledger.registerTool({
-      name: JUDGE_OUTPUT_TOOL_NAME,
-      label: "output",
-      description: "",
-      parameters: Type.Object({}),
-      execute: async () => ({ content: [], details: { judgeStatus: "converged" }, terminate: true }),
-    });
-    await closureHandlers.get("tool_execution_start")!(
-      { toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "accepted-1" },
-      ctx,
-    );
+    await emit("tool_execution_start", {
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "accepted-1",
+    }, ctx);
     assert.ok(outputTool);
-    await outputTool.execute("accepted-1", {}, undefined, undefined, ctx);
-    await closureHandlers.get("turn_end")!(
-      { turnIndex: 0, calls: [{ toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "accepted-1" }] },
+    const pending = await outputTool.execute(
+      "accepted-1",
+      { judgeStatus: "converged" },
+      undefined,
+      undefined,
       ctx,
     );
+    await emit("tool_result", {
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "accepted-1",
+      isError: false,
+      content: pending.content,
+      details: pending.details,
+    }, ctx);
+    await emit("turn_end", {
+      turnIndex: 0,
+      toolResults: [{ toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "accepted-1" }],
+    }, ctx);
     await emit("agent_settled", {}, ctx);
 
     assert.equal(settlesAfterMidTurn, 0, "mid-turn agent_settled must not settle Navigator");
