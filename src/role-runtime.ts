@@ -765,8 +765,6 @@ export function createRoleRuntimeExtension(
       const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
       if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
-      } else if (outputClassification?.kind === "accepted") {
-        receiptDelivery.recordAccepted();
       } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
         const reason = (event.content ?? [])
           .map((part) => part.type === "text" && "text" in part ? part.text : "")
@@ -774,11 +772,11 @@ export function createRoleRuntimeExtension(
           .trim() || "terminating tool rejected";
         receiptDelivery.recordRejected(reason);
       }
-      const settlement = publicNavigatorSettlement(
-        role,
-        navigatorPhase(roleHost, role),
-        classified,
-      );
+      // Accepted/human terminal projection belongs exclusively to typed ledger
+      // closure. tool_result retains only infrastructure settlement.
+      const settlement = isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure"
+        ? publicNavigatorSettlement(role, navigatorPhase(roleHost, role), classified)
+        : undefined;
       if (settlement !== undefined) {
         const attendance = navigatorAttendance;
         if (attendance !== undefined) {
