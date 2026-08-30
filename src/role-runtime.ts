@@ -1,5 +1,5 @@
 import { writeSync } from "node:fs";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -39,7 +39,9 @@ import {
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { createNotaryRoleRuntime } from "./notary-role.ts";
-import { createInspectorRoleRuntime } from "./inspector-role.ts";
+import { inspectorOutputSchema, projectInspectorReceipt } from "./inspector-role.ts";
+import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -993,12 +995,35 @@ export function createRoleRuntimeExtension(
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
       async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
-    const inspector = createInspectorRoleRuntime(pi, {
-      async loadSoul() {
+    let inspectorSoul: string | undefined;
+    let inspectorRegistered = false;
+    const inspector = {
+      async activate(): Promise<void> {
         if (!dependencies.loadInspectorSoul) throw new Error("Inspector runtime dependencies are not configured");
-        return dependencies.loadInspectorSoul();
+        inspectorSoul = (await dependencies.loadInspectorSoul()).trim();
+        if (inspectorSoul.length === 0) throw new Error("Inspector soul is empty");
+        if (!inspectorRegistered) {
+          inspectorRegistered = true;
+          pi.registerTool({
+            name: INSPECTOR_OUTPUT_TOOL_NAME,
+            label: "给事中输出",
+            description: "提交复杂度与测试质量的 typed pass/bounce 决议。",
+            promptSnippet: "提交给事中决议",
+            parameters: inspectorOutputSchema,
+            async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
+              failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
+              return projectInspectorReceipt(parameters);
+            },
+          });
+          pi.on("before_agent_start", (event) => {
+            if (inspectorSoul === undefined) throw new Error("给事中未激活");
+            return { systemPrompt: `${event.systemPrompt}\n\n<inspector_soul>\n${inspectorSoul}\n</inspector_soul>` };
+          });
+        }
+        const tools = pi.getAllTools().filter((tool) => tool.name === INSPECTOR_OUTPUT_TOOL_NAME);
+        if (tools.length !== 1) throw new Error(`Inspector required tool collision or missing: ${INSPECTOR_OUTPUT_TOOL_NAME}`);
       },
-    }, hostActions);
+    };
     const notary = createNotaryRoleRuntime(pi, {
       async loadSoul() {
         if (!dependencies.loadNotarySoul) throw new Error("Notary runtime dependencies are not configured");
