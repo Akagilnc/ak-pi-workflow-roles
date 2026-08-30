@@ -29,7 +29,7 @@ type Handler = HostEventRegistration[1];
 type RpcRequest = { readonly id: number; readonly token: string; readonly method: string; readonly params?: Record<string, unknown> };
 type ToolCallParams = { readonly name?: unknown; readonly arguments?: unknown };
 
-function activationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
+export function projectGrokActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
   const activation = request.activation;
   const flags = new Map<string, boolean | string>([["ak-role", activation.role]]);
   const inputFlag = packagedRoleInputFlag(activation.role);
@@ -90,7 +90,7 @@ export async function prepareGrokRoleEnvelope(options: {
   readonly socketPath: string;
 }): Promise<GrokPreparedTurn> {
   const { request } = options;
-  const flags = activationFlags(request);
+  const flags = projectGrokActivationFlags(request);
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
