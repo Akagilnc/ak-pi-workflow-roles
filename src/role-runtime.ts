@@ -37,6 +37,7 @@ import {
   createCollectorRoleRuntime,
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
 import { createNotaryRoleRuntime } from "./notary-role.ts";
 import {
@@ -77,6 +78,15 @@ function createFiledOfficerRuntime(
           parameters: spec.tool.parameters as never,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
+            const leaf = ctx.sessionManager.getLeafEntry();
+            if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
+              throw new Error(`${spec.role}回执非唯一终局工具调用`);
+            }
+            const calls = leaf.message.content.filter((p) => p.type === "toolCall");
+            if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== spec.tool.name) {
+              throw new Error(`${spec.role}回执非唯一终局工具调用`);
+            }
             return {
               content: [{ type: "text" as const, text: spec.acceptedText }],
               details: parameters,
