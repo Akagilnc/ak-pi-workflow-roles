@@ -42,6 +42,30 @@ test("ACP stdio preserves spawn failure and rejects later writes", async () => {
   await connection.close();
 });
 
+test("malformed ACP frame terminates the connection and settles every pending request", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-malformed-"));
+  try {
+    const executable = join(root, "grok-malformed.mjs");
+    await writeFile(executable, `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+let requests = 0;
+createInterface({ input: process.stdin }).on("line", () => {
+  if (++requests === 2) process.stdout.write("not-json\\n");
+});
+process.on("SIGTERM", () => process.exit(0));
+`);
+    await chmod(executable, 0o755);
+    const connection = await connectGrokAcpStdio({ binary: executable, cwd: root, env: process.env });
+    const first = connection.request("first", {});
+    const second = connection.request("second", {});
+    await assert.rejects(first, /Invalid Grok ACP JSON/);
+    await assert.rejects(second, /Invalid Grok ACP JSON/);
+    await assert.rejects(connection.request("after-malformed", {}), /Invalid Grok ACP JSON/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ACP stdio pairs framed replies and closes one real child", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-faux-"));
   try {
@@ -82,7 +106,7 @@ process.on("SIGTERM", () => process.exit(0));
   await connection.close();
     assert.deepEqual((await readFile(events, "utf8")).trim().split("\n").map((line) => JSON.parse(line).method), ["first", "second", "session/cancel"]);
     assert.deepEqual(JSON.parse(await readFile(launch, "utf8")), {
-      args: ["agent", "--model", "grok-4.5", "--tools", "read,bash", "--deny", "Shell(rm:*)", "--deny", "Shell(git clean:*)", "--always-approve", "stdio"],
+      args: ["--tools", "read,bash", "--deny", "Shell(rm:*)", "--deny", "Shell(git clean:*)", "agent", "--model", "grok-4.5", "--always-approve", "stdio"],
       config: JSON.stringify({ toolset: "coding" }),
     });
     await assert.rejects(connection.request("after-close", {}), /closed/i);

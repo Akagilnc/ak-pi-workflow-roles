@@ -34,9 +34,9 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   };
   const host = createGrokRoleTurnHost({
     sessionIdentity,
+    recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
     prepare: async () => ({
       mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }],
       systemPrompt: "law",
@@ -55,6 +55,7 @@ test("grok session identity is bound by its authority and decoded for resume", a
   const sessionCalls: Array<[string, unknown]> = [];
   const host = createGrokRoleTurnHost({
     sessionIdentity,
+    recordCapabilities: async () => {},
     connect: async () => ({
       async request(method, params) {
         sessionCalls.push([method, params]);
@@ -78,6 +79,7 @@ test("grok host rejects a model absent from typed ACP capabilities", async () =>
   let prompted = false;
   const host = createGrokRoleTurnHost({
     sessionIdentity,
+    recordCapabilities: async () => {},
     connect: async () => ({
       async request(method) {
         if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "grok-4.6" }] } } };
@@ -99,18 +101,24 @@ test("grok host rejects a model absent from typed ACP capabilities", async () =>
 });
 
 test("grok host serializes concurrent ACP prompts", async () => {
-  let activePrompts = 0;
-  let maxActivePrompts = 0;
+  let releaseFirst!: () => void;
+  const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let firstStarted!: () => void;
+  const firstPromptStarted = new Promise<void>((resolve) => { firstStarted = resolve; });
+  let promptCount = 0;
   let session = 0;
   const host = createGrokRoleTurnHost({
     sessionIdentity,
+    recordCapabilities: async () => {},
     connect: async () => ({
       async request(method) {
         if (method === "session/new") return { sessionId: `s${++session}` };
         if (method === "session/prompt") {
-          maxActivePrompts = Math.max(maxActivePrompts, ++activePrompts);
-          await new Promise((resolve) => setTimeout(resolve, 5));
-          activePrompts--;
+          promptCount++;
+          if (promptCount === 1) {
+            firstStarted();
+            await firstBlocked;
+          }
           return { stopReason: "end_turn" };
         }
         return {};
@@ -122,14 +130,20 @@ test("grok host serializes concurrent ACP prompts", async () => {
     prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),
   });
 
-  await Promise.all([host.executeTurn(request), host.executeTurn(request)]);
-  assert.equal(maxActivePrompts, 1);
+  const first = host.executeTurn(request);
+  const second = host.executeTurn(request);
+  await firstPromptStarted;
+  assert.equal(promptCount, 1);
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.equal(promptCount, 2);
 });
 
 test("grok refusal is a typed failure and never closes the session as accepted", async () => {
   const calls: string[] = [];
   const host = createGrokRoleTurnHost({
     sessionIdentity,
+    recordCapabilities: async () => {},
     connect: async () => ({
       async request(method) {
         calls.push(method);
@@ -161,6 +175,7 @@ test("grok host reports typed round closure failure instead of accepting no subm
   const knownFailure = { cause: "output", identity: { name: "MissingSubmission", code: "round-ended-without-submission" } } as const;
   const host = createGrokRoleTurnHost({
     sessionIdentity,
+    recordCapabilities: async () => {},
     connect: async () => connection,
     inspect: async () => ({ privateActive: [], akActive: [] }),
     prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => ({ accepted: false, failure: knownFailure }) }),
@@ -177,9 +192,13 @@ test("structured inspect classifies builtin, AK, and private sources by provenan
       { name: "disabled", disabled: true, source: { type: "user", path: "/home/disabled" } },
     ],
     plugins: [{ name: "private-plugin", enabled: true, path: "/home/plugin" }],
+    projectInstructions: [
+      { path: "/pkg/CLAUDE.md", scope: "project" },
+      { path: "/home/.claude/CLAUDE.md", scope: "global", disabled: true },
+    ],
   }, "/pkg"), {
     privateActive: ["plugins:private-plugin", "skills:private"],
-    akActive: ["skills:ak-method"],
+    akActive: ["projectInstructions:/pkg/CLAUDE.md", "skills:ak-method"],
   });
 });
 
@@ -200,6 +219,7 @@ test("grok host rejects an uncontrolled personalized session before model work",
   let connected = false;
   const host = createGrokRoleTurnHost({
     sessionIdentity,
+    recordCapabilities: async () => {},
     connect: async () => { connected = true; throw new Error("must not connect"); },
     inspect: async () => ({ privateActive: ["user-plugin"], akActive: [] }),
     prepare: async () => ({ mcpServers: [], systemPrompt: "law", closeRound: async () => ({ accepted: true }) }),

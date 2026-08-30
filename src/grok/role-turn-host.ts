@@ -45,7 +45,7 @@ export type GrokRoleTurnHostConfig = Readonly<{
   connect(request: RoleTurnRequest): Promise<GrokAcpConnection>;
   inspect(request: RoleTurnRequest): Promise<GrokControlledInspection>;
   prepare(request: RoleTurnRequest): Promise<GrokPreparedTurn>;
-  recordCapabilities?(request: RoleTurnRequest, declaration: GrokCapabilityDeclaration): void | Promise<void>;
+  recordCapabilities(request: RoleTurnRequest, declaration: GrokCapabilityDeclaration): void | Promise<void>;
 }>;
 
 function failure(cause: "activation" | "session" | "output", name: string, code: string, details?: Readonly<Record<string, unknown>>): RoleTurnResult {
@@ -74,10 +74,10 @@ export function connectGrokAcpStdio(options: {
   readonly toolset?: string;
 }): Promise<GrokAcpConnection> {
   const args = [
-    "agent",
-    ...(options.model === undefined ? [] : ["--model", options.model]),
     ...(options.tools === undefined ? [] : ["--tools", options.tools.join(",")]),
     ...(options.deny?.flatMap((rule) => ["--deny", rule]) ?? []),
+    "agent",
+    ...(options.model === undefined ? [] : ["--model", options.model]),
     "--always-approve",
     "stdio",
   ];
@@ -103,8 +103,9 @@ export function connectGrokAcpStdio(options: {
     let message: RpcReply;
     try { message = JSON.parse(line) as RpcReply; }
     catch (error) {
-      for (const waiter of pending.values()) waiter.reject(new Error(`Invalid Grok ACP JSON: ${String(error)}`));
-      pending.clear();
+      settleClosed(new Error(`Invalid Grok ACP JSON: ${String(error)}`, { cause: error }));
+      child.stdin.end();
+      child.kill("SIGTERM");
       return;
     }
     if (typeof message.id !== "number") return;
@@ -179,7 +180,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             "x.ai/hooks"?: { blockingEvents?: unknown; decisions?: unknown };
           } | undefined;
           const hooks = initializeMeta?.["x.ai/hooks"];
-          await config.recordCapabilities?.(request, {
+          await config.recordCapabilities(request, {
             nativeToolNarrowing: false,
             preToolUseDeny:
               Array.isArray(hooks?.blockingEvents) && hooks.blockingEvents.includes("pre_tool_use") &&
@@ -248,7 +249,14 @@ const PRIVATE_COMPAT_ENV = Object.fromEntries(
       [`GROK_${vendor}_${kind}_ENABLED`, "false"] as const)),
 );
 
-type InspectItem = { readonly name?: unknown; readonly disabled?: unknown; readonly enabled?: unknown; readonly source?: { readonly type?: unknown; readonly path?: unknown } };
+type InspectItem = {
+  readonly name?: unknown;
+  readonly path?: unknown;
+  readonly disabled?: unknown;
+  readonly enabled?: unknown;
+  readonly compatibilityStatus?: unknown;
+  readonly source?: { readonly type?: unknown; readonly path?: unknown };
+};
 
 /** Classify first-party inspect JSON by provenance; wording and item counts are irrelevant. */
 export function classifyGrokInspection(document: Readonly<Record<string, unknown>>, packageRoot: string): GrokControlledInspection {
@@ -258,10 +266,12 @@ export function classifyGrokInspection(document: Readonly<Record<string, unknown
     const items = document[section];
     if (!Array.isArray(items)) continue;
     for (const value of items as InspectItem[]) {
-      if (value.disabled === true || value.enabled === false) continue;
+      if (value.disabled === true || value.enabled === false || value.compatibilityStatus === "disabled") continue;
       const source = value.source;
       const sourceType = source?.type;
-      const path = typeof source?.path === "string" ? source.path : "";
+      const path = typeof source?.path === "string"
+        ? source.path
+        : typeof value.path === "string" ? value.path : "";
       const identity = `${section}:${typeof value.name === "string" ? value.name : path}`;
       if (sourceType === "builtin" || sourceType === "bundled") continue;
       if (path === packageRoot || path.startsWith(`${packageRoot}/`)) akActive.add(identity);
