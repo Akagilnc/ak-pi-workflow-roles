@@ -86,10 +86,12 @@ export function submitCountersignVerdict(
   if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== COUNTERSIGN_OUTPUT_TOOL_NAME) {
     throw new Error("给事中回执非唯一终局工具调用");
   }
-  const verdict = validateCountersignVerdict(parameters as CountersignVerdictParameters);
+  // #572 R2 (A5): submit accepts the unique terminating call as-is and
+  // terminates. Three-state recognition is settlement-path only — calling the
+  // discriminator here would destroy non-conforming submissions (ADR 0055).
   return {
     content: [{ type: "text" as const, text: COUNTERSIGN_ACCEPTED_TEXT }],
-    details: verdict,
+    details: parameters,
     terminate: true as const,
   };
 }
