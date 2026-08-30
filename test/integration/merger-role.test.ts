@@ -12,6 +12,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage
 import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { activationExtensionContext, packageRoot, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -107,7 +108,13 @@ test("production extension observes session repository B, not ambient repository
           "provider receives constitution + merger soul from production role-runtime",
         );
         const result = sessionManager.getEntries().find(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === MERGER_OUTPUT_TOOL_NAME) as any;
-        assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content)); assert.equal(result?.message.details.mergeCommitId, mergeCommitId);
+        assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content));
+        assert.deepEqual(result?.message.details, { submissionDisposition: "pending-round-closure" });
+        const headerId = sessionManager.getHeader?.()?.id;
+        assert.ok(headerId);
+        const sealed = await readSealedSubmission(repositoryB, headerId);
+        assert.ok(sealed, "typed turn_end must seal sole candidate");
+        assert.equal((sealed.decisiveFacts as any)?.mergeCommitId, mergeCommitId);
       });
     });
   } finally { await rm(repositoryB, { recursive: true, force: true }); }
