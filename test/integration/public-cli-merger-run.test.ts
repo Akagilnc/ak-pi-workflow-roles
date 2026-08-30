@@ -15,14 +15,10 @@ import test from "node:test";
 test.after(() => { process.exitCode = undefined; });
 
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
-import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { GATEKEEPER_OUTPUT_TOOL, INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
-import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
