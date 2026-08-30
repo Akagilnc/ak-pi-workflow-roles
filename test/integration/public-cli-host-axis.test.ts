@@ -6,7 +6,12 @@ import test from "node:test";
 
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
-import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
+import {
+  loadPublicCliConfig,
+  resolveEffectiveSeat,
+  setPersistentSeatConfig,
+  setPersistentSeatHost,
+} from "../../src/public-cli/config.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
@@ -31,17 +36,24 @@ async function homeTest(fn: (home: string) => Promise<void>) {
 
 const base = (home: string, adapters: readonly NamedRoleTurnHostAdapter[]) => ({ packageRoot, home, credentials, io, hostAdapters: adapters });
 
-test("host priority is flag > persistent > pi default, and explicit pi equals default", async () => homeTest(async (home) => {
-  const selected: string[] = [];
-  const adapters = [adapter("pi", selected), adapter("grok-build", selected)];
-  await runAkRole(["judge", "x"], base(home, adapters));
-  await runAkRole(["judge", "--host", "pi", "x"], base(home, adapters));
-  await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], base(home, adapters));
-  await runAkRole(["config", "set-host", "judge", "grok-build"], base(home, adapters));
-  await runAkRole(["judge", "x"], base(home, adapters));
-  await runAkRole(["judge", "--host", "pi", "x"], base(home, adapters));
-  assert.deepEqual(selected, ["pi", "pi", "grok-build", "pi"]);
+test("host priority is flag > persistent > pi default, and injected grok adapter is selected", async () => homeTest(async (home) => {
+  let config = setPersistentSeatConfig({ seats: {} }, "judge", {
+    provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high",
+  });
+  const fallback = resolveEffectiveSeat(config, "judge", credentials);
+  assert.deepEqual({ host: fallback.host, source: fallback.hostSource }, { host: "pi", source: "default" });
+  config = setPersistentSeatHost(config, "judge", "grok-build");
+  const persistent = resolveEffectiveSeat(config, "judge", credentials);
+  assert.deepEqual({ host: persistent.host, source: persistent.hostSource }, { host: "grok-build", source: "persistent" });
+  const explicitPi = resolveEffectiveSeat(config, "judge", credentials, { host: "pi" });
+  assert.deepEqual({ host: explicitPi.host, source: explicitPi.hostSource }, { host: "pi", source: "invocation" });
+
+  await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], base(home, [adapter("pi", [])]));
+  await runAkRole(["config", "set-host", "judge", "grok-build"], base(home, [adapter("pi", [])]));
   assert.equal((await loadPublicCliConfig(home)).seats.judge?.host, "grok-build");
+  const selected: string[] = [];
+  await runAkRole(["judge", "x"], base(home, [adapter("pi", selected), adapter("grok-build", selected)]));
+  assert.deepEqual(selected, ["grok-build"]);
 }));
 
 test("host selection failures are typed and stop before role turn", async () => homeTest(async (home) => {
