@@ -27,7 +27,7 @@ import {
   readOAuthKeepaliveProviders,
   type OAuthKeepaliveScheduler,
 } from "../../src/oauth-keepalive.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { createPiRoleRuntimeExtension as createRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import {
   flushEventLoopTurns,
   withHermeticHome,

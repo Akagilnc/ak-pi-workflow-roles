@@ -27,10 +27,14 @@ export type PiRoleHostAdapter = RoleEnvelopeHost & {
 const piContexts = new WeakMap<HostContext, ExtensionContext>();
 
 /** Pi-only entrypoint adapter around the host-neutral shared composition. */
-export function createPiRoleRuntimeExtension(dependencies: RoleRuntimeDependencies): (pi: ExtensionAPI) => void {
-  return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi,
-    dependencies.oauthKeepalive === undefined ? {} : { oauthKeepalive: dependencies.oauthKeepalive },
-  ));
+export function createPiRoleRuntimeExtension(
+  dependencies: RoleRuntimeDependencies,
+  options: { transcriptFromContext?: (context: ExtensionContext) => string } = {},
+): (pi: ExtensionAPI) => void {
+  return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi, {
+    ...options,
+    ...(dependencies.oauthKeepalive === undefined ? {} : { oauthKeepalive: dependencies.oauthKeepalive }),
+  }));
 }
 
 /** Project Pi's activation context onto the package-owned host contract. */
