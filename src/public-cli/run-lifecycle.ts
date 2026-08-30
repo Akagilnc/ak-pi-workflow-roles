@@ -448,16 +448,18 @@ function describeAutopsy(autopsy: WriterLockAutopsy): string {
  * the re-read and the unlink itself; POSIX offers no compare-and-delete, and
  * this narrows the window to a single syscall pair.
  */
-async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): Promise<void> {
+async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): Promise<boolean> {
   const current = await autopsyWriterLock(lockPath);
-  if (current.verdict !== "dead") return;
+  if (current.verdict !== "dead") return false;
   try {
     await unlink(lockPath);
+    return true;
   } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return;
+    if (errorCodeOf(error) === "ENOENT") return false;
     if (errorCodeOf(error) !== "EACCES") throw error;
     await chmod(runDirectory, 0o755);
     await unlink(lockPath);
+    return true;
   }
 }
 
@@ -587,19 +589,22 @@ export async function acquireRunWriterLease(
       );
     }
     if (reclaimsLeft <= 0) break;
+    let reclaimed = false;
     try {
-      await reclaimStaleWriterLock(lockPath, runDirectory);
+      reclaimed = await reclaimStaleWriterLock(lockPath, runDirectory);
     } catch (reclaimError) {
       throw new RunWriterLeaseHeldError(
         `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
       );
     }
-    // #556 residual declaration, facts only: the pid-only autopsy proves the
-    // CLI holder died; its pi child may outlive it and keep writing this run.
-    // Declare — do not guard.
-    reportDiagnostic(
-      `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run — check for a surviving pi process on this run before continuing`,
-    );
+    // #556 residual declaration, facts only, and only on the fact of removal:
+    // the pid-only autopsy proves the CLI holder died; its pi child may outlive
+    // it and keep writing this run. Declare — do not guard.
+    if (reclaimed) {
+      reportDiagnostic(
+        `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run — check for a surviving pi process on this run before continuing`,
+      );
+    }
   }
   throw new RunWriterLeaseHeldError(
     `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,

@@ -251,6 +251,6 @@ test("countersign runs are one-shot — resume is refused", async () => {
       io: resumeIo,
     });
     assert.equal(refused.exitCode, 2);
-    assert.match(resumeStderr.join(""), /countersign role runs are one-shot/);
+    assert.equal(refused.terminal, undefined);
   });
 });

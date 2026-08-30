@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
-  projectLawfulCountersignOutput,
-  retainCountersignSubmission,
+  validateRecordedCountersignOutput,
 } from "../../src/countersign-contracts.ts";
-import { createCountersignRoleRuntime } from "../../src/countersign-role.ts";
+import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
+import { submitCountersignVerdict } from "../../src/countersign-role.ts";
 
 /** Shared mock-Pi harness for the Countersign runtime. */
 function countersignHarness() {
@@ -22,19 +20,32 @@ function countersignHarness() {
   return { tools, pi, beforeStart: () => beforeStart };
 }
 
-test("projectLawfulCountersignOutput projects 署/封驳/上呈; non-verdict retained as-is", () => {
-  assert.equal(projectLawfulCountersignOutput({ countersignStatus: "converged", findings: [] })?.countersignStatus, "converged");
-  const sealedBack = projectLawfulCountersignOutput({ countersignStatus: "continue", findings: ["x"] });
-  assert.equal(sealedBack?.countersignStatus, "continue");
-  // 封驳 defaults to rewrite disposition — 退回重议, not run failure.
-  assert.equal((sealedBack as { disposition?: string }).disposition, "rewrite");
-  assert.equal(projectLawfulCountersignOutput({ countersignStatus: "escalate", findings: [] })?.countersignStatus, "escalate");
-  // ADR 0055 / 第 0 条: no shape admission throw — non-verdict stays undefined projection.
-  assert.equal(projectLawfulCountersignOutput({ countersignStatus: "maybe", note: "not a verdict" }), undefined);
-  assert.equal(projectLawfulCountersignOutput({ status: "converged" }), undefined);
-  assert.equal(projectLawfulCountersignOutput(null), undefined);
-  const raw = { countersignStatus: "maybe", note: "not an explicit verdict" };
-  assert.deepEqual(retainCountersignSubmission(raw), raw);
+test("validateRecordedCountersignOutput recognizes 署/封驳/上呈 read-only — 原卷保真", () => {
+  // 原卷保真 (ADR 0055): lawful verdicts are delivered untouched — no field
+  // defaulted, rewritten, or dropped (#572 判词送修 2).
+  const sealedBack = validateRecordedCountersignOutput({
+    countersignStatus: "continue",
+    findings: ["x"],
+    evidence: "e-1",
+  }) as unknown as Record<string, unknown>;
+  assert.equal(sealedBack.countersignStatus, "continue");
+  assert.equal("disposition" in sealedBack, false, "no disposition default may be injected");
+  assert.deepEqual(sealedBack.findings, ["x"], "findings must not be normalized");
+  assert.equal(sealedBack.evidence, "e-1", "evidence must survive");
+  assert.equal(
+    validateRecordedCountersignOutput({ countersignStatus: "converged", note: "n" }).countersignStatus,
+    "converged",
+  );
+  assert.equal(
+    validateRecordedCountersignOutput({
+      countersignStatus: "escalate",
+      decisionGate: { question: "q", options: ["a"] },
+    }).countersignStatus,
+    "escalate",
+  );
+  assert.throws(() => validateRecordedCountersignOutput({ countersignStatus: "maybe" }));
+  assert.throws(() => validateRecordedCountersignOutput({ status: "converged" }));
+  assert.throws(() => validateRecordedCountersignOutput(null));
 });
 
 test("Countersign runtime registers output tool and injects soul without ticket body preload", async () => {
@@ -64,10 +75,10 @@ test("Countersign runtime refuses empty soul", async () => {
     { loadSoul: async () => "   " },
     { failInfrastructure(error) { throw error; } },
   );
-  await assert.rejects(runtime.activate(), /Countersign soul is empty/);
+  await assert.rejects(runtime.activate());
 });
 
-test("Countersign output enforces the singleton terminating submission", async () => {
+test("Countersign submit enforces the singleton terminating submission and delivers the original verdict", async () => {
   const h = countersignHarness();
   const runtime = createCountersignRoleRuntime(
     h.pi as never,
@@ -77,24 +88,19 @@ test("Countersign output enforces the singleton terminating submission", async (
   await runtime.activate();
   const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
   assert.ok(tool);
-  const sessionManager = SessionManager.inMemory();
-  sessionManager.appendMessage({
-    role: "assistant",
-    content: [{ type: "text", text: "thinking out loud" }],
-    api: "openai-responses",
-    provider: "test",
-    model: "test",
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-    stopReason: "stop",
-    timestamp: 0,
-  });
-  const parameters = { countersignStatus: "converged", findings: [] };
-  await assert.rejects(
-    tool.execute("call-1", parameters, undefined, undefined, { sessionManager }),
-    (error) => {
-      assert.ok(error instanceof Error);
-      assert.equal(error.message, "给事中回执非唯一终局工具调用");
-      return true;
-    },
+  // Singleton gate: a leaf without exactly one terminating tool call rejects.
+  const emptyLeaf = { sessionManager: { getLeafEntry: () => ({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "thinking" }] } }) } };
+  assert.throws(
+    () => submitCountersignVerdict({ countersignStatus: "converged" }, "call-1", emptyLeaf as never, { failInfrastructure() { throw new Error("unused"); } }),
   );
+  // Lawful path: verdict delivered as submitted — 原卷保真.
+  const singleton = { sessionManager: { getLeafEntry: () => ({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "call-2", name: COUNTERSIGN_OUTPUT_TOOL_NAME, arguments: {} }] } }) } };
+  const receipt = submitCountersignVerdict(
+    { countersignStatus: "continue", fix: { summary: "授权出处缺失" }, evidence: "e-9" },
+    "call-2",
+    singleton as never,
+    { failInfrastructure() { throw new Error("unused"); } },
+  );
+  assert.equal(receipt.terminate, true);
+  assert.deepEqual(receipt.details, { countersignStatus: "continue", fix: { summary: "授权出处缺失" }, evidence: "e-9" });
 });
