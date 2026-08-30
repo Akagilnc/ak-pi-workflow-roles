@@ -302,6 +302,20 @@ const GLOBAL_OPTIONS = [
     },
   },
   {
+    id: "host",
+    owner: "global",
+    canonical: "--host",
+    aliases: [],
+    valueMetavar: "name",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Select the named main-session host adapter for this invocation.",
+      zh: "为本调用选择具名主会话宿主适配器。",
+    },
+  },
+  {
     id: "help",
     owner: "global",
     canonical: "--help",
@@ -1128,6 +1142,8 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role config unset <gatekeeper|inspector|notary>",
       "ak-role config set-engine <seat> <name>",
       "ak-role config unset-engine <seat>",
+      "ak-role config set-host <seat> <name>",
+      "ak-role config unset-host <seat>",
       "ak-role config set-auto-resume-limit <N>",
     ],
     examples: [
