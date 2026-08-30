@@ -10,14 +10,15 @@ const binary = join(homedir(), ".grok", "bin", "grok");
 const auth = join(homedir(), ".grok", "auth.json");
 
 /** Bare live seam: ACP resume/runtime controls cannot be credibly simulated. */
-test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 180_000 }, async (t) => {
+test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async (t) => {
   try { await Promise.all([access(binary), access(auth)]); } catch { t.skip("authenticated Grok unavailable"); return; }
   const home = await mkdtemp(join(tmpdir(), "ak-grok-acp-live-"));
   const connections: GrokAcpConnection[] = [];
-  const open = async (options: { toolset?: string } = {}) => {
+  const open = async (options: { toolset?: string; onNotification?: (method: string, params: Readonly<Record<string, unknown>>) => void } = {}) => {
     const connection = await connectGrokAcpStdio({
       binary, cwd: process.cwd(), env: controlledGrokChildEnv(process.env, home),
       ...(options.toolset === undefined ? {} : { toolset: options.toolset }),
+      ...(options.onNotification === undefined ? {} : { onNotification: options.onNotification }),
     });
     connections.push(connection);
     await connection.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
@@ -36,18 +37,43 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 180_000 }, async
     await firstConnection.request("session/close", { sessionId });
     await firstConnection.close();
 
-    const resumed = await open();
+    // G12: session/load must replay non-empty history, not merely return the same id.
+    const replayed: string[] = [];
+    const resumed = await open({
+      onNotification(method, params) {
+        if (method !== "session/update") return;
+        const update = (params as { update?: unknown }).update;
+        if (typeof update === "object" && update !== null && typeof (update as { sessionUpdate?: unknown }).sessionUpdate === "string") {
+          replayed.push((update as { sessionUpdate: string }).sessionUpdate);
+        }
+      },
+    });
     const loaded = await resumed.request("session/load", { sessionId, cwd: process.cwd(), mcpServers: [] });
-    assert.equal((loaded._meta as { "x.ai/sessionDetail"?: { sessionId?: unknown } })["x.ai/sessionDetail"]?.sessionId, sessionId); // G12
+    assert.equal((loaded._meta as { "x.ai/sessionDetail"?: { sessionId?: unknown } })["x.ai/sessionDetail"]?.sessionId, sessionId);
+    assert.ok(
+      replayed.some((kind) => kind === "user_message_chunk" || kind === "agent_message_chunk"),
+      "session/load must replay prior user/assistant history",
+    );
     await resumed.request("session/close", { sessionId });
     await resumed.close();
 
-    const configuredUpdates: Array<{ sessionUpdate?: unknown; status?: unknown }> = [];
+    // G11: GROK_CONFIG toolset=coding must surface the structured coding toolset,
+    // and the executed shell tool must report typed rawOutput — not just any
+    // completed tool_call_update.
+    const observedTools: string[] = [];
+    const toolCalls: Array<{ rawOutput?: { type?: unknown } }> = [];
     const configured = await connectGrokAcpStdio({
       binary, cwd: process.cwd(), env: controlledGrokChildEnv(process.env, home), toolset: "coding",
       onNotification(method, params) {
-        if (method === "session/update" && typeof params.update === "object" && params.update !== null) {
-          configuredUpdates.push(params.update as { sessionUpdate?: unknown; status?: unknown });
+        if (method !== "session/update") return;
+        const update = (params as { update?: unknown }).update;
+        if (typeof update !== "object" || update === null) return;
+        const record = update as Record<string, unknown>;
+        if (record.sessionUpdate === "available_commands_update") {
+          const tools = (record._meta as { tools?: unknown } | undefined)?.tools;
+          if (Array.isArray(tools)) for (const tool of tools) if (typeof tool === "string") observedTools.push(tool);
+        } else if (record.sessionUpdate === "tool_call_update" && record.status === "completed") {
+          toolCalls.push(record as unknown as { rawOutput?: { type?: unknown } });
         }
       },
     });
@@ -56,7 +82,8 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 180_000 }, async
     const configuredSession = await configured.request("session/new", { cwd: process.cwd(), mcpServers: [] });
     const configuredId = configuredSession.sessionId as string;
     await configured.request("session/prompt", { sessionId: configuredId, prompt: [{ type: "text", text: "Run pwd with the shell tool exactly once, then stop." }] });
-    assert.equal(configuredUpdates.some(({ sessionUpdate, status }) => sessionUpdate === "tool_call_update" && status === "completed"), true); // G11
+    assert.ok(observedTools.includes("run_terminal_command"), "coding toolset must expose the typed shell tool");
+    assert.ok(toolCalls.some((call) => call.rawOutput?.type === "Bash"), "the executed shell tool must report typed Bash rawOutput");
     await configured.request("session/close", { sessionId: configuredId });
     await configured.close();
   } finally {
