@@ -140,8 +140,14 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
       );
       const sessionFile = (await readdir(sessionDir)).find((name) => name.endsWith(".jsonl"));
       assert.ok(sessionFile);
-      const session = await readFile(join(sessionDir, sessionFile), "utf8");
-      assert.equal(session.includes(`\"toolName\":\"${INSPECTOR_OUTPUT_TOOL_NAME}\"`), true);
+      const entries = (await readFile(join(sessionDir, sessionFile), "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { message?: { toolName?: string } });
+      assert.equal(
+        entries.some((entry) => entry.message?.toolName === INSPECTOR_OUTPUT_TOOL_NAME),
+        true,
+      );
     }
   });
 });
