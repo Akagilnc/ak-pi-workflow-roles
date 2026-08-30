@@ -3059,11 +3059,8 @@ export async function trySettleDoctorTerminalResult(
   return settleLawfulDoctorTerminalResult(admitted);
 }
 
-export async function trySettleInspectorTerminalResult(
-  admitted: AdmittedInspectorInvocation,
-): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined || !isReceiptSettlementBindingClear(entries)) return undefined;
+export function extractInspectorRoleOutcome(entries: readonly SessionEntry[]): TerminalResult["roleOutcome"] | undefined {
+  if (!isReceiptSettlementBindingClear(entries)) return undefined;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const message = entries[index]?.message;
     if (message?.role !== "toolResult" || message.toolName !== INSPECTOR_OUTPUT_TOOL_NAME) continue;
@@ -3073,14 +3070,41 @@ export async function trySettleInspectorTerminalResult(
     const status = Reflect.get(details, "status");
     if (status !== "pass" && status !== "bounce") continue;
     const findings = Reflect.get(details, "findings");
-    const terminal: TerminalResult = {
-      roleOutcome: {
-        kind: "accepted", role: "inspector", status,
-        decisiveFacts: { findings },
-      },
+    return { kind: "accepted", role: "inspector", status, decisiveFacts: { findings } };
+  }
+  return undefined;
+}
+
+export async function trySettleInspectorTerminalResult(
+  admitted: AdmittedInspectorInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const outcome = extractInspectorRoleOutcome(entries);
+  if (outcome !== undefined) {
+    return withOptionalGateProjection({
+      roleOutcome: outcome,
       navigator: extractNavigatorFact(entries), artifacts: [], runId: admitted.runId,
-    };
-    return withOptionalGateProjection(terminal, admitted.sessionDirectory);
+    }, admitted.sessionDirectory);
+  }
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult") continue;
+    const residual = boundErroredToolCandidate(entries, index, message, INSPECTOR_OUTPUT_TOOL_NAME);
+    if (residual !== undefined) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: residual.diagnostic,
+        details: { candidate: residual.candidate, acceptedReceipt: false },
+      });
+    }
+    if (message.toolName === INSPECTOR_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: "给事中回执无显式 pass/bounce",
+        details: { candidate: message.details, acceptedReceipt: false },
+      });
+    }
   }
   return undefined;
 }

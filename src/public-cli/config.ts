@@ -42,8 +42,8 @@ export type SeatModelConfig = ModelRef;
 
 /**
  * Persistent seat row (#356/#384/#453): model fields and engine are independent
- * axes. Engine-only residual is legal only for notary after model clear so direct
- * direct officer activation keeps its labor engine while province inheritance resumes.
+ * axes. Direct Inspector and Notary seats may retain an engine after model clear so
+ * officer activation keeps its labor engine while province inheritance resumes.
  * All other seats keep the baseline provider/model required contract.
  */
 export type PersistentSeatConfig = {
@@ -156,7 +156,7 @@ export function setPersistentSeatConfig(
  * Scope is GateOfficerSeat only — non-province seats have no destructive clear seam.
  * Directly callable gate officers may retain an engine-only residual so activation keeps
  * its labor engine while model resolution returns to startup / province inheritance.
- * gatekeeper/inspector drop the whole row. Already-absent seats are a no-op.
+ * Gatekeeper drops the whole row. Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(
   config: PublicCliConfig,
@@ -164,7 +164,7 @@ export function clearPersistentSeatConfig(
 ): PublicCliConfig {
   const previous = config.seats[seat];
   if (previous === undefined) return config;
-  // Engine-only residual ownership is notary-only — never widen to other officers.
+  // Direct officer engine ownership survives an independent model clear.
   if ((seat === "notary" || seat === "inspector") && previous.engine !== undefined) {
     return {
       ...config,
@@ -536,7 +536,7 @@ function resolveBaseSeat(
   seat: PublicConfigurableSeat,
   credentials: CredentialProviders,
 ): EffectiveSeat {
-  const automatic = isAutomaticConfigurableSeat(seat) || seat === "inspector";
+  const automatic = isAutomaticConfigurableSeat(seat);
   // Engine-only residual is not a persistent model source (#453).
   const persistentModel = seatModelOnly(config.seats[seat]);
   if (persistentModel !== undefined) {
@@ -567,7 +567,7 @@ export function resolveEffectiveSeat(
   credentials: CredentialProviders,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
-  const automatic = isAutomaticConfigurableSeat(seat) || seat === "inspector";
+  const automatic = isAutomaticConfigurableSeat(seat);
   const hasModelInvocation =
     invocation !== undefined &&
     (invocation.model !== undefined || invocation.thinking !== undefined);

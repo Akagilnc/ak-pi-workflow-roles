@@ -308,7 +308,7 @@ async function installFromTarball(
 }
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
+  assert.equal(PUBLIC_CALLABLE_ROLES.length, 9);
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
@@ -407,6 +407,22 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       PATH: `${shimDir}:${process.env.PATH ?? ""}`,
       PI_OFFLINE: "1",
     };
+
+    // inspector — standard callable-role isolation profile.
+    {
+      const attachment = resolve(project, "inspector-material.txt");
+      await writeFile(attachment, "frozen review material", "utf8");
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["inspector", "--project", project, "--attach", attachment, "Review this material."],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("inspector", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "inspector");
+      assert.equal(args.includes("--no-skills"), true);
+    }
 
     // judge — retained role gate: Internal --ak-role judge, no ambient skills.
     {
