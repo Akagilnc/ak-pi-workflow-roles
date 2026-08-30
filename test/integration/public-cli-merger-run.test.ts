@@ -26,6 +26,10 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+  noReceiptLifecycleFacts,
+} from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
@@ -320,7 +324,27 @@ function hostNeutralTypedTurn(options: {
             }
           }
           if (options.stopAfterCandidate !== undefined) {
-            if (options.stopAfterCandidate === "failure") throw new Error("host failed after output candidate");
+            if (options.stopAfterCandidate === "failure") {
+              return {
+                code: 1,
+                stderr: "host failed after output candidate",
+                timedOut: false,
+                knownFailure: {
+                  cause: "session",
+                  identity: { name: "AlternateHostSessionFailure", code: "candidate-unclosed" },
+                },
+              };
+            }
+            context.sessionManager.appendCustomEntry!(
+              NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+              noReceiptLifecycleFacts({
+                terminalToolCalled: true,
+                rejectedReceipts: [],
+                deliveryTurns: 2,
+                runPointer: request.runDirectory,
+                attemptPointer: `current:${request.runDirectory}`,
+              }),
+            );
             return { code: 0, stderr: "", timedOut: false };
           }
           await handlers.get("turn_end")!({ turnIndex, calls }, context);
@@ -544,14 +568,17 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           }),
         },
       );
-      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
+      assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
+      if (result.terminal?.roleOutcome.kind !== "no_receipt") throw new Error("expected no-receipt outcome");
+      assert.equal(result.terminal.roleOutcome.terminalToolCalled, true);
+      assert.deepEqual(result.terminal.roleOutcome.rejectedReceipts, []);
+      assert.equal(result.terminal.roleOutcome.deliveryTurns, 2);
       assert.equal(
-        result.terminal?.roleOutcome.kind === "no_receipt" ||
-          result.terminal?.roleOutcome.kind === "incomplete" ||
-          result.exitCode !== 0,
-        true,
-        "no sealed path must not accept",
+        result.terminal.roleOutcome.sessionCompletion,
+        "settled-without-accepted-receipt",
       );
+      assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
       assert.equal(await readSealedSubmission(project, "run-table-no-receipt"), undefined);
     }
 
@@ -575,8 +602,10 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           }),
         },
       );
-      assert.notEqual(result.exitCode, 0);
-      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.terminal?.roleOutcome.kind, "failure");
+      if (result.terminal?.roleOutcome.kind !== "failure") throw new Error("expected failure outcome");
+      assert.equal(result.terminal.roleOutcome.cause, "session");
       assert.equal(await readSealedSubmission(project, "run-table-infrastructure"), undefined);
       process.exitCode = undefined;
     }
