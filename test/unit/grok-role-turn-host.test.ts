@@ -60,6 +60,16 @@ async function runInstalledSeatbeltHook(
   return JSON.parse(stdout) as { decision: string; reason?: string };
 }
 
+function canDenyInitializeMeta() {
+  return {
+    agentCapabilities: { loadSession: true },
+    _meta: {
+      modelState: { availableModels: [{ modelId: "grok-4.5" }] },
+      "x.ai/hooks": { blockingEvents: ["pre_tool_use"], decisions: ["deny"] },
+    },
+  };
+}
+
 test("grok host closes an accepted ACP turn through the typed round boundary", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-accept-"));
   try {
@@ -69,15 +79,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
     const connection: GrokAcpConnection = {
       async request(method, params) {
         calls.push([method, params]);
-        if (method === "initialize") {
-          return {
-            agentCapabilities: { loadSession: true },
-            _meta: {
-              modelState: { availableModels: [{ modelId: "grok-4.5" }] },
-              "x.ai/hooks": { blockingEvents: ["pre_tool_use"], decisions: ["deny"] },
-            },
-          };
-        }
+        if (method === "initialize") return canDenyInitializeMeta();
         if (method === "session/new") return { sessionId: "s1" };
         if (method === "session/prompt") return { stopReason: "end_turn" };
         if (method === "session/close") return {};
@@ -96,9 +98,9 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
 
     assert.deepEqual(await host.executeTurn(localRequest), { code: 0, stderr: "", timedOut: false });
     assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/close"]);
-    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
-    const hookJson = await readFile(join(home, "hooks", "ak-bash-seatbelt.json"), "utf8");
-    assert.equal(JSON.parse(hookJson).hooks.PreToolUse[0].matcher, "Bash|run_terminal_command");
+    // Default fixture role is judge: canDeny does not install the Fixer-only seatbelt.
+    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
+    await assert.rejects(readFile(join(home, "hooks", "ak-bash-seatbelt.json")));
     assert.deepEqual(calls[1], ["session/new", {
       cwd: "/work",
       mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }],
@@ -109,10 +111,81 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   }
 });
 
+test("grok host installs PreToolUse deny only for Fixer when the host can deny", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-grok-fixer-deny-"));
+  try {
+    const localRequest = {
+      ...request,
+      activation: { role: "fixer" },
+      home,
+      agentDir: join(home, "agent"),
+      runDirectory: join(home, "run"),
+    } as RoleTurnRequest;
+    const capabilities: unknown[] = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
+      connect: async () => ({
+        async request(method) {
+          if (method === "initialize") return canDenyInitializeMeta();
+          if (method === "session/new") return { sessionId: "s1" };
+          if (method === "session/prompt") return { stopReason: "end_turn" };
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_fixer_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: true })),
+    });
+    assert.equal((await host.executeTurn(localRequest)).code, 0);
+    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
+    // Presence of the hook file is the external hang signal; do not lock matcher text.
+    await readFile(join(home, "hooks", "ak-bash-seatbelt.json"), "utf8");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("grok host does not install PreToolUse deny for non-Fixer seats even when canDeny", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-grok-judge-nodeny-"));
+  try {
+    const localRequest = { ...request, home, agentDir: join(home, "agent"), runDirectory: join(home, "run") } as RoleTurnRequest;
+    const capabilities: unknown[] = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
+      connect: async () => ({
+        async request(method) {
+          if (method === "initialize") return canDenyInitializeMeta();
+          if (method === "session/new") return { sessionId: "s1" };
+          if (method === "session/prompt") return { stopReason: "end_turn" };
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: true })),
+    });
+    assert.equal((await host.executeTurn(localRequest)).code, 0);
+    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
+    await assert.rejects(readFile(join(home, "hooks", "ak-bash-seatbelt.json")));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("grok host records preToolUseDeny false when the host cannot deny", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-nodeny-"));
   try {
-    const localRequest = { ...request, home, agentDir: join(home, "agent"), runDirectory: join(home, "run") } as RoleTurnRequest;
+    const localRequest = {
+      ...request,
+      activation: { role: "fixer" },
+      home,
+      agentDir: join(home, "agent"),
+      runDirectory: join(home, "run"),
+    } as RoleTurnRequest;
     const capabilities: unknown[] = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity,
@@ -127,7 +200,7 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
         notify() {},
         async close() {},
       }),
-      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_fixer_output"] }),
       prepare: async () => prepared(async () => ({ accepted: true })),
     });
     assert.equal((await host.executeTurn(localRequest)).code, 0);
