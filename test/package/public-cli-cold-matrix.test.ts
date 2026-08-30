@@ -308,7 +308,6 @@ async function installFromTarball(
 }
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
-  assert.equal(PUBLIC_CALLABLE_ROLES.length, 8);
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
     PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
@@ -407,6 +406,18 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       PATH: `${shimDir}:${process.env.PATH ?? ""}`,
       PI_OFFLINE: "1",
     };
+
+    // Inspector — cold-installed executable reaches its isolated internal seat.
+    {
+      await runAkRoleBin(
+        installed.akRoleBin,
+        ["inspector", "--project", project, "Review this material."],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "inspector");
+      assert.equal(args.includes("--no-skills"), true);
+    }
 
     // judge — retained role gate: Internal --ak-role judge, no ambient skills.
     {

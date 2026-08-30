@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, realpath, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -16,6 +16,7 @@ import {
   resolveInternalRoleEntrypoint,
   runAkRole,
 } from "../../src/public-cli/cli.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
 import {
   loadPublicCliConfig,
@@ -23,7 +24,7 @@ import {
   resolveEffectiveSeat,
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, runPiSubprocess } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
@@ -62,6 +63,93 @@ test("help document capabilities match typed registry without depending on layou
     assert.equal(names.includes(role), true);
   }
   assert.equal((names as readonly string[]).includes("navigator"), false);
+});
+
+test("Inspector public runner preserves typed pass, bounce, and malformed output", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project);
+    execFileSync("git", ["init", "-b", "main"], { cwd: project, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "inspector@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Inspector Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project, stdio: "ignore" });
+    const attachment = join(project, "material.txt");
+    await writeFile(attachment, "frozen review material", "utf8");
+    const providerPath = resolve(packageRoot, "test/fixtures/inspector-public-provider.ts");
+
+    for (const [index, row] of [
+      { status: "pass", exitCode: 0, findings: ["pass-finding"] },
+      { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
+      { status: "malformed", exitCode: 1, candidate: { status: "unknown", findings: "unaltered" } },
+    ].entries()) {
+      const runId = `inspector-public-${index}`;
+      const result = await runAkRole(
+        [
+          "inspector", "--model", "ak-inspector-offline/faux-1", "--thinking", "off",
+          "--project", project, "--attach", attachment, "Review this material.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => runId,
+          io: captureIo().io,
+          piRunner: async (args, options) => {
+            const forwarded = [...args];
+            const extensionIndex = forwarded.indexOf("-e");
+            assert.notEqual(extensionIndex, -1);
+            forwarded.splice(extensionIndex + 2, 0, "-e", providerPath);
+            const child = await runPiSubprocess(forwarded, {
+              cwd: options.cwd,
+              env: { ...options.env, AK_TEST_INSPECTOR_STATUS: row.status },
+              ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+            });
+            return {
+              code: child.code ?? 1,
+              stderr: child.stderr,
+              timedOut: child.localTimeout,
+              args: forwarded,
+            };
+          },
+        },
+      );
+
+      assert.equal(result.exitCode, row.exitCode);
+      assert.ok(result.terminal);
+      const outcome = result.terminal.roleOutcome;
+      if (row.status === "malformed") {
+        assert.equal(outcome.kind, "failure");
+        if (outcome.kind !== "failure") throw new Error("expected malformed output failure");
+        assert.equal(outcome.cause, "output");
+        assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
+          candidate: row.candidate,
+          acceptedReceipt: false,
+        });
+      } else {
+        assert.equal(outcome.kind, "accepted");
+        if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
+        assert.equal(outcome.status, row.status);
+        assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+      }
+
+      // Session evidence only corroborates that the public runner traversed the
+      // real Pi/runtime output tool; all behavior assertions above use Terminal.
+      const sessionDir = join(
+        home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs",
+        `${runId}@inspector`, "session",
+      );
+      const sessionFile = (await readdir(sessionDir)).find((name) => name.endsWith(".jsonl"));
+      assert.ok(sessionFile);
+      const entries = (await readFile(join(sessionDir, sessionFile), "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { message?: { toolName?: string } });
+      assert.equal(
+        entries.some((entry) => entry.message?.toolName === INSPECTOR_OUTPUT_TOOL_NAME),
+        true,
+      );
+    }
+  });
 });
 
 // Config persistence round-trip on the typed seat face (#420 整改：原四条呈现案

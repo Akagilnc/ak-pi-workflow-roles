@@ -463,6 +463,44 @@ async function startJudge(
   });
 }
 
+test("shared runtime activates Inspector soul and executes its terminating receipt tool", async () => {
+  await withActivationHome({ prefix: "ak-inspector-role-" }, async ({ home }) => {
+    const harness = extensionHarness("inspector");
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "judge",
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      loadInspectorSoul: async () => "inspector",
+    })(harness.pi as ExtensionAPI);
+
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    const tool = harness.tools.get(INSPECTOR_OUTPUT_TOOL);
+    assert.ok(tool);
+    const receipt = await tool.execute(
+      "inspector-call",
+      { status: "bounce", findings: ["missing public-seam proof"] },
+      new AbortController().signal,
+      () => {},
+      toolCallContext([{ id: "inspector-call", name: INSPECTOR_OUTPUT_TOOL }]),
+    );
+    assert.equal(receipt.terminate, true);
+    assert.deepEqual(receipt.details, { status: "bounce", findings: ["missing public-seam proof"] });
+    await assert.rejects(
+      tool.execute(
+        "inspector-call-2",
+        { status: "pass", findings: [] },
+        new AbortController().signal,
+        () => {},
+        toolCallContext([
+          { id: "inspector-call-2", name: INSPECTOR_OUTPUT_TOOL },
+          { id: "second-terminal", name: INSPECTOR_OUTPUT_TOOL },
+        ]),
+      ),
+      /非唯一终局工具调用/,
+    );
+  });
+});
+
 test("stable factory registers the complete typed role flag set and stays inert without a role", async () => {
   let loads = 0;
   const harness = extensionHarness(undefined);
