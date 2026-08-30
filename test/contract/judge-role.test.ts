@@ -1,3 +1,4 @@
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -607,14 +608,14 @@ function activationCtx(home: string, extras: Record<string, unknown> = {}): Exte
 
 async function startJudge(
   auditSoulCompliance: Parameters<
-    typeof createRoleRuntimeExtension
+    typeof createPiRoleRuntimeExtension
   >[0]["auditSoulCompliance"],
   transcriptFromContext: (ctx: HostContext) => string = () =>
     "review evidence and adjudication",
 ) {
   return withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     const harness = extensionHarness("judge");
-    createRoleRuntimeExtension({
+    createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
       transcriptFromContext,
       auditSoulCompliance,
@@ -629,7 +630,7 @@ async function startJudge(
 test("stable factory registers the complete typed role flag set and stays inert without a role", async () => {
   let loads = 0;
   const harness = extensionHarness(undefined);
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => { loads += 1; return "judge"; },
     loadFixerSoul: async () => { loads += 1; return "fixer"; },
     loadCoderSoul: async () => { loads += 1; return "coder"; },
@@ -692,7 +693,7 @@ test("after_provider_response production handler writes typed 429 into resumable
     await writeFile(admittedRequestPath, "{}\n", "utf8");
 
     const harness = extensionHarness(undefined);
-    createRoleRuntimeExtension({
+    createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "judge",
       transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
@@ -798,7 +799,7 @@ test("after_provider_response production handler writes typed 429 into resumable
 test("unsupported role fails with the frozen diagnostic before any loader runs", async () => {
   let loads = 0;
   const harness = extensionHarness("router");
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => { loads += 1; return "judge"; },
     loadFixerSoul: async () => { loads += 1; return "fixer"; },
     loadCoderSoul: async () => { loads += 1; return "coder"; },
@@ -1124,7 +1125,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
     };
     let navigator: ReturnType<typeof createNavigatorAttendance> | undefined;
     const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
-    const extension = createRoleRuntimeExtension({
+    const extension = createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "record",
       auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
@@ -1206,7 +1207,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
 
 test("judge role fails before adjudication when its soul is empty", async () => {
   const harness = extensionHarness("judge");
-  const extension = createRoleRuntimeExtension({
+  const extension = createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "   \n",
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
@@ -1228,7 +1229,7 @@ test("coder plan loads its task without construction skill and returns planned",
     "ak-coder-task": "/materials/task.md",
     "ak-coder-phase": "plan",
   });
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async (path) => {
@@ -1285,7 +1286,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
   });
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
@@ -1339,7 +1340,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
   });
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
@@ -1379,7 +1380,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
 test("Gatekeeper non-pass projects structured details through role-runtime tool_result", async () => {
   // Real entry: judge output → requireGatekeeperPass binds via envelope hostActions → tool_result projects.
   const harness = extensionHarness("judge");
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
@@ -2194,7 +2195,7 @@ test("coder missing skill-expansion evidence persists typed non-pass on real hos
         "ak-coder-task": taskPath,
       },
       extensionFactories: [
-        createRoleRuntimeExtension({
+        createPiRoleRuntimeExtension({
           loadJudgeSoul: async () => "JUDGE LAW",
           loadCoderSoul: async () => "CODER LAW",
           loadCoderTask: async (path) => readFile(path, "utf8"),
@@ -2265,7 +2266,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
   ] as const;
   for (const row of rows) {
     const harness = extensionHarness("fixer", row.flags);
-    createRoleRuntimeExtension({
+    createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "judge",
       loadFixerSoul: async () => "fixer",
       loadFixPacket: async () => row.packet,
@@ -2285,7 +2286,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
 
 test("undeclared prerequisite submissions are rejected; declared references pass structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
     transcriptFromContext: () => "record", auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
@@ -2334,7 +2335,7 @@ test("undeclared prerequisite submissions are rejected; declared references pass
 });
 test("declared plan refusal passes structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "plan" });
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer",
     loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
     transcriptFromContext: () => "plan-record", auditSoulCompliance: async () => ({ status: "pass" }),
@@ -2355,7 +2356,7 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     "ak-fix-packet": "/materials/fix.md",
     "ak-fixer-phase": "apply",
   });
-  const extension = createRoleRuntimeExtension({
+  const extension = createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW\nCreate one forward commit.",
     loadFixPacket: async (path) => {
@@ -2417,7 +2418,7 @@ test("fixer activation leaves its tool surface unchanged", async () => {
     },
     ["read", "bash", "write", "edit", "arbitrary_sibling"],
   );
-  createRoleRuntimeExtension({
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
     loadFixPacket: async () => emptyFixPacket,
@@ -2468,7 +2469,7 @@ test(
       let attendance: ReturnType<typeof createNavigatorAttendance> | undefined;
       const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
 
-      const extension = createRoleRuntimeExtension({
+      const extension = createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
         transcriptFromContext: () => "record",
         auditSoulCompliance: async () => ({ status: "pass" }),

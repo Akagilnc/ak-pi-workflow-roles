@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -627,7 +628,6 @@ test("public admitted-request projects typed subject/authority; missing/malforme
 
 test("role-runtime passes admitted-request subject/authority into Navigator attendance", async () => {
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
 
   const root = await mkdtemp(join(tmpdir(), "navigator-admitted-attendance-"));
@@ -670,7 +670,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
       };
 
       const piHostAdapter = createPiRoleHostAdapter(pi as never);
-      createRoleRuntimeExtension({
+      createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
         transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
@@ -716,7 +716,6 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
 test("bare developer prompt recovers Navigator work context poisoned at session_start", async () => {
   const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
 
   await withActivationHome({ prefix: "ak-nav-prompt-recover-" }, async ({ home }) => {
@@ -751,7 +750,7 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
     let prepareCalls = 0;
     const setContexts: Array<Record<string, unknown>> = [];
 
-    createRoleRuntimeExtension({
+    createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
