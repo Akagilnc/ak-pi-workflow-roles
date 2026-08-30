@@ -223,7 +223,11 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
       );
       assert.equal(outputResults.length, 1, "single typed accept after legs");
       assert.equal(outputResults[0]?.message?.isError, false);
-      assert.deepEqual(outputResults[0]?.message?.details?.amendments, REVIEWER_AMENDMENT_TRACE);
+      const closureResults = sessionRows.filter(
+        (row) => row.type === "custom" && row.customType === "ak-role-submission-closure",
+      );
+      assert.equal(closureResults.length, 1, "single typed closure after legs");
+      assert.deepEqual(((closureResults[0] as any)?.data?.details ?? (closureResults[0] as any)?.details)?.amendments, REVIEWER_AMENDMENT_TRACE);
 
       // Caller-owned handoff: public Judge admits the frozen Reviewer receipt.
       const judgeProvider = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");

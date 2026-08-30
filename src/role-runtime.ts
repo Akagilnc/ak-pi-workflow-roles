@@ -1,12 +1,11 @@
 import { writeSync } from "node:fs";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   ExplicitInternalActivationError,
   type HostContext,
+  type RoleEnvelopeHost,
   type RoleHost,
 } from "./host-contracts.ts";
 import { recordReviewerDispatchRejectionSync } from "./public-cli/reviewer-dispatch-rejection.ts";
-import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "./pi/adapter.ts";
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost } from "./submission-ledger.ts";
@@ -33,8 +32,6 @@ import {
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
-import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
-
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
@@ -519,7 +516,6 @@ export type RoleRuntimeDependencies = {
     options: { context: HostContext; signal?: AbortSignal },
   ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;
-  transcriptFromContext(ctx: HostContext): string;
   auditSoulCompliance(
     options: { context: HostContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
@@ -530,12 +526,6 @@ export type RoleRuntimeDependencies = {
   /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
   toolExecutionObservationMonoNow?(): number;
   toolExecutionObservationWriter?: ToolExecutionObservationWriter;
-  /**
-   * #351 OAuth keepalive: providers/interval/scheduler.
-   * Production extension root reads oauth-keepalive.json and passes providers here
-   * (default ["kimi-coding"] when the setting file is absent). Tests may inject.
-   */
-  oauthKeepalive?: OAuthKeepaliveOptions;
 };
 
 function abortContext(ctx: { abort(): void }): void {
@@ -634,15 +624,13 @@ export async function projectClosedSubmissionLifecycle(
 
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
-  injectedPiHostAdapter?: PiRoleHostAdapter,
-): (pi: ExtensionAPI) => void {
-  return (pi) => {
-    const piHostAdapter = injectedPiHostAdapter ?? createPiRoleHostAdapter(pi);
+): (envelopeHost: RoleEnvelopeHost) => void {
+  return (envelopeHost) => {
     let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection, context: HostContext) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
-      piHostAdapter.host,
+      envelopeHost.host,
       new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
       failInfrastructure,
       async (projection, context) => projectClosedSubmission(projection, context),
@@ -662,7 +650,6 @@ export function createRoleRuntimeExtension(
     let reviewerExpansionCaptured = false;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
-    const oauthKeepalive = createOAuthKeepalive(dependencies.oauthKeepalive);
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
@@ -870,7 +857,7 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // one-shot roles must not mistake this delivery request for later caller input.
-        pi.appendEntry("ak-receipt-delivery-request");
+        envelopeHost.appendEntry("ak-receipt-delivery-request");
         try {
           sitianReport({
             level: "event",
@@ -881,7 +868,7 @@ export function createRoleRuntimeExtension(
             source: "role-runtime",
           });
         } catch {}
-        pi.sendMessage({
+        envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
           content: RECEIPT_DELIVERY_PROMPT,
           display: false,
@@ -891,7 +878,7 @@ export function createRoleRuntimeExtension(
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
           const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
-          pi.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
           try {
             sitianReport({
               level: "event",
@@ -920,7 +907,7 @@ export function createRoleRuntimeExtension(
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation === undefined) return;
-      await pi.sendMessage({
+      await envelopeHost.sendMessage({
         customType: NAVIGATOR_EVENT_TYPE,
         content: formatNavigatorReport(presentation.report),
         display: true,
@@ -929,14 +916,14 @@ export function createRoleRuntimeExtension(
     });
     roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
-      oauthKeepalive.stop();
+      envelopeHost.stopKeepalive();
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation !== undefined) {
         try {
-          await pi.sendMessage({
+          await envelopeHost.sendMessage({
             customType: NAVIGATOR_EVENT_TYPE,
             content: formatNavigatorReport(presentation.report),
             display: true,
@@ -1176,7 +1163,7 @@ export function createRoleRuntimeExtension(
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
-      oauthKeepalive.start(toPiContext(ctx));
+      envelopeHost.startKeepalive(ctx);
       const rawRole = roleHost.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);
@@ -1257,7 +1244,7 @@ export function createRoleRuntimeExtension(
               phase: invocationPhase,
               subjectKey: work.subjectKey,
             };
-            pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
+            envelopeHost.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
             try {
               sitianReport({
                 level: "event",

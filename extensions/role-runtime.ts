@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
-import { createPiRoleHostAdapter, toPiContext } from "../src/pi/adapter.ts";
+import { createPiRoleRuntimeExtension, toPiContext } from "../src/pi/adapter.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
@@ -37,7 +37,6 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
   createProductionMergerGitState,
-  createRoleRuntimeExtension,
   ROLE_FLAG,
 } from "../src/role-runtime.ts";
 import {
@@ -244,14 +243,10 @@ export async function loadNavigatorWorkContext(
 
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner({ packageRoot });
-  const piHostAdapter = createPiRoleHostAdapter(pi, { transcriptFromContext });
+  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
-  // #351: static provider list from extension setting (default ["kimi-coding"]).
-  // Production root is the sole reader; keepalive never auto-detects providers.
-  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
-  createRoleRuntimeExtension({
-    oauthKeepalive: { providers: oauthKeepaliveProviders },
+  createPiRoleRuntimeExtension({
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
@@ -305,7 +300,9 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     },
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, { ...options, context: toPiContext(options.context) }),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
-    transcriptFromContext: (context) => context.transcript?.() ?? "",
     auditSoulCompliance: (options) => createPiJudgeAuditor()({ ...options, context: toPiContext(options.context) }),
-  }, piHostAdapter)(pi);
+  }, {
+    transcriptFromContext,
+    oauthKeepalive: { providers: oauthKeepaliveProviders },
+  })(pi);
 }

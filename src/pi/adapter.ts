@@ -13,14 +13,26 @@ import type {
   HostGatekeeperActions,
   HostToolDefinition,
   HostToolResult,
+  RoleEnvelopeHost,
   RoleHost,
 } from "../host-contracts.ts";
+import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
+import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 
-export type PiRoleHostAdapter = {
-  readonly host: RoleHost;
-};
+export type PiRoleHostAdapter = RoleEnvelopeHost;
 
 const piContexts = new WeakMap<HostContext, ExtensionContext>();
+
+/** Pi-only entrypoint adapter around the host-neutral shared composition. */
+export function createPiRoleRuntimeExtension(
+  dependencies: RoleRuntimeDependencies,
+  options: {
+    transcriptFromContext?: (context: ExtensionContext) => string;
+    oauthKeepalive?: OAuthKeepaliveOptions;
+  } = {},
+): (pi: ExtensionAPI) => void {
+  return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi, options));
+}
 
 /** Project Pi's activation context onto the package-owned host contract. */
 function projectPiContext(context: ExtensionContext, transcriptFromContext?: (context: ExtensionContext) => string): HostContext {
@@ -105,8 +117,9 @@ function toPiToolDefinition<S extends TSchema, D>(
 /** Pi composition boundary. Each consumed capability is adapted explicitly. */
 export function createPiRoleHostAdapter(
   pi: ExtensionAPI,
-  options: { transcriptFromContext?: (context: ExtensionContext) => string } = {},
+  options: { transcriptFromContext?: (context: ExtensionContext) => string; oauthKeepalive?: OAuthKeepaliveOptions } = {},
 ): PiRoleHostAdapter {
+  const keepalive = createOAuthKeepalive(options.oauthKeepalive);
   const host: RoleHost = {
     deliverSubmissionRejection(rejection) {
       pi.sendMessage({
@@ -205,5 +218,16 @@ export function createPiRoleHostAdapter(
     },
     ...(typeof pi.getCommands === "function" ? { getCommands: () => pi.getCommands().map(({ name }) => ({ name })) } : {}),
   };
-  return { host };
+  return {
+    host,
+    appendEntry: (customType, data) => pi.appendEntry(customType, data),
+    sendMessage: (message, sendOptions) => pi.sendMessage({
+      customType: message.customType,
+      content: message.content,
+      display: message.display ?? false,
+      details: message.details,
+    }, sendOptions),
+    startKeepalive: (context) => keepalive.start(toPiContext(context)),
+    stopKeepalive: () => keepalive.stop(),
+  };
 }

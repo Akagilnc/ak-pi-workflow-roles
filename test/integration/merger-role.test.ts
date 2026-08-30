@@ -6,12 +6,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
 import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { activationExtensionContext, packageRoot, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -107,7 +108,13 @@ test("production extension observes session repository B, not ambient repository
           "provider receives constitution + merger soul from production role-runtime",
         );
         const result = sessionManager.getEntries().find(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === MERGER_OUTPUT_TOOL_NAME) as any;
-        assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content)); assert.equal(result?.message.details.mergeCommitId, mergeCommitId);
+        assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content));
+        assert.deepEqual(result?.message.details, { submissionDisposition: "pending-round-closure" });
+        const headerId = sessionManager.getHeader?.()?.id;
+        assert.ok(headerId);
+        const sealed = await readSealedSubmission(repositoryB, headerId);
+        assert.ok(sealed, "typed turn_end must seal sole candidate");
+        assert.equal((sealed.decisiveFacts as any)?.mergeCommitId, mergeCommitId);
       });
     });
   } finally { await rm(repositoryB, { recursive: true, force: true }); }
@@ -121,8 +128,8 @@ test("role extension binds Merger Git state to session cwd while preserving inje
       const roots: string[] = [];
       const states: object[] = [];
       const state = { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } };
-      createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "unused", transcriptFromContext: () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
+      createPiRoleRuntimeExtension({
+        loadJudgeSoul: async () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
         loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input,
         createMergerGitState(root) { roots.push(root); const created = { ...state }; states.push(created); return created; },
         ...(injected ? { mergerGitState: state } : {}),

@@ -18,6 +18,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
@@ -70,9 +71,8 @@ async function withPackageToolSession<T>(
       flags: {},
       extensionFactories: [
         (pi: ExtensionAPI) => {
-          createRoleRuntimeExtension({
+          createPiRoleRuntimeExtension({
             loadJudgeSoul: async () => "judge",
-            transcriptFromContext: () => "",
             auditSoulCompliance: async () => ({ status: "pass" }),
           })(pi);
           pi.registerTool(tool);
@@ -221,9 +221,8 @@ test(
               const piHostAdapter = createPiRoleHostAdapter(pi);
               createRoleRuntimeExtension({
               loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
-              transcriptFromContext: () => "adjudication evidence",
               auditSoulCompliance: (options) => auditSoulCompliance({ ...options, context: toPiContext(options.context) }),
-              }, piHostAdapter)(pi);
+              })(piHostAdapter);
             },
           ],
         }, async ({ session, sessionManager }) => {

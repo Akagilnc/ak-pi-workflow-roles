@@ -101,24 +101,30 @@ test("ordinary Navigator attendance persists preparation, settlement, and visibl
   assert.equal(current.result.code, 0, `ordinary invocation must succeed: ${current.result.stderr}`);
   const accepted = current.roleEntries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
   assert.equal(accepted.length, 1, "must persist the accepted Judge output result");
-  assert.deepEqual(accepted[0]?.message?.details, { judgeStatus: "converged" });
+  assert.deepEqual(accepted[0]?.message?.details, { submissionDisposition: "pending-round-closure" });
+  const closureRows = current.roleEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+  assert.equal(closureRows.length, 1, "must persist the sealed Judge submission closure");
+  assert.deepEqual(closureRows[0]?.data?.details, { judgeStatus: "converged" });
 
   const currentPreparation = current.navigatorEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message.isError === false);
   const currentSettlement = current.navigatorEntries.find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
   const currentVisible = current.roleEntries.find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
-  const currentAccepted = current.roleEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
+  // #575 sole-final barrier: the accepted settlement is the sealed closure,
+  // not the pending-round-closure execute toolResult.
+  const currentAccepted = closureRows[0];
   assert.ok(currentPreparation?.timestamp, "current invocation must persist Navigator preparation completion");
   assert.ok(currentSettlement?.timestamp, "current invocation must persist Navigator settlement");
   assert.ok(currentVisible?.timestamp, "current invocation must persist the visible custom message");
-  assert.ok(currentAccepted?.timestamp, "current invocation must persist the actual accepted role output result");
+  assert.ok(currentAccepted?.timestamp, "current invocation must persist the sealed accepted role output settlement");
   const preparationAt = Date.parse(currentPreparation.timestamp!);
   const settlementAt = Date.parse(currentSettlement.timestamp!);
   const visibleAt = Date.parse(currentVisible.timestamp!);
   const acceptedAt = Date.parse(currentAccepted.timestamp!);
   assert.ok(Number.isFinite(preparationAt) && Number.isFinite(settlementAt) && Number.isFinite(visibleAt) && Number.isFinite(acceptedAt));
-  assert.ok(preparationAt <= acceptedAt, "Navigator preparation must finish before the actual accepted role-output/tool-result settlement");
-  assert.ok(visibleAt >= acceptedAt, "persisted visible custom-message must follow the actual accepted role-output/tool-result settlement");
+  assert.ok(acceptedAt <= settlementAt, "sealed accepted settlement must precede Navigator settlement");
+  assert.ok(preparationAt <= settlementAt, "Navigator preparation must drain before settlement");
   assert.ok(visibleAt >= settlementAt, "persisted visible custom-message must follow Navigator settlement");
+  assert.ok(visibleAt >= acceptedAt, "persisted visible custom-message must follow the sealed accepted settlement");
   assert.ok(visibleAt - acceptedAt <= 1000, `persisted visible custom-message must follow accepted settlement within 1s (actual ${visibleAt - acceptedAt}ms)`);
   const currentEvents = current.result.stdout.split("\n").filter((line) => line.trim().startsWith("{")).map((line) => JSON.parse(line) as any);
   assert.equal(currentEvents.some((event) => event.type === "message_end" && event.message?.role === "custom" && event.message.customType === "ak-navigator-attendance"), true, "current ordinary invocation must display the typed attendance event");
@@ -586,7 +592,10 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
               assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
               assert.equal(receipt.message.isError, false, `${scenario.name}:${diagnostic}`);
-              assert.deepEqual(receipt.message.details, { judgeStatus: "converged" }, `${scenario.name}:${diagnostic}`);
+              assert.deepEqual(receipt.message.details, { submissionDisposition: "pending-round-closure" }, `${scenario.name}:${diagnostic}`);
+              const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+              assert.equal(closure.length, 1, `${scenario.name}:${diagnostic}`);
+              assert.deepEqual((closure[0] as { data?: { details?: unknown } }).data?.details, { judgeStatus: "converged" }, `${scenario.name}:${diagnostic}`);
               const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
               assert.equal(attendance.length, 1, `${scenario.name}:${diagnostic}`);
               const event = (attendance[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;

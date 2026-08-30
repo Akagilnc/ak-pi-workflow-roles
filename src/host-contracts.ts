@@ -254,6 +254,15 @@ export type HostCapabilityDeclaration = Readonly<{
   skillExpansion(prompt: string): HostSkillExpansionEvidence | undefined;
 }>;
 
+/** Host-owned effects used by the shared activation envelope. */
+export interface RoleEnvelopeHost {
+  readonly host: RoleHost;
+  appendEntry(customType: string, data?: unknown): void;
+  sendMessage(message: { customType: string; content: string; display?: boolean; details?: unknown }, options: { triggerTurn: boolean; deliverAs?: "followUp" }): void | Promise<void>;
+  startKeepalive(context: HostContext): void;
+  stopKeepalive(): void;
+}
+
 /** The activation surface consumed by package role factories. */
 export interface RoleHost {
   readonly capabilities?: HostCapabilityDeclaration;
