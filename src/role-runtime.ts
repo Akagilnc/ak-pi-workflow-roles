@@ -624,6 +624,7 @@ export function createRoleRuntimeExtension(
     const roleHost = createSubmissionLedgerHost(
       piHostAdapter.host,
       new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
+      failInfrastructure,
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).

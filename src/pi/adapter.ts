@@ -159,19 +159,28 @@ export function createPiRoleHostAdapter(
         pi.on("after_provider_response", (value, ctx) => handler({ status: value.status }, context(ctx)));
       } else if (registration[0] === "agent_end") {
         const [, handler] = registration;
-        pi.on("agent_end", (value, ctx) => handler({
-        messages: value.messages.map((message) => ({
-          role: message.role,
-          content: "content" in message && Array.isArray(message.content) ? message.content.map((part) => part.type === "text"
-            ? { type: "text", text: part.text }
-            : part.type === "toolCall"
-              ? { type: "toolCall", id: part.id, name: part.name, arguments: part.arguments }
-              : { type: part.type }) : [],
-          ...("toolName" in message && typeof message.toolName === "string" ? { toolName: message.toolName } : {}),
-          ...("isError" in message && typeof message.isError === "boolean" ? { isError: message.isError } : {}),
-          ...("stopReason" in message && typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
-        })),
-      }, context(ctx)));
+        pi.on("agent_end", (value, ctx) => {
+          const lastAssistant = [...value.messages].reverse().find((message) => message.role === "assistant");
+          const terminalRoundCalls = lastAssistant !== undefined && "content" in lastAssistant && Array.isArray(lastAssistant.content)
+            ? lastAssistant.content.flatMap((part) => part.type === "toolCall"
+              ? [{ toolCallId: part.id, toolName: part.name }]
+              : [])
+            : [];
+          return handler({
+            terminalRoundCalls,
+            messages: value.messages.map((message) => ({
+              role: message.role,
+              content: "content" in message && Array.isArray(message.content) ? message.content.map((part) => part.type === "text"
+                ? { type: "text", text: part.text }
+                : part.type === "toolCall"
+                  ? { type: "toolCall", id: part.id, name: part.name, arguments: part.arguments }
+                  : { type: part.type }) : [],
+              ...("toolName" in message && typeof message.toolName === "string" ? { toolName: message.toolName } : {}),
+              ...("isError" in message && typeof message.isError === "boolean" ? { isError: message.isError } : {}),
+              ...("stopReason" in message && typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
+            })),
+          }, context(ctx));
+        });
       } else if (registration[0] === "agent_settled") {
         const [, handler] = registration;
         pi.on("agent_settled", (_value, ctx) => handler({}, context(ctx)));
