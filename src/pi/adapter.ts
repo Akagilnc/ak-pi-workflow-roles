@@ -17,6 +17,7 @@ import type {
   RoleHost,
 } from "../host-contracts.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
+import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 
 export type PiRoleHostAdapter = RoleEnvelopeHost & {
   /** Compatibility alias for host-specific callers that only consume RoleHost. */
@@ -24,6 +25,13 @@ export type PiRoleHostAdapter = RoleEnvelopeHost & {
 };
 
 const piContexts = new WeakMap<HostContext, ExtensionContext>();
+
+/** Pi-only entrypoint adapter around the host-neutral shared composition. */
+export function createPiRoleRuntimeExtension(dependencies: RoleRuntimeDependencies): (pi: ExtensionAPI) => void {
+  return (pi) => createRoleRuntimeExtension(dependencies)(createPiRoleHostAdapter(pi,
+    dependencies.oauthKeepalive === undefined ? {} : { oauthKeepalive: dependencies.oauthKeepalive },
+  ));
+}
 
 /** Project Pi's activation context onto the package-owned host contract. */
 function projectPiContext(context: ExtensionContext, transcriptFromContext?: (context: ExtensionContext) => string): HostContext {
