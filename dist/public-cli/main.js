@@ -15998,6 +15998,18 @@ var init_audit_escalation = __esm({
   }
 });
 
+// src/submission-correctable-error.ts
+var correctableSubmissionErrorBrand, CorrectableSubmissionError;
+var init_submission_correctable_error = __esm({
+  "src/submission-correctable-error.ts"() {
+    "use strict";
+    correctableSubmissionErrorBrand = /* @__PURE__ */ Symbol("ak-roles.correctable-submission-error");
+    CorrectableSubmissionError = class extends Error {
+      [correctableSubmissionErrorBrand] = true;
+    };
+  }
+});
+
 // src/package-contracts/terminating-tools.ts
 function isTerminatingToolName(name) {
   return TERMINATING_TOOL_NAMES.includes(name);
@@ -16089,6 +16101,7 @@ var init_terminating_tools = __esm({
     init_judge_output();
     init_reviewer_output();
     init_audit_escalation();
+    init_submission_correctable_error();
     init_doctor_contracts();
     init_merger_contracts();
     init_notary_contracts();
@@ -16103,7 +16116,7 @@ var init_terminating_tools = __esm({
       MERGER_OUTPUT_TOOL_NAME,
       NOTARY_OUTPUT_TOOL_NAME
     ];
-    AcceptedDetailsContractError = class extends Error {
+    AcceptedDetailsContractError = class extends CorrectableSubmissionError {
       code = "accepted_details_contract";
       constructor(message, options) {
         super(message, options);
@@ -20868,6 +20881,7 @@ var init_submission_ledger = __esm({
     init_terminating_tools();
     init_run_terminal_artifacts();
     init_sitian_facade();
+    init_submission_correctable_error();
   }
 });
 

@@ -17,6 +17,7 @@ test.after(() => { process.exitCode = undefined; });
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { GATEKEEPER_OUTPUT_TOOL, INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
@@ -34,7 +35,8 @@ import {
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
-import { packageRoot, runPiSubprocess, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { packageRoot, runPiSubprocess, seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { seatSelection, writeInstitutionalSeatTable } from "../helpers/institutional-seat-table.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
@@ -691,6 +693,11 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
         provider: `singleton-${row.role}`,
         tokenSize: { min: 1000, max: 1000 },
       });
+      const seededModels = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
+      await writeInstitutionalSeatTable(work, {
+        gatekeeper: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
+        inspector: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
+      });
       faux.setResponses([
         fauxAssistantMessage(
           [
@@ -699,9 +706,29 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
           ],
           { stopReason: "toolUse" },
         ),
-        fauxAssistantMessage("done"),
+        fauxAssistantMessage(
+          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-1" }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage(
+          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-1" }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage(
+          [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage(
+          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-2" }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage(
+          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-2" }),
+          { stopReason: "toolUse" },
+        ),
       ] as any);
-      await withInProcessPi(
+      try {
+        await withInProcessPi(
         {
           activationLedgerSession: true,
           cwd: work,
@@ -724,13 +751,27 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
               entry.message.role === "toolResult" &&
               entry.message.toolName === row.tool,
           );
-          assert.equal(output?.message.isError, true, `${row.role} non-sole-final rejected`);
+          assert.deepEqual(
+            output?.message.details,
+            { submissionDisposition: "pending-round-closure" },
+            `${row.role} remains pending until typed turn closure`,
+          );
+          const rejection = entries.find(
+            (entry) => entry.type === "custom" && entry.customType === "ak-role-submission-rejection",
+          );
+          assert.deepEqual(rejection?.data, {
+            kind: "correctable-rejection",
+            code: "non-sole-round",
+            toolCallIds: ["output"],
+          }, `${row.role} receives the case-specific typed rejection`);
           const headerId = sessionManager.getHeader?.()?.id;
-          const sealed =
-            headerId === undefined ? undefined : await readSealedSubmission(work, headerId);
-          assert.equal(sealed, undefined, `${row.role} must not seal non-sole-final`);
+          const sealed = headerId === undefined ? undefined : await readSealedSubmission(work, headerId);
+          assert.equal(sealed?.role, row.role, `${row.role} retry on the same durable session seals`);
         },
-      );
+        );
+      } finally {
+        await seededModels.close();
+      }
     });
   }
 });

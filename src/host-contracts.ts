@@ -188,11 +188,9 @@ type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<strin
 type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: HostToolResult["content"]; details: unknown };
 type SessionStartEvent = { reason: string };
 type ProviderResponseEvent = { status?: number };
-type AgentEndEvent = {
-  messages: readonly HostEventMessage[];
-  /** Host-projected typed calls from the assistant round that just closed. */
-  terminalRoundCalls?: readonly ToolExecutionEvent[];
-};
+type AgentEndEvent = { messages: readonly HostEventMessage[] };
+/** Typed closure of exactly one assistant turn; calls come from the host event, not transcript inspection. */
+type TurnEndEvent = { readonly turnIndex: number; readonly calls: readonly ToolExecutionEvent[] };
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
 type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };
@@ -206,6 +204,7 @@ type HostEventMap = {
   session_shutdown: Record<never, never>;
   after_provider_response: ProviderResponseEvent;
   agent_end: AgentEndEvent;
+  turn_end: TurnEndEvent;
   agent_settled: Record<never, never>;
   tool_execution_start: ToolExecutionEvent;
   tool_execution_update: ToolExecutionUpdateEvent;
@@ -222,6 +221,7 @@ type HostEventResultMap = {
   session_shutdown: void;
   after_provider_response: void;
   agent_end: void;
+  turn_end: void;
   agent_settled: void;
   tool_execution_start: void;
   tool_execution_update: void;
@@ -272,6 +272,7 @@ export interface RoleHost {
   on(event: "session_shutdown", handler: HostEventHandler<"session_shutdown">): void;
   on(event: "after_provider_response", handler: HostEventHandler<"after_provider_response">): void;
   on(event: "agent_end", handler: HostEventHandler<"agent_end">): void;
+  on(event: "turn_end", handler: HostEventHandler<"turn_end">): void;
   on(event: "agent_settled", handler: HostEventHandler<"agent_settled">): void;
   on(event: "tool_execution_start", handler: HostEventHandler<"tool_execution_start">): void;
   on(event: "tool_execution_update", handler: HostEventHandler<"tool_execution_update">): void;

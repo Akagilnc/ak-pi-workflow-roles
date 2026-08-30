@@ -6,6 +6,7 @@ import { executeAuditorChild, type AuditorDecisionTool } from "./evidence-child-
 import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
+import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 export const GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
 export const INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
@@ -60,7 +61,7 @@ function nonPassMessage(result: GatekeeperNonPassResult): string {
 }
 
 /** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
-export class GatekeeperDecisionError extends Error {
+export class GatekeeperDecisionError extends CorrectableSubmissionError {
   readonly code = "gatekeeper_decision" as const;
   readonly result: GatekeeperNonPassResult;
   constructor(result: GatekeeperNonPassResult) {

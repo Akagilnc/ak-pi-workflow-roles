@@ -10,6 +10,7 @@ import {
   WORKER_SUBMISSION_GATE_KIND,
 } from "./archivist-record-entry.ts";
 import { sitianReport } from "./sitian-facade.ts";
+import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
@@ -25,7 +26,7 @@ const HOOK_FILE = "reference-transaction";
 const PLATFORM_PREFIX = /^[A-Za-z][A-Za-z0-9_-]*:/;
 const UNFINISHED_REASON_BOUNCE_LIMIT = 2;
 
-export class WorkerCommitReminderError extends Error {
+export class WorkerCommitReminderError extends CorrectableSubmissionError {
   readonly code = "worker_commit_reminder" as const;
   constructor() {
     super("未观察到 commit");
@@ -33,7 +34,7 @@ export class WorkerCommitReminderError extends Error {
   }
 }
 
-export class WorkerPrefixReminderError extends Error {
+export class WorkerPrefixReminderError extends CorrectableSubmissionError {
   readonly code = "worker_prefix_reminder" as const;
   constructor() {
     super("观察到缺前缀 commit");
@@ -41,7 +42,7 @@ export class WorkerPrefixReminderError extends Error {
   }
 }
 
-export class WorkerUnfinishedReasonReminderError extends Error {
+export class WorkerUnfinishedReasonReminderError extends CorrectableSubmissionError {
   readonly code = "worker_unfinished_reason_reminder" as const;
   constructor() {
     super("本次 unfinished 回执未含 reason；本接缝缺由至多打回两次。");
