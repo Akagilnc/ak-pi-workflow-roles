@@ -29,7 +29,11 @@ function registerTool(
   }),
 ) {
   let registered: HostToolDefinition | undefined;
-  const host = { registerTool(tool: HostToolDefinition) { registered = tool; } } as RoleHost;
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  const host = {
+    registerTool(tool: HostToolDefinition) { registered = tool; },
+    on(event: string, handler: (...args: any[]) => unknown) { handlers.set(event, handler); },
+  } as RoleHost;
   const pipeline = createSubmissionLedgerHost(host, new Map([[JUDGE_OUTPUT_TOOL_NAME, "judge"]]));
   pipeline.registerTool({ name: JUDGE_OUTPUT_TOOL_NAME, label: "output", description: "", parameters: Type.Object({}), execute });
   const context = {
@@ -39,7 +43,12 @@ function registerTool(
     sessionManager: { getHeader: () => ({ type: "session", id: "run-ledger:attempt" }) },
     abort() {},
   } as HostContext;
-  return { context, tool: () => registered! };
+  return {
+    context,
+    tool: () => registered!,
+    start: async (id: string, name = JUDGE_OUTPUT_TOOL_NAME) => { await handlers.get("tool_execution_start")!({ toolCallId: id, toolName: name }, context); },
+    close: async () => { await handlers.get("agent_end")!({ messages: [] }, context); },
+  };
 }
 
 async function fixture() {
@@ -52,7 +61,7 @@ async function ledgerRecords(root: string): Promise<SitianRecord[]> {
   const files = await readdir(`${root}/.ak-roles/books`, { recursive: true });
   const records: SitianRecord[] = [];
   for (const relative of files.filter((file) => file.endsWith(".jsonl"))) {
-    records.push(...(await readSitianRecords(`${root}/.ak-roles/books/${relative}`)).records.filter((record) => ["batchContext", "candidate", "outcome", "sealed", "post-seal-anomaly"].includes(record.kind)));
+    records.push(...(await readSitianRecords(`${root}/.ak-roles/books/${relative}`)).records.filter((record) => ["roundContext", "candidate", "outcome", "sealed", "post-seal-anomaly"].includes(record.kind)));
   }
   return records.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
 }
@@ -70,43 +79,57 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
   }
 }
 
-const soleBatch = (id: string) => ({ batchClosed: true as const, calls: [{ id, name: JUDGE_OUTPUT_TOOL_NAME }] });
-
-test("pipeline ledger restores its chain and sealed state in a new host", async () => {
+test("host-neutral round closure seals only a sole terminal candidate", async () => {
   await withLedgerFixture(async (f) => {
-    await assert.rejects(f.tool().execute("first", {}, undefined, undefined, {
-      ...f.context,
-      terminationBatch: { batchClosed: true, calls: [{ id: "first", name: JUDGE_OUTPUT_TOOL_NAME }, { id: "sibling", name: "read" }] },
-    }));
-    const accepted = await f.tool().execute("retry", {}, undefined, undefined, { ...f.context, terminationBatch: soleBatch("retry") });
+    await f.start("only");
+    const accepted = await f.tool().execute("only", {}, undefined, undefined, f.context);
     assert.equal(accepted.terminate, true);
+    assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
 
-    const resumed = registerTool(f.root);
-    await assert.rejects(resumed.tool().execute("after-seal", {}, undefined, undefined, {
-      ...resumed.context,
-      terminationBatch: soleBatch("after-seal"),
-    }));
-
-    const records = await ledgerRecords(f.root);
-    assert.deepEqual(records.map((record) => record.kind), ["batchContext", "candidate", "outcome", "batchContext", "candidate", "sealed", "post-seal-anomaly"]);
-    for (let i = 1; i < records.length; i += 1) assert.equal(records[i]?.priorEventId, records[i - 1]?.identity);
-    assert.deepEqual(records.at(-1)?.subject, { runId: "run-ledger", attemptId: "run-ledger:attempt" });
+    await f.close();
+    assert.deepEqual((await ledgerRecords(f.root)).map((record) => record.kind), ["candidate", "roundContext", "sealed"]);
     assert.deepEqual(await readSealedSubmission(f.root, "run-ledger"), {
       kind: "accepted",
       role: "judge",
       status: "converged",
       decisiveFacts: { judgeStatus: "converged" },
     });
+
+    const resumed = registerTool(f.root);
+    await resumed.start("after-seal", "read");
+    assert.equal((await ledgerRecords(f.root)).at(-1)?.kind, "post-seal-anomaly");
   });
+});
+
+test("mixed and double-output rounds reject typed candidates before a legal retry seals", async () => {
+  for (const row of [
+    { label: "sibling", calls: [JUDGE_OUTPUT_TOOL_NAME, "read"] },
+    { label: "double-output", calls: [JUDGE_OUTPUT_TOOL_NAME, JUDGE_OUTPUT_TOOL_NAME] },
+  ]) {
+    await withLedgerFixture(async (f) => {
+      for (const [index, name] of row.calls.entries()) {
+        const id = `${row.label}-${index}`;
+        await f.start(id, name);
+        if (name === JUDGE_OUTPUT_TOOL_NAME) await f.tool().execute(id, {}, undefined, undefined, f.context);
+      }
+      await f.close();
+      assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined, row.label);
+      const rejected = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
+      assert.equal(rejected.length, row.label === "double-output" ? 2 : 1, row.label);
+      assert.equal((rejected[0]?.payload as { code?: string }).code, "non-sole-round", row.label);
+
+      await f.start(`${row.label}-retry`);
+      await f.tool().execute(`${row.label}-retry`, {}, undefined, undefined, f.context);
+      await f.close();
+      assert.equal((await readSealedSubmission(f.root, "run-ledger"))?.status, "converged", row.label);
+    });
+  }
 });
 
 test("pipeline ledger records an unknown output failure as infrastructure", async () => {
   await withLedgerFixture(async (f) => {
     const failing = registerTool(f.root, async () => { throw new Error("typed seam unavailable"); });
-    await assert.rejects(failing.tool().execute("failure", {}, undefined, undefined, {
-      ...failing.context,
-      terminationBatch: soleBatch("failure"),
-    }));
+    await assert.rejects(failing.tool().execute("failure", {}, undefined, undefined, failing.context));
     const outcome = (await ledgerRecords(f.root)).at(-1);
     assert.equal(outcome?.kind, "outcome");
     assert.deepEqual(outcome?.payload, {
@@ -130,10 +153,7 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
     for (const anchor of anchors) {
       const failing = registerTool(f.root, async () => { throw anchor.error; });
       await assert.rejects(
-        failing.tool().execute(anchor.label, {}, undefined, undefined, {
-          ...failing.context,
-          terminationBatch: soleBatch(anchor.label),
-        }),
+        failing.tool().execute(anchor.label, {}, undefined, undefined, failing.context),
       );
       const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
       assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection", anchor.label);
@@ -149,10 +169,7 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
       { judgeStatus: "escalate" },
     );
     const escalating = registerTool(f.root, async () => ({ content: [], details, terminate: true }));
-    const result = await escalating.tool().execute("esc", {}, undefined, undefined, {
-      ...escalating.context,
-      terminationBatch: soleBatch("esc"),
-    });
+    const result = await escalating.tool().execute("esc", {}, undefined, undefined, escalating.context);
     assert.equal(result.terminate, true);
     assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
     const projection = await readAuditEscalationSubmission(f.root, "run-ledger");
@@ -169,7 +186,6 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
     const context = {
       ...bare.context,
       sessionManager: {},
-      terminationBatch: soleBatch("no-id"),
     } as unknown as HostContext;
     await assert.rejects(
       bare.tool().execute("no-id", {}, undefined, undefined, context),
@@ -220,10 +236,9 @@ test("a sealed append failure never returns accepted", async () => {
       return { content: [], details: { judgeStatus: "converged" }, terminate: true };
     });
     try {
-      await assert.rejects(failing.tool().execute("seal-failure", {}, undefined, undefined, {
-        ...failing.context,
-        terminationBatch: soleBatch("seal-failure"),
-      }));
+      await failing.start("seal-failure");
+      await failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context);
+      await assert.rejects(failing.close());
       assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
     } finally {
       if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);

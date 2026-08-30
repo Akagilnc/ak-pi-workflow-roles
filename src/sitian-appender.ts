@@ -29,7 +29,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Authorized S4 submission ledger kinds that share a common run submission volume. */
 export const S4_SUBMISSION_LEDGER_KINDS = new Set([
   "candidate",
-  "batchContext",
+  "roundContext",
   "outcome",
   "sealed",
   "post-seal-anomaly",

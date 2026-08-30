@@ -6,6 +6,7 @@ import {
   acceptedFacts,
   isTerminatingToolName,
   type AcceptedDetails,
+  type TerminatingToolName,
 } from "./package-contracts/terminating-tools.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport, type RecordPointer } from "./sitian-facade.ts";
@@ -19,10 +20,10 @@ import {
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
 /** Typed correctable-rejection codes — settlement residual precedence without re-judging 0041. */
-export type CorrectableRejectionCode = "closed-batch" | "non-terminate" | "typed-bounce";
+export type CorrectableRejectionCode = "non-sole-round" | "non-terminate" | "typed-bounce";
 export type SubmissionLedgerEvent =
-  | { readonly type: "batchContext"; readonly attemptId: string; readonly batchId: string; readonly closed: boolean; readonly calls: readonly SubmissionCall[] }
-  | { readonly type: "candidate"; readonly attemptId: string; readonly batchId: string; readonly toolCallId: string; readonly toolName: string; readonly sequence: number }
+  | { readonly type: "roundContext"; readonly attemptId: string; readonly calls: readonly SubmissionCall[] }
+  | { readonly type: "candidate"; readonly attemptId: string; readonly toolCallId: string; readonly toolName: string; readonly sequence: number }
   | {
       readonly type: "outcome";
       readonly attemptId: string;
@@ -170,6 +171,53 @@ async function restoreState(cwd: string, runId: string): Promise<LedgerState> {
 /** Pipeline-owned sole-final state and durable projection. */
 export function createSubmissionLedgerHost(host: RoleHost, outputTools: ReadonlyMap<string, TerminalRoleName>): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
+  type PendingCandidate = { toolCallId: string; toolName: TerminatingToolName; role: TerminalRoleName; result: HostToolResult<unknown>; context: HostContext };
+  const rounds = new Map<string, { calls: SubmissionCall[]; candidates: PendingCandidate[] }>();
+  const stateFor = (context: HostContext, runId: string) => states.get(runId) ?? (() => {
+    const pending = restoreState(context.cwd, runId);
+    states.set(runId, pending);
+    return pending;
+  })();
+  const appendFor = (state: LedgerState, context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
+    const pointer = sitianReport({ level: "event", kind: event.type, subject: { runId, attemptId }, ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }), payload: event, source: "role-runtime", cwd: context.cwd });
+    state.prior = pointer;
+    return pointer;
+  };
+
+  host.on("tool_execution_start", async ({ toolCallId, toolName }, context) => {
+    const runId = runIdentity(context);
+    const attemptId = attemptIdentity(context, runId);
+    const state = await stateFor(context, runId);
+    if (state.sealed) {
+      appendFor(state, context, runId, attemptId, { type: "post-seal-anomaly", attemptId, toolCallId, toolName });
+      return;
+    }
+    const round = rounds.get(attemptId) ?? { calls: [], candidates: [] };
+    round.calls.push({ id: toolCallId, name: toolName });
+    rounds.set(attemptId, round);
+  });
+  host.on("agent_end", async (_event, context) => {
+    const runId = runIdentity(context);
+    const attemptId = attemptIdentity(context, runId);
+    const round = rounds.get(attemptId);
+    if (round === undefined) return;
+    rounds.delete(attemptId);
+    const state = await stateFor(context, runId);
+    appendFor(state, context, runId, attemptId, { type: "roundContext", attemptId, calls: round.calls });
+    const sole = round.calls.length === 1 && round.candidates.length === 1 && round.calls[0]?.id === round.candidates[0]?.toolCallId;
+    if (!sole) {
+      for (const candidate of round.candidates) appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "correctable-rejection", code: "non-sole-round" });
+      return;
+    }
+    const candidate = round.candidates[0]!;
+    const details = typeof candidate.result.details === "object" && candidate.result.details !== null ? candidate.result.details as Record<string, unknown> : {};
+    const status = acceptedFacts(candidate.toolName, details as AcceptedDetails).status;
+    if (typeof status !== "string" || status.length === 0) throw new Error("提交账封账缺少 acceptedFacts.status");
+    const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role: candidate.role, status, decisiveFacts: details };
+    appendFor(state, candidate.context, runId, attemptId, { type: "sealed", attemptId, toolCallId: candidate.toolCallId, accepted: candidate.result.details, projection });
+    state.sealed = true;
+  });
+
   return {
     ...host,
     registerTool(tool) {
@@ -180,25 +228,10 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
         async execute(toolCallId, params, signal, update, context): Promise<HostToolResult<unknown>> {
           const runId = runIdentity(context);
           const attemptId = attemptIdentity(context, runId);
-          const state = await (states.get(runId) ?? (() => { const pending = restoreState(context.cwd, runId); states.set(runId, pending); return pending; })());
-          const append = (event: SubmissionLedgerEvent): RecordPointer => {
-            const pointer = sitianReport({ level: "event", kind: event.type, subject: { runId, attemptId }, ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }), payload: event, source: "role-runtime", cwd: context.cwd });
-            state.prior = pointer;
-            return pointer;
-          };
-          if (state.sealed) {
-            append({ type: "post-seal-anomaly", attemptId, toolCallId, toolName: tool.name });
-            throw new Error("提交账已封账");
-          }
-          const batch = context.terminationBatch;
-          const batchId = `${attemptId}:${toolCallId}`;
-          append({ type: "batchContext", attemptId, batchId, closed: batch?.batchClosed === true, calls: batch?.calls ?? [] });
-          append({ type: "candidate", attemptId, batchId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
-          const matching = batch?.calls.filter((call) => call.id === toolCallId && call.name === tool.name) ?? [];
-          if (batch?.batchClosed !== true || batch.calls.length !== 1 || matching.length !== 1) {
-            append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection", code: "closed-batch" });
-            throw new Error("回执非唯一终局工具调用");
-          }
+          const state = await stateFor(context, runId);
+          const append = (event: SubmissionLedgerEvent) => appendFor(state, context, runId, attemptId, event);
+          if (state.sealed) throw new Error("提交账已封账");
+          append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
           let result: HostToolResult<unknown>;
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
@@ -242,25 +275,13 @@ export function createSubmissionLedgerHost(host: RoleHost, outputTools: Readonly
             append({ type: "outcome", attemptId, toolCallId, outcome: "correctable-rejection", code: "non-terminate" });
             return result;
           }
-          const details = typeof result.details === "object" && result.details !== null ? result.details as Record<string, unknown> : {};
-          // sealed.status sole authority = acceptedFacts (Collector → collected); no parallel mapper.
           if (!isTerminatingToolName(tool.name)) {
             append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: `non-terminating tool ${tool.name}` });
             throw new Error("提交账只受理终止工具");
           }
-          const status = acceptedFacts(tool.name, details as AcceptedDetails).status;
-          if (typeof status !== "string" || status.length === 0) {
-            append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: "acceptedFacts missing status" });
-            throw new Error("提交账封账缺少 acceptedFacts.status");
-          }
-          const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role, status, decisiveFacts: details };
-          try {
-            append({ type: "sealed", attemptId, toolCallId, accepted: result.details, projection });
-          } catch (error) {
-            try { append({ type: "outcome", attemptId, toolCallId, outcome: "infrastructure", diagnostic: error instanceof Error ? error.message : String(error) }); } catch { /* original persistence failure remains authoritative */ }
-            throw error;
-          }
-          state.sealed = true;
+          const round = rounds.get(attemptId) ?? { calls: [], candidates: [] };
+          round.candidates.push({ toolCallId, toolName: tool.name, role, result, context });
+          rounds.set(attemptId, round);
           return result;
         },
       });

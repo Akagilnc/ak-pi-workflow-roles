@@ -31,9 +31,13 @@ async function driveLedgerProducer(input: {
 }): Promise<void> {
   const toolName = toolNameForRole(input.role);
   let registered: HostToolDefinition | undefined;
+  const handlers = new Map<string, (...args: any[]) => unknown>();
   const host = {
     registerTool(tool: HostToolDefinition) {
       registered = tool;
+    },
+    on(event: string, handler: (...args: any[]) => unknown) {
+      handlers.set(event, handler);
     },
   } as RoleHost;
   createSubmissionLedgerHost(host, new Map([[toolName, input.role]])).registerTool({
@@ -50,12 +54,7 @@ async function driveLedgerProducer(input: {
   process.env.AK_ROLE_RUN_DIR =
     input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
   try {
-    await registered.execute(
-      input.toolCallId,
-      {},
-      undefined,
-      undefined,
-      {
+    const context = {
         cwd: input.cwd,
         mode: "json",
         model: undefined,
@@ -67,13 +66,11 @@ async function driveLedgerProducer(input: {
           getSessionDir: () => "",
           getSessionFile: () => undefined,
         },
-        terminationBatch: {
-          batchClosed: true,
-          calls: [{ id: input.toolCallId, name: toolName }],
-        },
         abort() {},
-      } as HostContext,
-    );
+      } as HostContext;
+    await handlers.get("tool_execution_start")!({ toolCallId: input.toolCallId, toolName }, context);
+    await registered.execute(input.toolCallId, {}, undefined, undefined, context);
+    await handlers.get("agent_end")!({ messages: [] }, context);
   } finally {
     if (input.home !== undefined) {
       if (priorHome === undefined) delete process.env.HOME;
