@@ -9,7 +9,6 @@ import { join } from "node:path";
 import {} from "@earendil-works/pi-ai";
 import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, } from "./compliance-transport.js";
 import { auditorRunDirectory } from "./auditor-dossier-tool.js";
-import { sitianReport } from "./sitian-facade.js";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.js";
 import { engineNameFromEnv } from "./engine-detour.js";
 import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
@@ -490,17 +489,6 @@ export async function executeAuditorChild(options) {
         // Durable binding is a prerequisite: never observe the provider when its
         // response could not later be tied to the current parent attempt.
         auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
-        try {
-            sitianReport({
-                level: "event",
-                kind: "auditor",
-                cwd,
-                sessionParent: parentSessionFile,
-                payload: { type: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, ...binding },
-                source: "evidence-child-executor",
-            });
-        }
-        catch { }
         let turns = 0;
         const sessionUsage = emptyUsage();
         let boundaryResponse;
@@ -704,17 +692,6 @@ export async function executeAuditorChild(options) {
                     // charged this prompt to the exhausted shared budget.
                     decisionToolFailure = undefined;
                     auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-                    try {
-                        sitianReport({
-                            level: "event",
-                            kind: "auditor",
-                            cwd,
-                            sessionParent: parentSessionFile,
-                            payload: { type: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, ...facts },
-                            source: "evidence-child-executor",
-                        });
-                    }
-                    catch { }
                     // Provenance is granted only after the lifecycle owner persisted the
                     // current child record; accepted model arguments can never set it.
                     noReceiptLifecycle = facts;
@@ -810,7 +787,7 @@ export async function executeAuditorChild(options) {
                                 }),
                         },
                     };
-                    const failureData = {
+                    auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, {
                         version: 1,
                         parent: binding.parent,
                         failure: {
@@ -819,19 +796,7 @@ export async function executeAuditorChild(options) {
                             ...(failure.message === "" ? {} : { diagnostic: failure.message }),
                             details: failure.details,
                         },
-                    };
-                    auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, failureData);
-                    try {
-                        sitianReport({
-                            level: "event",
-                            kind: "auditor",
-                            cwd,
-                            sessionParent: parentSessionFile,
-                            payload: { type: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, ...failureData },
-                            source: "evidence-child-executor",
-                        });
-                    }
-                    catch { }
+                    });
                     throw failure;
                 }
             }
