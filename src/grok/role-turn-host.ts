@@ -11,6 +11,8 @@ export interface GrokAcpConnection {
   request(method: string, params: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>>;
   notify(method: string, params: Readonly<Record<string, unknown>>): void;
   close(): Promise<void>;
+  /** Subscribe to unsolicited ACP notifications (e.g. session/update available_commands_update). */
+  onNotification?(handler: (method: string, params: Readonly<Record<string, unknown>>) => void): void;
 }
 
 export type GrokControlledInspection = Readonly<{
@@ -20,9 +22,13 @@ export type GrokControlledInspection = Readonly<{
   akActive: readonly string[];
 }>;
 
+/** The shared envelope, prepared before session/new (systemPrompt delivery) and
+ * able to observe the host's real builtin tool surface once it arrives post-session. */
 export type GrokPreparedTurn = Readonly<{
   mcpServers: readonly Readonly<Record<string, unknown>>[];
   systemPrompt: string;
+  /** Effective user prompt after host-side input transform (canonical Skill invocation). */
+  prompt: string;
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
   closeRound(input: { readonly sessionId: string; readonly promptResult: Readonly<Record<string, unknown>> }): Promise<
     | { readonly accepted: true }
@@ -30,6 +36,8 @@ export type GrokPreparedTurn = Readonly<{
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
   dispose?(): Promise<void>;
+  /** Report the host's observed builtin tool names; never echo role-requested names. */
+  observeBuiltinTools?(names: readonly string[]): void;
 }>;
 
 export type GrokCapabilityDeclaration = Readonly<{
@@ -66,6 +74,10 @@ function failure(cause: "activation" | "session" | "output", name: string, code:
 
 type RpcReply = { readonly id?: unknown; readonly method?: unknown; readonly params?: unknown; readonly result?: unknown; readonly error?: unknown };
 
+function acpError(code: string, message: string, cause?: unknown): Error & { readonly code: string } {
+  return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { code });
+}
+
 /** One ACP JSON-RPC stdio process. Natural close/SIGTERM are its only lifecycle exits. */
 export function connectGrokAcpStdio(options: {
   readonly binary: string;
@@ -85,6 +97,8 @@ export function connectGrokAcpStdio(options: {
     : { ...options.env, GROK_CONFIG: JSON.stringify({ toolset: options.toolset }) };
   const child = spawn(options.binary, args, { cwd: options.cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map<number, { resolve(value: Readonly<Record<string, unknown>>): void; reject(error: Error): void }>();
+  const notificationHandlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
+  if (options.onNotification !== undefined) notificationHandlers.push(options.onNotification);
   let nextId = 0;
   let closed = false;
   let terminalError: Error | undefined;
@@ -96,35 +110,36 @@ export function connectGrokAcpStdio(options: {
     for (const waiter of pending.values()) waiter.reject(error);
     pending.clear();
   };
+  // One terminal path: any malformed/unsupported frame or process death closes stdin,
+  // kills the child, and settles every pending request with the same typed error.
+  const terminate = (error: Error): void => {
+    settleClosed(error);
+    child.stdin.end();
+    child.kill("SIGTERM");
+  };
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-  child.on("error", (error) => settleClosed(new Error(`Grok ACP process error: ${error.message}`, { cause: error })));
+  child.on("error", (error) => settleClosed(acpError("acp-process-error", `Grok ACP process error: ${error.message}`, error)));
   createInterface({ input: child.stdout }).on("line", (line) => {
     let message: RpcReply;
     try { message = JSON.parse(line) as RpcReply; }
     catch (error) {
-      settleClosed(new Error(`Invalid Grok ACP JSON: ${String(error)}`, { cause: error }));
-      child.stdin.end();
-      child.kill("SIGTERM");
+      terminate(acpError("acp-invalid-json", `Invalid Grok ACP JSON: ${String(error)}`, error));
       return;
     }
     if (typeof message.method === "string") {
       const params = typeof message.params === "object" && message.params !== null
         ? message.params as Readonly<Record<string, unknown>> : {};
-      options.onNotification?.(message.method, params);
+      for (const handler of notificationHandlers) handler(message.method, params);
       if (typeof message.id === "number") {
         if (message.method !== "session/request_permission") {
-          settleClosed(new Error(`Unsupported Grok ACP client request: ${message.method}`));
-          child.stdin.end();
-          child.kill("SIGTERM");
+          terminate(acpError("acp-unsupported-client-request", `Unsupported Grok ACP client request: ${message.method}`));
           return;
         }
         const choices = Array.isArray(params.options) ? params.options : [];
         const selected = choices.find((value) =>
           typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "allow_once") as { optionId?: unknown } | undefined;
         if (typeof selected?.optionId !== "string") {
-          settleClosed(new Error("Grok ACP permission request omitted allow_once"));
-          child.stdin.end();
-          child.kill("SIGTERM");
+          terminate(acpError("acp-permission-missing-allow-once", "Grok ACP permission request omitted allow_once"));
           return;
         }
         child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "selected", optionId: selected.optionId } } })}\n`);
@@ -135,13 +150,13 @@ export function connectGrokAcpStdio(options: {
     const waiter = pending.get(message.id);
     if (waiter === undefined) return;
     pending.delete(message.id);
-    if (message.error !== undefined) waiter.reject(new Error(`Grok ACP error: ${JSON.stringify(message.error)}`));
+    if (message.error !== undefined) waiter.reject(acpError("acp-upstream-error", `Grok ACP error: ${JSON.stringify(message.error)}`));
     else waiter.resolve((message.result ?? {}) as Readonly<Record<string, unknown>>);
   });
-  child.on("close", (code) => settleClosed(new Error(`Grok ACP closed (${String(code)}): ${stderr}`)));
+  child.on("close", (code) => settleClosed(acpError("acp-closed", `Grok ACP closed (${String(code)}): ${stderr}`)));
   return Promise.resolve({
     request(method, params) {
-      if (closed) return Promise.reject(terminalError ?? new Error("Grok ACP connection is closed"));
+      if (closed) return Promise.reject(terminalError ?? acpError("acp-connection-closed", "Grok ACP connection is closed"));
       const id = ++nextId;
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
@@ -150,16 +165,20 @@ export function connectGrokAcpStdio(options: {
           const waiter = pending.get(id);
           if (waiter === undefined) return;
           pending.delete(id);
-          waiter.reject(new Error(`Grok ACP write failed: ${error.message}`, { cause: error }));
+          waiter.reject(acpError("acp-write-failed", `Grok ACP write failed: ${error.message}`, error));
         });
       });
     },
     notify(method, params) {
-      if (closed) throw terminalError ?? new Error("Grok ACP connection is closed");
+      if (closed) throw terminalError ?? acpError("acp-connection-closed", "Grok ACP connection is closed");
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+    },
+    onNotification(handler) {
+      notificationHandlers.push(handler);
     },
     async close() {
       if (closed) return;
+      settleClosed(acpError("acp-connection-closed", "Grok ACP connection is closed"));
       child.stdin.end();
       child.kill("SIGTERM");
       await new Promise<void>((resolve) => child.once("close", () => resolve()));
@@ -229,6 +248,19 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           if (continuation.kind === "resume" && resumedSessionId === undefined) {
             return failure("session", "GrokAcpSessionFailure", "session-binding-missing");
           }
+          // Observe the host's typed builtin tool surface when the ACP seam delivers it
+          // (G5/G10: report the real surface to the shared envelope, never echo names).
+          connection.onNotification?.((method, params) => {
+            if (method !== "session/update") return;
+            const update = (params as { update?: unknown }).update;
+            if (typeof update !== "object" || update === null) return;
+            if ((update as { sessionUpdate?: unknown }).sessionUpdate !== "available_commands_update") return;
+            const meta = (update as { _meta?: { tools?: unknown } })._meta;
+            if (Array.isArray(meta?.tools)) {
+              const observed = meta.tools.filter((tool): tool is string => typeof tool === "string");
+              if (observed.length > 0) prepared.observeBuiltinTools?.(observed);
+            }
+          });
           const session = await connection.request(
             continuation.kind === "resume" ? "session/load" : "session/new",
             {
@@ -243,7 +275,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             return failure("session", "GrokAcpSessionFailure", "session-id-missing");
           }
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
-          let prompt = continuation.prompt;
+          let prompt = prepared.prompt;
           for (let attempt = 0; attempt < 8; attempt += 1) {
             const result = await connection.request("session/prompt", {
               sessionId,
@@ -274,9 +306,11 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               try { connection.notify("session/cancel", { sessionId }); }
               catch { /* Preserve the original turn result or failure. */ }
             }
-            await connection.close();
+            try { await connection.close(); }
+            catch { /* Preserve the original turn result or failure. */ }
           }
-          await prepared.dispose?.();
+          try { await prepared.dispose?.(); }
+          catch { /* Preserve the original turn result or failure. */ }
         }
       });
       serial = execution.then(() => undefined, () => undefined);

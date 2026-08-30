@@ -432,6 +432,7 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
       };
       failedOutputAt: string;
       failedOutputCorrelation: boolean;
+      closureDetails: Record<string, unknown>;
     };
   };
   assert.equal(evidence.navigatorCalls, 1);
@@ -468,8 +469,9 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
   assert.equal(evidence.role.failedOutput.toolCallId, "fatal-judge");
   assert.equal(evidence.role.failedOutput.toolName, "ak_judge_output");
   assert.equal(evidence.role.failedOutput.isError, false);
-  assert.equal(evidence.role.failedOutput.details.judgeStatus, "converged");
-  const auditNoReceipt = evidence.role.failedOutput.details.auditNoReceipt as {
+  assert.deepEqual(evidence.role.failedOutput.details, { submissionDisposition: "pending-round-closure" });
+  assert.equal(evidence.role.closureDetails.judgeStatus, "converged");
+  const auditNoReceipt = evidence.role.closureDetails.auditNoReceipt as {
     acceptedReceipt: boolean;
     deliveryTurns: number;
     terminalToolCalled: boolean;
@@ -484,8 +486,7 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
   assert.deepEqual(auditNoReceipt.rejectedReceipts, []);
   assert.match(auditNoReceipt.runPointer, /judge-navigator/);
   assert.notEqual(auditNoReceipt.attemptPointer, "");
-  assert.deepEqual(evidence.role.failedOutput.usage, auditNoReceipt.usage);
-  assert.ok((evidence.role.failedOutput.usage?.totalTokens ?? 0) > 0, "measured audit usage reaches the external Judge result");
+  assert.ok((auditNoReceipt.usage?.totalTokens ?? 0) > 0, "measured audit usage reaches the sealed Judge submission");
   assert.equal(
     evidence.role.failedOutputCorrelation,
     true,
