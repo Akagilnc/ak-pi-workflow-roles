@@ -24,6 +24,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
+import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -34,14 +35,13 @@ import {
   createSubmissionLedgerHost,
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
-import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
+import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
 import { packageRoot, runPiSubprocess, seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { seatSelection, writeInstitutionalSeatTable } from "../helpers/institutional-seat-table.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { Type } from "typebox";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 
@@ -244,11 +244,54 @@ type AcceptedRow = {
   }) => Promise<string[]> | string[];
 };
 
-/** Shared subprocess entry — same runAkRole + sealedAcceptance path for every accepted row. */
+/** Shared public entry backed by a host-neutral typed-turn runtime for every accepted row. */
 async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
   const runId = `run-table-${row.role}-accepted`;
   const args = await row.args(project, home);
   const { io, stderr } = captureIo();
+  const alternateHost: RoleTurnHost = {
+    async executeTurn(request) {
+      let registered: HostToolDefinition | undefined;
+      const handlers = new Map<string, (...values: any[]) => unknown>();
+      const host = {
+        registerTool(tool: HostToolDefinition) { registered = tool; },
+        on(event: string, handler: (...values: any[]) => unknown) { handlers.set(event, handler); },
+      } as RoleHost;
+      const outputTool = packagedRoleOutputTool(row.role)!;
+      const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, row.role]]));
+      const details = await row.details({ project, home, runId, args });
+      pipeline.registerTool({
+        name: outputTool,
+        label: "output",
+        description: "",
+        parameters: Type.Object({}),
+        execute: async () => ({ content: [], details, terminate: true }),
+      });
+      const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(join(coordinates.sessionFile, ".."), { recursive: true });
+      const lines = row.sessionLines
+        ? await row.sessionLines({ project, home, runId, details })
+        : [JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: outputTool, isError: false, details } })];
+      await writeFile(coordinates.sessionFile, `${lines.join("\n")}\n`, "utf8");
+      const context = {
+        cwd: request.cwd,
+        mode: "json",
+        model: undefined,
+        sessionManager: { getHeader: () => ({ type: "session", id: `${runId}:alternate-host` }) },
+        abort() {},
+      } as HostContext;
+      const priorRun = process.env.AK_ROLE_RUN_DIR;
+      process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+      try {
+        await handlers.get("tool_execution_start")!({ toolCallId: "t1", toolName: outputTool }, context);
+        await registered!.execute("t1", {}, undefined, undefined, context);
+        await handlers.get("turn_end")!({ turnIndex: 0, calls: [{ toolCallId: "t1", toolName: outputTool }] }, context);
+      } finally {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+      return { code: 0, stderr: "", timedOut: false };
+    },
+  };
   const result = await runAkRole(args, {
     packageRoot,
     home,
@@ -256,60 +299,7 @@ async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
     createRunId: () => runId,
     credentials: { "openai-codex": true, xai: false },
     io,
-    roleTurnHost: roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (piArgs, options) => {
-        const sessionIdx = piArgs.indexOf("--session");
-        const sessionFile =
-          sessionIdx >= 0
-            ? piArgs[sessionIdx + 1]!
-            : join(piArgs[piArgs.indexOf("--session-dir") + 1]!, "session.jsonl");
-        await mkdir(join(sessionFile, ".."), { recursive: true });
-        const details = await row.details({ project, home, runId, args: piArgs });
-        const lines = row.sessionLines
-          ? await row.sessionLines({ project, home, runId, details })
-          : [
-              JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolCallId: "t1",
-                  toolName: (() => {
-                    switch (row.role) {
-                      case "judge":
-                        return JUDGE_OUTPUT_TOOL_NAME;
-                      case "coder":
-                        return CODER_OUTPUT_TOOL_NAME;
-                      case "fixer":
-                        return FIXER_OUTPUT_TOOL_NAME;
-                      case "reviewer":
-                        return REVIEWER_OUTPUT_TOOL_NAME;
-                      case "doctor":
-                        return DOCTOR_OUTPUT_TOOL_NAME;
-                      case "merger":
-                        return MERGER_OUTPUT_TOOL_NAME;
-                      case "notary":
-                        return NOTARY_OUTPUT_TOOL_NAME;
-                      case "collector":
-                        return COLLECTOR_OUTPUT_TOOL;
-                    }
-                  })(),
-                  isError: false,
-                  details,
-                },
-              }),
-            ];
-        await writeFile(sessionFile, `${lines.join("\n")}\n`, "utf8");
-        return {
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...piArgs],
-          sealedAcceptance: { role: row.role, details, toolCallId: "t1" },
-        };
-      },
-    }),
+    roleTurnHost: alternateHost,
   });
   return { result, runId, stderr: stderr.join("") };
 }
