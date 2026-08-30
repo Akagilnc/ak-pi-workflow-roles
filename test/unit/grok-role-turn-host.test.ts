@@ -19,6 +19,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
       if (method === "initialize") return { agentCapabilities: { loadSession: true }, _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } } };
       if (method === "session/new") return { sessionId: "s1" };
       if (method === "session/prompt") return { stopReason: "end_turn" };
+      if (method === "session/close") return {};
       throw new Error(method);
     },
     notify(method, params) { calls.push([method, params]); },
@@ -35,7 +36,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   });
 
   assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
-  assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/cancel"]);
+  assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/close"]);
   assert.deepEqual(calls[1], ["session/new", { cwd: "/work", mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }], _meta: { systemPromptOverride: "law" } }]);
 });
 
@@ -87,6 +88,28 @@ test("grok host serializes concurrent ACP prompts", async () => {
 
   await Promise.all([host.executeTurn(request), host.executeTurn(request)]);
   assert.equal(maxActivePrompts, 1);
+});
+
+test("grok refusal is a typed failure and never closes the session as accepted", async () => {
+  const calls: string[] = [];
+  const host = createGrokRoleTurnHost({
+    connect: async () => ({
+      async request(method) {
+        calls.push(method);
+        if (method === "session/new") return { sessionId: "refused" };
+        if (method === "session/prompt") return { stopReason: "refusal" };
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => ({ mcpServers: [{}], systemPrompt: "law", closeRound: async () => assert.fail("refusal must not close the ledger round") }),
+  });
+
+  const result = await host.executeTurn(request);
+  assert.equal(result.knownFailure?.identity?.code, "refusal");
+  assert.equal(calls.includes("session/close"), false);
 });
 
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
