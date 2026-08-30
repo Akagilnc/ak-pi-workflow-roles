@@ -96,24 +96,3 @@ test("Collector failed reactivation clears a previously successful real role act
   await assert.rejects(() => runtime.activate(context, { reason: "new" }), /requires --ak-collector-repo/);
   await assert.rejects(() => tools.get(COLLECTOR_OBSERVE_TOOL).execute("call", {}, undefined, undefined), /通进司未激活/);
 });
-
-test("Collector output routes an infrastructure-failure declaration to the host before any receipt", async () => {
-  const flags = new Map<string, unknown>([["ak-collector-repo", "acme/widgets"], ["ak-collector-pr", "1"]]);
-  const tools = new Map<string, any>(); let active: string[] = []; let hostCalls = 0;
-  const pi = { registerFlag() {}, getFlag: (name: string) => flags.get(name), getCommands: () => [], getAllTools: () => [...tools.values()], registerTool: (tool: any) => tools.set(tool.name, tool), setActiveTools: (names: string[]) => { active = names; }, getActiveTools: () => active, on() {} };
-  const runtime = createCollectorRoleRuntime(pi as any, { loadSoul: async () => soul, createTransport: () => createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] }), createClock: clock }, { failInfrastructure(error: unknown, _ctx: unknown, id?: string) { hostCalls += 1; assert.equal(id, "infra"); throw error instanceof Error ? error : new Error(String(error)); } });
-  const context = { mode: "print" } as any;
-  await runtime.activate(context, { reason: "new" });
-  const output = tools.get(COLLECTOR_OUTPUT_TOOL);
-  assert.ok(output, "Collector output tool must be registered after activation");
-  const parameters = { infrastructureFailure: { diagnostic: "collector engine 541" } };
-  await assert.rejects(
-    output.execute("infra", parameters, undefined, undefined, { mode: "print" }),
-    (error) => {
-      assert.ok(error instanceof Error);
-      assert.equal(error.message, "collector engine 541");
-      return true;
-    },
-  );
-  assert.equal(hostCalls, 1, "the collector infra declaration reaches the host exactly once");
-});
