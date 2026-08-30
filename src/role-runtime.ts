@@ -621,14 +621,14 @@ export function createRoleRuntimeExtension(
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
     const piHostAdapter = injectedPiHostAdapter ?? createPiRoleHostAdapter(pi);
-    let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection) => Promise<void> = async () => {
+    let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection, context: HostContext) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
       piHostAdapter.host,
       new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
       failInfrastructure,
-      async (projection) => projectClosedSubmission(projection),
+      async (projection, context) => projectClosedSubmission(projection, context),
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
@@ -699,12 +699,18 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = pending;
       await pending;
     };
-    projectClosedSubmission = async (projection) => {
+    projectClosedSubmission = async (projection, context) => {
       receiptDelivery.recordAccepted();
+      const closure = {
+        toolName: navigatorOutputTool(projection.role)!,
+        isError: false,
+        details: projection.decisiveFacts,
+      };
+      context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
       await settleNavigatorProjection(publicNavigatorSettlement(
         projection.role,
         navigatorPhase(roleHost, projection.role),
-        { toolName: navigatorOutputTool(projection.role)!, details: projection.decisiveFacts },
+        closure,
       ));
     };
     roleHost.on("input", (event) => {
