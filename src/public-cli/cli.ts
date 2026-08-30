@@ -1,3 +1,5 @@
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
 /**
  * Public ak-role CLI dispatcher (roles / config / layered help / Judge run).
  */
@@ -12,7 +14,6 @@ import {
   clearPersistentSeatConfig,
   effectiveSeatConfigurations,
   formatModelSpec,
-  isEngineAxisSeat,
   isGateOfficerSeat,
   loadCredentialProviders,
   loadPublicCliConfig,
@@ -23,7 +24,8 @@ import {
   setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
-  validatePublicCliConfigEngines,
+  setPersistentSeatHost,
+  validatePublicCliConfigAxes,
   type CredentialProviders,
   type EffectiveSeat,
   type InvocationModelOverride,
@@ -31,10 +33,14 @@ import {
 } from "./config.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
+import type { RoleTurnHost } from "../host-contracts.ts";
 import {
-  type ExplicitInternalPiRunner,
-} from "./explicit-internal.ts";
+  createPiRoleTurnHost,
+  appendPiSessionCustomEntry,
+} from "../pi/role-turn-host.ts";
 import {
+  observeLaunchedRolePackageIdentity,
+  parseAnalystArgv,
   parseCoderArgv,
   parseCollectorArgv,
   parseCountersignArgv,
@@ -44,7 +50,8 @@ import {
   parseMergerArgv,
   parseNotaryArgv,
   parseReviewerArgv,
-  parseAnalystArgv,
+  recordLaunchedPiIdentity,
+  recordLaunchedRolePackageIdentity,
 } from "./invocation.ts";
 import {
   createTypedOptionConsumer,
@@ -91,7 +98,7 @@ import type { TerminalResult } from "./terminal.ts";
 export {
   buildExplicitInternalActivationArgs,
   resolveInternalRoleEntrypoint,
-} from "./explicit-internal.ts";
+} from "../pi/role-turn-host.ts";
 export { CliUsageError } from "./cli-errors.ts";
 export type { CliIo } from "./cli-io.ts";
 
@@ -121,7 +128,8 @@ type TakenPublicGlobalFlag =
   | { flag: "help"; consume: 1 }
   | { flag: "model"; consume: 1 | 2; value: string | undefined }
   | { flag: "thinking"; consume: 1 | 2; raw: string | undefined }
-  | { flag: "engine"; consume: 1 | 2; value: string | undefined };
+  | { flag: "engine"; consume: 1 | 2; value: string | undefined }
+  | { flag: "host"; consume: 1 | 2; value: string | undefined };
 
 /**
  * If `argv[index]` is a public global flag, describe its span and payload.
@@ -154,9 +162,9 @@ function takePublicGlobalFlag(
       raw: taken.value,
     };
   }
-  if (taken.def.id === "engine") {
+  if (taken.def.id === "engine" || taken.def.id === "host") {
     return {
-      flag: "engine",
+      flag: taken.def.id,
       consume: consumed as 1 | 2,
       value: taken.value,
     };
@@ -164,16 +172,44 @@ function takePublicGlobalFlag(
   return undefined;
 }
 
+export type HostSelectionFailure = {
+  readonly kind: "host-unregistered" | "host-model-mismatch";
+  readonly host: string;
+  readonly seat: PublicCallableRole;
+  readonly model: string;
+};
+
+export type NamedRoleTurnHostAdapter = {
+  readonly name: string;
+  readonly create: (input: { role: PublicCallableRole; model: EffectiveSeat["selection"] }) =>
+    | { readonly ok: true; readonly host: RoleTurnHost }
+    | { readonly ok: false };
+};
+
+class HostSelectionError extends Error {
+  constructor(
+    readonly failure: HostSelectionFailure,
+    readonly registeredHosts: readonly string[],
+  ) { super(failure.kind); }
+}
+
 export type CliEnv = {
   home?: string;
+  /** Host durable-principal authority; production uses the Pi adapter. */
+  principalAuthority?: DurablePrincipalAuthority;
   agentDir?: string;
   /** Process cwd for any Pi subprocess owned by ak-role. */
   cwd?: string;
   packageRoot: string;
   credentials?: CredentialProviders;
   io?: CliIo;
-  /** Injectable Pi runner (tests); production resolves `pi` on PATH. */
-  piRunner?: ExplicitInternalPiRunner;
+  /**
+   * Injectable host-neutral turn host (tests). Production composes the Pi
+   * adapter once per dispatch from packageRoot + seat extraPiArgs/timeout.
+   */
+  roleTurnHost?: RoleTurnHost;
+  /** Composition-root-owned unique named adapter table. */
+  hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Optional caller correlation id (#78 host channel). */
   correlationId?: string;
   /** Extra Pi args for Judge runs (tests: faux provider). */
@@ -211,10 +247,143 @@ export type CliEnv = {
   createRunId?: () => string;
 };
 
+/** Compose the Pi turn host for one role dispatch (sole public-cli → pi contact). */
+function resolveRoleTurnHost(
+  env: CliEnv,
+  options: {
+    role: PublicCallableRole;
+    seat: EffectiveSeat;
+    principalAuthority: DurablePrincipalAuthority;
+    extraPiArgs?: readonly string[];
+    timeoutMs?: number;
+  },
+): RoleTurnHost {
+  const piHost = env.roleTurnHost ?? createPiRoleTurnHost({
+    packageRoot: env.packageRoot,
+    principalAuthority: options.principalAuthority,
+    ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    recordLaunchedPiIdentity,
+    recordLaunchedRolePackageIdentity,
+    observeLaunchedRolePackageIdentity,
+  });
+  const adapters = env.hostAdapters ?? [{ name: "pi", create: () => ({ ok: true as const, host: piHost }) }];
+  const hostName = options.seat.host;
+  const adapter = adapters.find((candidate) => candidate.name === hostName);
+  const model = options.seat.selection === undefined ? "unconfigured" : `${options.seat.selection.provider}/${options.seat.selection.model}`;
+  const registeredHosts = adapters.map(({ name }) => name);
+  if (adapter === undefined) {
+    throw new HostSelectionError(
+      { kind: "host-unregistered", host: hostName, seat: options.role, model },
+      registeredHosts,
+    );
+  }
+  const selected = adapter.create({ role: options.role, model: options.seat.selection });
+  if (!selected.ok) {
+    throw new HostSelectionError(
+      { kind: "host-model-mismatch", host: hostName, seat: options.role, model },
+      registeredHosts,
+    );
+  }
+  return selected.host;
+}
+
+type RoleEnvironmentOptions = {
+  role: "judge" | "coder" | "fixer" | "reviewer" | "merger" | "collector" | "doctor" | "notary" | "countersign";
+  home: string;
+  agentDir: string;
+  cwd: string;
+  credentials?: CredentialProviders;
+  seat: EffectiveSeat;
+  config?: PublicCliConfig;
+  /**
+   * Resume must not inject seat startup/persistent defaults as env.model — those
+   * would mask admitted.model restoration (standards-2 second facet). Only an
+   * explicit invocation --model (source === "invocation") is forwarded.
+   */
+  resume?: boolean;
+};
+
+function createRoleEnvironment(
+  env: CliEnv,
+  options: RoleEnvironmentOptions,
+) {
+  const role = options.role;
+  const extraPiArgs =
+    role === "coder"
+      ? env.coderExtraPiArgs
+      : role === "fixer"
+        ? env.fixerExtraPiArgs
+        : role === "reviewer"
+          ? env.reviewerExtraPiArgs
+          : role === "merger"
+            ? env.mergerExtraPiArgs
+            : role === "judge"
+              ? env.judgeExtraPiArgs
+              : role === "collector"
+                ? env.collectorExtraPiArgs
+                : role === "doctor"
+                  ? env.doctorExtraPiArgs
+                  : role === "notary"
+                    ? env.notaryExtraPiArgs
+                    : undefined;
+  const timeoutMs =
+    role === "coder"
+      ? env.coderTimeoutMs
+      : role === "fixer"
+        ? env.fixerTimeoutMs
+        : role === "reviewer"
+          ? env.reviewerTimeoutMs
+          : role === "merger"
+            ? env.mergerTimeoutMs
+            : role === "judge"
+              ? env.judgeTimeoutMs
+              : role === "collector"
+                ? env.collectorTimeoutMs
+                : role === "doctor"
+                  ? env.doctorTimeoutMs
+                  : role === "notary"
+                    ? env.notaryTimeoutMs
+                    : undefined;
+
+  // Initial runs take seat.selection from any source (invocation/persistent/startup).
+  // Resume only forwards an explicit CLI --model; otherwise env.model stays unset so
+  // resolveResumeModel can restore admitted.model (incl. thinking).
+  const injectModel =
+    options.seat.selection !== undefined &&
+    (options.resume !== true || options.seat.source === "invocation");
+
+  return {
+    home: options.home,
+    principalAuthority: env.principalAuthority!,
+    agentDir: options.agentDir,
+    sessionAppender: appendPiSessionCustomEntry,
+    packageRoot: env.packageRoot,
+    roleTurnHost: resolveRoleTurnHost(env, {
+      role,
+      seat: options.seat,
+      principalAuthority: env.principalAuthority!,
+      ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    }),
+    cwd: options.cwd,
+    ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
+    ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+    ...(injectModel ? { model: options.seat.selection } : {}),
+    ...projectSeatEngine(options.seat),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+    ...(options.config?.autoResumeLimit === undefined
+      ? {}
+      : { autoResumeLimit: options.config.autoResumeLimit }),
+  };
+}
+
 export type CliResult = {
   exitCode: number;
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
   terminal?: TerminalResult;
+  hostFailure?: HostSelectionFailure;
 };
 
 const THINKING_LEVELS = new Set([
@@ -256,6 +425,7 @@ type ParsedGlobal = {
   model?: string;
   thinking?: PublicThinkingLevel;
   engine?: string;
+  host?: string;
   help: boolean;
 };
 
@@ -271,6 +441,7 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
   let model: string | undefined;
   let thinking: PublicThinkingLevel | undefined;
   let engine: string | undefined;
+  let host: string | undefined;
   let help = false;
   const positional: string[] = [];
   const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
@@ -314,11 +485,12 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
         args.splice(0, taken.consume);
         continue;
       }
-      if (taken.flag === "engine") {
-        if (taken.value === undefined) {
-          throw new CliUsageError("--engine requires a value");
+      if (taken.flag === "engine" || taken.flag === "host") {
+        if (taken.value === undefined || taken.value.trim() === "") {
+          throw new CliUsageError(`--${taken.flag} requires a value`);
         }
-        engine = taken.value;
+        if (taken.flag === "engine") engine = taken.value;
+        else host = taken.value;
         args.splice(0, taken.consume);
         continue;
       }
@@ -337,6 +509,7 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
     ...(model === undefined ? {} : { model }),
     ...(thinking === undefined ? {} : { thinking }),
     ...(engine === undefined ? {} : { engine }),
+    ...(host === undefined ? {} : { host }),
     help,
   };
 }
@@ -363,7 +536,8 @@ function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | u
   if (
     parsed.model === undefined &&
     parsed.thinking === undefined &&
-    parsed.engine === undefined
+    parsed.engine === undefined &&
+    parsed.host === undefined
   ) {
     return undefined;
   }
@@ -371,6 +545,7 @@ function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | u
     ...(parsed.model === undefined ? {} : { model: parsed.model }),
     ...(parsed.thinking === undefined ? {} : { thinking: parsed.thinking }),
     ...(parsed.engine === undefined ? {} : { engine: parsed.engine }),
+    ...(parsed.host === undefined ? {} : { host: parsed.host }),
   };
 }
 
@@ -385,21 +560,19 @@ function requireLegalEngineName(name: string): string {
   }
 }
 
-/**
- * Persistent engine axis gate (#391 E1): PUBLIC_CALLABLE_ROLES only.
- * Automatic seats are configurable for model but have no independent activation path.
- */
-function requireEngineAxisSeat(
+/** Callable seats own persistent call axes; automatic seats have no call path. */
+function requireCallableSeat(
   seat: string,
-  verb: "set-engine" | "unset-engine",
+  axis: "engine" | "host",
+  verb: "set-engine" | "unset-engine" | "set-host" | "unset-host",
 ): asserts seat is PublicCallableRole {
   if (isAutomaticConfigurableSeat(seat)) {
     throw new CliUsageError(
       `config ${verb} refuses ${seat}: no independent activation path; storing would be silently ineffective`,
     );
   }
-  if (!isEngineAxisSeat(seat)) {
-    throw new CliUsageError(`unknown engine-axis seat: ${seat}`);
+  if (!isPublicCallableRole(seat)) {
+    throw new CliUsageError(`unknown ${axis}-axis seat: ${seat}`);
   }
 }
 
@@ -416,7 +589,7 @@ function loadAndValidateConfig(
 ): Promise<PublicCliConfig> {
   return loadPublicCliConfig(home).then((config) => {
     try {
-      validatePublicCliConfigEngines(config, packageRoot);
+      validatePublicCliConfigAxes(config, packageRoot);
     } catch (error) {
       throw new CliUsageError(
         error instanceof Error ? error.message : String(error),
@@ -567,7 +740,7 @@ function renderPersistentSeatModel(selection: {
 }
 
 function renderConfig(config: PublicCliConfig): string {
-  const lines: string[] = ["seat\tmodel\tengine"];
+  const lines: string[] = ["seat\tmodel\tengine\thost"];
   const keys = Object.keys(config.seats) as (keyof typeof config.seats)[];
   if (keys.length === 0) {
     lines.push("(empty)");
@@ -576,7 +749,8 @@ function renderConfig(config: PublicCliConfig): string {
       const selection = config.seats[seat];
       if (selection === undefined) continue;
       const engine = selection.engine === undefined ? "-" : selection.engine;
-      lines.push(`${seat}\t${renderPersistentSeatModel(selection)}\t${engine}`);
+      const host = selection.host === undefined ? "-" : selection.host;
+      lines.push(`${seat}\t${renderPersistentSeatModel(selection)}\t${engine}\t${host}`);
     }
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
@@ -600,11 +774,9 @@ async function runConfigCommand(
       if (selection === undefined) {
         io.stdout(`${args[1]}\t(unconfigured)\n`);
       } else {
-        const engine =
-          selection.engine === undefined ? "-" : selection.engine;
-        io.stdout(
-          `${args[1]}\t${renderPersistentSeatModel(selection)}\t${engine}\n`,
-        );
+        const engine = selection.engine === undefined ? "-" : selection.engine;
+        const host = selection.host === undefined ? "-" : selection.host;
+        io.stdout(`${args[1]}\t${renderPersistentSeatModel(selection)}\t${engine}\t${host}\n`);
       }
       return 0;
     }
@@ -663,6 +835,24 @@ async function runConfigCommand(
     return 0;
   }
 
+  if (args[0] === "set-host" || args[0] === "unset-host") {
+    const unset = args[0] === "unset-host";
+    if (args.length !== (unset ? 2 : 3)) {
+      throw new CliUsageError(`usage: ak-role config ${args[0]} <seat>${unset ? "" : " <name>"}`);
+    }
+    const seat = args[1]!;
+    requireCallableSeat(seat, "host", unset ? "unset-host" : "set-host");
+    let config = await loadAndValidateConfig(home, packageRoot);
+    try {
+      config = setPersistentSeatHost(config, seat, unset ? undefined : args[2]!);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
@@ -671,7 +861,7 @@ async function runConfigCommand(
     }
     const seat = args[1]!;
     const name = args[2]!;
-    requireEngineAxisSeat(seat, "set-engine");
+    requireCallableSeat(seat, "engine", "set-engine");
     requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
@@ -694,7 +884,7 @@ async function runConfigCommand(
       );
     }
     const seat = args[1]!;
-    requireEngineAxisSeat(seat, "unset-engine");
+    requireCallableSeat(seat, "engine", "unset-engine");
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
       config = setPersistentSeatEngine(config, seat, undefined);
@@ -755,10 +945,26 @@ export async function runAkRole(
   try {
     // Select the installed package identity once, before any role-owned Skill,
     // runtime entry, activation argv, or invocation provenance is derived.
-    env = { ...env, packageRoot: await realpath(env.packageRoot) };
+    env = {
+      ...env,
+      packageRoot: await realpath(env.packageRoot),
+      principalAuthority: env.principalAuthority ?? piDurablePrincipalAuthority,
+    };
     const parsed = parseArgv(argv);
     // Invocation --engine rejects at the call-request seam (not role submission).
     // #356 / #378 / #391: engine axis is every callable role (not resume / support).
+    if (parsed.host !== undefined && parsed.command === "resume") {
+      throw new CliUsageError("resume cannot change host");
+    }
+    if (
+      parsed.host !== undefined &&
+      !parsed.help &&
+      parsed.command !== undefined &&
+      parsed.command !== "help" &&
+      !isPublicCallableRole(parsed.command)
+    ) {
+      throw new CliUsageError(`host axis is role commands only; refused command ${parsed.command}`);
+    }
     if (parsed.engine !== undefined) {
       requireLegalEngineName(parsed.engine);
       if (
@@ -852,24 +1058,16 @@ export async function runAkRole(
       if (resumeRole === "coder") {
         const result = await runPublicCoderResume(
           resumeRequest,
-          {
+          createRoleEnvironment(env, {
+            role: "coder",
             home,
             agentDir,
-            packageRoot: env.packageRoot,
             cwd,
             credentials,
-            ...(env.correlationId === undefined
-              ? {}
-              : { correlationId: env.correlationId }),
-            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-            ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...(env.coderExtraPiArgs === undefined
-              ? {}
-              : { extraPiArgs: env.coderExtraPiArgs }),
-            ...(env.coderTimeoutMs === undefined
-              ? {}
-              : { timeoutMs: env.coderTimeoutMs }),
-          },
+            seat,
+            config,
+            resume: true,
+          }),
           io,
         );
         return {
@@ -880,24 +1078,16 @@ export async function runAkRole(
       if (resumeRole === "fixer") {
         const result = await runPublicFixerResume(
           resumeRequest,
-          {
+          createRoleEnvironment(env, {
+            role: "fixer",
             home,
             agentDir,
-            packageRoot: env.packageRoot,
             cwd,
             credentials,
-            ...(env.correlationId === undefined
-              ? {}
-              : { correlationId: env.correlationId }),
-            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-            ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...(env.fixerExtraPiArgs === undefined
-              ? {}
-              : { extraPiArgs: env.fixerExtraPiArgs }),
-            ...(env.fixerTimeoutMs === undefined
-              ? {}
-              : { timeoutMs: env.fixerTimeoutMs }),
-          },
+            seat,
+            config,
+            resume: true,
+          }),
           io,
         );
         return {
@@ -908,24 +1098,16 @@ export async function runAkRole(
       if (resumeRole === "reviewer") {
         const result = await runPublicReviewerResume(
           resumeRequest,
-          {
+          createRoleEnvironment(env, {
+            role: "reviewer",
             home,
             agentDir,
-            packageRoot: env.packageRoot,
             cwd,
             credentials,
-            ...(env.correlationId === undefined
-              ? {}
-              : { correlationId: env.correlationId }),
-            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-            ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...(env.reviewerExtraPiArgs === undefined
-              ? {}
-              : { extraPiArgs: env.reviewerExtraPiArgs }),
-            ...(env.reviewerTimeoutMs === undefined
-              ? {}
-              : { timeoutMs: env.reviewerTimeoutMs }),
-          },
+            seat,
+            config,
+            resume: true,
+          }),
           io,
         );
         return {
@@ -936,24 +1118,16 @@ export async function runAkRole(
       if (resumeRole === "merger") {
         const result = await runPublicMergerResume(
           resumeRequest,
-          {
+          createRoleEnvironment(env, {
+            role: "merger",
             home,
             agentDir,
-            packageRoot: env.packageRoot,
             cwd,
             credentials,
-            ...(env.correlationId === undefined
-              ? {}
-              : { correlationId: env.correlationId }),
-            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-            ...(seat.selection === undefined ? {} : { model: seat.selection }),
-            ...(env.mergerExtraPiArgs === undefined
-              ? {}
-              : { extraPiArgs: env.mergerExtraPiArgs }),
-            ...(env.mergerTimeoutMs === undefined
-              ? {}
-              : { timeoutMs: env.mergerTimeoutMs }),
-          },
+            seat,
+            config,
+            resume: true,
+          }),
           io,
         );
         return {
@@ -963,24 +1137,16 @@ export async function runAkRole(
       }
       const result = await runPublicResume(
         resumeRequest,
-        {
+        createRoleEnvironment(env, {
+          role: "judge",
           home,
           agentDir,
-          packageRoot: env.packageRoot,
           cwd,
           credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...(env.judgeExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.judgeExtraPiArgs }),
-          ...(env.judgeTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.judgeTimeoutMs }),
-        },
+          seat,
+          config,
+          resume: true,
+        }),
         io,
       );
       return {
@@ -1008,30 +1174,7 @@ export async function runAkRole(
       );
       const result = await runPublicJudge(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.judgeExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.judgeExtraPiArgs }),
-          ...(env.judgeTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.judgeTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.judge.parse,
       );
@@ -1056,20 +1199,7 @@ export async function runAkRole(
       );
       const result = await runPublicCountersign(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-        },
+        createRoleEnvironment(env, { role: "countersign", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.countersign.parse,
       );
@@ -1094,30 +1224,7 @@ export async function runAkRole(
       );
       const result = await runPublicCoder(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.coderExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.coderExtraPiArgs }),
-          ...(env.coderTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.coderTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.coder.parse,
       );
@@ -1142,30 +1249,7 @@ export async function runAkRole(
       );
       const result = await runPublicFixer(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.fixerExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.fixerExtraPiArgs }),
-          ...(env.fixerTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.fixerTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.fixer.parse,
       );
@@ -1190,26 +1274,7 @@ export async function runAkRole(
       );
       const result = await runPublicCollector(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.collectorExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.collectorExtraPiArgs }),
-          ...(env.collectorTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.collectorTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-        },
+        createRoleEnvironment(env, { role: "collector", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.collector.parse,
       );
@@ -1234,30 +1299,7 @@ export async function runAkRole(
       );
       const result = await runPublicReviewer(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.reviewerExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.reviewerExtraPiArgs }),
-          ...(env.reviewerTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.reviewerTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.reviewer.parse,
       );
@@ -1282,26 +1324,7 @@ export async function runAkRole(
       );
       const result = await runPublicDoctor(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.doctorExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.doctorExtraPiArgs }),
-          ...(env.doctorTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.doctorTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-        },
+        createRoleEnvironment(env, { role: "doctor", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.doctor.parse,
       );
@@ -1326,26 +1349,7 @@ export async function runAkRole(
       );
       const result = await runPublicNotary(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.notaryExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.notaryExtraPiArgs }),
-          ...(env.notaryTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.notaryTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-        },
+        createRoleEnvironment(env, { role: "notary", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.notary.parse,
       );
@@ -1370,30 +1374,7 @@ export async function runAkRole(
       );
       const result = await runPublicMerger(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...(env.correlationId === undefined
-            ? {}
-            : { correlationId: env.correlationId }),
-          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
-          ...(seat.selection === undefined ? {} : { model: seat.selection }),
-          ...projectSeatEngine(seat),
-          ...(env.mergerExtraPiArgs === undefined
-            ? {}
-            : { extraPiArgs: env.mergerExtraPiArgs }),
-          ...(env.mergerTimeoutMs === undefined
-            ? {}
-            : { timeoutMs: env.mergerTimeoutMs }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...(config.autoResumeLimit === undefined
-            ? {}
-            : { autoResumeLimit: config.autoResumeLimit }),
-        },
+        createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.merger.parse,
       );
@@ -1419,6 +1400,11 @@ export async function runAkRole(
     // tokens (including misspelled role names) are structural rejects.
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
+    if (error instanceof HostSelectionError) {
+      const registered = error.registeredHosts.join(", ");
+      io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}; registered: ${registered}`));
+      return { exitCode: 1, hostFailure: error.failure };
+    }
     if (error instanceof CliUsageError) {
       // Non-judge structural paths share the same rejection presenter as Judge.
       presentStructuralRejection(error, io);

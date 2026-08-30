@@ -11,12 +11,15 @@
  * serialized thrown value, no field picking) — never by content comparison.
  */
 import assert from "node:assert/strict";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import test from "node:test";
 
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
@@ -50,11 +53,13 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     const callsRef={n:0};
     const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:"throw-loop-limit2b"},
+    principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:"throw-loop-limit2b"},
       io,
       autoResumeLimit:2,
-      buildInitialArgs: ()=>["--initial"],
-      buildResumeArgs: ()=>["--resume"],
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
       dispatch:alwaysThrowingDispatch(callsRef,[`boom-attempt-${1}`,`boom-attempt-${2}`,`boom-final`]),
     });
     const terminal=result.terminal as TerminalResult;
@@ -109,11 +114,13 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     const callsRef={n:0};
     const {io,stderr}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"fixer",runId:"throw-sink-fails"},
+    principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"fixer",runId:"throw-sink-fails"},
       io,
       autoResumeLimit:2,
-      buildInitialArgs: ()=>["--initial"],
-      buildResumeArgs: ()=>["--resume"],
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
       dispatch:alwaysThrowingDispatch(callsRef,["boom-sink"]),
     });
     // Retries still ran to budget and ended in the loud typed failure terminal.

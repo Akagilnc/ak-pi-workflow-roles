@@ -19,7 +19,10 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import { roleRunSessionCoordinates } from "../archivist-role-run-coordinates.ts";
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+} from "../host-contracts.ts";
 import { resolveTicketNumberFromAttachmentBodies } from "../ticket-frontmatter.ts";
 import {
   loadDoctorCase,
@@ -69,6 +72,12 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
+import { loadPublicCliConfig, THINKING_LEVELS } from "./config.ts";
+import type { PublicThinkingLevel } from "./registry.ts";
+import {
+  resolveInstitutionalSeatSelections,
+  writeInstitutionalResolutionPage,
+} from "../institutional-resolution.ts";
 
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
@@ -91,9 +100,8 @@ export type AdmittedRoleInvocationBase = {
   readonly instructionEmpty: boolean;
   readonly attachments: readonly FrozenAttachment[];
   readonly runDirectory: string;
-  readonly sessionDirectory: string;
-  /** Exact Pi session file principal (bound at admission; reopened on resume). */
-  readonly sessionFile: string;
+  /** Host-issued opaque durable principal (coordinates only via authority.decode). */
+  readonly principal: DurablePrincipal;
   readonly admittedRequestPath: string;
   /**
    * Optional opaque invocation correlation restored from a prior admitted page
@@ -105,6 +113,8 @@ export type AdmittedRoleInvocationBase = {
    * Absent when no attachment carries a valid contract field (unbound).
    */
   readonly ticketNumber?: number;
+  /** Effective model from invocation identity; restored on resume when no CLI model is given. */
+  readonly model?: InvocationEffectiveModel;
 };
 
 export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
@@ -202,19 +212,83 @@ export type AdmittedRoleInvocation =
   | AdmittedReviewerInvocation
   | AdmittedMergerInvocation;
 
+/** Persistence projection only — not carried on Admitted (opaque principal owns identity). */
 type RoleInvocationLedgerSource = Pick<
   AdmittedRoleInvocationBase,
-  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile" | "correlationId" | "ticketNumber"
->;
+  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "correlationId" | "ticketNumber"
+> & {
+  readonly sessionDirectory: string;
+  readonly sessionFile: string;
+};
+
+/** Shared admission placement from an injected host authority (no consumer Pi default). */
+export type AdmissionPlacement = {
+  readonly principal: DurablePrincipal;
+  readonly sessionDirectory: string;
+  readonly sessionFile: string;
+  readonly runDirectory: string;
+  readonly ledgerHome: string;
+  readonly bookKey: string;
+};
+
+/** Issue principal + derive ledger placement through the injected authority only. */
+export function issueAdmissionPlacement(
+  authority: DurablePrincipalAuthority,
+  request: {
+    readonly cwd: string;
+    readonly runId: string;
+    readonly role: AdmittedRoleInvocation["role"];
+    readonly home?: string;
+  },
+): AdmissionPlacement {
+  const principal = authority.issue(request);
+  const { sessionDirectory, sessionFile } = authority.decode(principal);
+  const runDirectory = join(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(
+    request.home === undefined ? undefined : () => request.home!,
+  );
+  const bookKey = resolveBookKeyFromGit(request.cwd);
+  return {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  };
+}
+
+/**
+ * Unique admitted-request.json persistence projection: top-level sessionDirectory/sessionFile
+ * (base wire shape). Memory Admitted keeps only the opaque principal — never dual-carry.
+ */
+async function writeAdmittedRequestPersistence(
+  admittedRequestPath: string,
+  body: Record<string, unknown>,
+  coordinates: { readonly sessionDirectory: string; readonly sessionFile: string },
+): Promise<void> {
+  const { principal: _omitPrincipal, ...rest } = body;
+  const projection = {
+    ...rest,
+    sessionDirectory: coordinates.sessionDirectory,
+    sessionFile: coordinates.sessionFile,
+  };
+  await writeFile(
+    admittedRequestPath,
+    `${JSON.stringify(projection, null, 2)}\n`,
+    "utf8",
+  );
+}
 
 /**
  * Effective provider/model selection recorded on the invocation identity page.
  * thinking is present only when the caller/seat supplied it — bare model omits it.
+ * Restored values are bounded to typed PublicThinkingLevel (never arbitrary string).
  */
 export type InvocationEffectiveModel = {
   readonly provider: string;
   readonly model: string;
-  readonly thinking?: string;
+  readonly thinking?: PublicThinkingLevel;
 };
 
 /** Project effective model onto ledger fields; absent thinking stays absent. */
@@ -227,6 +301,25 @@ function effectiveModelLedgerFields(
     model: model.model,
     ...(model.thinking === undefined ? {} : { thinking: model.thinking }),
   };
+}
+
+/** Recover the machine home that owns a run directory under `.ak-roles/`. */
+export function homeFromRunDirectory(runDirectory: string): string {
+  const marker = `${sep}.ak-roles${sep}`;
+  const idx = runDirectory.indexOf(marker);
+  if (idx !== -1) {
+    return runDirectory.slice(0, idx);
+  }
+  const altMarker = ".ak-roles";
+  const altIdx = runDirectory.indexOf(altMarker);
+  if (altIdx !== -1) {
+    const candidate = runDirectory.slice(0, altIdx);
+    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  if (typeof process.env.HOME === "string" && process.env.HOME.length > 0) {
+    return process.env.HOME;
+  }
+  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
 }
 
 /**
@@ -258,6 +351,10 @@ async function writeRoleInvocationLedger(
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
+  const home = homeFromRunDirectory(source.runDirectory);
+  const config = await loadPublicCliConfig(home);
+  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
+  await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
 
 /**
@@ -296,6 +393,21 @@ export async function recordEffectiveInvocationModel(
     `${JSON.stringify(next, null, 2)}\n`,
     "utf8",
   );
+  const effectiveModel: InvocationEffectiveModel | undefined =
+    typeof next.provider === "string" && typeof next.model === "string"
+      ? {
+          provider: next.provider,
+          model: next.model,
+          ...(typeof next.thinking === "string" &&
+          THINKING_LEVELS.has(next.thinking as PublicThinkingLevel)
+            ? { thinking: next.thinking as PublicThinkingLevel }
+            : {}),
+        }
+      : undefined;
+  const home = homeFromRunDirectory(runDirectory);
+  const config = await loadPublicCliConfig(home);
+  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
+  await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 
 /** Merge observed launch-time fields into the single existing invocation.json identity page. */
@@ -789,6 +901,7 @@ export type AdmitJudgeInvocationOptions = {
   project?: string;
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
+  principalAuthority: DurablePrincipalAuthority;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
 };
@@ -806,8 +919,19 @@ export async function admitJudgeInvocation(
   }
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "judge",
+    home: options.home,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -826,8 +950,7 @@ export async function admitJudgeInvocation(
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -840,8 +963,11 @@ export async function admitJudgeInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "judge",
@@ -852,8 +978,7 @@ export async function admitJudgeInvocation(
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     ...ticketFields,
   };
@@ -891,6 +1016,7 @@ export type AdmitCountersignInvocationOptions = {
   project?: string;
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
+  principalAuthority: DurablePrincipalAuthority;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
   correlationId?: string;
@@ -910,8 +1036,19 @@ export async function admitCountersignInvocation(
   }
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "countersign", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "countersign",
+    home: options.home,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -930,8 +1067,7 @@ export async function admitCountersignInvocation(
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
     ...ticketFields,
     instruction,
@@ -945,8 +1081,11 @@ export async function admitCountersignInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "countersign",
@@ -957,8 +1096,7 @@ export async function admitCountersignInvocation(
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
     ...ticketFields,
@@ -1009,6 +1147,7 @@ export async function ensureRunArtifactsDir(runDirectory: string): Promise<strin
 
 export type AdmitCoderInvocationOptions = {
   home: string;
+  principalAuthority: DurablePrincipalAuthority;
   cwd: string;
   phase: CoderPhase;
   instruction: string;
@@ -1042,8 +1181,19 @@ export async function admitCoderInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "coder",
+    home: options.home,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1064,8 +1214,7 @@ export async function admitCoderInvocation(
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -1079,8 +1228,11 @@ export async function admitCoderInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "coder",
@@ -1092,8 +1244,7 @@ export async function admitCoderInvocation(
     instructionEmpty: false,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     taskPath,
     ...ticketFields,
@@ -1122,6 +1273,7 @@ export function buildCoderTransportPrompt(
 
 export type AdmitFixerInvocationOptions = {
   home: string;
+  principalAuthority: DurablePrincipalAuthority;
   cwd: string;
   phase: FixerPhase;
   instruction: string;
@@ -1182,8 +1334,19 @@ export async function admitFixerInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "fixer",
+    home: options.home,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1214,8 +1377,7 @@ export async function admitFixerInvocation(
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -1234,8 +1396,11 @@ export async function admitFixerInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "fixer",
@@ -1247,8 +1412,7 @@ export async function admitFixerInvocation(
     instructionEmpty: false,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     packetPath,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
@@ -1419,6 +1583,7 @@ function stripGitSuffix(name: string): string {
 
 export type AdmitCollectorInvocationOptions = {
   home: string;
+  principalAuthority: DurablePrincipalAuthority;
   cwd: string;
   prNumber: number;
   instruction?: string;
@@ -1479,8 +1644,19 @@ export async function admitCollectorInvocation(
   const manifestDigest = manifest.digest;
 
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "collector",
+    home: options.home,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -1505,8 +1681,7 @@ export async function admitCollectorInvocation(
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -1524,12 +1699,11 @@ export async function admitCollectorInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "collector",
@@ -1540,8 +1714,7 @@ export async function admitCollectorInvocation(
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     prNumber,
     repository,
@@ -1657,6 +1830,7 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
 
 export type AdmitDoctorInvocationOptions = {
   home: string;
+  principalAuthority: DurablePrincipalAuthority;
   cwd: string;
   issueNumber: number;
   /** Optional project-relative retained runs root override. */
@@ -1763,8 +1937,19 @@ export async function admitDoctorInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "doctor",
+    home: options.home,
+  });
 
   let caseRunsPath: string;
   try {
@@ -1824,8 +2009,7 @@ export async function admitDoctorInvocation(
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -1841,12 +2025,11 @@ export async function admitDoctorInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "doctor",
@@ -1857,8 +2040,7 @@ export async function admitDoctorInvocation(
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     issueNumber: options.issueNumber,
     caseRunsPath,
@@ -1945,6 +2127,7 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
 
 export async function admitNotaryInvocation(options: {
   readonly home: string;
+  readonly principalAuthority: DurablePrincipalAuthority;
   readonly cwd: string;
   readonly sourceRun: string;
   readonly project?: string;
@@ -1972,13 +2155,19 @@ export async function admitNotaryInvocation(options: {
   }
 
   const runId = options.createRunId?.() ?? uuidv7();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({
-      cwd: projectRoot,
-      runId,
-      role: "notary",
-      home: options.home,
-    });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "notary",
+    home: options.home,
+  });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
 
   const admitted = {
@@ -1987,8 +2176,7 @@ export async function admitNotaryInvocation(options: {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     instruction: "",
     instructionEmpty: true,
     attachments: [] as const,
@@ -1999,12 +2187,11 @@ export async function admitNotaryInvocation(options: {
       : { correlationId: options.correlationId }),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "notary",
@@ -2015,8 +2202,7 @@ export async function admitNotaryInvocation(options: {
     instructionEmpty: true,
     attachments: [],
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     sourceRunPath: sourceRun.runDirectory,
     sourceRun,
@@ -2097,6 +2283,7 @@ export function parseReviewerArgv(
 
 export type AdmitReviewerInvocationOptions = {
   home: string;
+  principalAuthority: DurablePrincipalAuthority;
   cwd: string;
   /** Optional caller prose retained only as admitted provenance — never semantic control. */
   instruction: string;
@@ -2130,8 +2317,19 @@ export async function admitReviewerInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "reviewer",
+    home: options.home,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -2151,8 +2349,7 @@ export async function admitReviewerInvocation(
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -2167,12 +2364,11 @@ export async function admitReviewerInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "reviewer",
@@ -2183,8 +2379,7 @@ export async function admitReviewerInvocation(
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     baseRevision: options.baseRevision,
     authorityRefs,
@@ -2314,6 +2509,7 @@ export async function deriveMergerEnvelopeFromActiveMerge(
 
 export type AdmitMergerInvocationOptions = {
   home: string;
+  principalAuthority: DurablePrincipalAuthority;
   cwd: string;
   instruction: string;
   attachmentPaths: readonly string[];
@@ -2350,8 +2546,19 @@ export async function admitMergerInvocation(
   );
 
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } =
-    roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "merger",
+    home: options.home,
+  });
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -2403,8 +2610,7 @@ export async function admitMergerInvocation(
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -2425,12 +2631,11 @@ export async function admitMergerInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}\n`,
-    "utf8",
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
 
   return {
     role: "merger",
@@ -2441,8 +2646,7 @@ export async function admitMergerInvocation(
     instructionEmpty: false,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,

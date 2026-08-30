@@ -1,11 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve, join, relative, sep } from "node:path";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
-import {
-  roleRunSessionCoordinates
-} from "./archivist-role-run-coordinates.js";
 import {
   ActivationLedgerError,
   activationBookDirectory,
@@ -15,26 +12,49 @@ import {
   physicallyContainedIn,
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
-const { findMostRecentSession } = await import(new URL("./core/session-manager.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
-const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
-function assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile) {
-  const absoluteHome = resolve(ledgerHome);
-  const absoluteSessionDir = resolve(sessionDir);
-  const absoluteFile = resolve(recentFile);
-  const relToHome = relative(absoluteHome, absoluteSessionDir);
-  const segments = relToHome.split(sep);
-  if (relToHome === "" || isAbsolute(relToHome) || relToHome === ".." || relToHome.startsWith(`..${sep}`) || segments[0] !== "books" || segments[1] === void 0 || segments[1] === "" || segments[1] === "." || segments[1] === "..") {
-    throw new ActivationLedgerError(
-      `archivist record sessionDir must be under a ledger book (${ledgerHome}): ${sessionDir}`
-    );
-  }
-  const bookRoot = join(absoluteHome, "books", segments[1]);
-  let realBookRoot;
+const CURRENT_SESSION_LEDGER = "current-session.json";
+function readCurrentSession(sessionDir) {
+  const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
   try {
-    realBookRoot = realpathSync(bookRoot);
+    const value = JSON.parse(readFileSync(ledger, "utf8"));
+    if (typeof value !== "object" || value === null || typeof value.sessionFile !== "string" || value.sessionFile.length === 0) {
+      throw new Error("sessionFile is missing");
+    }
+    return value.sessionFile;
   } catch (error) {
     throw new ActivationLedgerError(
-      `activation ledger book is not resolvable (${bookRoot}): ${errorText(error)}`,
+      `archivist current-session ledger is unavailable or invalid (${ledger}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+function writeCurrentSession(sessionDir, sessionFile) {
+  const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
+  try {
+    writeFileSync(ledger, `${JSON.stringify({ sessionFile })}
+`, { flag: "wx" });
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
+function assertRecentFinalFileUnderSessionDir(sessionDir, recentFile) {
+  const absoluteSessionDir = resolve(sessionDir);
+  const absoluteFile = resolve(recentFile);
+  if (absoluteFile !== absoluteSessionDir && !pathContainedIn(absoluteSessionDir, absoluteFile)) {
+    throw new ActivationLedgerError(
+      `archivist record session must be under the authorized nest (${sessionDir}): ${recentFile}`
+    );
+  }
+  let realSessionDir;
+  try {
+    realSessionDir = realpathSync(absoluteSessionDir);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `archivist record sessionDir is not resolvable (${absoluteSessionDir}): ${errorText(error)}`,
       { cause: error }
     );
   }
@@ -47,9 +67,9 @@ function assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile
       { cause: error }
     );
   }
-  if (realFile !== realBookRoot && !pathContainedIn(realBookRoot, realFile)) {
+  if (realFile !== realSessionDir && !pathContainedIn(realSessionDir, realFile)) {
     throw new ActivationLedgerError(
-      `archivist record session must be under the ledger book (${bookRoot}): ${recentFile}`
+      `archivist record session must be under the authorized nest (${sessionDir}): ${recentFile}`
     );
   }
 }
@@ -74,14 +94,13 @@ function createRecordSession(options) {
     sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join(dirname(parentResolved), options.kind) : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
     parentSession = parentFile;
   }
+  const nestAlreadyExists = existsSync(sessionDir);
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   const mayResumeSameNest = options.subject !== void 0 || options.kind === WORKER_SUBMISSION_GATE_KIND;
-  if (mayResumeSameNest) {
-    const recentFile = findMostRecentSession(sessionDir, cwd);
-    if (recentFile !== null) {
-      assertRecentFinalFileUnderLedgerHome(ledgerHome, sessionDir, recentFile);
-      return SessionManager.open(recentFile, sessionDir, cwd);
-    }
+  if (mayResumeSameNest && nestAlreadyExists) {
+    const recentFile = readCurrentSession(sessionDir);
+    assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+    return SessionManager.open(recentFile, sessionDir, cwd);
   }
   const session = SessionManager.create(
     cwd,
@@ -98,11 +117,13 @@ function createRecordSession(options) {
         session.setSessionFile(file);
       }
     }
+    if (mayResumeSameNest && file !== void 0) {
+      writeCurrentSession(sessionDir, file);
+    }
   }
   return session;
 }
 export {
   WORKER_SUBMISSION_GATE_KIND,
-  createRecordSession,
-  roleRunSessionCoordinates
+  createRecordSession
 };

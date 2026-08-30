@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -24,12 +26,9 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { runExplicitInternalActivation } from "../../src/public-cli/explicit-internal.ts";
+
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import {
-  buildFixerActivationExtraArgs,
-  buildFixerResumeActivationExtraArgs,
-} from "../../src/public-cli/fixer-run.ts";
+
 import {
   admitFixerInvocation as admitFixerInvocationRaw,
 } from "../../src/public-cli/invocation.ts";
@@ -37,7 +36,6 @@ import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts
 import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
 import {
   extractFixerMethodInvocations,
-  extractFixerRoleOutcome,
   settleFixerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
@@ -50,13 +48,18 @@ import {
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fixer-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -102,6 +105,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
     await assert.rejects(
       () =>
         admitFixerInvocationRaw({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           phase: "apply",
@@ -117,6 +121,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
     await assert.rejects(
       () =>
         admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           phase: "apply",
@@ -141,6 +146,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
     const source = join(home, "notes.txt");
     await writeFile(source, "attachment-v1", "utf8");
     const admitted = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",
@@ -184,6 +190,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const admitted = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "apply",
@@ -191,7 +198,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       attachmentPaths: [],
       createRunId: () => "run-fixer-settle-001",
     });
-    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
       "diagnosing-bugs",
@@ -250,19 +257,25 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
         },
       }),
     ];
-    await writeFile(admitted.sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "fixer",
+      details: receipt,
+      toolCallId: "f1",
+    });
 
     const entries = sessionLines.map((line) => JSON.parse(line));
-    const extracted = extractFixerRoleOutcome(entries);
-    assert.equal(extracted?.outcome.role, "fixer");
-    assert.equal(extracted?.outcome.status, "completed");
     const invocations = extractFixerMethodInvocations(entries, {
       allowedLocations: [configuredPath, material.skillPath],
     });
     assert.equal(invocations.length, 1);
     assert.equal(invocations[0]!.name, "diagnosing-bugs");
 
-    const terminal = await settleFixerTerminalResult(admitted, {
+    const terminal = await settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -301,6 +314,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
 
     // Without skill expansion, provenance remains and invocation is not forced/observed.
     const noDiag = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "apply",
@@ -308,9 +322,9 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       attachmentPaths: [],
       createRunId: () => "run-fixer-settle-002",
     });
-    await mkdir(noDiag.sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(noDiag.principal).sessionDirectory, { recursive: true });
     await writeFile(
-      noDiag.sessionFile,
+      piDurablePrincipalAuthority.decode(noDiag.principal).sessionFile,
       `${JSON.stringify({
         type: "message",
         message: {
@@ -323,7 +337,16 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       })}\n`,
       "utf8",
     );
-    const terminalNoDiag = await settleFixerTerminalResult(noDiag, {
+    await sealAcceptedSubmission({
+      runId: noDiag.runId,
+      cwd: project,
+      home,
+      runDirectory: noDiag.runDirectory,
+      role: "fixer",
+      details: receipt,
+      toolCallId: "f2",
+    });
+    const terminalNoDiag = await settleFixerTerminalResult(noDiag, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -352,9 +375,13 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
         home,
         cwd: project,
         io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           throw new Error("must not dispatch");
         },
+          }),
       });
       assert.equal(result.exitCode, 2);
       assert.equal(stderr.join("").length > 0, true);
@@ -371,9 +398,13 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
           home,
           cwd: project,
           io,
-          piRunner: async () => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
             throw new Error("must not dispatch malformed prereq");
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 2);
@@ -396,7 +427,10 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
           cwd: project,
           createRunId: () => "run-cli-fixer-plan",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -421,11 +455,13 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "fixer" as const, details: receipt, toolCallId: "p1" },
               stderr: "",
               timedOut: false,
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "fixer plan failed");
@@ -465,7 +501,10 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
           cwd: project,
           createRunId: () => "run-cli-fixer-apply",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             return {
               code: 1,
@@ -474,6 +513,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(Array.isArray(captured), true);
@@ -502,7 +542,10 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -517,6 +560,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume, "fixer plan 429 must be resumable");
@@ -548,7 +592,10 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
         assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
@@ -576,11 +623,16 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         );
         return {
           code: 0,
+          sealedAcceptance: { role: "fixer" as const, details: {
+                status: "planned",
+                report: "Resumed plan remains plan phase.",
+              }, toolCallId: "r1" },
           stderr: "",
           timedOut: false,
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "fixer resume failed");
     assert.equal(Array.isArray(resumeArgs), true);
@@ -611,13 +663,22 @@ async function settleFixerSession(
   admitted: Awaited<ReturnType<typeof admitFixerInvocation>>,
   details: unknown,
 ) {
-  await mkdir(admitted.sessionDirectory, { recursive: true });
-  await writeFile(admitted.sessionFile, fixerSessionLine(details), "utf8");
+  await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
+  await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
+  await sealAcceptedSubmission({
+    runId: admitted.runId,
+    cwd: admitted.projectRoot,
+    ...(process.env.HOME === undefined ? {} : { home: process.env.HOME }),
+    runDirectory: admitted.runDirectory,
+    role: "fixer",
+    details,
+    toolCallId: "f-out",
+  });
   const material = await loadPackagedMethodSkillMaterial(
     packageRoot,
     "diagnosing-bugs",
   );
-  return settleFixerTerminalResult(admitted, {
+  return settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
     methodProvenance: material.provenance,
     methodSkillPath: material.skillPath,
     methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
@@ -648,6 +709,7 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     // Production seam: admit valid prerequisites, then settle a phase-legal plan refusal
     // that judges the declared prerequisite unmet — must stay accepted Terminal exit 0.
     const admitted = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",
@@ -717,7 +779,10 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
         cwd: project,
         createRunId: () => "run-cli-fixer-prereq-unmet",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, fixerSessionLine(receipt), "utf8");
@@ -726,8 +791,10 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "fixer" as const, details: receipt, toolCallId: "f-out" },
           };
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 0, stdout.join("") || "prereq_unmet refused failed");
@@ -794,106 +861,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       },
     };
 
-    // extract path: each lawful status keeps typed meaning on the shared face.
-    const unfinishedExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: unfinishedReceipt,
-        },
-      },
-    ]);
-    assert.ok(unfinishedExtracted);
-    assert.equal(unfinishedExtracted.outcome.kind, "accepted");
-    assert.equal(unfinishedExtracted.outcome.status, "unfinished");
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.fixerStatus,
-      "unfinished",
-    );
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.remainingScope,
-      unfinishedReceipt.remainingScope,
-    );
-    assert.equal(
-      unfinishedExtracted.outcome.decisiveFacts.reason,
-      unfinishedReceipt.reason,
-    );
-    assert.equal(unfinishedExtracted.outcome.decisiveFacts.classResultCount, 1);
-
-    const refusedExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: applyRefusedReceipt,
-        },
-      },
-    ]);
-    assert.ok(refusedExtracted);
-    assert.equal(refusedExtracted.outcome.kind, "accepted");
-    assert.equal(refusedExtracted.outcome.status, "refused");
-    assert.equal(refusedExtracted.outcome.decisiveFacts.fixerStatus, "refused");
-    assert.deepEqual(
-      refusedExtracted.outcome.decisiveFacts.classDispositions,
-      [{ name: "PolicyCase", disposition: "refused" }],
-    );
-    assert.deepEqual(
-      refusedExtracted.outcome.decisiveFacts.blockerCauses,
-      ["authority_violation"],
-    );
-
-    const partialExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: partialReceipt,
-        },
-      },
-    ]);
-    assert.ok(partialExtracted);
-    assert.equal(partialExtracted.outcome.kind, "accepted");
-    assert.equal(partialExtracted.outcome.status, "partially_completed");
-    assert.equal(
-      partialExtracted.outcome.decisiveFacts.fixerStatus,
-      "partially_completed",
-    );
-    assert.equal(partialExtracted.outcome.decisiveFacts.classResultCount, 2);
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.classDispositions,
-      [{ name: "ParserCase", disposition: "completed" }, { name: "TransportCase", disposition: "refused" }],
-    );
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.blockerCauses,
-      ["prerequisite_unmet"],
-    );
-    assert.deepEqual(
-      partialExtracted.outcome.decisiveFacts.prerequisiteIds,
-      ["repository.ready"],
-    );
-
-    const escalationExtracted = extractFixerRoleOutcome([
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolName: FIXER_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: escalation,
-        },
-      },
-    ]);
-    // A role-authored kind is not an audit identity without the retained,
-    // seat-bound compliance response.
-    assert.equal(escalationExtracted, undefined);
-
     // settle + runAkRole production path for each lawful status → exit 0.
     const cases: Array<{
       runId: string;
@@ -935,6 +902,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
 
     for (const row of cases) {
       const admitted = await admitFixerInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
         home,
         cwd: project,
         phase: row.phase,
@@ -971,7 +939,10 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         cwd: project,
         createRunId: () => row.runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, fixerSessionLine(row.details), "utf8");
@@ -980,8 +951,10 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "fixer" as const, details: row.details, toolCallId: "f-out" },
           };
         },
+          }),
       });
       assert.equal(
         result.exitCode,

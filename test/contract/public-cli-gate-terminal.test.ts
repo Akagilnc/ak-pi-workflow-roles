@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #478 Terminal gate projection — real public CLI entry (runAkRole).
  *
@@ -195,6 +197,8 @@ async function runJudgePublic(input: {
     readonly code: number;
     readonly stderr?: string;
   };
+  /** When set, seals via production submission ledger (accepted path). */
+  sealedAcceptance?: { readonly details: unknown };
 }): Promise<{ terminal: TerminalResult; exitCode: number; stdout: string[]; stderr: string[] }> {
   const { io, stdout, stderr } = captureIo();
   const result = await runAkRole(
@@ -205,7 +209,10 @@ async function runJudgePublic(input: {
       cwd: input.project,
       createRunId: () => input.runId,
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         const runDir = join(sessionDir, "..");
         await mkdir(sessionDir, { recursive: true });
@@ -215,8 +222,17 @@ async function runJudgePublic(input: {
           stderr: input.piResult?.stderr ?? "",
           timedOut: false,
           args: [...args],
+          ...(input.sealedAcceptance === undefined
+            ? {}
+            : {
+                sealedAcceptance: {
+                  role: "judge" as const,
+                  details: input.sealedAcceptance.details,
+                },
+              }),
         };
       },
+          }),
     },
   );
   assert.ok(result.terminal, "public entry must settle a Terminal");
@@ -241,6 +257,7 @@ test("public CLI projects normal gate dispatch + officer findings", async () => 
       home,
       project,
       runId: "run-gate-normal",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedGatePair(sessionDir, {
@@ -270,6 +287,7 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
       home,
       project,
       runId: "run-gate-no-reason",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedGatePair(sessionDir, {
@@ -300,6 +318,7 @@ test("public CLI omits gate when no auditor-roles gate ran", async () => {
       home,
       project,
       runId: "run-gate-no-gate",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
       },
@@ -323,6 +342,7 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
       home,
       project,
       runId: "run-gate-damaged",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         const auditorDir = join(sessionDir, "auditor-roles");
@@ -430,7 +450,10 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           await mkdir(sessionDir, { recursive: true });
@@ -468,6 +491,7 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 1);

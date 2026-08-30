@@ -3,7 +3,7 @@
  * Production-reachable shape: SessionManager.open(file, otherDir) ≡ pi --session-dir A --resume B.
  * Settlement reads join(dirname(sessionFile), "auditor-roles"); writer must land on the same path.
  * Subject tracer: subject→dir, same-subject continue, switch isolation, parentSession header.
- * #221 book-circle: books/A final .jsonl symlink → books/B legal session is refused before open.
+ * #221/#525 nest-circle: same-book cross-nest pointer and books/A→B final .jsonl symlink refused before open.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -83,10 +83,34 @@ test("createRecordSession nests by parent file and continues subject-keyed navig
     first.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
     const firstFile = first.getSessionFile()!;
 
-    // same subject continues the same session
+    // same subject continues the same session through the AK-owned pointer ledger
     const continued = createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent });
     assert.equal(continued.getSessionFile(), firstFile);
     continued.appendCustomEntry("principal", { run: 2 });
+
+    await rm(join(dirA, "current-session.json"));
+    assert.throws(
+      () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
+      (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    );
+    await writeFile(join(dirA, "current-session.json"), "not-json");
+    assert.throws(
+      () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
+      (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    );
+    await writeFile(join(dirA, "current-session.json"), `${JSON.stringify({ sessionFile: firstFile })}\n`);
+
+    // Same-book cross-nest pointer: subject-a nest points at subject-b's legal file → refuse before open.
+    const peerB = createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-b", parent });
+    peerB.appendCustomEntry("principal", { run: "peer-b" });
+    peerB.appendMessage({ role: "assistant", content: [], api: "test", provider: "test", model: "test", usage: {}, stopReason: "stop", timestamp: Date.now() } as never);
+    const peerBFile = peerB.getSessionFile()!;
+    await writeFile(join(dirA, "current-session.json"), `${JSON.stringify({ sessionFile: peerBFile })}\n`);
+    assert.throws(
+      () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
+      (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    );
+    await writeFile(join(dirA, "current-session.json"), `${JSON.stringify({ sessionFile: firstFile })}\n`);
 
     // Cross-book final-file symlink: books/A nest points at a legal books/B session → refuse before open.
     const foreignDir = join(machineLedgerHome(home), "books", "foreign", "navigator", "peer");
@@ -141,5 +165,62 @@ test("createRecordSession nests by parent file and continues subject-keyed navig
     const header = JSON.parse((await readFile(freshFile, "utf8")).split("\n")[0]!) as { parentSession?: string };
     assert.equal(header.parentSession, parentFile);
     assert.equal((await readFile(firstFile, "utf8")).match(/\"principal\"/g)?.length, 2);
+  });
+});
+
+test("Sitian facade: three levels, with/without usage, and raw pointer can open canonical volume", async () => {
+  await withHermeticHome({ prefix: "ak-sitian-three-levels-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+
+    const { sitianReport, readSitianRecords } = await import("../../src/sitian-facade.ts");
+
+    // Case 1: run-summary with usage
+    const summaryPtr = sitianReport({
+      level: "run-summary",
+      kind: "settlement-summary",
+      cwd: project,
+      subject: { runId: "r-sum-1", attemptId: "att-1" },
+      payload: { status: "completed" },
+      usage: { promptTokens: 42, completionTokens: 18, totalTokens: 60 },
+    });
+    assert.equal(summaryPtr.level, "run-summary");
+    const summaryRead = await readSitianRecords(summaryPtr.recordFile);
+    assert.equal(summaryRead.records.length, 1);
+    assert.equal(summaryRead.records[0]!.usage?.totalTokens, 60);
+
+    // Case 2: event without usage, with raw reference
+    const rawFile = join(home, "raw-session.jsonl");
+    await writeFile(rawFile, '{"type":"session"}\n', "utf8");
+    const eventPtr = sitianReport({
+      level: "event",
+      kind: "gate",
+      cwd: project,
+      subject: { runId: "r-evt-1" },
+      payload: { reminder: true },
+      raw: { sessionFile: rawFile, entryId: "entry-99" },
+    });
+    assert.equal(eventPtr.level, "event");
+    const eventRead = await readSitianRecords(eventPtr.recordFile);
+    assert.equal(eventRead.records.length, 1);
+    assert.equal(eventRead.records[0]!.usage, undefined);
+    assert.equal(eventRead.records[0]!.raw?.sessionFile, rawFile);
+    assert.equal(eventRead.records[0]!.raw?.entryId, "entry-99");
+
+    // Case 3: protocol-snapshot without usage, without raw reference
+    const snapPtr = sitianReport({
+      level: "protocol-snapshot",
+      kind: "auditor-roles",
+      cwd: project,
+      subject: "snap-sub-1",
+      payload: { state: "initialized" },
+    });
+    assert.equal(snapPtr.level, "protocol-snapshot");
+    const snapRead = await readSitianRecords(snapPtr.recordFile);
+    assert.equal(snapRead.records.length, 1);
+    assert.equal(snapRead.records[0]!.level, "protocol-snapshot");
+    assert.equal(snapRead.records[0]!.raw, undefined);
+    assert.equal(snapRead.records[0]!.usage, undefined);
   });
 });

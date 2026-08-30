@@ -13,7 +13,10 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   acquireRunWriterLease,
@@ -236,7 +239,10 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           const runDir = join(sessionDir, "..");
@@ -257,6 +263,7 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
             args: [...args],
           };
         },
+        }),
       },
     );
 
@@ -293,7 +300,7 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
       httpStatus: 429,
       provider: "openai-codex",
     });
-    const durable = await readRoleRunState(runDirectory);
+    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "resumable");
     assert.deepEqual(durable?.resumable, {
       httpStatus: 429,
@@ -319,7 +326,10 @@ test("quota-like prose without typed 429 is not resumable", async () => {
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           // No typed observation file. Only quota-like prose in errorMessage.
@@ -334,6 +344,7 @@ test("quota-like prose without typed 429 is not resumable", async () => {
             args: [...args],
           };
         },
+        }),
       },
     );
 
@@ -343,6 +354,7 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     const bookKey = resolveBookKeyFromGit(project);
     const durable = await readRoleRunState(
       join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`),
+      piDurablePrincipalAuthority,
     );
     assert.equal(durable?.state, "terminal");
   });
@@ -365,7 +377,10 @@ test("lawful terminal result wins over typed 429 observation", async () => {
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           const runDir = join(sessionDir, "..");
@@ -394,8 +409,10 @@ test("lawful terminal result wins over typed 429 observation", async () => {
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "completed despite earlier 429" } },
           };
         },
+        }),
       },
     );
 
@@ -406,6 +423,7 @@ test("lawful terminal result wins over typed 429 observation", async () => {
     const bookKey = resolveBookKeyFromGit(project);
     const durable = await readRoleRunState(
       join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`),
+      piDurablePrincipalAuthority,
     );
     assert.equal(durable?.state, "terminal");
   });
@@ -428,7 +446,10 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           const runDir = join(sessionDir, "..");
@@ -460,6 +481,7 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
             },
           };
         },
+        }),
       },
     );
 
@@ -478,7 +500,7 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
       `${runId}@judge`,
     );
     assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     assert.equal(stdout.join("").includes("ak-role resume"), false);
   });
 });
@@ -503,7 +525,10 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await observeTyped429ViaProductionHandler({
@@ -526,6 +551,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
               },
             };
           },
+          }),
         },
       );
       assert.equal(first.exitCode, 1);
@@ -540,7 +566,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
       "runs",
       `${runId}@judge`,
     );
-    assert.equal((await readRoleRunState(runDirectory))?.state, "resumable");
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
     assert.ok(await readTypedHttp429Observation(runDirectory));
 
     // Attempt 2 (resume): non-429 failure. Prior observation must not qualify resume.
@@ -552,7 +578,10 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
         resumeDispatches += 1;
         const sessionFile = args[args.indexOf("--session") + 1]!;
         // Bound principal remains; drop prior provider-stop so this attempt's
@@ -566,6 +595,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
           args: [...args],
         };
       },
+      }),
     });
 
     assert.equal(resumeDispatches, 1);
@@ -578,7 +608,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
       assert.equal(second.terminal!.roleOutcome.cause, "timeout");
     }
     assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
-    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     // Presented output must not advertise a resume command after the non-429 attempt.
     assert.equal(stdout.join("").includes("ak-role resume"), false);
   });
@@ -601,7 +631,10 @@ test("lawful result with publication failure is not resumable even with attempt 
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           // Block report.json publication after a lawful converged verdict.
@@ -634,8 +667,10 @@ test("lawful result with publication failure is not resumable even with attempt 
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "lawful despite later publication failure" } },
           };
         },
+        }),
       },
     );
 
@@ -658,7 +693,7 @@ test("lawful result with publication failure is not resumable even with attempt 
       "runs",
       `${runId}@judge`,
     );
-    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     assert.equal(stdout.join("").includes("ak-role resume"), false);
   });
 });
@@ -680,7 +715,10 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await observeTyped429ViaProductionHandler({
@@ -703,6 +741,7 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
             },
           };
         },
+        }),
       },
     );
 
@@ -788,7 +827,10 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             openedPrincipals.add(args[args.indexOf("--session") + 1]!);
             await mkdir(sessionDir, { recursive: true });
@@ -807,6 +849,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume);
@@ -856,7 +899,10 @@ test("resume restores admitted identity and exact Pi session without resubmittin
         cwd: movedProject,
         credentials: { "openai-codex": true, xai: true },
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           resumeArgs = [...args];
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const sessionFile = args[args.indexOf("--session") + 1]!;
@@ -890,8 +936,10 @@ test("resume restores admitted identity and exact Pi session without resubmittin
             stderr: "",
             timedOut: false,
             args: [...args],
+            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "resumed ok" } },
           };
         },
+        }),
       },
     );
 
@@ -911,7 +959,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     ) as { attachments: Array<{ sha256: string }> };
     assert.equal(admittedAfter.attachments[0]!.sha256, frozenSha);
 
-    const durable = await readRoleRunState(runDirectory);
+    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");
     assert.equal(durable?.sessionFile, join(sessionDirectory, "session.jsonl"));
     assert.deepEqual([...openedPrincipals], [
@@ -946,7 +994,10 @@ test("resume model override is temporary and does not rewrite persistent config"
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await observeTyped429ViaProductionHandler({
@@ -964,6 +1015,7 @@ test("resume model override is temporary and does not rewrite persistent config"
             args: [...args],
           };
         },
+        }),
       });
     }
 
@@ -974,7 +1026,10 @@ test("resume model override is temporary and does not rewrite persistent config"
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await writeFile(
           join(sessionDir, "session.jsonl"),
@@ -996,6 +1051,7 @@ test("resume model override is temporary and does not rewrite persistent config"
           args: [...args],
         };
       },
+      }),
     });
 
     // Persistent config unchanged — temporary override only.
@@ -1009,6 +1065,153 @@ test("resume model override is temporary and does not rewrite persistent config"
     assert.equal(cfg.exitCode, 0);
     assert.equal(stdout.join("").includes("openai-codex/gpt-5.6-sol:high"), true);
     assert.equal(stdout.join("").includes("xai/grok-4.5"), false);
+  });
+});
+
+test("resume model precedence: explicit --model beats admitted.model; model-less resume restores admitted.model incl thinking", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const instruction = "resume model precedence probe";
+
+    async function admitResumable(runId: string) {
+      const { io } = captureIo();
+      const first = await runAkRole(
+        ["--model", "xai/grok-4.5:high", "judge", "--project", project, instruction],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              await mkdir(sessionDir, { recursive: true });
+              await observeTyped429ViaProductionHandler({
+                runDirectory: join(sessionDir, ".."),
+                provider: "xai",
+              });
+              await writeSessionProviderStop(sessionDir, {
+                provider: "xai",
+                errorMessage: "declined",
+              });
+              return {
+                code: 1,
+                stderr: "x\n",
+                timedOut: false,
+                args: [...args],
+              };
+            },
+          }),
+        },
+      );
+      assert.ok(first.terminal?.resume, "first admission must settle resumable");
+    }
+
+    // Run A: model-less resume must restore admitted.model including thinking.
+    {
+      const runId = "run-model-precedence-a";
+      await admitResumable(runId);
+      const { io } = captureIo();
+      let modelLessArgs: string[] | undefined;
+      const resumed = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            modelLessArgs = [...args];
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: { judgeStatus: "converged" },
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+              sealedAcceptance: { role: "judge", details: { judgeStatus: "converged" } },
+            };
+          },
+        }),
+      });
+      assert.ok(modelLessArgs, "model-less resume must dispatch a Pi turn");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--provider") + 1], "xai");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--model") + 1], "grok-4.5");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--thinking") + 1], "high");
+      assert.equal(resumed.exitCode, 0);
+    }
+
+    // Run B: an explicit CLI --model on resume must beat admitted.model.
+    {
+      const runId = "run-model-precedence-b";
+      await admitResumable(runId);
+      const { io, stdout } = captureIo();
+      let explicitArgs: string[] | undefined;
+      const resumed = await runAkRole(
+        ["--model", "openai-codex/gpt-5.6-sol:off", "resume", runId],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              explicitArgs = [...args];
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              await writeFile(
+                join(sessionDir, "session.jsonl"),
+                `${JSON.stringify({
+                  type: "message",
+                  message: {
+                    role: "toolResult",
+                    toolName: JUDGE_OUTPUT_TOOL_NAME,
+                    isError: false,
+                    details: { judgeStatus: "converged" },
+                  },
+                })}\n`,
+                "utf8",
+              );
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+                sealedAcceptance: { role: "judge", details: { judgeStatus: "converged" } },
+              };
+            },
+          }),
+        },
+      );
+      assert.ok(explicitArgs, "explicit-model resume must dispatch a Pi turn");
+      assert.equal(explicitArgs[explicitArgs.indexOf("--provider") + 1], "openai-codex");
+      assert.equal(explicitArgs[explicitArgs.indexOf("--model") + 1], "gpt-5.6-sol");
+      assert.equal(explicitArgs[explicitArgs.indexOf("--thinking") + 1], "off");
+      assert.equal(resumed.exitCode, 0);
+      assert.equal(stdout.join("").includes("xai/grok-4.5"), false);
+    }
   });
 });
 
@@ -1035,7 +1238,11 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
         home,
         cwd: project,
         io,
-        piRunner: runner,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: runner,
+        }),
       });
       assert.equal(unknown.exitCode, 2);
       assert.equal(stdout.length, 0);
@@ -1054,7 +1261,10 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => terminalId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           return {
@@ -1064,6 +1274,7 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
             args: [...args],
           };
         },
+        }),
       });
     }
     dispatches = 0;
@@ -1074,7 +1285,11 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
         home,
         cwd: project,
         io,
-        piRunner: runner,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: runner,
+        }),
       });
       assert.equal(rejected.exitCode, 2);
       assert.equal(stdout.length, 0);
@@ -1083,7 +1298,7 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
 
     // Unit: loadResumableJudgeRun rejects terminal/non-resumable.
     await assert.rejects(
-      () => loadResumableJudgeRun(home, "missing"),
+      () => loadResumableJudgeRun(home, "missing", piDurablePrincipalAuthority),
       /unknown role run id/,
     );
   });
@@ -1103,7 +1318,10 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       credentials: { "openai-codex": true, xai: true },
       createRunId: () => runId,
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
         await observeTyped429ViaProductionHandler({
@@ -1121,6 +1339,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
           args: [...args],
         };
       },
+      }),
     });
 
     const bookKey = resolveBookKeyFromGit(project);
@@ -1142,7 +1361,10 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         io: io2,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           dispatches += 1;
           return {
             code: 0,
@@ -1151,6 +1373,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
             args: [...args],
           };
         },
+        }),
       });
       // Concurrent resume rejected before second dispatch.
       assert.equal(dispatches, 0);
@@ -1262,11 +1485,10 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       instructionEmpty: false,
       attachments: [],
       runDirectory,
-      sessionDirectory,
-      sessionFile,
+      principal: fixturePrincipal(sessionDirectory, sessionFile),
       admittedRequestPath,
     };
-    await markRunAdmitted(admitted);
+    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(runDirectory, {
       httpStatus: 429,
       provider: "xai",
@@ -1275,6 +1497,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     const withResume = await settleJudgeFailureTerminalResult(
       admitted,
       { cause: "provider", diagnostic: "upstream declined" },
+      piDurablePrincipalAuthority,
       {
         resume: {
           command: renderResumeCommand(runId),
@@ -1288,21 +1511,48 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     const without = await settleJudgeFailureTerminalResult(admitted, {
       cause: "activation",
       diagnostic: "boom",
-    });
+    }, piDurablePrincipalAuthority);
     assert.equal(without.resume, undefined);
     assert.equal(without.runId, runId);
     assert.ok(without.artifacts.length > 0);
   });
 });
 
-test("initial activation and resume bind the exact Pi session file principal", async () => {
+test("host-issued sessionFile coordinate reaches activation and resume execution seams", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-session-principal-001";
+    // Host issues a distinctive sessionFile coordinate (not the Pi default name).
+    // Contract under test: the opaque frozen wire is the principal on resume,
+    // not public-cli rebuilt objects — alternate authority brands decode output
+    // to distinguish frozen wire (pass) from reconstructed coordinates (fail).
+    const principalAuthority = {
+      issue(request: Parameters<typeof piDurablePrincipalAuthority.issue>[0]) {
+        const base = piDurablePrincipalAuthority.issue(request);
+        const coords = piDurablePrincipalAuthority.decode(base);
+        return fixturePrincipal(
+          coords.sessionDirectory,
+          join(coords.sessionDirectory, "host-issued-principal.jsonl"),
+        );
+      },
+      decode(value: unknown) {
+        const coords = piDurablePrincipalAuthority.decode(value);
+        return Object.assign({}, coords, { __durableCoords: true });
+      },
+      async isAvailable(principal: Parameters<typeof piDurablePrincipalAuthority.isAvailable>[0]) {
+        if (
+          principal !== null &&
+          typeof principal === "object" &&
+          "__durableCoords" in (principal as Record<string, unknown>)
+        ) {
+          return false;
+        }
+        return piDurablePrincipalAuthority.isAvailable(principal);
+      },
+    };
 
-    let initialArgs: string[] | undefined;
     {
       const { io } = captureIo();
       const first = await runAkRole(
@@ -1313,10 +1563,14 @@ test("initial activation and resume bind the exact Pi session file principal", a
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
+          principalAuthority,
           io,
-          piRunner: async (args) => {
-            initialArgs = [...args];
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+            const sessionDir = (args as string[])[(args as string[]).indexOf("--session-dir") + 1]!;
+            const sessionPath = (args as string[])[(args as string[]).indexOf("--session") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await observeTyped429ViaProductionHandler({
               runDirectory: join(sessionDir, ".."),
@@ -1326,6 +1580,7 @@ test("initial activation and resume bind the exact Pi session file principal", a
               provider: "openai-codex",
               errorMessage: "rate limited",
             });
+            await writeFile(sessionPath, "\n", "utf8");
             return {
               code: 1,
               stderr: "fail\n",
@@ -1333,15 +1588,13 @@ test("initial activation and resume bind the exact Pi session file principal", a
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume);
+      assert.equal(first.exitCode, 1);
+      assert.equal(first.terminal?.roleOutcome.kind, "failure");
     }
-
-    assert.ok(initialArgs);
-    const boundSession = initialArgs[initialArgs.indexOf("--session") + 1]!;
-    assert.equal(initialArgs.includes("--continue"), false);
-    assert.equal(boundSession.endsWith("/session/session.jsonl"), true);
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -1352,24 +1605,59 @@ test("initial activation and resume bind the exact Pi session file principal", a
       "runs",
       `${runId}@judge`,
     );
-    const durable = await readRoleRunState(runDirectory);
-    assert.equal(durable?.sessionFile, boundSession);
-    assert.equal(durable?.state, "resumable");
+    const durable = await readRoleRunState(runDirectory, principalAuthority);
+    assert.ok(durable);
+    assert.equal(durable.sessionFile.endsWith("/session/host-issued-principal.jsonl"), true);
+    assert.equal(durable.state, "resumable");
 
+    // Host-denied availability must fail honestly without a typed accepted Terminal.
+    const blockingAuthority = {
+      issue: principalAuthority.issue,
+      decode: principalAuthority.decode,
+      async isAvailable() {
+        return false;
+      },
+    };
+    {
+      const { io } = captureIo();
+      const blocked = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        principalAuthority: blockingAuthority,
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => ({
+          code: 0,
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+        }),
+        }),
+      });
+      assert.equal(blocked.exitCode, 2);
+      assert.equal(blocked.terminal, undefined);
+    }
+
+    // Successful resume with opaque frozen wire must reopen the same host-issued sessionFile.
     const { io } = captureIo();
-    let resumeArgs: string[] | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
+      principalAuthority,
       io,
-      piRunner: async (args) => {
-        resumeArgs = [...args];
-        assert.equal(args[args.indexOf("--session") + 1], boundSession);
-        assert.equal(args.includes("--continue"), false);
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+        const sessionPath = (args as string[])[(args as string[]).indexOf("--session") + 1]!;
         await writeFile(
-          boundSession,
+          sessionPath,
           `${JSON.stringify({
             type: "message",
             message: {
@@ -1386,12 +1674,16 @@ test("initial activation and resume bind the exact Pi session file principal", a
           stderr: "",
           timedOut: false,
           args: [...args],
+          sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "principal ok" } },
         };
       },
+      }),
     });
-    assert.ok(resumeArgs);
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    const after = await readRoleRunState(runDirectory, principalAuthority);
+    assert.equal(after?.state, "terminal");
+    assert.equal(after?.sessionFile.endsWith("/session/host-issued-principal.jsonl"), true);
   });
 });
 
@@ -1433,10 +1725,9 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       instructionEmpty: false,
       attachments: [],
       runDirectory,
-      sessionDirectory,
-      sessionFile,
+      principal: fixturePrincipal(sessionDirectory, sessionFile),
       admittedRequestPath,
-    });
+    }, piDurablePrincipalAuthority);
     await markRunResumable(runDirectory, {
       httpStatus: 429,
       provider: "xai",
@@ -1444,7 +1735,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     // Principal path is bound but the file itself is missing.
 
     await assert.rejects(
-      () => loadResumableJudgeRun(home, runId),
+      () => loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof Error &&
         error.message.includes("Pi session principal is unavailable"),
@@ -1458,7 +1749,10 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
         dispatches += 1;
         return {
           code: 0,
@@ -1467,6 +1761,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
           args: [...args],
         };
       },
+      }),
     });
     assert.equal(dispatches, 0);
     assert.equal(stdout.length, 0);
@@ -1495,7 +1790,10 @@ test("typed 429 without a session principal is not offered as resumable", async 
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           // Typed 429 observation only — no session principal materialised.
@@ -1510,6 +1808,7 @@ test("typed 429 without a session principal is not offered as resumable", async 
             args: [...args],
           };
         },
+        }),
       },
     );
 
@@ -1526,7 +1825,7 @@ test("typed 429 without a session principal is not offered as resumable", async 
       "runs",
       `${runId}@judge`,
     );
-    const durable = await readRoleRunState(runDirectory);
+    const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
     assert.equal(durable?.state, "terminal");
   });
 });
@@ -1578,7 +1877,10 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
         credentials: creds,
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           const sd = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sd, { recursive: true });
           await writeFile(join(sd, "session.jsonl"), "", "utf8");
@@ -1588,6 +1890,7 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
           });
           return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
         },
+        }),
       });
       assert.ok(first.terminal?.resume, `${role}/${runId} must be resumable`);
       const sessionDirectory = join(
@@ -1637,11 +1940,15 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
         cwd: project,
         credentials: creds,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
           n += 1;
           seen = [...args];
           return { code: 0, stderr: "", timedOut: false, args: [...args] };
         },
+        }),
       });
       assert.equal(n, 1, `${c.runId}: dispatch; ${stderr.join("")}`);
       assert.ok(seen);
@@ -1672,10 +1979,14 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
           cwd: project,
           credentials: creds,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             n += 1;
             return { code: 0, stderr: "", timedOut: false, args: [...args] };
           },
+          }),
         });
         assert.equal(n, 0, bad.join(" "));
         assert.notEqual(rejected.exitCode, 0);

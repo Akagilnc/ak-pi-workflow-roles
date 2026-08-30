@@ -1,13 +1,16 @@
 /**
- * Public Fixer Role run: admit → explicit Internal activate → settle Terminal result.
+ * Public Fixer Role run: admit → post-admission coordinator → settle Terminal result (#110 / #517).
  * #110/#177: package-owned diagnosing-bugs and tdd methods (available, not forced),
  * common Invocation + structural prerequisites, default apply / explicit plan,
  * shared #106 success interface. Controlled-failure settlement reuses #107.
+ * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { applyEngineChildEnv } from "../engine-detour.ts";
+import type {
+  DurablePrincipalAuthority,
+  MethodBinding,
+  RoleTurnKnownFailure,
+  RoleTurnRequest,
+} from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -15,12 +18,6 @@ import {
   type PackagedMethodSkillMaterial,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
-import {
-  runExplicitInternalActivation,
-  type ExplicitInternalKnownFailure,
-  type ExplicitInternalPiRunner,
-  type ExplicitInternalPiResult,
-} from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitFixerInvocation,
@@ -28,392 +25,82 @@ import {
   type AdmittedFixerInvocation,
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
-  type CredentialProviders,
-  type SeatModelConfig,
-} from "./config.ts";
-import {
-  missingCredentialPreDispatchFailure,
-  postRunMissingCredentialFailure,
-} from "./public-run-credentials.ts";
-import {
-  acquireRunWriterLease,
-  clearTypedProviderHttpObservation,
-  isSessionPrincipalAvailable,
-  isV1ResumableFailure,
   loadResumableFixerRun,
   markRunAdmitted,
-  markRunResumable,
-  markRunRunning,
-  markRunTerminal,
-  renderResumeCommand,
-  type PublicResumeRequest,
   selectResumeContinuationPrompt,
-  RunWriterLeaseHeldError,
-  type RunWriterLease,
-  type TypedProviderHttpObservation,
+  type PublicResumeRequest,
 } from "./run-lifecycle.ts";
-import { runWithAutoResumeLoop } from "./auto-resume.ts";
 import {
-  classifyPostAdmissionFailure,
-  exitCodeForTerminalOutcome,
-  formatCliDiagnostic,
-  formatTerminalResult,
   hasLawfulFixerTerminalResult,
-  inspectJudgeSession,
-  isLawfulTypedTerminalOutcome,
-  presentFailureTerminal,
   presentStructuralRejection,
-  resolveAuditedRunnerFailureResolution,
-  resolveControlledFailureResumeObservation,
-  controlledFailureInputFromResolution,
-  explicitInternalKnownFailureClassificationInput,
-  settleFailureTerminalResult,
   trySettleFixerTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type {
-  ControlledFailureCause,
-  TerminalResult,
-} from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
+import {
+  presentControlledFailure,
+  runPostAdmissionManualResume,
+  runPostAdmissionResumable,
+  type PostAdmissionAdapters,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
 
-export type FixerRunEnv = {
-  home: string;
-  agentDir: string;
-  packageRoot: string;
-  cwd: string;
-  correlationId?: string;
-  piRunner?: ExplicitInternalPiRunner;
-  model?: SeatModelConfig;
-  /** Optional labor engine name (config→activation; session material + env signal). */
-  engine?: string;
-  credentials?: CredentialProviders;
+export type FixerRunEnv = PostAdmissionEnv & {
   createRunId?: () => string;
-  /** #422: effective single-call auto-resume ceiling; undefined = package default (AUTO_RESUME_LIMIT). */
-  autoResumeLimit?: number;
-  extraPiArgs?: readonly string[];
-  timeoutMs?: number;
 };
 
+function fixerMethods(packageRoot: string): readonly MethodBinding[] {
+  return [
+    { kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "diagnosing-bugs") },
+    { kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "tdd") },
+  ];
+}
 
-/**
- * Build Internal activation extra-args for an admitted Fixer run.
- * Package diagnosing-bugs and tdd Skills are available via --skill on every phase
- * (not forced into the first prompt). Ambient home skills stay disabled.
- */
-export function buildFixerActivationExtraArgs(
+/** Project admitted Fixer invocation onto the host-neutral turn request. */
+export function buildFixerTurnRequest(
   admitted: AdmittedFixerInvocation,
-  options: {
-    packageRoot: string;
-    model?: SeatModelConfig;
-    engine?: string;
-    extraPiArgs?: readonly string[];
-  },
-): string[] {
-  const prompt = buildFixerTransportPrompt(
+  options: RoleTurnRequestProjectionOptions,
+): RoleTurnRequest {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options),
-  );
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs",
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs =
-    admitted.prerequisitesPath === undefined
-      ? []
-      : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
-  return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
-}
-
-/**
- * Reopen the exact Fixer Pi session for resume. Preserves admitted phase,
- * prerequisites, and package diagnosis/tdd availability; does not resubmit instruction.
- */
-export function buildFixerResumeActivationExtraArgs(
-  admitted: AdmittedFixerInvocation,
-  options: {
-    packageRoot: string;
-    model?: SeatModelConfig;
-    extraPiArgs?: readonly string[];
-    message?: string;
-  },
-): string[] {
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs",
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs =
-    admitted.prerequisitesPath === undefined
-      ? []
-      : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
-  return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message),
-  ];
-}
-
-async function presentControlledFailure(
-  admitted: AdmittedFixerInvocation,
-  failureInput: {
-    timedOut: boolean;
-    code: number | null;
-    stderr: string;
-    thrown?: unknown;
-    knownFailure?: ExplicitInternalKnownFailure;
-    typedHttpObservationSettled?: true;
-    typedHttpObservation?: TypedProviderHttpObservation;
-  },
-  io: CliIo,
-): Promise<{
-  exitCode: number;
-  admitted: AdmittedFixerInvocation;
-  terminal: TerminalResult;
-}> {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...(failureInput.typedHttpObservationSettled === true
-      ? {
-        typedHttpObservationSettled: true as const,
-        ...(failureInput.typedHttpObservation === undefined
+    {
+      activation: {
+        role: "fixer",
+        phase: admitted.phase,
+        packetPath: admitted.packetPath,
+        ...(admitted.prerequisitesPath === undefined
           ? {}
-          : { typedHttpObservation: failureInput.typedHttpObservation }),
-      }
-      : {}),
-  });
-  const knownFailure =
-    failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session =
-    !hasThrown &&
-    !failureInput.timedOut &&
-    knownFailure === undefined
-      ? await inspectJudgeSession(admitted.sessionFile)
-      : undefined;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
-    ...(session === undefined ? {} : { session }),
-  });
-
-  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
-  const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile,
+          : { prerequisitesPath: admitted.prerequisitesPath }),
+      },
+      methods: fixerMethods(options.packageRoot),
+    },
+    options,
   );
-  const resumable =
-    sessionPrincipalAvailable &&
-    isV1ResumableFailure({
-      hasLawfulTerminalResult,
-      ...(typedHttp429 === undefined ? {} : { typedHttp429 }),
-    });
-  if (resumable && typedHttp429 !== undefined) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-  }
-
-  // #107 owns generic controlled-failure settlement — consume, do not re-own.
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    resumable
-      ? { resume: { command: renderResumeCommand(admitted.runId) } }
-      : {},
-  );
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal,
-  };
 }
 
-async function dispatchAdmittedFixer(input: {
-  admitted: AdmittedFixerInvocation;
-  env: FixerRunEnv;
-  io: CliIo;
-  extraArgs: string[];
-  lease: RunWriterLease;
-  methodMaterial: PackagedMethodSkillMaterial;
-  /** Mechanical engine provenance for initial Fixer dispatch only. */
-  effectiveEngine?: string;
-}): Promise<{
-  exitCode: number;
-  admitted: AdmittedFixerInvocation;
-  terminal?: TerminalResult;
-}> {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials,
-    );
-    if (missingCredential !== undefined) {
-      return await presentControlledFailure(
-        admitted,
-        missingCredential,
-        io,
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory,
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== undefined && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-
-    let result: ExplicitInternalPiResult;
-    try {
-      result = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-        },
-        io,
-      );
-    }
-
-    try {
-      await writeFile(
-        join(admitted.runDirectory, "stderr.log"),
-        result.stderr,
-        "utf8",
-      );
-    } catch {
-      // continue to lawful / controlled-failure settlement
-    }
-
-    let lawful: TerminalResult | undefined;
-    try {
-      lawful = await trySettleFixerTerminalResult(admitted, {
-        methodProvenance: methodMaterial.provenance,
-        methodSkillPath: methodMaterial.skillPath,
-        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-          env.packageRoot,
-          "diagnosing-bugs",
-        ),
-      });
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: result.code,
-          stderr: result.stderr,
-          thrown: error,
-        },
-        io,
-      );
-    }
-    if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => undefined);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful,
-      };
-    }
-
-
-    const credentialFailure = postRunMissingCredentialFailure(
-      result,
-      env.model,
-      env.credentials,
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result.knownFailure,
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory,
-    });
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...controlledFailureInputFromResolution(resolution),
-      },
-      io,
-    );
-  } finally {
-    await lease.release();
-  }
+function fixerAdapters(
+  packageRoot: string,
+  methodMaterial?: PackagedMethodSkillMaterial,
+): PostAdmissionAdapters<AdmittedFixerInvocation> {
+  return {
+    trySettle: (admitted, authority) =>
+      methodMaterial === undefined
+        ? Promise.resolve(undefined)
+        : trySettleFixerTerminalResult(admitted, authority, {
+            methodProvenance: methodMaterial.provenance,
+            methodSkillPath: methodMaterial.skillPath,
+            methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+              packageRoot,
+              "diagnosing-bugs",
+            ),
+          }),
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulFixerTerminalResult(admitted, authority),
+    isResumableRole: true,
+  };
 }
 
 async function loadFixerMethodMaterial(
@@ -443,6 +130,7 @@ export async function runPublicFixer(
     const parsed = parseFixerArgv(argv);
     admitted = await admitFixerInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -462,13 +150,13 @@ export async function runPublicFixer(
     throw error;
   }
 
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
   } catch (error) {
-    return await presentControlledFailure(
+    return (await presentControlledFailure(
       admitted,
       {
         timedOut: false,
@@ -476,41 +164,56 @@ export async function runPublicFixer(
         stderr: "",
         thrown: error,
       },
+      fixerAdapters(env.packageRoot),
+      env.principalAuthority,
       io,
-    );
+    )) as { exitCode: number; admitted: AdmittedFixerInvocation; terminal: TerminalResult };
   }
 
-  return runWithAutoResumeLoop({
+  return await runPostAdmissionResumable({
     admitted,
+    env,
     io,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () =>
-      buildFixerActivationExtraArgs(admitted, {
+    buildInitialRequest: () =>
+      buildFixerTurnRequest(admitted, {
         packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-      }),
-    buildResumeArgs: () =>
-      buildFixerResumeActivationExtraArgs(admitted, {
-        packageRoot: env.packageRoot,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-      }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) =>
-      dispatchAdmittedFixer({
-        admitted,
-        env: {
-          ...env,
-          ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "initial",
+          prompt: buildFixerTransportPrompt(
+            admitted,
+            engineSessionMaterialFromOptions({
+              ...(env.engine === undefined ? {} : { engine: env.engine }),
+              packageRoot: env.packageRoot,
+            }),
+          ),
         },
-        io: attemptIo,
-        extraArgs,
-        lease,
-        methodMaterial,
-        ...(isFirst && env.engine !== undefined ? { effectiveEngine: env.engine } : {}),
       }),
+    buildResumeRequest: () =>
+      buildFixerTurnRequest(admitted, {
+        packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(admitted.correlationId === undefined && env.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId ?? env.correlationId }),
+        continuation: {
+          kind: "resume",
+          prompt: selectResumeContinuationPrompt(),
+        },
+      }),
+    adapters: fixerAdapters(env.packageRoot, methodMaterial),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
@@ -529,7 +232,7 @@ export async function runPublicFixerResume(
 }> {
   let loaded;
   try {
-    loaded = await loadResumableFixerRun(env.home, request.runId);
+    loaded = await loadResumableFixerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -540,23 +243,11 @@ export async function runPublicFixerResume(
 
   const { admitted } = loaded;
 
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
-
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
-    return await presentControlledFailure(
+    return (await presentControlledFailure(
       admitted,
       {
         timedOut: false,
@@ -564,31 +255,35 @@ export async function runPublicFixerResume(
         stderr: "",
         thrown: error,
       },
+      fixerAdapters(env.packageRoot),
+      env.principalAuthority,
       io,
-    );
+    )) as { exitCode: number; admitted: AdmittedFixerInvocation; terminal: TerminalResult };
   }
 
-  const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
+  const turnRequest = buildFixerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
-    ...(request.message === undefined ? {} : { message: request.message }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message),
+    },
   });
 
-  const result = await dispatchAdmittedFixer({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
+    env,
     io,
-    extraArgs,
-    lease,
-    methodMaterial,
+    request: turnRequest,
+    adapters: fixerAdapters(env.packageRoot, methodMaterial),
   });
-  if (result.terminal !== undefined) (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
-  return result;
 }
 
-// Re-export for tests that assert typed credential failure channel shape.
-export type { ExplicitInternalKnownFailure, PackagedMethodSkillProvenance };
+export type { RoleTurnKnownFailure, PackagedMethodSkillProvenance };

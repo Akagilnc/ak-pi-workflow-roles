@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -20,8 +20,9 @@ import {
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
-export default function auditFailureProvider(pi: ExtensionAPI): void {
+export default async function auditFailureProvider(pi: ExtensionAPI): Promise<void> {
   // #475 missing-subject public tracer: keep the live leaf for singleton execute,
   // but hide candidate toolCalls from getEntries so audit materials fail closed.
   if (process.env.AK_AUDIT_MISSING_SUBJECT === "1") {
@@ -62,6 +63,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     provider: "ak-audit-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
   if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
     // Header timeoutMs and body-idle both default to owner-final 183000ms but are distinct seams.
     // Idle arms first; the provider schedules timeoutMs second. Compress provider waits harder so the
@@ -259,6 +261,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (healthyNavigator && !observation) console.error(`AUDIT_FAILURE_PROCESS_RELEASE=${JSON.stringify({ at: new Date().toISOString() })}`);
   });
   pi.on("session_shutdown", async () => {
+    await seeded.close();
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
     if (!healthyNavigator || observation) return;
     const root = process.env.AK_NAVIGATOR_ROOT;
@@ -288,12 +291,18 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       .map((entry) => ({ toolCallId: entry.message.toolCallId, toolName: entry.message.toolName, isError: entry.message.isError === true, details: entry.message.details ?? {}, usage: entry.message.usage }));
     const failedOutput = roleResults.find((entry) => entry.toolCallId === "fatal-judge");
     const failedOutputEntry = [...rolePersisted].find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolCallId === "fatal-judge");
+    // #575 sole-final barrier: execute projects only a pending-round-closure candidate;
+    // the audited decisive facts (judgeStatus + auditNoReceipt) arrive on the typed closure.
+    const closureEntry = [...rolePersisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+    const closureDetails = typeof closureEntry?.data === "object" && closureEntry.data !== null
+      ? (closureEntry.data as { details?: unknown }).details ?? {}
+      : {};
     const drainedBeforeSettlement = navigatorCompletedAt !== "" && typeof settlement?.timestamp === "string" && Date.parse(navigatorCompletedAt) <= Date.parse(settlement.timestamp);
     console.error(`AUDIT_FAILURE_EVIDENCE=${JSON.stringify({
       providerCalls: faux.state.callCount,
       navigatorCalls,
       navigator: { startedAt: navigatorStartedAt, completedAt: navigatorCompletedAt, preparedAt: prepared?.timestamp ?? "", settledAt: settlement?.timestamp ?? "", settlementKind: settlement?.data?.kind ?? "", inputReleasedAt, releaseAfterDrain: drainedBeforeSettlement },
-      role: { failedOutput, failedOutputAt: failedOutputEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME },
+      role: { failedOutput, failedOutputAt: failedOutputEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME, closureDetails },
     })}`);
   });
 }

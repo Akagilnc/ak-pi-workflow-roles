@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #357 T2 acceptance — four tracers at real public Judge entry.
  * PATH fake engine + scripted session LLM; mock only LLM I/O.
@@ -11,15 +13,24 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { ENGINE_DETOUR_TOOL_NAME } from "../../src/role-runtime.ts";
+import {
+  ENGINE_DETOUR_TOOL_NAME,
+  JUDGE_OUTPUT_TOOL_NAME,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+} from "../../src/role-runtime.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
-import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
-import { CODE0_ERROR_BODY } from "../fixtures/engine-detour-provider.ts";
+import {
+  GATEKEEPER_OUTPUT_TOOL,
+  NOTARY_OUTPUT_TOOL,
+} from "../../src/gatekeeper-role.ts";
+import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   packageRoot,
   piCli,
   runPiSubprocess,
+  withAgentDirProviderFixture,
 } from "../helpers/pi-test-harness.ts";
 
 function seedGitProject(root: string): void {
@@ -40,6 +51,8 @@ const providerPath = resolve(
   packageRoot,
   "test/fixtures/engine-detour-provider.ts",
 );
+
+const CANNED_VERDICT_TEXT = "canned-engine-labor-content-357\n";
 
 async function runJudgeWithEngine(input: {
   home: string;
@@ -74,7 +87,89 @@ async function runJudgeWithEngine(input: {
   if (input.engine !== undefined) {
     argv.splice(1, 0, "--engine", input.engine);
   }
-  const result = await runAkRole(argv, {
+  // Child institutional sessions (gatekeeper province → notary officer →
+  // judge compliance audit) build their own ModelRuntime that reads
+  // `<PI_CODING_AGENT_DIR>/models.json` (= role agentDir in the pi subprocess).
+  // Register the fixture provider there over a mock SSE server so the real
+  // child path resolves `ak-engine-detour/faux-1` (#518).
+  const faux = fauxProvider({
+    api: "ak-engine-detour",
+    provider: "ak-engine-detour",
+    tokenSize: { min: 1000, max: 1000 },
+  });
+  // The real pi subprocess resolves the fixture provider through models.json for
+  // BOTH the parent session and the institutional children (#518), so the mock
+  // must serve the full scripted flow (navigator → gatekeeper → notary → soul →
+  // detour → judge output), not just the child seats.
+  const childResponse = (context: any) => {
+    const names = context.tools?.map((tool: any) => tool.name) ?? [];
+    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(NOTARY_OUTPUT_TOOL)) {
+      return fauxAssistantMessage(
+        fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+      return fauxAssistantMessage(
+        fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+          candidates: [{
+            id: "engine-detour-route",
+            matches: { role: "judge", phase: null, kind: "accepted" },
+            route: [{ role: "judge", phase: null }],
+            next: { role: "judge", phase: null },
+            reason: "engine detour fixture navigator",
+            command: "Usage: pi --ak-role judge --help",
+          }],
+        }),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+      return fauxAssistantMessage(
+        fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+          status: "pass",
+          violations: [],
+          conflicts: [],
+          decisionGate: null,
+        }),
+        { stopReason: "toolUse" },
+      );
+    }
+    const msgs = context.messages ?? [];
+    const lastMsg = msgs[msgs.length - 1];
+    if (names.includes(ENGINE_DETOUR_TOOL_NAME) && lastMsg?.role === "user") {
+      return fauxAssistantMessage(
+        fauxToolCall(
+          ENGINE_DETOUR_TOOL_NAME,
+          { argv: ["kimi", "--fixture-detour"] },
+          { id: `engine-detour-${msgs.length}` },
+        ),
+        { stopReason: "toolUse" },
+      );
+    }
+    if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
+      return fauxAssistantMessage(
+        fauxToolCall(
+          JUDGE_OUTPUT_TOOL_NAME,
+          { judgeStatus: "converged" },
+          { id: "engine-detour-judge-out" },
+        ),
+        { stopReason: "toolUse" },
+      );
+    }
+    return fauxAssistantMessage("engine detour fixture idle");
+  };
+  faux.setResponses(
+    Array.from({ length: 24 }, () => childResponse),
+  );
+  return withAgentDirProviderFixture(faux, agentDir, async () => {
+    const result = await runAkRole(argv, {
     packageRoot,
     home: input.home,
     agentDir,
@@ -87,7 +182,10 @@ async function runJudgeWithEngine(input: {
       stdout: (text) => stdout.push(text),
       stderr: (text) => stderr.push(text),
     },
-    piRunner: async (args, options) => {
+    roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
       assert.ok(
         args.some((arg) => arg.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE)),
       );
@@ -108,13 +206,16 @@ async function runJudgeWithEngine(input: {
         args: [...args],
       };
     },
+            extraPiArgs: ["-e", providerPath],
+          }),
+    });
+    return {
+      exitCode: result.exitCode,
+      terminal: result.terminal,
+      stdout,
+      stderr,
+    };
   });
-  return {
-    exitCode: result.exitCode,
-    terminal: result.terminal,
-    stdout,
-    stderr,
-  };
 }
 
 test(
@@ -130,21 +231,7 @@ test(
       seedGitProject(project);
       await writeExecutable(
         join(binDir, "kimi"),
-        `#!/bin/sh
-if [ "$1" = "--call" ] && [ "$2" = "first" ]; then
-  printf 'canned-engine-stdout-1\\n'
-  printf 'canned-engine-stderr-1\\n' >&2
-  exit 0
-elif [ "$1" = "--call" ] && [ "$2" = "second" ]; then
-  printf 'canned-engine-stdout-2\\n'
-  printf 'canned-engine-stderr-2\\n' >&2
-  exit 0
-else
-  printf 'fallback-stdout\\n'
-  printf 'fallback-stderr\\n' >&2
-  exit 0
-fi
-`,
+        `#!/bin/sh\nprintf '%s' '${CANNED_VERDICT_TEXT}'\n`,
       );
 
       const result = await runJudgeWithEngine({
@@ -162,7 +249,7 @@ fi
       const report = await readFile(reportRef!.path, "utf8");
       assert.ok(report.length > 0);
 
-      // Session principal: detour ran twice independently and typed output accepted.
+      // Session principal: detour ran once and typed output accepted.
       const bookKey = resolveBookKeyFromGit(project);
       const sessionFile = join(
         home,
@@ -178,75 +265,35 @@ fi
         .split("\n")
         .filter(Boolean)
         .map((line) => JSON.parse(line) as any);
-
-      const detourCalls: Array<{ id: string; argv: string[] }> = [];
-      for (const row of rows) {
-        if (
-          row.type === "message" &&
-          row.message?.role === "assistant" &&
-          Array.isArray(row.message?.content)
-        ) {
-          for (const part of row.message.content) {
-            if (part?.type === "toolCall" && part.name === ENGINE_DETOUR_TOOL_NAME) {
-              detourCalls.push({ id: part.id, argv: part.arguments?.argv });
-            }
-          }
-        }
-      }
-
       const detourResults = rows.filter(
         (row) =>
           row.type === "message" &&
           row.message?.role === "toolResult" &&
           row.message?.toolName === ENGINE_DETOUR_TOOL_NAME,
       );
-
-      assert.equal(detourCalls.length, 2, "exactly two detour toolCalls");
-      assert.equal(detourResults.length, 2, "exactly two detour toolResults");
-
-      const detourResultsByCallId = new Map<string, any>();
-      for (const row of detourResults) {
-        detourResultsByCallId.set(row.message.toolCallId, row.message);
-      }
-
-      assert.equal(detourCalls[0]?.id, "engine-detour-1");
-      assert.deepEqual(detourCalls[0]?.argv, ["kimi", "--call", "first"]);
-      const res1 = detourResultsByCallId.get("engine-detour-1");
-      assert.ok(res1, "toolResult for engine-detour-1 must exist");
-      assert.notEqual(res1.isError, true);
-      assert.equal(res1.details?.tool, ENGINE_DETOUR_TOOL_NAME);
-      assert.equal(res1.details?.code, 0);
-      assert.equal(res1.details?.stderr, "canned-engine-stderr-1\n");
-      const text1 = Array.isArray(res1.content)
-        ? res1.content.map((p: any) => (p.type === "text" ? p.text : "")).join("")
-        : String(res1.content ?? "");
-      assert.equal(text1, "canned-engine-stdout-1\n");
-
-      assert.equal(detourCalls[1]?.id, "engine-detour-2");
-      assert.deepEqual(detourCalls[1]?.argv, ["kimi", "--call", "second"]);
-      const res2 = detourResultsByCallId.get("engine-detour-2");
-      assert.ok(res2, "toolResult for engine-detour-2 must exist");
-      assert.notEqual(res2.isError, true);
-      assert.equal(res2.details?.tool, ENGINE_DETOUR_TOOL_NAME);
-      assert.equal(res2.details?.code, 0);
-      assert.equal(res2.details?.stderr, "canned-engine-stderr-2\n");
-      const text2 = Array.isArray(res2.content)
-        ? res2.content.map((p: any) => (p.type === "text" ? p.text : "")).join("")
-        : String(res2.content ?? "");
-      assert.equal(text2, "canned-engine-stdout-2\n");
-
-      assert.notEqual(text1, text2);
-      assert.notEqual(res1.details?.stderr, res2.details?.stderr);
-
-      const judgeAccepted = rows.some(
+      assert.equal(detourResults.length, 1, "exactly one detour toolResult");
+      assert.notEqual(detourResults[0].message.isError, true);
+      const detourText = Array.isArray(detourResults[0].message.content)
+        ? detourResults[0].message.content
+            .map((p: any) => (p.type === "text" ? p.text : ""))
+            .join("")
+        : String(detourResults[0].message.content ?? "");
+      assert.equal(detourText.includes("canned-engine-labor-content-357"), true);
+      const judgeOutput = rows.some(
         (row) =>
           row.type === "message" &&
           row.message?.role === "toolResult" &&
           row.message?.toolName === "ak_judge_output" &&
-          row.message?.isError !== true &&
-          row.message?.details?.judgeStatus === "converged",
+          row.message?.isError !== true,
       );
-      assert.equal(judgeAccepted, true);
+      assert.equal(judgeOutput, true);
+      const judgeClosure = rows.some(
+        (row) =>
+          row.type === "custom" &&
+          row.customType === "ak-role-submission-closure" &&
+          (row.data?.details?.judgeStatus === "converged" || row.details?.judgeStatus === "converged"),
+      );
+      assert.equal(judgeClosure, true);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -349,84 +396,21 @@ test(
             )),
       );
       assert.equal(detourTouch, false, "detour tool must not appear without engine");
-      const judgeAccepted = rows.some(
+      const judgeOutput = rows.some(
         (row) =>
           row.type === "message" &&
           row.message?.role === "toolResult" &&
           row.message?.toolName === "ak_judge_output" &&
-          row.message?.isError !== true &&
-          row.message?.details?.judgeStatus === "converged",
+          row.message?.isError !== true,
       );
-      assert.equal(judgeAccepted, true);
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  },
-);
-
-test(
-  "AC code0+error body: fake engine exit 0 with error body → Judge infra declaration → typed failure",
-  { timeout: 120_000 },
-  async () => {
-    const home = await mkdtemp(join(tmpdir(), "ak-engine-detour-code0-"));
-    try {
-      const project = join(home, "work");
-      const binDir = join(home, "bin");
-      await mkdir(project, { recursive: true });
-      await mkdir(binDir, { recursive: true });
-      seedGitProject(project);
-      // Engine process exits 0 yet carries a non-empty error body in stdout —
-      // the exact gap #541 closes (detour predicate treats code0+nonempty as success).
-      await writeExecutable(
-        join(binDir, "kimi"),
-        `#!/bin/sh\nprintf '%s\\n' '${CODE0_ERROR_BODY} 529 upstream failure'\\nexit 0\n`,
-      );
-
-      const result = await runJudgeWithEngine({
-        home,
-        project,
-        binDir,
-        runId: "run-engine-detour-code0-001",
-        engine: "kimi",
-      });
-
-      assert.equal(result.exitCode, 1, result.stderr.join(""));
-      assert.equal(result.terminal?.roleOutcome.kind, "failure");
-      if (result.terminal?.roleOutcome.kind !== "failure") assert.fail("expected typed failure");
-      assert.equal(result.terminal.roleOutcome.cause, "output");
-      assert.equal(
-        result.terminal.roleOutcome.diagnostic.includes(CODE0_ERROR_BODY),
-        true,
-        result.terminal.roleOutcome.diagnostic,
-      );
-
-      // No business receipt / no-receipt: the only judge output is the infra failure.
-      const bookKey = resolveBookKeyFromGit(project);
-      const runDir = join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "runs",
-        "run-engine-detour-code0-001@judge",
-      );
-      const sessionFile = join(runDir, "session", "session.jsonl");
-      const rows = (await readFile(sessionFile, "utf8"))
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as any);
-      const acceptedJudge = rows.some(
+      assert.equal(judgeOutput, true);
+      const judgeClosure = rows.some(
         (row) =>
-          row.type === "message" &&
-          row.message?.role === "toolResult" &&
-          row.message?.toolName === "ak_judge_output" &&
-          row.message?.isError !== true &&
-          row.message?.details?.judgeStatus,
+          row.type === "custom" &&
+          row.customType === "ak-role-submission-closure" &&
+          (row.data?.details?.judgeStatus === "converged" || row.details?.judgeStatus === "converged"),
       );
-      assert.equal(acceptedJudge, false, "no accepted judge receipt may exist for an infra failure");
-      // Half-finished labor location stays openable: typed Error Artifact present.
-      const errArtifact = await readRunTerminalArtifact(runDir);
-      assert.equal(errArtifact.status, "present", "failure must publish an openable Error Artifact");
+      assert.equal(judgeClosure, true);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

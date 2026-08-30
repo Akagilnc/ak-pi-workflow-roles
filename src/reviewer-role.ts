@@ -1,6 +1,7 @@
-import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
+import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 export type { CanonicalSkillBinding };
@@ -10,10 +11,6 @@ import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
-import {
-  failOnInfrastructureFailureDeclaration,
-  withInfrastructureFailureDeclaration,
-} from "./package-contracts/terminating-infrastructure.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
@@ -52,17 +49,11 @@ export type ReviewerRoleDependencies = {
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
   /** Injected issue-fetch capability; shared seam owns gh lifecycle. */
   fetchIssue?: ReviewerIssueFetcher;
-  runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
+  runDispatch(execution: AcceptedReviewerExecution, options: { context: HostContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   shutdownAgent?(): Promise<void>;
 };
-export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never };
+export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
-function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("御史台回执非唯一终局工具调用");
-  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
-  if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== REVIEWER_OUTPUT_TOOL_NAME) throw new Error("御史台回执非唯一终局工具调用");
-}
 
 export type ReviewerActivation = Readonly<{
   dispatcher: ReturnType<typeof createReviewerDispatcher>;
@@ -80,11 +71,11 @@ export type ReviewerActivation = Readonly<{
  * Reviewer-side 审刑院 gate retired (#495 S6 / 风闻奏事); accept on typed validate only.
  */
 export function createReviewerRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: ReviewerRoleDependencies,
   hostActions: ReviewerRoleHostActions,
 ): {
-  activate(ctx: ExtensionContext | undefined, admitted: ReviewerAdmittedInputs): Promise<ReviewerActivation>;
+  activate(ctx: HostContext | undefined, admitted: ReviewerAdmittedInputs): Promise<ReviewerActivation>;
 } {
   let soul: string | undefined;
   let binding: CanonicalSkillBinding<"code-review"> | undefined;
@@ -113,7 +104,7 @@ export function createReviewerRoleRuntime(
       const executeAndProjectDispatch = async (execution: AcceptedReviewerExecution, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
         const dispatch = acceptedDispatch;
         if (dispatch === undefined || dispatch.identity !== execution.identity) throw new Error("Reviewer execution lacks accepted construction evidence");
-        const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
+        const { context, signal } = invocation as { context: HostContext; signal?: AbortSignal };
         ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: execution.identity, cardinality: execution.legs.length as 1 | 2 });
         try {
           const result = await dependencies.runDispatch(execution, { context, ...(signal === undefined ? {} : { signal }) });
@@ -151,12 +142,8 @@ export function createReviewerRoleRuntime(
       if (!registered) {
         registered = true;
         pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "Standards/Spec 评审腿由 runtime 以取证子会话代跑，本席收腿报告后交薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
-          async execute(id, parameters, _signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
+          async execute(id: string, parameters: unknown, _signal: AbortSignal | undefined, _update: unknown, toolCtx: HostContext): Promise<HostToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
-            // #541: infra declaration fails via the shared host seam before the
-            // ledger audit record / receipt assembly / shutdown.
-            failOnInfrastructureFailureDeclaration(parameters, hostActions, toolCtx, id);
-            requireSoleReviewerOutputCall(id, toolCtx);
             const output = validateReviewerIntent(parameters);
             let record: ReviewerExecutionRecord;
             try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx, id); throw error; }

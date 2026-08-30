@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #378 acceptance — Reviewer legs labor via engine detour at real public entry.
  * PATH fake engine + scripted session LLM; mock only LLM I/O.
@@ -136,7 +138,10 @@ async function runReviewerWithEngine(input: {
       stdout: (text) => stdout.push(text),
       stderr: (text) => stderr.push(text),
     },
-    piRunner: async (args, options) => {
+    roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
       assert.ok(
         args.some((arg) => arg.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE)),
       );
@@ -157,6 +162,8 @@ async function runReviewerWithEngine(input: {
         args: [...args],
       };
     },
+            extraPiArgs: ["-e", extensionPath],
+          }),
   });
   return {
     exitCode: result.exitCode,

@@ -15,9 +15,386 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/activation-ledger-git.ts
+import { execFileSync } from "node:child_process";
+import { basename, dirname as dirname2, isAbsolute, resolve } from "node:path";
+function envWithoutGitDiscovery(base = process.env) {
+  const env = { ...base, LC_ALL: "C" };
+  for (const key of GIT_DISCOVERY_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+function isConfirmedNonRepositoryStderr(stderr) {
+  return CONFIRMED_NON_REPOSITORY_STDERR.test(stderr);
+}
+function isGitSpawnInfrastructureError(error) {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  const code = error.code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
+}
+function gitChildExitedNonzero(error) {
+  if (error === null || typeof error !== "object" || !("status" in error)) return false;
+  const status = error.status;
+  return typeof status === "number" && status !== 0;
+}
+function resolveBookKeyFromGit(cwd) {
+  let commonDir;
+  try {
+    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: envWithoutGitDiscovery()
+    }).trim();
+  } catch (error) {
+    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
+      throw error;
+    }
+    const err = error;
+    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", {
+      cause: error,
+      confirmedNonRepository: isConfirmedNonRepositoryStderr(detail)
+    });
+  }
+  if (commonDir.length === 0) {
+    throw new Error("git rev-parse --git-common-dir returned an empty path");
+  }
+  const absoluteCommon = isAbsolute(commonDir) ? commonDir : resolve(cwd, commonDir);
+  const hostDirectory = basename(absoluteCommon) === ".git" ? dirname2(absoluteCommon) : absoluteCommon;
+  const bookKey = basename(hostDirectory);
+  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
+    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
+  }
+  return bookKey;
+}
+var GIT_DISCOVERY_ENV_KEYS, CONFIRMED_NON_REPOSITORY_STDERR, ActivationGitRepositoryRequiredError;
+var init_activation_ledger_git = __esm({
+  "src/activation-ledger-git.ts"() {
+    "use strict";
+    GIT_DISCOVERY_ENV_KEYS = [
+      "GIT_DIR",
+      "GIT_COMMON_DIR",
+      "GIT_WORK_TREE",
+      "GIT_CEILING_DIRECTORIES",
+      "GIT_DISCOVERY_ACROSS_FILESYSTEM"
+    ];
+    CONFIRMED_NON_REPOSITORY_STDERR = /^fatal:\s*not a git repository/i;
+    ActivationGitRepositoryRequiredError = class extends Error {
+      code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
+      confirmedNonRepository;
+      constructor(detail, options) {
+        super(
+          `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationGitRepositoryRequiredError";
+        this.confirmedNonRepository = options?.confirmedNonRepository ?? false;
+      }
+    };
+  }
+});
+
+// src/activation-ledger-topology.ts
+import {
+  lstatSync as lstatSync2,
+  mkdirSync as mkdirSync2,
+  realpathSync as realpathSync2,
+  statSync
+} from "node:fs";
+import { homedir } from "node:os";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, join as join2, relative, resolve as resolve2, sep } from "node:path";
+function resolveActivationLedgerHome(home = () => process.env.HOME ?? homedir()) {
+  const processHome = home();
+  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute2(processHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
+    );
+  }
+  return resolve2(processHome, ".ak-roles");
+}
+function activationBookDirectory(ledgerHome, bookKey) {
+  return join2(ledgerHome, "books", bookKey);
+}
+function pathContainedIn(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute2(rel);
+}
+function physicalPathIdentity(path) {
+  const absolute = resolve2(path);
+  const missing = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync2(cursor);
+      return missing.length === 0 ? real : join2(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        return absolute;
+      }
+      const parent = dirname3(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename2(cursor));
+      cursor = parent;
+    }
+  }
+}
+function physicallyContainedIn(root, candidate) {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
+}
+function errnoCode(error) {
+  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
+}
+function errorText(error) {
+  if (!(error instanceof Error)) return String(error);
+  return error.message;
+}
+function assertPhysicalLedgerRoot(absoluteRoot) {
+  let st;
+  try {
+    st = lstatSync2(absoluteRoot);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st === void 0) {
+    try {
+      mkdirSync2(absoluteRoot, { recursive: true });
+    } catch (error) {
+      if (errnoCode(error) !== "EEXIST") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+    }
+    try {
+      st = lstatSync2(absoluteRoot);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st.isSymbolicLink()) {
+    throw new ActivationLedgerError(
+      `activation ledger home is a symbolic link: ${absoluteRoot}`
+    );
+  }
+  if (!st.isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
+  }
+}
+function ensureRealDirectoryTree(root, targetDir) {
+  if (!isAbsolute2(root)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
+  }
+  const absoluteRoot = resolve2(root);
+  const absoluteTarget = resolve2(targetDir);
+  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  assertPhysicalLedgerRoot(absoluteRoot);
+  let realRoot;
+  try {
+    realRoot = realpathSync2(absoluteRoot);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (!statSync(realRoot).isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
+  }
+  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
+  if (rel === "") return realRoot;
+  if (isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  let lexicalCursor = absoluteRoot;
+  for (const part of rel.split(sep)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
+    }
+    lexicalCursor = join2(lexicalCursor, part);
+    let st;
+    try {
+      st = lstatSync2(lexicalCursor);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+      try {
+        mkdirSync2(lexicalCursor);
+      } catch (mkdirError) {
+        if (errnoCode(mkdirError) !== "EEXIST") {
+          throw new ActivationLedgerError(
+            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
+            { cause: mkdirError }
+          );
+        }
+      }
+      try {
+        st = lstatSync2(lexicalCursor);
+      } catch (statError) {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
+          { cause: statError }
+        );
+      }
+    }
+    if (st.isSymbolicLink()) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is a symbolic link: ${lexicalCursor}`
+      );
+    }
+    if (!st.isDirectory()) {
+      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
+    }
+    let realCursor;
+    try {
+      realCursor = realpathSync2(lexicalCursor);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
+      throw new ActivationLedgerError(
+        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
+      );
+    }
+  }
+  try {
+    return realpathSync2(absoluteTarget);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+function assertLedgerFileInsideHome(ledgerPath, ledgerHome) {
+  if (!isAbsolute2(ledgerHome)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
+  }
+  const resolvedLedger = resolve2(ledgerPath);
+  try {
+    if (!lstatSync2(resolvedLedger).isSymbolicLink()) return;
+    throw new ActivationLedgerError(
+      `activation ledger file is a symbolic link: ${resolvedLedger}`
+    );
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      if (error instanceof ActivationLedgerError) throw error;
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+}
+var ActivationLedgerError;
+var init_activation_ledger_topology = __esm({
+  "src/activation-ledger-topology.ts"() {
+    "use strict";
+    ActivationLedgerError = class extends Error {
+      code = "AK_ACTIVATION_LEDGER";
+      constructor(message, options) {
+        super(
+          message,
+          options?.cause === void 0 ? void 0 : { cause: options.cause }
+        );
+        this.name = "ActivationLedgerError";
+      }
+    };
+  }
+});
+
+// src/pi/durable-principal.ts
+import { lstat } from "node:fs/promises";
+import { join as join3 } from "node:path";
+function encode(coordinates) {
+  return coordinates;
+}
+function issuePiDurablePrincipalCoordinates(request) {
+  const ledgerHome = resolveActivationLedgerHome(
+    request.home === void 0 ? void 0 : () => request.home
+  );
+  const bookKey = resolveBookKeyFromGit(request.cwd);
+  const runDirectory = join3(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${request.runId}@${request.role}`
+  );
+  const sessionDirectory = join3(runDirectory, "session");
+  return {
+    ledgerHome,
+    bookKey,
+    runDirectory,
+    sessionDirectory,
+    sessionFile: join3(sessionDirectory, "session.jsonl")
+  };
+}
+var piDurablePrincipalAuthority;
+var init_durable_principal = __esm({
+  "src/pi/durable-principal.ts"() {
+    "use strict";
+    init_activation_ledger_git();
+    init_activation_ledger_topology();
+    piDurablePrincipalAuthority = {
+      issue(request) {
+        const coordinates = issuePiDurablePrincipalCoordinates(request);
+        return encode({
+          sessionDirectory: coordinates.sessionDirectory,
+          sessionFile: coordinates.sessionFile
+        });
+      },
+      decode(value) {
+        const record4 = value;
+        if (record4 === null || typeof record4 !== "object") {
+          throw new Error("durable principal payload is missing");
+        }
+        if (typeof record4.sessionDirectory !== "string" || record4.sessionDirectory.trim() === "") {
+          throw new Error("durable principal session directory is missing");
+        }
+        return {
+          sessionDirectory: record4.sessionDirectory,
+          sessionFile: typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join3(record4.sessionDirectory, "session.jsonl")
+        };
+      },
+      async isAvailable(principal) {
+        const { sessionFile } = this.decode(principal);
+        try {
+          const stat2 = await lstat(sessionFile);
+          return stat2.isFile() && !stat2.isSymbolicLink();
+        } catch {
+          return false;
+        }
+      }
+    };
+  }
+});
+
 // src/package-resources/engine-material.ts
 import { existsSync as existsSync2, readdirSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { join as join4 } from "node:path";
 function isEngineNameSyntax(name) {
   if (typeof name !== "string") return false;
   if (name.length === 0 || name.trim() !== name) return false;
@@ -26,11 +403,11 @@ function isEngineNameSyntax(name) {
   return true;
 }
 function resolveEngineMaterialDirectory(packageRoot2) {
-  return join2(packageRoot2, ENGINE_MATERIAL_RELATIVE_ROOT);
+  return join4(packageRoot2, ENGINE_MATERIAL_RELATIVE_ROOT);
 }
 function resolveEngineMaterialPath(packageRoot2, name) {
   const legal = assertLegalEngineName(name);
-  return join2(resolveEngineMaterialDirectory(packageRoot2), `${legal}.md`);
+  return join4(resolveEngineMaterialDirectory(packageRoot2), `${legal}.md`);
 }
 function assertLegalEngineName(name) {
   if (!isEngineNameSyntax(name)) {
@@ -1918,8 +2295,8 @@ var init_codec = __esm({
       Encode(callback) {
         const type = this.type;
         const decode = IsCodec(type) ? (value) => this.decode(type["~codec"].decode(value)) : this.decode;
-        const encode = IsCodec(type) ? (value) => type["~codec"].encode(callback(value)) : callback;
-        const codec = { decode, encode };
+        const encode2 = IsCodec(type) ? (value) => type["~codec"].encode(callback(value)) : callback;
+        const codec = { decode, encode: encode2 };
         return memory_exports.Update(this.type, { "~codec": codec }, {});
       }
     };
@@ -14444,7 +14821,7 @@ var init_countersign_contracts = __esm({
 });
 
 // src/packaged-role-registry.ts
-var PACKAGED_ROLE_REGISTRY, ONE_SHOT_ROLES;
+var NOTARY_SESSION_MATERIALS, PUBLIC_ROLE_RECORDS, ONE_SHOT_ROLES, PACKAGED_ROLE_REGISTRY;
 var init_packaged_role_registry = __esm({
   "src/packaged-role-registry.ts"() {
     "use strict";
@@ -14456,17 +14833,115 @@ var init_packaged_role_registry = __esm({
     init_merger_contracts();
     init_notary_contracts();
     init_countersign_contracts();
-    PACKAGED_ROLE_REGISTRY = [
-      { role: "judge", phases: [null], outputTool: JUDGE_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-      { role: "fixer", phases: ["plan", "apply"], outputTool: FIXER_OUTPUT_TOOL_NAME, inputFlag: "ak-fix-packet", phaseFlag: "ak-fixer-phase", activationStage: "load-and-install" },
-      { role: "coder", phases: ["plan", "apply"], outputTool: CODER_OUTPUT_TOOL_NAME, inputFlag: "ak-coder-task", phaseFlag: "ak-coder-phase", activationStage: "load-and-install" },
-      { role: "reviewer", phases: [null], outputTool: REVIEWER_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
+    NOTARY_SESSION_MATERIALS = [
+      "CLAUDE.md",
+      "souls/notary.md",
+      "souls/gate-output-guide.md"
+    ];
+    PUBLIC_ROLE_RECORDS = [
+      {
+        role: "judge",
+        phases: [null],
+        outputTool: JUDGE_OUTPUT_TOOL_NAME,
+        inputFlag: void 0,
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: [
+          "CLAUDE.md",
+          "souls/judge.md",
+          "souls/audit-law.md",
+          "souls/quality-law.md",
+          "souls/judge-output-guide.md"
+        ]
+      },
+      {
+        role: "fixer",
+        phases: ["plan", "apply"],
+        outputTool: FIXER_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-fix-packet",
+        phaseFlag: "ak-fixer-phase",
+        activationStage: "load-and-install",
+        sessionMaterials: [
+          "CLAUDE.md",
+          "souls/fixer.md",
+          "souls/quality-law.md",
+          "souls/fixer-output-guide.md"
+        ]
+      },
+      {
+        role: "coder",
+        phases: ["plan", "apply"],
+        outputTool: CODER_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-coder-task",
+        phaseFlag: "ak-coder-phase",
+        activationStage: "load-and-install",
+        sessionMaterials: [
+          "CLAUDE.md",
+          "souls/coder.md",
+          "souls/quality-law.md",
+          "souls/coder-output-guide.md"
+        ]
+      },
+      {
+        role: "reviewer",
+        phases: [null],
+        outputTool: REVIEWER_OUTPUT_TOOL_NAME,
+        inputFlag: void 0,
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: [
+          "CLAUDE.md",
+          "souls/reviewer.md",
+          "souls/audit-law.md",
+          "souls/quality-law.md"
+        ]
+      },
       // ak-collector-repo is GitHub owner/repo identity, not a local material path (#438).
-      { role: "collector", phases: [null], outputTool: COLLECTOR_OUTPUT_TOOL, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" },
-      { role: "doctor", phases: [null], outputTool: DOCTOR_OUTPUT_TOOL_NAME, inputFlag: "ak-doctor-case", phaseFlag: void 0, activationStage: "load-and-install" },
-      { role: "merger", phases: [null], outputTool: MERGER_OUTPUT_TOOL_NAME, inputFlag: "ak-merger-input", phaseFlag: void 0, activationStage: "prepare-git-and-install" },
-      { role: "notary", phases: [null], outputTool: NOTARY_OUTPUT_TOOL_NAME, inputFlag: "ak-notary-source-run", phaseFlag: void 0, activationStage: "load-and-install" },
-      { role: "countersign", phases: [null], outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME, inputFlag: void 0, phaseFlag: void 0, activationStage: "load-and-install" }
+      {
+        role: "collector",
+        phases: [null],
+        outputTool: COLLECTOR_OUTPUT_TOOL,
+        inputFlag: void 0,
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: ["CLAUDE.md", "souls/collector.md"]
+      },
+      {
+        role: "doctor",
+        phases: [null],
+        outputTool: DOCTOR_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-doctor-case",
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: ["CLAUDE.md", "souls/doctor.md"]
+      },
+      {
+        role: "merger",
+        phases: [null],
+        outputTool: MERGER_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-merger-input",
+        phaseFlag: void 0,
+        activationStage: "prepare-git-and-install",
+        sessionMaterials: ["CLAUDE.md", "souls/merger.md"]
+      },
+      {
+        role: "notary",
+        phases: [null],
+        outputTool: NOTARY_OUTPUT_TOOL_NAME,
+        inputFlag: "ak-notary-source-run",
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: NOTARY_SESSION_MATERIALS
+      },
+      {
+        role: "countersign",
+        phases: [null],
+        outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
+        inputFlag: void 0,
+        phaseFlag: void 0,
+        activationStage: "load-and-install",
+        sessionMaterials: ["CLAUDE.md", "souls/countersign.md"]
+      }
     ];
     ONE_SHOT_ROLES = [
       "collector",
@@ -14474,6 +14949,7 @@ var init_packaged_role_registry = __esm({
       "notary",
       "countersign"
     ];
+    PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
   }
 });
 
@@ -14594,15 +15070,17 @@ var init_registry2 = __esm({
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname as dirname2, join as join3 } from "node:path";
+import { dirname as dirname4, join as join5 } from "node:path";
 function isGateOfficerSeat(value) {
   return GATE_OFFICER_SEATS.includes(value);
 }
-function publicCliConfigPath(home = homedir()) {
-  return join3(home, ".ak-roles", "public-cli.json");
+function publicCliConfigPath(home) {
+  if (typeof home !== "string" || home.trim() === "") {
+    throw new Error("home must be explicitly provided");
+  }
+  return join5(home, ".ak-roles", "public-cli.json");
 }
-async function loadPublicCliConfig(home = homedir()) {
+async function loadPublicCliConfig(home) {
   const path = publicCliConfigPath(home);
   try {
     const raw = await readFile(path, "utf8");
@@ -14614,9 +15092,9 @@ async function loadPublicCliConfig(home = homedir()) {
     throw error;
   }
 }
-async function savePublicCliConfig(config, home = homedir()) {
+async function savePublicCliConfig(config, home) {
   const path = publicCliConfigPath(home);
-  await mkdir(dirname2(path), { recursive: true });
+  await mkdir(dirname4(path), { recursive: true });
   const normalized = parsePublicCliConfig(config);
   await writeFile(path, `${JSON.stringify(normalized, null, 2)}
 `, "utf8");
@@ -14632,7 +15110,8 @@ function setPersistentSeatConfig(config, seat, selection) {
       [seat]: {
         ...selection,
         // Model rewrite preserves a previously configured engine axis.
-        ...previous?.engine === void 0 ? {} : { engine: previous.engine }
+        ...previous?.engine === void 0 ? {} : { engine: previous.engine },
+        ...previous?.host === void 0 ? {} : { host: previous.host }
       }
     }
   };
@@ -14640,20 +15119,35 @@ function setPersistentSeatConfig(config, seat, selection) {
 function clearPersistentSeatConfig(config, seat) {
   const previous = config.seats[seat];
   if (previous === void 0) return config;
-  if (seat === "notary" && previous.engine !== void 0) {
+  if (seat === "notary" && (previous.engine !== void 0 || previous.host !== void 0)) {
     return {
       ...config,
       seats: {
         ...config.seats,
-        notary: { engine: previous.engine }
+        notary: {
+          ...previous.engine === void 0 ? {} : { engine: previous.engine },
+          ...previous.host === void 0 ? {} : { host: previous.host }
+        }
       }
     };
   }
   const { [seat]: _dropped, ...seats } = config.seats;
   return { ...config, seats };
 }
-function isEngineAxisSeat(seat) {
-  return isPublicCallableRole(seat);
+function setPersistentSeatHost(config, seat, host) {
+  const previous = config.seats[seat];
+  if (previous === void 0) {
+    throw new Error(`config seat ${seat} has no persistent model; set provider/model[:thinking] before host`);
+  }
+  if (host === void 0) {
+    const { host: _dropped, ...rest } = previous;
+    if (seatModelOnly(rest) === void 0 && rest.engine === void 0) {
+      const { [seat]: _row, ...seats } = config.seats;
+      return { ...config, seats };
+    }
+    return { ...config, seats: { ...config.seats, [seat]: rest } };
+  }
+  return { ...config, seats: { ...config.seats, [seat]: { ...previous, host } } };
 }
 function setPersistentSeatEngine(config, seat, engine) {
   const previous = config.seats[seat];
@@ -14664,7 +15158,7 @@ function setPersistentSeatEngine(config, seat, engine) {
   }
   if (engine === void 0) {
     const { engine: _dropped, ...modelOnly } = previous;
-    if (seatModelOnly(modelOnly) === void 0) {
+    if (seatModelOnly(modelOnly) === void 0 && modelOnly.host === void 0) {
       const { [seat]: _row, ...seats } = config.seats;
       return { ...config, seats };
     }
@@ -14699,15 +15193,15 @@ function seatModelOnly(seat) {
   if (seat?.provider === void 0 || seat.model === void 0) return void 0;
   return seat.thinking === void 0 ? { provider: seat.provider, model: seat.model } : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
 }
-function validatePublicCliConfigEngines(config, _packageRoot) {
+function validatePublicCliConfigAxes(config, _packageRoot) {
   for (const seat of Object.keys(config.seats)) {
     const row = config.seats[seat];
-    if (row?.engine === void 0) continue;
-    if (!isEngineAxisSeat(seat)) {
+    if ((row?.engine !== void 0 || row?.host !== void 0) && !isPublicCallableRole(seat)) {
       throw new Error(
-        `config seat ${seat} cannot persist engine: no independent activation path; storing would be silently ineffective`
+        `config seat ${seat} cannot persist call axes: no independent activation path; storing would be silently ineffective`
       );
     }
+    if (row?.engine === void 0) continue;
     try {
       assertLegalEngineName(row.engine);
     } catch (error) {
@@ -14749,16 +15243,6 @@ function parseModelSpec(spec, fallbackThinking) {
 function formatModelSpec(selection) {
   const base = `${selection.provider}/${selection.model}`;
   return selection.thinking === void 0 ? base : `${base}:${selection.thinking}`;
-}
-function buildSeatModelCliArgs(model) {
-  if (model === void 0) return [];
-  return [
-    "--provider",
-    model.provider,
-    "--model",
-    model.model,
-    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
-  ];
 }
 function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -14802,15 +15286,21 @@ function parseSeatModelConfig(value, seat) {
   if (hasProvider !== hasModel) {
     throw new Error(`config seat ${seat} requires both provider and model`);
   }
+  if (raw.host !== void 0 && (typeof raw.host !== "string" || raw.host.trim() === "")) {
+    throw new Error(`config seat ${seat} host must be a non-empty string`);
+  }
   if (raw.engine !== void 0 && typeof raw.engine !== "string") {
     throw new Error(`config seat ${seat} engine must be a string`);
   }
   if (!hasProvider) {
-    if (seat === "notary" && typeof raw.engine === "string") {
+    if (seat === "notary" && (typeof raw.engine === "string" || typeof raw.host === "string")) {
       if (raw.thinking !== void 0) {
         throw new Error(`config seat ${seat} thinking requires provider/model`);
       }
-      return { engine: raw.engine };
+      return {
+        ...raw.engine === void 0 ? {} : { engine: raw.engine },
+        ...raw.host === void 0 ? {} : { host: raw.host }
+      };
     }
     throw new Error(`config seat ${seat} requires provider`);
   }
@@ -14829,7 +15319,8 @@ function parseSeatModelConfig(value, seat) {
     provider: raw.provider,
     model: raw.model,
     ...raw.thinking === void 0 ? {} : { thinking: raw.thinking },
-    ...raw.engine === void 0 ? {} : { engine: raw.engine }
+    ...raw.engine === void 0 ? {} : { engine: raw.engine },
+    ...raw.host === void 0 ? {} : { host: raw.host }
   };
   return parsed;
 }
@@ -14850,8 +15341,14 @@ function pickStartupCandidate(seat, credentials) {
   }
   return void 0;
 }
+function attachHostAxis(seat, config, invocation) {
+  if (invocation?.host !== void 0) return { ...seat, host: invocation.host, hostSource: "invocation" };
+  const persistent = config.seats[seat.seat]?.host;
+  if (persistent !== void 0) return { ...seat, host: persistent, hostSource: "persistent" };
+  return { ...seat, host: "pi", hostSource: "default" };
+}
 function attachEngineAxis(seat, config, invocation) {
-  if (!isEngineAxisSeat(seat.seat)) {
+  if (!isPublicCallableRole(seat.seat)) {
     return {
       ...seat,
       engineSource: "unconfigured"
@@ -14935,7 +15432,7 @@ function resolveEffectiveSeat(config, seat, credentials, invocation) {
       };
     }
   }
-  return attachEngineAxis(modelSeat, config, invocation);
+  return attachHostAxis(attachEngineAxis(modelSeat, config, invocation), config, invocation);
 }
 function effectiveSeatConfigurations(config, credentials, invocation) {
   return PUBLIC_CONFIGURABLE_SEATS.map(
@@ -14954,7 +15451,7 @@ function credentialProvidersFromAuthData(data) {
 }
 async function loadCredentialProviders(agentDir) {
   try {
-    const raw = await readFile(join3(agentDir, "auth.json"), "utf8");
+    const raw = await readFile(join5(agentDir, "auth.json"), "utf8");
     return credentialProvidersFromAuthData(JSON.parse(raw));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -15004,341 +15501,552 @@ var init_cli_errors = __esm({
   }
 });
 
-// src/activation-ledger-topology.ts
-import {
-  lstatSync as lstatSync2,
-  mkdirSync as mkdirSync2,
-  realpathSync as realpathSync2,
-  statSync
-} from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { basename, dirname as dirname3, isAbsolute, join as join4, relative, resolve, sep } from "node:path";
-function resolveActivationLedgerHome(home = homedir2) {
-  const processHome = home();
-  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
-    throw new ActivationLedgerError(
-      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
-    );
-  }
-  return resolve(processHome, ".ak-roles");
-}
-function activationBookDirectory(ledgerHome, bookKey) {
-  return join4(ledgerHome, "books", bookKey);
-}
-function pathContainedIn(root, candidate) {
-  const rel = relative(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-function physicalPathIdentity(path) {
-  const absolute = resolve(path);
-  const missing = [];
-  let cursor = absolute;
-  while (true) {
-    try {
-      const real = realpathSync2(cursor);
-      return missing.length === 0 ? real : join4(real, ...missing);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        return absolute;
-      }
-      const parent = dirname3(cursor);
-      if (parent === cursor) return absolute;
-      missing.unshift(basename(cursor));
-      cursor = parent;
-    }
-  }
-}
-function errnoCode(error) {
-  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
-}
-function errorText(error) {
-  if (!(error instanceof Error)) return String(error);
-  return error.message;
-}
-function assertPhysicalLedgerRoot(absoluteRoot) {
-  let st;
-  try {
-    st = lstatSync2(absoluteRoot);
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st === void 0) {
-    try {
-      mkdirSync2(absoluteRoot, { recursive: true });
-    } catch (error) {
-      if (errnoCode(error) !== "EEXIST") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-    }
-    try {
-      st = lstatSync2(absoluteRoot);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-  if (st.isSymbolicLink()) {
-    throw new ActivationLedgerError(
-      `activation ledger home is a symbolic link: ${absoluteRoot}`
-    );
-  }
-  if (!st.isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
-  }
-}
-function ensureRealDirectoryTree(root, targetDir) {
-  if (!isAbsolute(root)) {
-    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
-  }
-  const absoluteRoot = resolve(root);
-  const absoluteTarget = resolve(targetDir);
-  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  assertPhysicalLedgerRoot(absoluteRoot);
-  let realRoot;
-  try {
-    realRoot = realpathSync2(absoluteRoot);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-  if (!statSync(realRoot).isDirectory()) {
-    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
-  }
-  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
-  if (rel === "") return realRoot;
-  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new ActivationLedgerError(
-      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
-    );
-  }
-  let lexicalCursor = absoluteRoot;
-  for (const part of rel.split(sep)) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
-    }
-    lexicalCursor = join4(lexicalCursor, part);
-    let st;
-    try {
-      st = lstatSync2(lexicalCursor);
-    } catch (error) {
-      if (errnoCode(error) !== "ENOENT") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-      try {
-        mkdirSync2(lexicalCursor);
-      } catch (mkdirError) {
-        if (errnoCode(mkdirError) !== "EEXIST") {
-          throw new ActivationLedgerError(
-            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
-            { cause: mkdirError }
-          );
-        }
-      }
-      try {
-        st = lstatSync2(lexicalCursor);
-      } catch (statError) {
-        throw new ActivationLedgerError(
-          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
-          { cause: statError }
-        );
-      }
-    }
-    if (st.isSymbolicLink()) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is a symbolic link: ${lexicalCursor}`
-      );
-    }
-    if (!st.isDirectory()) {
-      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
-    }
-    let realCursor;
-    try {
-      realCursor = realpathSync2(lexicalCursor);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
-      throw new ActivationLedgerError(
-        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
-      );
-    }
-  }
-  try {
-    return realpathSync2(absoluteTarget);
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-}
-function assertLedgerFileInsideHome(ledgerPath, ledgerHome) {
-  if (!isAbsolute(ledgerHome)) {
-    throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
-  }
-  const resolvedLedger = resolve(ledgerPath);
-  try {
-    if (!lstatSync2(resolvedLedger).isSymbolicLink()) return;
-    throw new ActivationLedgerError(
-      `activation ledger file is a symbolic link: ${resolvedLedger}`
-    );
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") {
-      if (error instanceof ActivationLedgerError) throw error;
-      throw new ActivationLedgerError(
-        `activation ledger failed to stat ledger file (${resolvedLedger}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-  }
-}
-var ActivationLedgerError;
-var init_activation_ledger_topology = __esm({
-  "src/activation-ledger-topology.ts"() {
+// src/host-contracts.ts
+var ExplicitInternalActivationError;
+var init_host_contracts = __esm({
+  "src/host-contracts.ts"() {
     "use strict";
-    ActivationLedgerError = class extends Error {
-      code = "AK_ACTIVATION_LEDGER";
+    init_build();
+    ExplicitInternalActivationError = class extends Error {
+      knownCause;
+      failureCode;
       constructor(message, options) {
         super(
           message,
-          options?.cause === void 0 ? void 0 : { cause: options.cause }
+          options.cause === void 0 ? void 0 : { cause: options.cause }
         );
-        this.name = "ActivationLedgerError";
+        this.name = options.name ?? "ExplicitInternalActivationError";
+        this.knownCause = options.knownCause;
+        if (options.code !== void 0) {
+          this.failureCode = options.code;
+        }
       }
     };
   }
 });
 
-// src/activation-ledger-git.ts
-import { execFileSync } from "node:child_process";
-import { basename as basename2, dirname as dirname4, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
-function envWithoutGitDiscovery(base = process.env) {
-  const env = { ...base, LC_ALL: "C" };
-  for (const key of GIT_DISCOVERY_ENV_KEYS) {
-    delete env[key];
+// src/engine-detour.ts
+function applyEngineChildEnv(childEnv, engine) {
+  delete childEnv[AK_ROLE_ENGINE_ENV];
+  if (engine !== void 0 && engine.trim() !== "") {
+    childEnv[AK_ROLE_ENGINE_ENV] = engine.trim();
+  } else {
+    childEnv[AK_ROLE_ENGINE_ENV] = void 0;
   }
-  return env;
 }
-function isConfirmedNonRepositoryStderr(stderr) {
-  return CONFIRMED_NON_REPOSITORY_STDERR.test(stderr);
-}
-function isGitSpawnInfrastructureError(error) {
-  if (error === null || typeof error !== "object" || !("code" in error)) return false;
-  const code = error.code;
-  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
-}
-function gitChildExitedNonzero(error) {
-  if (error === null || typeof error !== "object" || !("status" in error)) return false;
-  const status = error.status;
-  return typeof status === "number" && status !== 0;
-}
-function resolveBookKeyFromGit(cwd) {
-  let commonDir;
-  try {
-    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: envWithoutGitDiscovery()
-    }).trim();
-  } catch (error) {
-    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
-      throw error;
-    }
-    const err = error;
-    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
-    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", {
-      cause: error,
-      confirmedNonRepository: isConfirmedNonRepositoryStderr(detail)
-    });
-  }
-  if (commonDir.length === 0) {
-    throw new Error("git rev-parse --git-common-dir returned an empty path");
-  }
-  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
-  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname4(absoluteCommon) : absoluteCommon;
-  const bookKey = basename2(hostDirectory);
-  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
-    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
-  }
-  return bookKey;
-}
-var GIT_DISCOVERY_ENV_KEYS, CONFIRMED_NON_REPOSITORY_STDERR, ActivationGitRepositoryRequiredError;
-var init_activation_ledger_git = __esm({
-  "src/activation-ledger-git.ts"() {
+var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
+var init_engine_detour = __esm({
+  "src/engine-detour.ts"() {
     "use strict";
-    GIT_DISCOVERY_ENV_KEYS = [
-      "GIT_DIR",
-      "GIT_COMMON_DIR",
-      "GIT_WORK_TREE",
-      "GIT_CEILING_DIRECTORIES",
-      "GIT_DISCOVERY_ACROSS_FILESYSTEM"
-    ];
-    CONFIRMED_NON_REPOSITORY_STDERR = /^fatal:\s*not a git repository/i;
-    ActivationGitRepositoryRequiredError = class extends Error {
-      code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
-      confirmedNonRepository;
-      constructor(detail, options) {
-        super(
-          `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
-          options?.cause === void 0 ? void 0 : { cause: options.cause }
-        );
-        this.name = "ActivationGitRepositoryRequiredError";
-        this.confirmedNonRepository = options?.confirmedNonRepository ?? false;
+    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
+    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
+  }
+});
+
+// src/sitian-contracts.ts
+function attachDirectErrnoCode(error, cause) {
+  if (cause === null || typeof cause !== "object" || !("code" in cause)) return;
+  const code = cause.code;
+  if (typeof code === "string") error.code = code;
+}
+var SitianInfrastructureError;
+var init_sitian_contracts = __esm({
+  "src/sitian-contracts.ts"() {
+    "use strict";
+    SitianInfrastructureError = class extends Error {
+      knownCause = "session";
+      constructor(message, options) {
+        super(message, options);
+        this.name = "SitianInfrastructureError";
+        attachDirectErrnoCode(this, options?.cause);
       }
     };
   }
 });
 
-// src/archivist-role-run-coordinates.ts
-import { join as join5 } from "node:path";
-function roleRunSessionCoordinates(options) {
-  const ledgerHome = resolveActivationLedgerHome(
-    options.home === void 0 ? void 0 : () => options.home
-  );
-  const bookKey = resolveBookKeyFromGit(options.cwd);
-  const runDirectory = join5(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${options.runId}@${options.role}`
-  );
-  const sessionDirectory = join5(runDirectory, "session");
-  return {
-    ledgerHome,
-    bookKey,
-    runDirectory,
-    sessionDirectory,
-    sessionFile: join5(sessionDirectory, "session.jsonl")
-  };
+// src/sitian-appender.ts
+import { createHash as createHash2, randomUUID } from "node:crypto";
+import { appendFileSync, existsSync as existsSync3, readFileSync } from "node:fs";
+import { basename as basename3, dirname as dirname5, join as join6, resolve as resolve3 } from "node:path";
+function isRecord4(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-var init_archivist_role_run_coordinates = __esm({
-  "src/archivist-role-run-coordinates.ts"() {
+function resolveSitianVolumeCategory(kind) {
+  if (S4_SUBMISSION_LEDGER_KINDS.has(kind)) {
+    return "submission-ledger";
+  }
+  return kind;
+}
+function safeBookKey(cwd) {
+  try {
+    return resolveBookKeyFromGit(cwd);
+  } catch {
+    return basename3(resolve3(cwd)) || "default";
+  }
+}
+function resolveSitianRecordPathInLedger(input, ledgerHome) {
+  const cwd = input.cwd ?? process.cwd();
+  const category = resolveSitianVolumeCategory(input.kind);
+  let sessionDir;
+  if (input.sessionParent !== void 0 && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
+    sessionDir = join6(dirname5(input.sessionParent), category);
+  } else {
+    const bookKey = safeBookKey(cwd);
+    const bookDir = activationBookDirectory(ledgerHome, bookKey);
+    if (input.subject !== void 0) {
+      let subjectStr;
+      if (typeof input.subject === "string") {
+        subjectStr = input.subject;
+      } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
+        subjectStr = input.subject.runId;
+      } else {
+        subjectStr = JSON.stringify(input.subject);
+      }
+      const digest = createHash2("sha256").update(subjectStr).digest("hex").slice(0, 32);
+      sessionDir = join6(bookDir, category, digest);
+    } else {
+      sessionDir = join6(bookDir, category);
+    }
+  }
+  const recordFile = join6(sessionDir, "records.jsonl");
+  return { sessionDir, recordFile, ledgerHome };
+}
+function resolveSitianRecordPath(input) {
+  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
+}
+function appendSitianRecord(input) {
+  try {
+    const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
+    ensureRealDirectoryTree(ledgerHome, sessionDir);
+    const identity = input.identity ?? randomUUID();
+    const timestamp2 = input.timestamp ?? (/* @__PURE__ */ new Date()).toISOString();
+    const host = input.host ?? "pi";
+    const record4 = {
+      level: input.level,
+      kind: input.kind,
+      identity,
+      ...input.subject === void 0 ? {} : { subject: input.subject },
+      ...input.sessionParent === void 0 ? {} : { sessionParent: input.sessionParent },
+      ...input.priorEventId === void 0 ? {} : { priorEventId: input.priorEventId },
+      timestamp: timestamp2,
+      host,
+      ...input.source === void 0 ? {} : { source: input.source },
+      ...input.payload === void 0 ? {} : { payload: input.payload },
+      ...input.raw === void 0 ? {} : { raw: input.raw },
+      ...input.usage === void 0 ? {} : { usage: input.usage }
+    };
+    if (existsSync3(recordFile)) {
+      const buffer = readFileSync(recordFile);
+      if (buffer.length > 0) {
+        if (buffer[buffer.length - 1] !== 10) {
+          appendFileSync(recordFile, "\n", "utf8");
+        }
+        const text = readFileSync(recordFile, "utf8");
+        for (const line2 of text.split("\n")) {
+          const trimmed = line2.trim();
+          if (!trimmed) continue;
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (isRecord4(parsed) && parsed.identity === identity) {
+              return {
+                identity,
+                recordFile,
+                kind: record4.kind,
+                level: record4.level
+              };
+            }
+          } catch {
+          }
+        }
+      }
+    }
+    const row = `${JSON.stringify(record4)}
+`;
+    appendFileSync(recordFile, row, "utf8");
+    return {
+      identity,
+      recordFile,
+      kind: record4.kind,
+      level: record4.level
+    };
+  } catch (error) {
+    if (error instanceof SitianInfrastructureError) throw error;
+    throw new SitianInfrastructureError(
+      `Sitian appender persistence failure: ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+var S4_SUBMISSION_LEDGER_KINDS;
+var init_sitian_appender = __esm({
+  "src/sitian-appender.ts"() {
     "use strict";
     init_activation_ledger_git();
     init_activation_ledger_topology();
+    init_sitian_contracts();
+    S4_SUBMISSION_LEDGER_KINDS = /* @__PURE__ */ new Set([
+      "candidate",
+      "roundContext",
+      "outcome",
+      "sealed",
+      "post-seal-anomaly"
+    ]);
+  }
+});
+
+// src/sitian-reader.ts
+import { existsSync as existsSync4 } from "node:fs";
+import { readFile as readFile2 } from "node:fs/promises";
+function isRecord5(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function readSitianRecords(recordFile) {
+  if (!existsSync4(recordFile)) {
+    return { records: [], diagnostics: [] };
+  }
+  const text = await readFile2(recordFile, "utf8");
+  const lines = text.split("\n");
+  const records2 = [];
+  const diagnostics = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line2 = lines[index];
+    if (!line2.trim()) continue;
+    try {
+      const parsed = JSON.parse(line2);
+      if (isRecord5(parsed)) {
+        records2.push(parsed);
+      } else {
+        const typeDesc = parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed;
+        diagnostics.push({
+          kind: "malformed",
+          line: index + 1,
+          raw: line2,
+          error: `expected JSON object, got ${typeDesc}`
+        });
+      }
+    } catch (error) {
+      diagnostics.push({
+        kind: "malformed",
+        line: index + 1,
+        raw: line2,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  return { records: records2, diagnostics };
+}
+var init_sitian_reader = __esm({
+  "src/sitian-reader.ts"() {
+    "use strict";
+  }
+});
+
+// src/sitian-facade.ts
+function sitianReport(input) {
+  return appendSitianRecord(input);
+}
+var init_sitian_facade = __esm({
+  "src/sitian-facade.ts"() {
+    "use strict";
+    init_sitian_appender();
+    init_sitian_contracts();
+    init_sitian_appender();
+    init_sitian_reader();
+  }
+});
+
+// src/pi/role-turn-host.ts
+import { execFile, spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, realpath } from "node:fs/promises";
+import { delimiter as delimiter2, isAbsolute as isAbsolute3, join as join7, resolve as resolve4 } from "node:path";
+import { platform } from "node:process";
+import { promisify } from "node:util";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { appendFile, readFile as readFile3 } from "node:fs/promises";
+function resolveInternalRoleEntrypoint(packageRoot2) {
+  return join7(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE2);
+}
+function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
+  return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
+}
+function buildSeatModelCliArgs(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    ...model.thinking === void 0 ? [] : ["--thinking", model.thinking]
+  ];
+}
+function buildActivationFlagArgs(activation) {
+  switch (activation.role) {
+    case "judge":
+      return ["--ak-role", "judge"];
+    case "coder":
+      return [
+        "--ak-role",
+        "coder",
+        "--ak-coder-phase",
+        activation.phase,
+        "--ak-coder-task",
+        activation.taskPath
+      ];
+    case "fixer":
+      return [
+        "--ak-role",
+        "fixer",
+        "--ak-fixer-phase",
+        activation.phase,
+        "--ak-fix-packet",
+        activation.packetPath,
+        ...activation.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", activation.prerequisitesPath]
+      ];
+    case "reviewer":
+      return [
+        "--ak-role",
+        "reviewer",
+        "--ak-review-base",
+        activation.baseRevision,
+        ...activation.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...activation.authorityRefs])],
+        ...activation.ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(activation.ticketNumber)]
+      ];
+    case "merger":
+      return ["--ak-role", "merger", "--ak-merger-input", activation.inputPath];
+    case "collector":
+      return [
+        "--ak-role",
+        "collector",
+        "--ak-collector-repo",
+        activation.repo,
+        "--ak-collector-pr",
+        activation.pr,
+        ...activation.requestManifestPath === void 0 ? [] : ["--ak-collector-request-manifest", activation.requestManifestPath]
+      ];
+    case "doctor":
+      return ["--ak-role", "doctor", "--ak-doctor-case", activation.casePath];
+    case "notary":
+      return ["--ak-role", "notary", "--ak-notary-source-run", activation.sourceRun];
+    case "countersign":
+      return ["--ak-role", "countersign"];
+    default: {
+      const _exhaustive = activation;
+      return _exhaustive;
+    }
+  }
+}
+function buildMethodArgs(methods) {
+  const skillArgs = [];
+  for (const method of methods) {
+    if (method.kind === "skill") {
+      skillArgs.push("--skill", method.path);
+    }
+  }
+  return skillArgs;
+}
+function buildPiTurnExtraArgs(request, authority, extraPiArgs = []) {
+  const { sessionFile, sessionDirectory } = authority.decode(request.principal);
+  const prompt = request.continuation.kind === "initial" || request.continuation.kind === "resume" ? request.continuation.prompt : (() => {
+    const _exhaustive = request.continuation;
+    return _exhaustive;
+  })();
+  return [
+    "--no-skills",
+    ...buildMethodArgs(request.methods),
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    sessionFile,
+    "--session-dir",
+    sessionDirectory,
+    ...extraPiArgs,
+    ...buildActivationFlagArgs(request.activation),
+    "--mode",
+    "json",
+    ...buildSeatModelCliArgs(request.model),
+    prompt
+  ];
+}
+async function resolveSelectedPi(command, cwd, env) {
+  const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
+  const candidates = isAbsolute3(command) || command.includes("/") ? [resolve4(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve4(cwd, dir, command));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+    } catch (error) {
+      const code = error.code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
+      throw new ExplicitInternalActivationError(
+        `Pi executable resolution failed: ${String(error.message)}`,
+        { knownCause: "activation", cause: error }
+      );
+    }
+    return await realpath(candidate);
+  }
+  throw new ExplicitInternalActivationError(`Pi executable not found: ${command}`, {
+    knownCause: "activation"
+  });
+}
+async function selectedPiIdentity(command, cwd, env) {
+  const executable = await resolveSelectedPi(command, cwd, env);
+  const { stdout } = await execFileAsync(executable, ["--version"], {
+    cwd,
+    env,
+    encoding: "utf8"
+  });
+  const version = stdout.trim();
+  if (version === "") throw new Error(`Pi executable returned an empty version: ${executable}`);
+  return { executable, version };
+}
+function createDefaultPiSpawnRunner(options) {
+  return async (args, spawnOptions) => {
+    const command = spawnOptions.env.PI_BINARY ?? "pi";
+    const piIdentity = await selectedPiIdentity(command, spawnOptions.cwd, spawnOptions.env);
+    return await new Promise((resolveResult, reject) => {
+      const child = spawn(piIdentity.executable, [...args], {
+        cwd: spawnOptions.cwd,
+        env: spawnOptions.env,
+        stdio: ["ignore", "ignore", "pipe"]
+      });
+      let stderr = "";
+      let timedOut = false;
+      let timer;
+      let settled = false;
+      let hasSpawned = false;
+      let executionError;
+      const armTimeoutAfterChildReady = () => {
+        if (spawnOptions.timeoutMs === void 0) return;
+        timer = setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+        }, spawnOptions.timeoutMs);
+      };
+      let identityRecorded = Promise.resolve();
+      child.once("spawn", () => {
+        hasSpawned = true;
+        armTimeoutAfterChildReady();
+        const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
+        if (typeof runDirectory === "string" && runDirectory !== "" && options.recordLaunchedPiIdentity !== void 0) {
+          identityRecorded = options.recordLaunchedPiIdentity(runDirectory, piIdentity);
+        }
+      });
+      child.stderr.setEncoding("utf8").on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("error", (error) => {
+        if (settled || hasSpawned) {
+          executionError = error;
+          return;
+        }
+        if (timer !== void 0) clearTimeout(timer);
+        settled = true;
+        reject(error);
+      });
+      child.on("close", (code) => {
+        if (timer !== void 0) clearTimeout(timer);
+        void identityRecorded.then(
+          () => {
+            if (settled) return;
+            settled = true;
+            if (executionError !== void 0) {
+              reject(executionError);
+              return;
+            }
+            resolveResult({
+              code,
+              stderr,
+              timedOut
+            });
+          },
+          (error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          }
+        );
+      });
+    });
+  };
+}
+function createPiRoleTurnHost(config) {
+  const spawnRunner = config.spawnRunner ?? createDefaultPiSpawnRunner({
+    ...config.recordLaunchedPiIdentity === void 0 ? {} : { recordLaunchedPiIdentity: config.recordLaunchedPiIdentity }
+  });
+  return {
+    async executeTurn(request) {
+      const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
+      const extraArgs = buildPiTurnExtraArgs(
+        request,
+        config.principalAuthority,
+        config.extraPiArgs ?? []
+      );
+      const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
+      const env = {
+        ...process.env,
+        HOME: request.home,
+        PI_CODING_AGENT_DIR: request.agentDir,
+        AK_ROLE_RUN_DIR: request.runDirectory
+      };
+      applyEngineChildEnv(env, request.engine);
+      if (request.correlationId !== void 0 && request.correlationId.trim() !== "") {
+        env.AK_CORRELATION_ID = request.correlationId;
+      }
+      if (config.recordLaunchedRolePackageIdentity !== void 0 && config.observeLaunchedRolePackageIdentity !== void 0) {
+        await config.recordLaunchedRolePackageIdentity(
+          request.runDirectory,
+          await config.observeLaunchedRolePackageIdentity(config.packageRoot, roleEntry)
+        );
+      }
+      const timeoutMs = request.timeoutMs ?? config.timeoutMs;
+      return await spawnRunner(args, {
+        cwd: request.cwd,
+        env,
+        ...timeoutMs === void 0 ? {} : { timeoutMs }
+      });
+    }
+  };
+}
+async function appendPiSessionCustomEntry(authority, principal, customType, data) {
+  const { sessionFile } = authority.decode(principal);
+  const text = await readFile3(sessionFile, "utf8");
+  let parentId = null;
+  for (const line2 of text.trim().split("\n").filter(Boolean)) {
+    const entry = JSON.parse(line2);
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+  }
+  const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+  const pointerLine = `${JSON.stringify({
+    type: "custom",
+    customType,
+    data,
+    id: randomUUID2(),
+    parentId,
+    timestamp: timestamp2
+  })}
+`;
+  await appendFile(sessionFile, pointerLine, "utf8");
+  try {
+    sitianReport({
+      level: "event",
+      kind: "dispatch-error",
+      sessionParent: sessionFile,
+      payload: { customType, data },
+      source: "pi-role-turn-host"
+    });
+  } catch {
+  }
+}
+var INTERNAL_ROLE_ENTRYPOINT_RELATIVE2, execFileAsync;
+var init_role_turn_host = __esm({
+  "src/pi/role-turn-host.ts"() {
+    "use strict";
+    init_host_contracts();
+    init_engine_detour();
+    init_sitian_facade();
+    INTERNAL_ROLE_ENTRYPOINT_RELATIVE2 = "extensions/role-runtime.ts";
+    execFileAsync = promisify(execFile);
   }
 });
 
@@ -15417,6 +16125,18 @@ var init_audit_escalation = __esm({
   "src/audit-escalation.ts"() {
     "use strict";
     AUDIT_ESCALATION_KIND = "audit_escalation";
+  }
+});
+
+// src/submission-correctable-error.ts
+var correctableSubmissionErrorBrand, CorrectableSubmissionError;
+var init_submission_correctable_error = __esm({
+  "src/submission-correctable-error.ts"() {
+    "use strict";
+    correctableSubmissionErrorBrand = /* @__PURE__ */ Symbol("ak-roles.correctable-submission-error");
+    CorrectableSubmissionError = class extends Error {
+      [correctableSubmissionErrorBrand] = true;
+    };
   }
 });
 
@@ -15517,6 +16237,7 @@ var init_terminating_tools = __esm({
     init_judge_output();
     init_reviewer_output();
     init_audit_escalation();
+    init_submission_correctable_error();
     init_doctor_contracts();
     init_merger_contracts();
     init_notary_contracts();
@@ -15533,7 +16254,8 @@ var init_terminating_tools = __esm({
       NOTARY_OUTPUT_TOOL_NAME,
       COUNTERSIGN_OUTPUT_TOOL_NAME
     ];
-    AcceptedDetailsContractError = class extends Error {
+    AcceptedDetailsContractError = class extends CorrectableSubmissionError {
+      code = "accepted_details_contract";
       constructor(message, options) {
         super(message, options);
         this.name = "AcceptedDetailsContractError";
@@ -15543,8 +16265,8 @@ var init_terminating_tools = __esm({
 });
 
 // src/doctor-evidence.ts
-import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
-import { dirname as dirname5, relative as relative2, resolve as resolve3, sep as sep2 } from "node:path";
+import { readdir, readFile as readFile4, realpath as realpath2, stat } from "node:fs/promises";
+import { dirname as dirname6, relative as relative2, resolve as resolve5, sep as sep2 } from "node:path";
 function record2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -15552,7 +16274,7 @@ async function discoverCaseFiles(root) {
   const found = [];
   async function walk(dir, depth) {
     for (const item of await readdir(dir, { withFileTypes: true })) {
-      const path = resolve3(dir, item.name);
+      const path = resolve5(dir, item.name);
       if (item.isDirectory()) await walk(path, depth + 1);
       else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
     }
@@ -15577,12 +16299,12 @@ async function stableRunsIdentity(root) {
   let cursor = root;
   while (true) {
     try {
-      const git2 = await stat(resolve3(cursor, ".git"));
+      const git2 = await stat(resolve5(cursor, ".git"));
       if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep2).join("/");
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
     }
-    const parent = dirname5(cursor);
+    const parent = dirname6(cursor);
     if (parent === cursor) return root;
     cursor = parent;
   }
@@ -15654,14 +16376,14 @@ function deriveSession(content, id) {
   return { session, turns, calls, tokens, statuses, commits };
 }
 async function loadDoctorCase(runsPath) {
-  const root = await realpath(runsPath);
+  const root = await realpath2(runsPath);
   const match = root.split(sep2).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
   if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/issues/<n>/runs directory");
   const evidence = [], sessions = [], statuses = [], commits = [];
   const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
   for (const path of await discoverCaseFiles(root)) {
     const id = relative2(root, path).split(sep2).join("/");
-    const bytes = await readFile2(path);
+    const bytes = await readFile4(path);
     const content = bytes.toString("utf8");
     const kind = id.endsWith(".jsonl") ? "session" : "stderr";
     evidence.push({ id, kind, byteLength: bytes.byteLength, contentLength: content.length, sha256: sha256Hex(bytes), content });
@@ -15690,8 +16412,8 @@ var init_doctor_evidence = __esm({
 });
 
 // src/collector-config.ts
-import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile3 } from "node:fs/promises";
+import { createHash as createHash3 } from "node:crypto";
+import { readFile as readFile5 } from "node:fs/promises";
 function fail3(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
@@ -15729,12 +16451,12 @@ function canonicalManifest(requests) {
 }
 function emptyCollectorManifest() {
   const canonicalJson2 = canonicalManifest([]);
-  return { requests: [], canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex") };
+  return { requests: [], canonicalJson: canonicalJson2, digest: createHash3("sha256").update(canonicalJson2).digest("hex") };
 }
 async function loadCollectorManifest(path) {
   let bytes;
   try {
-    bytes = await readFile3(path);
+    bytes = await readFile5(path);
   } catch (error) {
     fail3(`Collector request manifest is unreadable at ${path}`, error);
   }
@@ -15756,7 +16478,7 @@ async function loadCollectorManifest(path) {
     requests.push({ id: item.id, requestBody: item.body });
   }
   const canonicalJson2 = canonicalManifest(requests);
-  return { requests, canonicalJson: canonicalJson2, digest: createHash2("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
+  return { requests, canonicalJson: canonicalJson2, digest: createHash3("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
 }
 var COLLECTOR_OWNER_PATTERN, COLLECTOR_REPO_PATTERN, COLLECTOR_FIXED_KICKOFF;
 var init_collector_config = __esm({
@@ -15769,10 +16491,10 @@ var init_collector_config = __esm({
 });
 
 // src/merger-git-state.ts
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile as execFile2 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
 async function git(cwd, args) {
-  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
+  const { stdout } = await execFileAsync2("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
   return new Uint8Array(stdout);
 }
 function line(bytes, label) {
@@ -15833,13 +16555,13 @@ function createProductionMergerGitState(repositoryRoot = process.cwd()) {
     }
   };
 }
-var execFileAsync;
+var execFileAsync2;
 var init_merger_git_state = __esm({
   "src/merger-git-state.ts"() {
     "use strict";
     init_exact_utf8();
     init_git_object_id();
-    execFileAsync = promisify(execFile);
+    execFileAsync2 = promisify2(execFile2);
   }
 });
 
@@ -15869,10 +16591,10 @@ var init_uuidv7 = __esm({
 });
 
 // src/typed-provider-http.ts
-import { readFile as readFile4, unlink, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { readFile as readFile6, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join8 } from "node:path";
 function typedProviderHttpPath(runDirectory) {
-  return join6(runDirectory, TYPED_HTTP_FILE);
+  return join8(runDirectory, TYPED_HTTP_FILE);
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
@@ -15887,7 +16609,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readLatestTypedProviderHttpObservation(runDirectory) {
   let text;
   try {
-    text = await readFile4(typedProviderHttpPath(runDirectory), "utf8");
+    text = await readFile6(typedProviderHttpPath(runDirectory), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return void 0;
@@ -15916,8 +16638,8 @@ var init_typed_provider_http = __esm({
 });
 
 // src/public-cli/run-lifecycle.ts
-import { chmod, lstat, open, readdir as readdir2, readFile as readFile5, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { chmod, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join9 } from "node:path";
 function selectResumeContinuationPrompt(message) {
   return message !== void 0 ? message : RESUME_TRANSPORT_ENVELOPE;
 }
@@ -15941,16 +16663,16 @@ function renderResumeCommand(runId) {
 async function writeRoleRunState(runDirectory, record4) {
   const payload = { ...record4, runDirectory };
   await writeFile3(
-    join7(runDirectory, RUN_STATE_FILE),
+    join9(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
   );
 }
-async function readRoleRunState(runDirectory) {
+async function readRoleRunStateDisk(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile5(join7(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile7(join9(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -15972,7 +16694,10 @@ async function readRoleRunState(runDirectory) {
   if (typeof record4.sessionDirectory !== "string") return void 0;
   if (typeof record4.admittedRequestPath !== "string") return void 0;
   const runDir = typeof record4.runDirectory === "string" && record4.runDirectory.trim() !== "" ? record4.runDirectory : runDirectory;
-  const sessionFile = typeof record4.sessionFile === "string" && record4.sessionFile.trim() !== "" ? record4.sessionFile : join7(record4.sessionDirectory, "session.jsonl");
+  const principalWire = {
+    sessionDirectory: record4.sessionDirectory,
+    ...typeof record4.sessionFile === "string" ? { sessionFile: record4.sessionFile } : {}
+  };
   let resumable;
   if (record4.resumable !== void 0 && record4.resumable !== null) {
     if (typeof record4.resumable === "object" && !Array.isArray(record4.resumable)) {
@@ -15989,87 +16714,134 @@ async function readRoleRunState(runDirectory) {
     state: record4.state,
     bookKey: record4.bookKey,
     projectRoot: record4.projectRoot,
-    sessionDirectory: record4.sessionDirectory,
-    sessionFile,
     runDirectory: runDir,
     admittedRequestPath: record4.admittedRequestPath,
+    principalWire,
     ...phase === void 0 ? {} : { phase },
     ...resumable === void 0 ? {} : { resumable }
   };
 }
-async function markRunAdmitted(admitted) {
+async function writeRoleRunStateDisk(runDirectory, disk) {
+  const payload = {
+    runId: disk.runId,
+    role: disk.role,
+    state: disk.state,
+    bookKey: disk.bookKey,
+    projectRoot: disk.projectRoot,
+    runDirectory: disk.runDirectory,
+    sessionDirectory: disk.principalWire.sessionDirectory,
+    ...disk.principalWire.sessionFile === void 0 ? {} : { sessionFile: disk.principalWire.sessionFile },
+    admittedRequestPath: disk.admittedRequestPath,
+    ...disk.phase === void 0 ? {} : { phase: disk.phase },
+    ...disk.resumable === void 0 ? {} : { resumable: disk.resumable }
+  };
+  await writeFile3(
+    join9(runDirectory, RUN_STATE_FILE),
+    `${JSON.stringify(payload, null, 2)}
+`,
+    "utf8"
+  );
+}
+function materializeRoleRunFromDisk(disk, authority) {
+  try {
+    const coordinates = authority.decode(disk.principalWire);
+    return {
+      principal: disk.principalWire,
+      run: {
+        runId: disk.runId,
+        role: disk.role,
+        state: disk.state,
+        bookKey: disk.bookKey,
+        projectRoot: disk.projectRoot,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
+        runDirectory: disk.runDirectory,
+        admittedRequestPath: disk.admittedRequestPath,
+        ...disk.phase === void 0 ? {} : { phase: disk.phase },
+        ...disk.resumable === void 0 ? {} : { resumable: disk.resumable }
+      }
+    };
+  } catch {
+    return void 0;
+  }
+}
+async function readRoleRunIdentity(runDirectory) {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === void 0) return void 0;
+  return {
+    runId: disk.runId,
+    role: disk.role,
+    bookKey: disk.bookKey,
+    runDirectory: disk.runDirectory,
+    state: disk.state
+  };
+}
+async function markRunAdmitted(admitted, authority) {
+  const { sessionDirectory, sessionFile } = authority.decode(admitted.principal);
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
     role: admitted.role,
     state: "admitted",
     bookKey: admitted.bookKey,
     projectRoot: admitted.projectRoot,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
+    sessionDirectory,
+    sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
 }
 async function markRunRunning(runDirectory, effectiveModel, effectiveEngine) {
-  if (effectiveModel !== void 0 || effectiveEngine !== void 0) {
-    await recordEffectiveInvocationModel(
-      runDirectory,
-      effectiveModel,
-      effectiveEngine
-    );
-  }
-  const current = await readRoleRunState(runDirectory);
+  await recordEffectiveInvocationModel(
+    runDirectory,
+    effectiveModel,
+    effectiveEngine
+  );
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark running: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
     state: "running",
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
+    runDirectory: current.runDirectory,
     admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
     ...current.phase === void 0 ? {} : { phase: current.phase }
   });
 }
 async function markRunResumable(runDirectory, observation) {
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark resumable: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     ...current,
     state: "resumable",
     resumable: observation
   });
 }
 async function markRunTerminal(runDirectory) {
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === void 0) {
     throw new Error("cannot mark terminal: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
     state: "terminal",
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
+    runDirectory: current.runDirectory,
     admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
     ...current.phase === void 0 ? {} : { phase: current.phase }
   });
 }
-async function isSessionPrincipalAvailable(sessionFile) {
-  if (sessionFile.trim() === "") return false;
-  try {
-    const st = await lstat(sessionFile);
-    return st.isFile() && !st.isSymbolicLink();
-  } catch {
-    return false;
-  }
+async function isDurablePrincipalAvailable(principal, authority) {
+  return authority.isAvailable(principal);
 }
 function describeErrorIdentity(error) {
   const candidate = error;
@@ -16078,146 +16850,60 @@ function describeErrorIdentity(error) {
   const message = typeof candidate?.message === "string" && candidate.message !== "" ? `: ${candidate.message}` : "";
   return `${name}${code}${message}`;
 }
-function errorCodeOf(error) {
-  return error.code;
-}
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return errorCodeOf(error) !== "ESRCH";
-  }
-}
-async function autopsyWriterLock(lockPath) {
-  let content;
-  try {
-    content = await readFile5(lockPath, "utf8");
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return { verdict: "absent" };
-    return { verdict: "absent", readFailure: error };
-  }
-  const pid = Number.parseInt(content.trim(), 10);
-  if (!Number.isInteger(pid) || pid <= 0) return { verdict: "absent" };
-  return isProcessAlive(pid) ? { verdict: "alive", pid } : { verdict: "dead", pid };
-}
-function describeAutopsy(autopsy) {
-  switch (autopsy.verdict) {
-    case "alive":
-      return `live pid ${autopsy.pid}`;
-    case "dead":
-      return `dead pid ${autopsy.pid}`;
-    case "absent":
-      return autopsy.readFailure !== void 0 ? "unreadable lock" : "absent or unparseable holder";
-  }
-}
-async function reclaimStaleWriterLock(lockPath, runDirectory) {
-  const current = await autopsyWriterLock(lockPath);
-  if (current.verdict !== "dead") return false;
-  try {
-    await unlink2(lockPath);
-    return true;
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return false;
-    if (errorCodeOf(error) !== "EACCES") throw error;
-    await chmod(runDirectory, 493);
-    await unlink2(lockPath);
-    return true;
-  }
-}
-async function createWriterLease(lockPath, runDirectory, reportCleanupFailure) {
-  const handle = await open(lockPath, "wx");
-  try {
-    await handle.writeFile(`${process.pid}
-`, "utf8");
-  } catch (error) {
-    await handle.close().catch(() => void 0);
-    await unlink2(lockPath).catch(() => void 0);
-    throw error;
-  }
-  let released = false;
-  return {
-    lockPath,
-    async release() {
-      if (released) return;
-      released = true;
-      await handle.close().catch(() => void 0);
-      try {
-        await unlink2(lockPath);
-      } catch (error) {
-        if (errorCodeOf(error) === "EACCES") {
-          try {
-            await chmod(runDirectory, 493);
-            await unlink2(lockPath);
-          } catch (retryError) {
-            reportCleanupFailure(retryError);
-          }
-        } else {
-          reportCleanupFailure(error);
-        }
-      }
-    }
-  };
-}
 async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
-  const reportDiagnostic = (diagnostic) => {
-    const line2 = diagnostic.endsWith("\n") ? diagnostic : `${diagnostic}
-`;
+  const reportCleanupFailure = (error) => {
     try {
-      onCleanupFailure?.(line2);
+      onCleanupFailure?.(
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join9(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
+      );
     } catch {
     }
   };
-  const reportCleanupFailure = (error) => {
-    reportDiagnostic(
-      `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join7(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`
-    );
-  };
-  const lockPath = join7(runDirectory, WRITER_LOCK_FILE);
-  let lastAutopsy = { verdict: "absent" };
-  for (let reclaimsLeft = WRITER_LEASE_RECLAIM_ROUNDS; ; reclaimsLeft -= 1) {
+  const lockPath = join9(runDirectory, WRITER_LOCK_FILE);
+  try {
+    const handle = await open(lockPath, "wx");
     try {
-      return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
+      await handle.writeFile(`${process.pid}
+`, "utf8");
     } catch (error) {
-      if (errorCodeOf(error) !== "EEXIST") throw error;
+      await handle.close().catch(() => void 0);
+      await unlink2(lockPath).catch(() => void 0);
+      throw error;
     }
-    lastAutopsy = await autopsyWriterLock(lockPath);
-    if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== void 0) {
-      reportCleanupFailure(lastAutopsy.readFailure);
+    let released = false;
+    return {
+      lockPath,
+      async release() {
+        if (released) return;
+        released = true;
+        await handle.close().catch(() => void 0);
+        try {
+          await unlink2(lockPath);
+        } catch (error) {
+          if (error.code === "EACCES") {
+            try {
+              await chmod(runDirectory, 493);
+              await unlink2(lockPath);
+            } catch (retryError) {
+              reportCleanupFailure(retryError);
+            }
+          } else {
+            reportCleanupFailure(error);
+          }
+        }
+      }
+    };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+      throw new RunWriterLeaseHeldError();
     }
-    if (lastAutopsy.verdict === "alive") {
-      throw new RunWriterLeaseHeldError(
-        `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`
-      );
-    }
-    if (lastAutopsy.verdict === "absent") {
-      throw new RunWriterLeaseHeldError(
-        lastAutopsy.readFailure !== void 0 ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place` : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`
-      );
-    }
-    if (reclaimsLeft <= 0) break;
-    let reclaimed = false;
-    try {
-      reclaimed = await reclaimStaleWriterLock(lockPath, runDirectory);
-    } catch (reclaimError) {
-      throw new RunWriterLeaseHeldError(
-        `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`
-      );
-    }
-    if (reclaimed) {
-      reportDiagnostic(
-        `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run \u2014 check for a surviving pi process on this run before continuing`
-      );
-    }
+    throw error;
   }
-  throw new RunWriterLeaseHeldError(
-    `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`
-  );
 }
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
   const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join7(ledgerHome, "books");
+  const booksRoot = join9(ledgerHome, "books");
   let bookKeys;
   try {
     bookKeys = await readdir2(booksRoot);
@@ -16225,7 +16911,7 @@ async function findRunDirectoryById(home, runId) {
     return void 0;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join7(activationBookDirectory(ledgerHome, bookKey), "runs");
+    const runsDir = join9(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
       entries = await readdir2(runsDir);
@@ -16234,7 +16920,7 @@ async function findRunDirectoryById(home, runId) {
     }
     for (const entry of entries) {
       if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join7(runsDir, entry);
+        return join9(runsDir, entry);
       }
     }
   }
@@ -16254,16 +16940,21 @@ function restoredTicketFields(fields) {
     ...fields.ticketNumber === void 0 ? {} : { ticketNumber: fields.ticketNumber }
   };
 }
-async function loadResumableRunRecord(home, runId) {
+async function loadResumableRunRecord(home, runId, authority) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const run = await readRoleRunState(runDirectory);
-  if (run === void 0) {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  if (!await isSessionPrincipalAvailable(run.sessionFile)) {
+  const materialized = materializeRoleRunFromDisk(disk, authority);
+  if (materialized === void 0) {
+    throw new CliUsageError(`unknown role run id: ${runId}`);
+  }
+  const { run, principal } = materialized;
+  if (!await isDurablePrincipalAvailable(principal, authority)) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`
     );
@@ -16284,7 +16975,7 @@ async function loadResumableRunRecord(home, runId) {
   let ticketNumber;
   try {
     const raw = JSON.parse(
-      await readFile5(run.admittedRequestPath, "utf8")
+      await readFile7(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record4 = raw;
@@ -16353,29 +17044,37 @@ async function loadResumableRunRecord(home, runId) {
       { cause: error }
     );
   }
-  if (correlationId === void 0 || ticketNumber === void 0) {
-    try {
-      const invocationRaw = JSON.parse(
-        await readFile5(join7(run.runDirectory, "invocation.json"), "utf8")
-      );
-      if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
-        const fromInvocation = parsePersistedTicketIdentity(
-          invocationRaw
-        );
+  let model;
+  try {
+    const invocationRaw = JSON.parse(
+      await readFile7(join9(run.runDirectory, "invocation.json"), "utf8")
+    );
+    if (invocationRaw !== null && typeof invocationRaw === "object" && !Array.isArray(invocationRaw)) {
+      const rec = invocationRaw;
+      if (typeof rec.provider === "string" && typeof rec.model === "string") {
+        model = {
+          provider: rec.provider,
+          model: rec.model,
+          ...typeof rec.thinking === "string" && THINKING_LEVELS.has(rec.thinking) ? { thinking: rec.thinking } : {}
+        };
+      }
+      if (correlationId === void 0 || ticketNumber === void 0) {
+        const fromInvocation = parsePersistedTicketIdentity(rec);
         if (correlationId === void 0) correlationId = fromInvocation.correlationId;
         if (ticketNumber === void 0) ticketNumber = fromInvocation.ticketNumber;
       }
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw new CliUsageError(
-          `role run invocation identity is unreadable: ${runId}`,
-          { cause: error }
-        );
-      }
+    }
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw new CliUsageError(
+        `role run invocation identity is unreadable: ${runId}`,
+        { cause: error }
+      );
     }
   }
   return {
     run,
+    principal,
     ...run.resumable === void 0 ? {} : { observation: run.resumable },
     admittedFields: {
       instruction,
@@ -16391,12 +17090,13 @@ async function loadResumableRunRecord(home, runId) {
       ...mergerInputPath === void 0 ? {} : { mergerInputPath },
       ...derived === void 0 ? {} : { derived },
       ...correlationId === void 0 ? {} : { correlationId },
-      ...ticketNumber === void 0 ? {} : { ticketNumber }
+      ...ticketNumber === void 0 ? {} : { ticketNumber },
+      ...model === void 0 ? {} : { model }
     }
   };
 }
-async function loadResumableJudgeRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableJudgeRun(home, runId, authority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "judge") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not judge`
@@ -16411,9 +17111,9 @@ async function loadResumableJudgeRun(home, runId) {
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16422,8 +17122,8 @@ async function loadResumableJudgeRun(home, runId) {
     ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
-async function loadResumableCoderRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableCoderRun(home, runId, authority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "coder") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not coder`
@@ -16456,10 +17156,10 @@ async function loadResumableCoderRun(home, runId) {
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16468,8 +17168,8 @@ async function loadResumableCoderRun(home, runId) {
     ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
-async function loadResumableFixerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableFixerRun(home, runId, authority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "fixer") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not fixer`
@@ -16503,12 +17203,12 @@ async function loadResumableFixerRun(home, runId) {
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
     prerequisites,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16517,8 +17217,8 @@ async function loadResumableFixerRun(home, runId) {
     ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
-async function loadResumableReviewerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableReviewerRun(home, runId, authority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "reviewer") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`
@@ -16539,11 +17239,11 @@ async function loadResumableReviewerRun(home, runId) {
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16552,8 +17252,8 @@ async function loadResumableReviewerRun(home, runId) {
     ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
   };
 }
-async function loadResumableMergerRun(home, runId) {
-  const loaded = await loadResumableRunRecord(home, runId);
+async function loadResumableMergerRun(home, runId, authority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "merger") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not merger`
@@ -16585,11 +17285,11 @@ async function loadResumableMergerRun(home, runId) {
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
   return {
@@ -16601,10 +17301,10 @@ async function loadResumableMergerRun(home, runId) {
 async function peekRoleRunRole(home, runId) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) return void 0;
-  const run = await readRoleRunState(runDirectory);
+  const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }
-var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError, WRITER_LEASE_RECLAIM_ROUNDS;
+var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
@@ -16612,6 +17312,7 @@ var init_run_lifecycle = __esm({
     init_cli_errors();
     init_typed_provider_http();
     init_typed_provider_http();
+    init_config2();
     init_invocation();
     V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
     AUTO_RESUME_LIMIT = 2;
@@ -16625,13 +17326,12 @@ var init_run_lifecycle = __esm({
         this.name = "RunWriterLeaseHeldError";
       }
     };
-    WRITER_LEASE_RECLAIM_ROUNDS = 3;
   }
 });
 
 // src/notary-source-run.ts
-import { dirname as dirname6, isAbsolute as isAbsolute3, join as join8, resolve as resolve4, basename as basename3 } from "node:path";
-import { lstat as lstat2, realpath as realpath2 } from "node:fs/promises";
+import { dirname as dirname7, isAbsolute as isAbsolute4, join as join10, resolve as resolve6, basename as basename4 } from "node:path";
+import { lstat as lstat2, realpath as realpath3 } from "node:fs/promises";
 function parseRunDirectoryName(name) {
   const match = RUN_DIR_NAME.exec(name);
   if (match === null) return void 0;
@@ -16640,7 +17340,7 @@ function parseRunDirectoryName(name) {
 async function requireRunDirectory(candidate, display) {
   let real;
   try {
-    real = await realpath2(candidate);
+    real = await realpath3(candidate);
   } catch (error) {
     throw new NotarySourceRunError(
       `notary --source-run is not a readable run directory: ${display}`,
@@ -16661,10 +17361,10 @@ async function requireRunDirectory(candidate, display) {
       `notary --source-run must be a run directory: ${display}`
     );
   }
-  const identity = parseRunDirectoryName(basename3(real));
+  const identity = parseRunDirectoryName(basename4(real));
   if (identity === void 0) {
     throw new NotarySourceRunError(
-      `notary --source-run must be named <runId>@<role>: ${basename3(real)}`
+      `notary --source-run must be named <runId>@<role>: ${basename4(real)}`
     );
   }
   return real;
@@ -16678,24 +17378,24 @@ async function resolveNotarySourceRunLocator(options) {
     options.home === void 0 ? void 0 : () => options.home
   );
   const bookKey = resolveBookKeyFromGit(options.projectRoot);
-  const bookRunsRoot = join8(activationBookDirectory(ledgerHome, bookKey), "runs");
+  const bookRunsRoot = join10(activationBookDirectory(ledgerHome, bookKey), "runs");
   let candidate;
   const bare = parseRunDirectoryName(raw);
   if (bare !== void 0 && !raw.includes("/") && !raw.includes("\\")) {
-    candidate = join8(bookRunsRoot, `${bare.runId}@${bare.role}`);
+    candidate = join10(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
-    candidate = isAbsolute3(raw) ? raw : resolve4(options.projectRoot, raw);
+    candidate = isAbsolute4(raw) ? raw : resolve6(options.projectRoot, raw);
   }
   const real = await requireRunDirectory(candidate, raw);
-  const identity = parseRunDirectoryName(basename3(real));
+  const identity = parseRunDirectoryName(basename4(real));
   const runsRootIdentity = physicalPathIdentity(bookRunsRoot);
-  const parentIdentity = physicalPathIdentity(dirname6(real));
+  const parentIdentity = physicalPathIdentity(dirname7(real));
   if (parentIdentity !== runsRootIdentity) {
     throw new NotarySourceRunError(
       "notary --source-run must resolve to a retained run under the project machine-ledger book"
     );
   }
-  const runState = await readRoleRunState(real);
+  const runState = await readRoleRunIdentity(real);
   if (runState === void 0) {
     throw new NotarySourceRunError(
       "notary --source-run lacks retained run-state identity"
@@ -17071,6 +17771,20 @@ var init_option_definitions = __esm({
         description: {
           en: "Optional labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
           zh: "\u672C\u8C03\u7528\u53EF\u9009\u52B3\u52A8\u5F15\u64CE\uFF08\u6C60\u4EE4\u540D\u5B57\uFF1B\u6709\u5305\u5185\u8C03\u6CD5\u7B14\u8BB0\u5219\u9644\u5377\uFF1B\u5168\u90E8\u89D2\u8272\u53EF\u7528\uFF09\u3002"
+        }
+      },
+      {
+        id: "host",
+        owner: "global",
+        canonical: "--host",
+        aliases: [],
+        valueMetavar: "name",
+        required: false,
+        repeatable: false,
+        form: "option",
+        description: {
+          en: "Select the named main-session host adapter for this invocation.",
+          zh: "\u4E3A\u672C\u8C03\u7528\u9009\u62E9\u5177\u540D\u4E3B\u4F1A\u8BDD\u5BBF\u4E3B\u9002\u914D\u5668\u3002"
         }
       },
       {
@@ -17586,6 +18300,8 @@ var init_option_definitions = __esm({
           "ak-role config unset <gatekeeper|inspector|notary>",
           "ak-role config set-engine <seat> <name>",
           "ak-role config unset-engine <seat>",
+          "ak-role config set-host <seat> <name>",
+          "ak-role config unset-host <seat>",
           "ak-role config set-auto-resume-limit <N>"
         ],
         examples: [
@@ -17619,16 +18335,94 @@ var init_option_definitions = __esm({
   }
 });
 
+// src/institutional-resolution.ts
+import { readFile as readFile8, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join11 } from "node:path";
+function cleanSelection(model) {
+  if (model === void 0) return void 0;
+  if (typeof model.provider !== "string" || typeof model.model !== "string") return void 0;
+  return {
+    provider: model.provider,
+    model: model.model,
+    ...model.thinking === void 0 ? {} : { thinking: model.thinking }
+  };
+}
+function resolveInstitutionalSeatSelections(config, parentEffectiveModel) {
+  const parentSelection = cleanSelection(parentEffectiveModel);
+  const ownInspector = cleanSelection(seatModelOnly(config.seats?.inspector));
+  const ownNotary = cleanSelection(seatModelOnly(config.seats?.notary));
+  const ownGatekeeper = cleanSelection(seatModelOnly(config.seats?.gatekeeper));
+  const gatekeeper = ownGatekeeper ?? parentSelection;
+  const inspector = ownInspector ?? ownGatekeeper ?? parentSelection;
+  const notary = ownNotary ?? ownGatekeeper ?? parentSelection;
+  const auditor = parentSelection;
+  const evidenceChild = parentSelection;
+  return {
+    version: 1,
+    seats: {
+      ...gatekeeper === void 0 ? {} : { gatekeeper },
+      ...inspector === void 0 ? {} : { inspector },
+      ...notary === void 0 ? {} : { notary },
+      ...auditor === void 0 ? {} : { auditor },
+      ...evidenceChild === void 0 ? {} : { evidenceChild }
+    }
+  };
+}
+async function writeInstitutionalResolutionPage(runDirectory, page) {
+  const filePath = join11(runDirectory, INSTITUTIONAL_RESOLUTION_FILE);
+  await writeFile4(filePath, `${JSON.stringify(page, null, 2)}
+`, "utf8");
+}
+var INSTITUTIONAL_RESOLUTION_FILE;
+var init_institutional_resolution = __esm({
+  "src/institutional-resolution.ts"() {
+    "use strict";
+    init_config2();
+    INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json";
+  }
+});
+
 // src/public-cli/invocation.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat as lstat3,
   mkdir as mkdir2,
-  readFile as readFile6,
-  realpath as realpath3,
-  writeFile as writeFile4
+  readFile as readFile9,
+  realpath as realpath4,
+  writeFile as writeFile5
 } from "node:fs/promises";
-import { basename as basename4, isAbsolute as isAbsolute4, join as join9, resolve as resolve5, sep as sep3 } from "node:path";
+import { basename as basename5, isAbsolute as isAbsolute5, join as join12, resolve as resolve7, sep as sep3 } from "node:path";
+function issueAdmissionPlacement(authority, request) {
+  const principal = authority.issue(request);
+  const { sessionDirectory, sessionFile } = authority.decode(principal);
+  const runDirectory = join12(sessionDirectory, "..");
+  const ledgerHome = resolveActivationLedgerHome(
+    request.home === void 0 ? void 0 : () => request.home
+  );
+  const bookKey = resolveBookKeyFromGit(request.cwd);
+  return {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  };
+}
+async function writeAdmittedRequestPersistence(admittedRequestPath, body, coordinates) {
+  const { principal: _omitPrincipal, ...rest } = body;
+  const projection = {
+    ...rest,
+    sessionDirectory: coordinates.sessionDirectory,
+    sessionFile: coordinates.sessionFile
+  };
+  await writeFile5(
+    admittedRequestPath,
+    `${JSON.stringify(projection, null, 2)}
+`,
+    "utf8"
+  );
+}
 function effectiveModelLedgerFields(model) {
   if (model === void 0) return {};
   return {
@@ -17636,6 +18430,23 @@ function effectiveModelLedgerFields(model) {
     model: model.model,
     ...model.thinking === void 0 ? {} : { thinking: model.thinking }
   };
+}
+function homeFromRunDirectory(runDirectory) {
+  const marker = `${sep3}.ak-roles${sep3}`;
+  const idx = runDirectory.indexOf(marker);
+  if (idx !== -1) {
+    return runDirectory.slice(0, idx);
+  }
+  const altMarker = ".ak-roles";
+  const altIdx = runDirectory.indexOf(altMarker);
+  if (altIdx !== -1) {
+    const candidate = runDirectory.slice(0, altIdx);
+    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  if (typeof process.env.HOME === "string" && process.env.HOME.length > 0) {
+    return process.env.HOME;
+  }
+  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
 }
 async function writeRoleInvocationLedger(source, role, effectiveModel) {
   const identity = {
@@ -17650,16 +18461,20 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
     ...source.ticketNumber === void 0 ? {} : { ticketNumber: source.ticketNumber },
     ...effectiveModelLedgerFields(effectiveModel)
   };
-  await writeFile4(
-    join9(source.runDirectory, "invocation.json"),
+  await writeFile5(
+    join12(source.runDirectory, "invocation.json"),
     `${JSON.stringify(identity, null, 2)}
 `,
     "utf8"
   );
+  const home = homeFromRunDirectory(source.runDirectory);
+  const config = await loadPublicCliConfig(home);
+  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
+  await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
 async function recordEffectiveInvocationModel(runDirectory, model, engine) {
-  const ledgerPath = join9(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile6(ledgerPath, "utf8"));
+  const ledgerPath = join12(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile9(ledgerPath, "utf8"));
   const next = { ...current };
   if (model !== void 0) {
     next.provider = model.provider;
@@ -17673,17 +18488,26 @@ async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   if (engine !== void 0) {
     next.engine = engine;
   }
-  await writeFile4(
+  await writeFile5(
     ledgerPath,
     `${JSON.stringify(next, null, 2)}
 `,
     "utf8"
   );
+  const effectiveModel = typeof next.provider === "string" && typeof next.model === "string" ? {
+    provider: next.provider,
+    model: next.model,
+    ...typeof next.thinking === "string" && THINKING_LEVELS.has(next.thinking) ? { thinking: next.thinking } : {}
+  } : void 0;
+  const home = homeFromRunDirectory(runDirectory);
+  const config = await loadPublicCliConfig(home);
+  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
+  await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 async function mergeInvocationIdentityPage(runDirectory, fields) {
-  const ledgerPath = join9(runDirectory, "invocation.json");
-  const current = JSON.parse(await readFile6(ledgerPath, "utf8"));
-  await writeFile4(
+  const ledgerPath = join12(runDirectory, "invocation.json");
+  const current = JSON.parse(await readFile9(ledgerPath, "utf8"));
+  await writeFile5(
     ledgerPath,
     `${JSON.stringify({
       ...current,
@@ -17702,7 +18526,7 @@ async function recordLaunchedPiIdentity(runDirectory, identity) {
 async function observeLaunchedRolePackageIdentity(packageRoot2, selectedRoleEntry) {
   const rolePackageRoot = packageRoot2;
   const raw = JSON.parse(
-    await readFile6(join9(rolePackageRoot, "package.json"), "utf8")
+    await readFile9(join12(rolePackageRoot, "package.json"), "utf8")
   );
   if (typeof raw.version !== "string" || raw.version.trim() === "") {
     throw new Error(
@@ -17895,7 +18719,7 @@ function parseFixerArgv(args) {
   };
 }
 async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
-  const absolute = isAbsolute4(sourcePath) ? sourcePath : resolve5(sourcePath);
+  const absolute = isAbsolute5(sourcePath) ? sourcePath : resolve7(sourcePath);
   let st;
   try {
     st = await lstat3(absolute);
@@ -17910,10 +18734,10 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile6(absolute);
-  const name = `${String(index).padStart(2, "0")}-${basename4(absolute)}`;
-  const frozenPath = join9(destinationDir, name);
-  await writeFile4(frozenPath, bytes);
+  const bytes = await readFile9(absolute);
+  const name = `${String(index).padStart(2, "0")}-${basename5(absolute)}`;
+  const frozenPath = join12(destinationDir, name);
+  await writeFile5(frozenPath, bytes);
   return {
     attachment: {
       provenancePath: absolute,
@@ -17950,10 +18774,22 @@ async function admitJudgeInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "judge", home: options.home });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "judge",
+    home: options.home
+  });
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -17969,8 +18805,7 @@ async function admitJudgeInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -17982,10 +18817,12 @@ async function admitJudgeInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "judge",
     runId,
@@ -17995,8 +18832,7 @@ async function admitJudgeInvocation(options) {
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     ...ticketFields
   };
@@ -18019,10 +18855,22 @@ async function admitCountersignInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "countersign", home: options.home });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "countersign",
+    home: options.home
+  });
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18038,8 +18886,7 @@ async function admitCountersignInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId },
     ...ticketFields,
     instruction,
@@ -18052,10 +18899,12 @@ async function admitCountersignInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "countersign",
     runId,
@@ -18065,8 +18914,7 @@ async function admitCountersignInvocation(options) {
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId },
     ...ticketFields
@@ -18076,7 +18924,7 @@ function buildCountersignTransportPrompt(admitted, engineMaterial) {
   return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 async function ensureRunArtifactsDir(runDirectory) {
-  const dir = join9(runDirectory, "artifacts");
+  const dir = join12(runDirectory, "artifacts");
   await mkdir2(dir, { recursive: true });
   return dir;
 }
@@ -18093,10 +18941,22 @@ async function admitCoderInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("coder phase must be plan or apply");
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "coder", home: options.home });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "coder",
+    home: options.home
+  });
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18104,8 +18964,8 @@ async function admitCoderInvocation(options) {
     attachmentsDirectory
   );
   const ticketFields = ticketAdmissionFields(ticketNumber);
-  const taskPath = join9(runDirectory, "task.md");
-  await writeFile4(taskPath, instruction, "utf8");
+  const taskPath = join12(runDirectory, "task.md");
+  await writeFile5(taskPath, instruction, "utf8");
   const admitted = {
     role: "coder",
     phase: options.phase,
@@ -18113,8 +18973,7 @@ async function admitCoderInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -18127,10 +18986,12 @@ async function admitCoderInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "coder",
     phase: options.phase,
@@ -18141,8 +19002,7 @@ async function admitCoderInvocation(options) {
     instructionEmpty: false,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     taskPath,
     ...ticketFields
@@ -18175,9 +19035,9 @@ async function admitFixerInvocation(options) {
   let prerequisites = Object.freeze([]);
   let prerequisitesSource;
   if (options.prerequisitesPath !== void 0) {
-    const absolutePrereq = isAbsolute4(options.prerequisitesPath) ? options.prerequisitesPath : resolve5(options.prerequisitesPath);
+    const absolutePrereq = isAbsolute5(options.prerequisitesPath) ? options.prerequisitesPath : resolve7(options.prerequisitesPath);
     try {
-      prerequisitesSource = await readFile6(absolutePrereq, "utf8");
+      prerequisitesSource = await readFile9(absolutePrereq, "utf8");
     } catch (error) {
       throw new CliUsageError(
         `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
@@ -18193,10 +19053,22 @@ async function admitFixerInvocation(options) {
       throw error;
     }
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "fixer", home: options.home });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "fixer",
+    home: options.home
+  });
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18206,16 +19078,16 @@ async function admitFixerInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let prerequisitesPath;
   if (prerequisitesSource !== void 0) {
-    prerequisitesPath = join9(runDirectory, "prerequisites.json");
-    await writeFile4(
+    prerequisitesPath = join12(runDirectory, "prerequisites.json");
+    await writeFile5(
       prerequisitesPath,
       `${JSON.stringify(prerequisites, null, 2)}
 `,
       "utf8"
     );
   }
-  const packetPath = join9(runDirectory, "fix-packet.md");
-  await writeFile4(packetPath, instruction, "utf8");
+  const packetPath = join12(runDirectory, "fix-packet.md");
+  await writeFile5(packetPath, instruction, "utf8");
   const admitted = {
     role: "fixer",
     phase: options.phase,
@@ -18223,8 +19095,7 @@ async function admitFixerInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -18242,10 +19113,12 @@ async function admitFixerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
-`, "utf8");
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "fixer",
     phase: options.phase,
@@ -18256,8 +19129,7 @@ async function admitFixerInvocation(options) {
     instructionEmpty: false,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     packetPath,
     ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
@@ -18414,7 +19286,7 @@ async function admitCollectorInvocation(options) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(detail, { cause: error });
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   let repository;
   if (options.repo !== void 0) {
     try {
@@ -18438,8 +19310,20 @@ async function admitCollectorInvocation(options) {
   }
   const manifestDigest = manifest.digest;
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "collector", home: options.home });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "collector",
+    home: options.home
+  });
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18449,8 +19333,8 @@ async function admitCollectorInvocation(options) {
   const ticketFields = ticketAdmissionFields(ticketNumber);
   let requestManifestPath;
   if (manifestCanonicalJson !== void 0) {
-    requestManifestPath = join9(runDirectory, "request-manifest.json");
-    await writeFile4(requestManifestPath, manifestCanonicalJson, "utf8");
+    requestManifestPath = join12(runDirectory, "request-manifest.json");
+    await writeFile5(requestManifestPath, manifestCanonicalJson, "utf8");
   }
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -18460,8 +19344,7 @@ async function admitCollectorInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -18478,14 +19361,12 @@ async function admitCollectorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "collector",
     runId,
@@ -18495,8 +19376,7 @@ async function admitCollectorInvocation(options) {
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     prNumber,
     repository,
@@ -18579,7 +19459,7 @@ function parseDoctorArgv(args) {
 }
 async function resolveDoctorCaseRunsPath(options) {
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
-  const defaultRuns = join9(
+  const defaultRuns = join12(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
     String(options.issueNumber),
@@ -18592,12 +19472,12 @@ async function resolveDoctorCaseRunsPath(options) {
   if (raw === "") {
     throw new CliUsageError("doctor --runs requires a path");
   }
-  if (isAbsolute4(raw)) {
+  if (isAbsolute5(raw)) {
     throw new CliUsageError(
       "doctor --runs must be a project-relative path"
     );
   }
-  const resolved = resolve5(options.projectRoot, raw);
+  const resolved = resolve7(options.projectRoot, raw);
   if (resolved !== options.projectRoot && !pathContainedIn(options.projectRoot, resolved)) {
     throw new CliUsageError(
       "doctor --runs escapes the project root"
@@ -18605,7 +19485,7 @@ async function resolveDoctorCaseRunsPath(options) {
   }
   let real;
   try {
-    real = await realpath3(resolved);
+    real = await realpath4(resolved);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(
@@ -18636,9 +19516,21 @@ async function admitDoctorInvocation(options) {
       `doctor --issue must be a positive integer, got ${options.issueNumber}`
     );
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "doctor", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "doctor",
+    home: options.home
+  });
   let caseRunsPath;
   try {
     caseRunsPath = await resolveDoctorCaseRunsPath({
@@ -18665,7 +19557,7 @@ async function admitDoctorInvocation(options) {
       );
     }
     caseIdentity2 = patient.identity;
-    caseRunsPath = await realpath3(caseRunsPath);
+    caseRunsPath = await realpath4(caseRunsPath);
   } catch (error) {
     if (error instanceof CliUsageError) throw error;
     const detail = error instanceof Error ? error.message : String(error);
@@ -18674,7 +19566,7 @@ async function admitDoctorInvocation(options) {
       { cause: error }
     );
   }
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18690,8 +19582,7 @@ async function admitDoctorInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -18706,14 +19597,12 @@ async function admitDoctorInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "doctor",
     runId,
@@ -18723,8 +19612,7 @@ async function admitDoctorInvocation(options) {
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     issueNumber: options.issueNumber,
     caseRunsPath,
@@ -18795,7 +19683,7 @@ async function admitNotaryInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   let sourceRun;
   try {
     sourceRun = await resolveNotarySourceRunLocator({
@@ -18810,7 +19698,14 @@ async function admitNotaryInvocation(options) {
     throw error;
   }
   const runId = options.createRunId?.() ?? uuidv7();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "notary",
@@ -18823,8 +19718,7 @@ async function admitNotaryInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     instruction: "",
     instructionEmpty: true,
     attachments: [],
@@ -18832,14 +19726,12 @@ async function admitNotaryInvocation(options) {
     sourceRun,
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId }
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "notary",
     runId,
@@ -18849,8 +19741,7 @@ async function admitNotaryInvocation(options) {
     instructionEmpty: true,
     attachments: [],
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     sourceRunPath: sourceRun.runDirectory,
     sourceRun,
@@ -18918,10 +19809,22 @@ async function admitReviewerInvocation(options) {
   const authorityRefs = Object.freeze(
     (options.authorityRefs ?? []).map((ref) => requireAuthorityRef(ref))
   );
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "reviewer", home: options.home });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "reviewer",
+    home: options.home
+  });
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -18937,8 +19840,7 @@ async function admitReviewerInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty,
@@ -18952,14 +19854,12 @@ async function admitReviewerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "reviewer",
     runId,
@@ -18969,8 +19869,7 @@ async function admitReviewerInvocation(options) {
     instructionEmpty,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     baseRevision: options.baseRevision,
     authorityRefs,
@@ -19064,14 +19963,26 @@ async function admitMergerInvocation(options) {
   if (instruction.trim() === "") {
     throw new CliUsageError("merger requires a nonblank task instruction");
   }
-  const projectRoot = resolve5(options.project ?? options.cwd);
+  const projectRoot = resolve7(options.project ?? options.cwd);
   const derived = await deriveMergerEnvelopeFromActiveMerge(
     projectRoot,
     options.gitState ?? createProductionMergerGitState(projectRoot)
   );
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
-  const attachmentsDirectory = join9(runDirectory, "attachments");
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "merger",
+    home: options.home
+  });
+  const attachmentsDirectory = join12(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
@@ -19103,8 +20014,8 @@ async function admitMergerInvocation(options) {
     // Authorized checks remain available on the assignment; default none.
     authorizedChecks: []
   });
-  const mergerInputPath = join9(runDirectory, "merger-input.json");
-  await writeFile4(
+  const mergerInputPath = join12(runDirectory, "merger-input.json");
+  await writeFile5(
     mergerInputPath,
     `${JSON.stringify(mergerInput, null, 2)}
 `,
@@ -19116,8 +20027,7 @@ async function admitMergerInvocation(options) {
     bookKey,
     projectRoot,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     ...ticketFields,
     instruction,
     instructionEmpty: false,
@@ -19137,14 +20047,12 @@ async function admitMergerInvocation(options) {
       mediaKind: a.mediaKind
     }))
   };
-  const admittedRequestPath = join9(runDirectory, "admitted-request.json");
-  await writeFile4(
-    admittedRequestPath,
-    `${JSON.stringify(admitted, null, 2)}
-`,
-    "utf8"
-  );
-  await writeRoleInvocationLedger(admitted, admitted.role, options.model);
+  const admittedRequestPath = join12(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
   return {
     role: "merger",
     runId,
@@ -19154,8 +20062,7 @@ async function admitMergerInvocation(options) {
     instructionEmpty: false,
     attachments,
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,
@@ -19401,7 +20308,6 @@ var init_invocation = __esm({
     "use strict";
     init_activation_ledger_topology();
     init_activation_ledger_git();
-    init_archivist_role_run_coordinates();
     init_ticket_frontmatter();
     init_doctor_evidence();
     init_collector_config();
@@ -19415,6 +20321,8 @@ var init_invocation = __esm({
     init_engine_material();
     init_cli_errors();
     init_option_definitions();
+    init_config2();
+    init_institutional_resolution();
     MergerEnvelopeDerivationError = class extends Error {
       code = "merger-envelope-derivation";
       /** Typed cause for #107 classifyPostAdmissionFailure (isTypedActivationError). */
@@ -19430,342 +20338,14 @@ var init_invocation = __esm({
   }
 });
 
-// src/reviewer-git-snapshot.ts
-var init_reviewer_git_snapshot = __esm({
-  "src/reviewer-git-snapshot.ts"() {
-    "use strict";
-  }
-});
-
-// src/reviewer-preflight-error.ts
-var init_reviewer_preflight_error = __esm({
-  "src/reviewer-preflight-error.ts"() {
-    "use strict";
-  }
-});
-
-// src/reviewer-pinned-git.ts
-import { execFile as execFile2 } from "node:child_process";
-import { promisify as promisify2 } from "node:util";
-var execFileAsync2;
-var init_reviewer_pinned_git = __esm({
-  "src/reviewer-pinned-git.ts"() {
-    "use strict";
-    init_reviewer_git_snapshot();
-    init_sha256();
-    init_reviewer_preflight_error();
-    execFileAsync2 = promisify2(execFile2);
-  }
-});
-
-// src/reviewer-prompt-identity.ts
-var init_reviewer_prompt_identity = __esm({
-  "src/reviewer-prompt-identity.ts"() {
-    "use strict";
-  }
-});
-
-// src/reviewer-scope-prompt.ts
-var init_reviewer_scope_prompt = __esm({
-  "src/reviewer-scope-prompt.ts"() {
-    "use strict";
-  }
-});
-
-// src/reviewer-construction.ts
-var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER;
-var init_reviewer_construction = __esm({
-  "src/reviewer-construction.ts"() {
-    "use strict";
-    init_sha256();
-    init_reviewer_scope_prompt();
-    REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
-      recipeId: "reviewer-common-bundle",
-      version: 1,
-      runtimeVersion: "1",
-      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts")
-    });
-    REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
-      adapterId: "reviewer-axis-output",
-      version: 1
-    });
-  }
-});
-
-// src/reviewer-dispatch.ts
-var REVIEWER_PREFLIGHT_VIOLATIONS;
-var init_reviewer_dispatch = __esm({
-  "src/reviewer-dispatch.ts"() {
-    "use strict";
-    init_reviewer_git_snapshot();
-    init_reviewer_pinned_git();
-    init_reviewer_pinned_git();
-    init_reviewer_prompt_identity();
-    init_sha256();
-    init_reviewer_construction();
-    init_reviewer_construction();
-    init_reviewer_preflight_error();
-    init_sha256();
-    init_reviewer_prompt_identity();
-    REVIEWER_PREFLIGHT_VIOLATIONS = ["base-invalid", "range-invalid", "prompt-identity-invalid", "target-drift"];
-  }
-});
-
-// src/upstream-error-testimony.ts
-function isNonSuccessHttpStatus(status) {
-  return typeof status === "number" && (status < 200 || status >= 300);
-}
-function hasUpstreamErrorTestimony(input) {
-  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
-  return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
-}
-function projectConfirmedRemotePayload(input) {
-  return {
-    ...input.body === void 0 ? {} : { body: input.body },
-    ...input.code === void 0 ? {} : { code: input.code },
-    ...input.errno === void 0 ? {} : { errno: input.errno }
-  };
-}
-var init_upstream_error_testimony = __esm({
-  "src/upstream-error-testimony.ts"() {
-    "use strict";
-  }
-});
-
-// src/public-cli/explicit-internal.ts
-import { execFile as execFile3, spawn } from "node:child_process";
-import { constants, writeFileSync } from "node:fs";
-import { access, readFile as readFile7, realpath as realpath4, unlink as unlink3 } from "node:fs/promises";
-import { delimiter as delimiter2, isAbsolute as isAbsolute5, join as join10, resolve as resolve6 } from "node:path";
-import { platform } from "node:process";
-import { promisify as promisify3 } from "node:util";
-function isReviewerPreflightViolation(value) {
-  return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
-}
-function reviewerDispatchRejectionPath(runDirectory) {
-  return join10(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
-}
-async function clearReviewerDispatchRejection(runDirectory) {
-  try {
-    await unlink3(reviewerDispatchRejectionPath(runDirectory));
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
-}
-async function readReviewerDispatchRejection(runDirectory) {
-  let raw;
-  try {
-    raw = await readFile7(reviewerDispatchRejectionPath(runDirectory), "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return void 0;
-    }
-    throw error;
-  }
-  const parsed = JSON.parse(raw);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    const error = new Error("Reviewer dispatch rejection page must be a JSON object");
-    error.name = "ReviewerDispatchRejectionContractError";
-    throw error;
-  }
-  const record4 = parsed;
-  if (typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
-    const error = new Error("Reviewer dispatch rejection page has unusable required fields");
-    error.name = "ReviewerDispatchRejectionContractError";
-    throw error;
-  }
-  return {
-    cause: "activation",
-    diagnostic: record4.diagnostic,
-    identity: { name: "ReviewerDispatchRejectionError" },
-    details: { violations: Object.freeze([...record4.violations]) }
-  };
-}
-function resolveInternalRoleEntrypoint(packageRoot2) {
-  return join10(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
-}
-function buildExplicitInternalActivationArgs(selectedRoleEntry, extraArgs = []) {
-  return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
-}
-function nonEmptyString(value) {
-  return typeof value === "string" && value.trim() !== "" ? value : void 0;
-}
-function sessionStopDetails(input) {
-  const details = {};
-  const errorMessage = nonEmptyString(input.errorMessage);
-  if (errorMessage !== void 0) details.errorMessage = errorMessage;
-  const api = nonEmptyString(input.api);
-  if (api !== void 0) details.api = api;
-  const rawStopReason = nonEmptyString(input.rawStopReason);
-  if (rawStopReason !== void 0) details.rawStopReason = rawStopReason;
-  const testimony = hasUpstreamErrorTestimony(input);
-  if (testimony) {
-    const provider = nonEmptyString(input.provider);
-    if (provider !== void 0) details.provider = provider;
-    const model = nonEmptyString(input.model);
-    if (model !== void 0) details.model = model;
-  }
-  if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
-  if (input.diagnostics !== void 0) details.diagnostics = input.diagnostics;
-  if (testimony) Object.assign(details, projectConfirmedRemotePayload(input));
-  return details;
-}
-function knownFailureFromProviderStop(input) {
-  if (input.stopReason !== "error" && input.stopReason !== "aborted") return void 0;
-  const diagnostic = nonEmptyString(input.errorMessage);
-  const details = sessionStopDetails(input);
-  return {
-    cause: hasUpstreamErrorTestimony(input) ? "provider" : "unrecognized",
-    ...diagnostic === void 0 ? {} : { diagnostic },
-    ...Object.keys(details).length === 0 ? {} : { details }
-  };
-}
-async function resolveSelectedPi(command, cwd, env) {
-  const searchPath = env.PATH ?? (platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin");
-  const candidates = isAbsolute5(command) || command.includes("/") ? [resolve6(cwd, command)] : searchPath.split(delimiter2).map((dir) => resolve6(cwd, dir, command));
-  for (const candidate of candidates) {
-    try {
-      await access(candidate, constants.X_OK);
-    } catch (error) {
-      const code = error.code;
-      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") continue;
-      throw error;
-    }
-    return await realpath4(candidate);
-  }
-  throw new Error(`Pi executable not found: ${command}`);
-}
-async function selectedPiIdentity(command, cwd, env) {
-  const executable = await resolveSelectedPi(command, cwd, env);
-  const { stdout } = await execFileAsync3(executable, ["--version"], {
-    cwd,
-    env,
-    encoding: "utf8"
-  });
-  const version = stdout.trim();
-  if (version === "") throw new Error(`Pi executable returned an empty version: ${executable}`);
-  return { executable, version };
-}
-async function runExplicitInternalActivation(options) {
-  const roleEntry = await realpath4(
-    resolveInternalRoleEntrypoint(options.packageRoot)
-  );
-  const args = buildExplicitInternalActivationArgs(
-    roleEntry,
-    options.extraArgs ?? []
-  );
-  const runner = options.runner ?? defaultExplicitInternalPiRunner;
-  const env = {
-    ...process.env,
-    ...options.env,
-    HOME: options.home,
-    PI_CODING_AGENT_DIR: options.agentDir
-  };
-  const runDirectory = env.AK_ROLE_RUN_DIR;
-  if (typeof runDirectory === "string" && runDirectory !== "") {
-    await recordLaunchedRolePackageIdentity(
-      runDirectory,
-      await observeLaunchedRolePackageIdentity(options.packageRoot, roleEntry)
-    );
-  }
-  return await runner(args, {
-    cwd: options.cwd,
-    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
-    env
-  });
-}
-var REVIEWER_DISPATCH_REJECTION_FILE, execFileAsync3, defaultExplicitInternalPiRunner;
-var init_explicit_internal = __esm({
-  "src/public-cli/explicit-internal.ts"() {
-    "use strict";
-    init_invocation();
-    init_registry2();
-    init_reviewer_dispatch();
-    init_upstream_error_testimony();
-    init_upstream_error_testimony();
-    REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
-    execFileAsync3 = promisify3(execFile3);
-    defaultExplicitInternalPiRunner = async (args, options) => {
-      const command = options.env.PI_BINARY ?? "pi";
-      const piIdentity = await selectedPiIdentity(command, options.cwd, options.env);
-      return await new Promise((resolveResult, reject) => {
-        const child = spawn(piIdentity.executable, [...args], {
-          cwd: options.cwd,
-          env: options.env,
-          stdio: ["ignore", "ignore", "pipe"]
-        });
-        let stderr = "";
-        let timedOut = false;
-        let timer;
-        const armTimeoutAfterChildReady = () => {
-          if (options.timeoutMs === void 0) return;
-          timer = setTimeout(() => {
-            timedOut = true;
-            child.kill("SIGTERM");
-          }, options.timeoutMs);
-        };
-        let identityRecorded = Promise.resolve();
-        child.once("spawn", () => {
-          armTimeoutAfterChildReady();
-          const runDirectory = options.env.AK_ROLE_RUN_DIR;
-          if (typeof runDirectory === "string" && runDirectory !== "") {
-            identityRecorded = recordLaunchedPiIdentity(runDirectory, piIdentity);
-          }
-        });
-        child.stderr.setEncoding("utf8").on("data", (chunk) => {
-          stderr += chunk;
-        });
-        child.on("error", (error) => {
-          if (timer !== void 0) clearTimeout(timer);
-          reject(error);
-        });
-        child.on("close", (code) => {
-          if (timer !== void 0) clearTimeout(timer);
-          void identityRecorded.then(
-            () => resolveResult({
-              code,
-              stderr,
-              timedOut,
-              args: [...args],
-              piIdentity
-            }),
-            reject
-          );
-        });
-      });
-    };
-  }
-});
-
-// src/engine-detour.ts
-function applyEngineChildEnv(childEnv, engine) {
-  delete childEnv[AK_ROLE_ENGINE_ENV];
-  if (engine !== void 0 && engine.trim() !== "") {
-    childEnv[AK_ROLE_ENGINE_ENV] = engine.trim();
-  } else {
-    childEnv[AK_ROLE_ENGINE_ENV] = void 0;
-  }
-}
-var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV;
-var init_engine_detour = __esm({
-  "src/engine-detour.ts"() {
-    "use strict";
-    ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
-    AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
-  }
-});
-
 // src/package-resources/method-skill.ts
-import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile8, realpath as realpath5 } from "node:fs/promises";
-import { join as join11 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
+import { readFile as readFile10, realpath as realpath5 } from "node:fs/promises";
+import { join as join13 } from "node:path";
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
-  return createHash3("sha1").update(header).update(body).digest("hex");
+  return createHash4("sha1").update(header).update(body).digest("hex");
 }
 function stripSkillFrontmatter(content) {
   if (!content.startsWith("---")) return content;
@@ -19778,16 +20358,16 @@ function packagedMethodSkillRelativeDirectory(name) {
   return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
 }
 function resolvePackagedMethodSkillRoot(packageRoot2, name) {
-  return join11(packageRoot2, packagedMethodSkillRelativeDirectory(name));
+  return join13(packageRoot2, packagedMethodSkillRelativeDirectory(name));
 }
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
-  return join11(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
+  return join13(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
-function isRecord4(value) {
+function isRecord6(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseProvenance(raw, expectedName) {
-  if (!isRecord4(raw)) {
+  if (!isRecord6(raw)) {
     throw new Error(`Packaged method provenance must be an object for ${expectedName}`);
   }
   if (raw.name !== expectedName) {
@@ -19801,7 +20381,7 @@ function parseProvenance(raw, expectedName) {
   if (typeof raw.packageAdaptation !== "string" || raw.packageAdaptation.trim() === "") {
     throw new Error(`Packaged method provenance packageAdaptation must be nonblank`);
   }
-  if (!isRecord4(raw.upstream)) {
+  if (!isRecord6(raw.upstream)) {
     throw new Error(`Packaged method provenance upstream must be an object`);
   }
   const upstream = raw.upstream;
@@ -19828,12 +20408,12 @@ function parseProvenance(raw, expectedName) {
       `Packaged method provenance upstream must include nonblank tag or version`
     );
   }
-  if (!isRecord4(raw.files)) {
+  if (!isRecord6(raw.files)) {
     throw new Error(`Packaged method provenance files must be an object`);
   }
   const files = {};
   for (const [rel, entry] of Object.entries(raw.files)) {
-    if (!isRecord4(entry)) {
+    if (!isRecord6(entry)) {
       throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
     }
     if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
@@ -19875,11 +20455,11 @@ function parseProvenance(raw, expectedName) {
 }
 async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
-  const skillPathConfigured = join11(rootDirectory, "SKILL.md");
-  const provenancePath = join11(rootDirectory, "provenance.json");
+  const skillPathConfigured = join13(rootDirectory, "SKILL.md");
+  const provenancePath = join13(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile8(provenancePath, "utf8");
+    provenanceRaw = await readFile10(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -19893,10 +20473,10 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   }
   const provenance = parseProvenance(provenanceJson, name);
   for (const [rel, expected] of Object.entries(provenance.files)) {
-    const absolute = join11(rootDirectory, rel);
+    const absolute = join13(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile8(absolute);
+      bytes = await readFile10(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -19912,7 +20492,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath5(skillPathConfigured);
-    raw = await readFile8(skillPath, "utf8");
+    raw = await readFile10(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -19990,39 +20570,1118 @@ var init_method_skill = __esm({
   }
 });
 
-// src/public-cli/public-run-credentials.ts
-function knownFailureForMissingProviderCredential(model, credentials) {
-  if (model === void 0 || credentials === void 0) return void 0;
-  if (model.provider !== "openai-codex" && model.provider !== "xai") return void 0;
-  if (!missingPublicProviderCredential(model.provider, credentials)) {
+// src/ledger-session-read.ts
+import { readFile as readFile11 } from "node:fs/promises";
+function isRecord7(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function readLedgerSessionJsonl(path) {
+  const text = await readFile11(path, "utf8");
+  const lines = text.split("\n");
+  const rows = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line2 = lines[index];
+    if (!line2.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line2);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      const completedByTerminator = index < lines.length - 1;
+      if (completedByTerminator) {
+        throw new LedgerSessionJsonlError(
+          `malformed JSONL record in ${path} at line ${index + 1}: ${error.message}`,
+          { path, line: index + 1, prefixRows: rows }
+        );
+      }
+      break;
+    }
+    if (!isRecord7(row)) {
+      const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
+      throw new LedgerSessionJsonlError(
+        `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
+        { path, line: index + 1, prefixRows: rows }
+      );
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+function extractSessionTimestampSpan(rows) {
+  let startedAt;
+  let endedAt;
+  for (const row of rows) {
+    if (typeof row.timestamp !== "string" || !row.timestamp) continue;
+    if (startedAt === void 0) startedAt = row.timestamp;
+    endedAt = row.timestamp;
+  }
+  return {
+    ...startedAt !== void 0 ? { startedAt } : {},
+    ...endedAt !== void 0 ? { endedAt } : {}
+  };
+}
+function extractSessionModelSequence(rows) {
+  const seen = /* @__PURE__ */ new Set();
+  const ordered = [];
+  const push = (raw) => {
+    const model = raw.trim();
+    if (model === "" || seen.has(model)) return;
+    seen.add(model);
+    ordered.push(model);
+  };
+  for (const row of rows) {
+    if (row.type === "model_change" && typeof row.modelId === "string") {
+      push(row.modelId);
+    }
+    const message = isRecord7(row.message) ? row.message : void 0;
+    if (message?.role === "assistant" && typeof message.model === "string") {
+      push(message.model);
+    }
+  }
+  return ordered;
+}
+function bashCommandFirstLine(command) {
+  const match = /^[^\r\n]*/.exec(command);
+  return match?.[0] ?? "";
+}
+function extractSessionToolIntervals(rows) {
+  const order = [];
+  const openById = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const rowTimestamp = typeof row.timestamp === "string" ? row.timestamp : void 0;
+    const message = isRecord7(row.message) ? row.message : void 0;
+    if (message?.role === "assistant" && Array.isArray(message.content)) {
+      const callTimestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : rowTimestamp;
+      for (const part of message.content) {
+        if (!isRecord7(part) || part.type !== "toolCall") continue;
+        if (typeof part.id !== "string" || part.id.length === 0) {
+          throw new Error("toolCall frame missing string id");
+        }
+        if (typeof part.name !== "string" || part.name.length === 0) {
+          throw new Error(`toolCall ${part.id} missing string name`);
+        }
+        if (callTimestamp === void 0 || callTimestamp.length === 0) {
+          throw new Error(`toolCall ${part.id} missing timestamp`);
+        }
+        if (openById.has(part.id)) {
+          throw new Error(`duplicate toolCall id ${part.id}`);
+        }
+        const args = isRecord7(part.arguments) ? part.arguments : void 0;
+        const command = part.name === "bash" && args !== void 0 && typeof args.command === "string" ? bashCommandFirstLine(args.command) : void 0;
+        const interval = {
+          toolCallId: part.id,
+          toolName: part.name,
+          startedAt: callTimestamp,
+          ...command !== void 0 ? { command } : {}
+        };
+        order.push(interval);
+        openById.set(part.id, interval);
+      }
+    }
+    if (message?.role === "toolResult") {
+      if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) {
+        throw new Error("toolResult frame missing string toolCallId");
+      }
+      const resultTimestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : rowTimestamp;
+      if (resultTimestamp === void 0 || resultTimestamp.length === 0) {
+        throw new Error(`toolResult ${message.toolCallId} missing timestamp`);
+      }
+      const open4 = openById.get(message.toolCallId);
+      if (open4 === void 0) {
+        const toolName = typeof message.toolName === "string" && message.toolName.length > 0 ? message.toolName : "unknown";
+        order.push({
+          toolCallId: message.toolCallId,
+          toolName,
+          startedAt: resultTimestamp,
+          endedAt: resultTimestamp
+        });
+        continue;
+      }
+      if (open4.endedAt !== void 0) {
+        throw new Error(`duplicate toolResult for toolCallId ${message.toolCallId}`);
+      }
+      open4.endedAt = resultTimestamp;
+    }
+  }
+  return order.map((interval) => {
+    const base = {
+      toolCallId: interval.toolCallId,
+      toolName: interval.toolName,
+      startedAt: interval.startedAt,
+      ...interval.command !== void 0 ? { command: interval.command } : {}
+    };
+    return interval.endedAt === void 0 ? base : { ...base, endedAt: interval.endedAt };
+  });
+}
+var LedgerSessionJsonlError;
+var init_ledger_session_read = __esm({
+  "src/ledger-session-read.ts"() {
+    "use strict";
+    LedgerSessionJsonlError = class extends Error {
+      path;
+      line;
+      prefixRows;
+      constructor(message, init) {
+        super(message);
+        this.name = "LedgerSessionJsonlError";
+        this.path = init.path;
+        this.line = init.line;
+        this.prefixRows = init.prefixRows;
+      }
+    };
+  }
+});
+
+// src/analyst-gate-cycles-read.ts
+import { readdir as readdir3 } from "node:fs/promises";
+import { join as join14 } from "node:path";
+function isRecord8(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isMissingDirectoryError(error) {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+function normalizeOfficerArg(raw) {
+  if (typeof raw !== "string") return void 0;
+  return OFFICER_ARG_ALIASES[raw.trim()];
+}
+function asStringFindings(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => typeof item === "string");
+}
+function optionalDispatchReason(raw) {
+  if (typeof raw !== "string") return void 0;
+  if (raw.trim() === "") return void 0;
+  return raw;
+}
+function isGateTerminatingToolName(toolName) {
+  return DISPATCH_TOOLS.has(toolName) || OFFICER_TOOL_TO_FACE[toolName] !== void 0;
+}
+function acceptedGateReceiptIds(rows) {
+  const accepted = /* @__PURE__ */ new Set();
+  for (const row of rows) {
+    const message = isRecord8(row.message) ? row.message : void 0;
+    if (message?.role !== "toolResult") continue;
+    if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) continue;
+    if (message.isError === false) accepted.add(message.toolCallId);
+  }
+  return accepted;
+}
+function extractLastAcceptedGateToolCall(rows) {
+  const acceptedIds = acceptedGateReceiptIds(rows);
+  let last;
+  for (const row of rows) {
+    const message = isRecord8(row.message) ? row.message : void 0;
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (!isRecord8(part) || part.type !== "toolCall") continue;
+      if (typeof part.id !== "string" || part.id.length === 0) continue;
+      if (!acceptedIds.has(part.id)) continue;
+      if (typeof part.name !== "string" || part.name.length === 0) continue;
+      if (!isGateTerminatingToolName(part.name)) continue;
+      last = {
+        toolName: part.name,
+        args: isRecord8(part.arguments) ? part.arguments : void 0
+      };
+    }
+  }
+  return last;
+}
+function requireAcceptedGateStatus(args, filePath) {
+  if (args === void 0 || typeof args.status !== "string" || args.status.trim() === "") {
+    throw new Error(
+      `accepted gate receipt missing usable status in ${filePath}`
+    );
+  }
+  return args.status.trim();
+}
+function requireAcceptedGateSpan(rows, filePath) {
+  const span = extractSessionTimestampSpan(rows);
+  if (span.startedAt === void 0 || span.endedAt === void 0) {
+    throw new Error(
+      `accepted gate volume missing session timestamp span in ${filePath}`
+    );
+  }
+  const startedMs = Date.parse(span.startedAt);
+  const endedMs = Date.parse(span.endedAt);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs) || endedMs < startedMs) {
+    throw new Error(
+      `accepted gate volume has unusable timestamp span in ${filePath}`
+    );
+  }
+  return {
+    startedAt: span.startedAt,
+    endedAt: span.endedAt,
+    wallMs: endedMs - startedMs
+  };
+}
+async function classifyAuditorVolume(filePath) {
+  const rows = await readLedgerSessionJsonl(filePath);
+  const call = extractLastAcceptedGateToolCall(rows);
+  if (call === void 0) return void 0;
+  const span = requireAcceptedGateSpan(rows, filePath);
+  const status = requireAcceptedGateStatus(call.args, filePath);
+  const findings = asStringFindings(call.args?.findings);
+  const findingsCount = findings.length;
+  if (DISPATCH_TOOLS.has(call.toolName)) {
+    if (status !== "dispatch") {
+      throw new Error(
+        `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`
+      );
+    }
+    const officer2 = normalizeOfficerArg(call.args?.officer);
+    if (officer2 === void 0) {
+      throw new Error(
+        `accepted dispatch receipt missing or unknown officer in ${filePath}`
+      );
+    }
+    const reason = optionalDispatchReason(call.args?.reason);
+    return {
+      kind: "dispatch",
+      startedAt: span.startedAt,
+      officer: officer2,
+      status,
+      ...reason === void 0 ? {} : { reason }
+    };
+  }
+  const officer = OFFICER_TOOL_TO_FACE[call.toolName];
+  if (officer === void 0) {
+    throw new Error(
+      `accepted gate receipt has unknown officer tool ${call.toolName} in ${filePath}`
+    );
+  }
+  return {
+    kind: "officer",
+    startedAt: span.startedAt,
+    endedAt: span.endedAt,
+    officer,
+    status,
+    findings,
+    findingsCount,
+    officerWallMs: span.wallMs
+  };
+}
+function pairGateRounds(volumes) {
+  const ordered = [...volumes].sort((a, b) => {
+    if (a.startedAt !== b.startedAt) return a.startedAt.localeCompare(b.startedAt);
+    if (a.kind !== b.kind) return a.kind === "dispatch" ? -1 : 1;
+    return 0;
+  });
+  const usedOfficerIdx = /* @__PURE__ */ new Set();
+  const rounds = [];
+  for (let i = 0; i < ordered.length; i += 1) {
+    const vol = ordered[i];
+    if (vol.kind !== "dispatch") continue;
+    let match;
+    for (let j = i + 1; j < ordered.length; j += 1) {
+      if (usedOfficerIdx.has(j)) continue;
+      const candidate = ordered[j];
+      if (candidate.kind !== "officer") continue;
+      if (candidate.officer !== vol.officer) continue;
+      match = { index: j, officer: candidate };
+      break;
+    }
+    if (match === void 0) continue;
+    usedOfficerIdx.add(match.index);
+    rounds.push({
+      roundIndex: rounds.length + 1,
+      officer: match.officer.officer,
+      status: match.officer.status,
+      officerWallMs: match.officer.officerWallMs,
+      officerStartedAt: match.officer.startedAt,
+      officerEndedAt: match.officer.endedAt,
+      findings: match.officer.findings,
+      findingsCount: match.officer.findingsCount,
+      dispatchStatus: vol.status,
+      ...vol.reason === void 0 ? {} : { dispatchReason: vol.reason }
+    });
+  }
+  return rounds;
+}
+async function readAnalystGateCyclesFromAuditorRoles(auditorRolesDirectory) {
+  let names;
+  try {
+    const entries = await readdir3(auditorRolesDirectory, { withFileTypes: true });
+    names = entries.filter((e) => e.isFile() && e.name.endsWith(".jsonl")).map((e) => e.name).sort();
+  } catch (error) {
+    if (isMissingDirectoryError(error)) return [];
+    throw error;
+  }
+  const volumes = [];
+  for (const name of names) {
+    const classified = await classifyAuditorVolume(join14(auditorRolesDirectory, name));
+    if (classified !== void 0) volumes.push(classified);
+  }
+  return pairGateRounds(volumes);
+}
+var DISPATCH_TOOLS, OFFICER_TOOL_TO_FACE, OFFICER_ARG_ALIASES;
+var init_analyst_gate_cycles_read = __esm({
+  "src/analyst-gate-cycles-read.ts"() {
+    "use strict";
+    init_ledger_session_read();
+    DISPATCH_TOOLS = /* @__PURE__ */ new Set(["ak_menxia_output", "ak_gatekeeper_output"]);
+    OFFICER_TOOL_TO_FACE = {
+      ak_jishizhong_output: "inspector",
+      ak_inspector_output: "inspector",
+      ak_fubaolang_output: "notary",
+      ak_notary_output: "notary"
+    };
+    OFFICER_ARG_ALIASES = {
+      jishizhong: "inspector",
+      inspector: "inspector",
+      fubaolang: "notary",
+      notary: "notary"
+    };
+  }
+});
+
+// src/submission-errors.ts
+var init_submission_errors = __esm({
+  "src/submission-errors.ts"() {
+    "use strict";
+  }
+});
+
+// src/run-terminal-artifacts.ts
+import { readdir as readdir4, readFile as readFile12 } from "node:fs/promises";
+import { basename as basename6, dirname as dirname8, join as join15 } from "node:path";
+function isMissingPathError2(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+function errorText2(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function isRecord9(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readUsableTerminalArtifactBody(body) {
+  if (body === null) {
+    return { ok: false, reason: "terminal artifact JSON value is null" };
+  }
+  if (!isRecord9(body)) {
+    return {
+      ok: false,
+      reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`
+    };
+  }
+  if (typeof body.role !== "string" || body.role.trim() === "") {
+    return {
+      ok: false,
+      reason: "terminal artifact missing nonblank producer-owned role field"
+    };
+  }
+  return { ok: true, body };
+}
+async function readTerminalArtifactAtPath(path, file) {
+  let raw;
+  try {
+    raw = await readFile12(path, "utf8");
+  } catch (error) {
+    if (isMissingPathError2(error)) return void 0;
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: errorText2(error)
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: error instanceof Error ? error.message : `terminal artifact JSON parse failed: ${String(error)}`
+    };
+  }
+  const usable = readUsableTerminalArtifactBody(parsed);
+  if (!usable.ok) {
+    return {
+      status: "unreadable",
+      file,
+      path,
+      reason: usable.reason
+    };
+  }
+  return { status: "present", file, path, body: usable.body };
+}
+async function listUniqueErrorFallbackPaths(directories) {
+  const found = [];
+  for (const dir of directories) {
+    let names;
+    try {
+      names = await readdir4(dir);
+    } catch (error) {
+      if (isMissingPathError2(error)) continue;
+      throw error;
+    }
+    for (const name of names.sort((a, b) => a.localeCompare(b))) {
+      if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
+      found.push(join15(dir, name));
+    }
+  }
+  return found;
+}
+function runIdFromRunDirectory(runDirectory) {
+  const name = basename6(runDirectory);
+  const at = name.lastIndexOf("@");
+  if (at <= 0 || at === name.length - 1) return void 0;
+  return name.slice(0, at);
+}
+function presentUniqueFallbackBoundToRun(body, expectedRunId) {
+  if (expectedRunId === void 0) return false;
+  return typeof body.runId === "string" && body.runId === expectedRunId;
+}
+async function readRunTerminalArtifact(runDirectory) {
+  const artifactsDir = join15(runDirectory, "artifacts");
+  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
+    const path = join15(artifactsDir, file);
+    const read3 = await readTerminalArtifactAtPath(path, file);
+    if (read3 !== void 0) return read3;
+  }
+  for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
+    const path = join15(runDirectory, relative3);
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 !== void 0) return read3;
+  }
+  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 !== void 0) return read3;
+  }
+  const expectedRunId = runIdFromRunDirectory(runDirectory);
+  for (const path of await listUniqueErrorFallbackPaths([dirname8(runDirectory)])) {
+    const read3 = await readTerminalArtifactAtPath(path, "error.json");
+    if (read3 === void 0) continue;
+    if (read3.status === "present") {
+      if (!presentUniqueFallbackBoundToRun(read3.body, expectedRunId)) continue;
+      return read3;
+    }
+  }
+  return { status: "absent" };
+}
+var RUN_TERMINAL_ARTIFACT_FILES, RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS, UNIQUE_ERROR_FALLBACK_NAME;
+var init_run_terminal_artifacts = __esm({
+  "src/run-terminal-artifacts.ts"() {
+    "use strict";
+    RUN_TERMINAL_ARTIFACT_FILES = [
+      "report.json",
+      "error.json",
+      "audit-incomplete.json"
+    ];
+    RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
+      "artifacts/error.settlement.json",
+      "error.settlement.json"
+    ];
+    UNIQUE_ERROR_FALLBACK_NAME = /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
+  }
+});
+
+// src/submission-ledger.ts
+function isAcceptedProjection(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value;
+  return candidate.kind === "accepted" && typeof candidate.role === "string" && typeof candidate.status === "string" && typeof candidate.decisiveFacts === "object" && candidate.decisiveFacts !== null;
+}
+function isAuditEscalationTerminalProjection(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value;
+  return candidate.kind === "audit_escalation" && typeof candidate.role === "string" && candidate.status === "audit_escalation" && typeof candidate.decisiveFacts === "object" && candidate.decisiveFacts !== null;
+}
+function submissionRecordFile(cwd, runId, home) {
+  const ledgerHome = resolveActivationLedgerHome(
+    home === void 0 ? void 0 : () => home
+  );
+  return resolveSitianRecordPathInLedger({
+    level: "event",
+    kind: "candidate",
+    subject: { runId },
+    cwd
+  }, ledgerHome).recordFile;
+}
+async function readOwnedSubmissionRecords(cwd, runId, home) {
+  const file = submissionRecordFile(cwd, runId, home);
+  const { records: records2 } = await readSitianRecords(file);
+  return {
+    file,
+    owned: records2.filter((record4) => typeof record4.subject === "object" && record4.subject?.runId === runId)
+  };
+}
+async function readSealedSubmission(cwd, runId, home) {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  for (let index = owned.length - 1; index >= 0; index -= 1) {
+    const record4 = owned[index];
+    if (record4?.kind === "post-seal-anomaly") return void 0;
+    if (record4?.kind !== "sealed") continue;
+    const payload = record4.payload;
+    if (payload?.type === "sealed" && isAcceptedProjection(payload.projection)) return payload.projection;
+  }
+  return void 0;
+}
+async function readAuditEscalationSubmission(cwd, runId, home) {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  for (let index = owned.length - 1; index >= 0; index -= 1) {
+    const record4 = owned[index];
+    if (record4?.kind !== "outcome") continue;
+    const payload = record4.payload;
+    if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation") continue;
+    if (isAuditEscalationTerminalProjection(payload.projection)) return payload.projection;
+  }
+  return void 0;
+}
+async function readLatestSubmissionOutcome(cwd, runId, home) {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  for (let index = owned.length - 1; index >= 0; index -= 1) {
+    const record4 = owned[index];
+    if (record4?.kind !== "outcome") continue;
+    const payload = record4.payload;
+    if (payload?.type === "outcome" && typeof payload.outcome === "string") {
+      return payload;
+    }
+  }
+  return void 0;
+}
+var init_submission_ledger = __esm({
+  "src/submission-ledger.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+    init_audit_escalation();
+    init_submission_errors();
+    init_terminating_tools();
+    init_run_terminal_artifacts();
+    init_sitian_facade();
+    init_submission_correctable_error();
+    init_terminating_infrastructure();
+  }
+});
+
+// src/session-opening-materials.ts
+var packageRootUrl, MAIN_ROLE_SESSION_MATERIALS;
+var init_session_opening_materials = __esm({
+  "src/session-opening-materials.ts"() {
+    "use strict";
+    init_packaged_role_registry();
+    packageRootUrl = new URL("..", import.meta.url);
+    MAIN_ROLE_SESSION_MATERIALS = {
+      ...Object.fromEntries(
+        PUBLIC_ROLE_RECORDS.map((record4) => [record4.role, record4.sessionMaterials])
+      ),
+      navigator: ["CLAUDE.md", "souls/navigator.md"]
+    };
+  }
+});
+
+// src/auditor-soul.ts
+var init_auditor_soul = __esm({
+  "src/auditor-soul.ts"() {
+    "use strict";
+    init_session_opening_materials();
+  }
+});
+
+// src/auditor-dossier-tool.ts
+var init_auditor_dossier_tool = __esm({
+  "src/auditor-dossier-tool.ts"() {
+    "use strict";
+    init_build();
+  }
+});
+
+// src/engine-detour-tool.ts
+var engineDetourArgsSchema;
+var init_engine_detour_tool = __esm({
+  "src/engine-detour-tool.ts"() {
+    "use strict";
+    init_build();
+    init_engine_detour();
+    engineDetourArgsSchema = typebox_exports.Object(
+      {
+        argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), {
+          minItems: 1,
+          description: "\u9996\u9879\u4E3A PATH \u4E2D\u7684\u53EF\u6267\u884C\u6587\u4EF6\uFF0C\u5176\u4F59\u9879\u4E3A\u53C2\u6570\u3002"
+        })
+      },
+      { additionalProperties: false }
+    );
+  }
+});
+
+// src/receipt-delivery-policy.ts
+function isRecord10(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function parseNoReceiptLifecycleFacts(input) {
+  if (!isRecord10(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord10(item) && typeof item.reason === "string")) {
+    throw new TypeError("malformed no-receipt lifecycle facts");
+  }
+  return {
+    terminalToolCalled: input.terminalToolCalled,
+    rejectedReceipts: input.rejectedReceipts.map((item) => ({
+      reason: item.reason,
+      diagnosticAvailable: item.reason.trim() !== ""
+    })),
+    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+    sessionCompletion: "settled-without-accepted-receipt",
+    runPointer: input.runPointer,
+    attemptPointer: input.attemptPointer,
+    acceptedReceipt: false
+  };
+}
+var RECEIPT_DELIVERY_TURN_LIMIT, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE;
+var init_receipt_delivery_policy = __esm({
+  "src/receipt-delivery-policy.ts"() {
+    "use strict";
+    RECEIPT_DELIVERY_TURN_LIMIT = 2;
+    NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle";
+  }
+});
+
+// src/upstream-error-testimony.ts
+function isNonSuccessHttpStatus(status) {
+  return typeof status === "number" && (status < 200 || status >= 300);
+}
+function hasUpstreamErrorTestimony(input) {
+  if (isNonSuccessHttpStatus(input.httpStatus)) return true;
+  return Array.isArray(input.diagnostics) && input.diagnostics.length > 0;
+}
+function projectConfirmedRemotePayload(input) {
+  return {
+    ...input.body === void 0 ? {} : { body: input.body },
+    ...input.code === void 0 ? {} : { code: input.code },
+    ...input.errno === void 0 ? {} : { errno: input.errno }
+  };
+}
+var init_upstream_error_testimony = __esm({
+  "src/upstream-error-testimony.ts"() {
+    "use strict";
+  }
+});
+
+// src/evidence-child-executor.ts
+var init_evidence_child_executor = __esm({
+  "src/evidence-child-executor.ts"() {
+    "use strict";
+    init_compliance_transport();
+    init_auditor_dossier_tool();
+    init_sitian_facade();
+    init_engine_detour_tool();
+    init_engine_detour();
+    init_engine_material();
+    init_session_opening_materials();
+    init_config2();
+    init_institutional_resolution();
+    init_receipt_delivery_policy();
+    init_upstream_error_testimony();
+  }
+});
+
+// src/compliance-transport.ts
+function createComplianceDecisionTool(name, description) {
+  return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
+    return { content: [{ type: "text", text: "\u5BA1\u8BA1\u51B3\u8BAE\u5DF2\u6536" }], details: params, terminate: true };
+  } };
+}
+var nonblank2, decisionGateSchema, complianceDecisionSchema, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE;
+var init_compliance_transport = __esm({
+  "src/compliance-transport.ts"() {
+    "use strict";
+    init_build();
+    init_evidence_child_executor();
+    init_auditor_dossier_tool();
+    init_sitian_facade();
+    nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+    decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
+    complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "pass | revise | escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), violations: typebox_exports.Array(nonblank2, { description: "\u89C2\u5BDF\u5230\u7684\u5408\u89C4\u8FDD\u89C4" }), conflicts: typebox_exports.Array(nonblank2, { description: "\u672A\u51B3\u6743\u5A01\u6216\u6267\u884C\u51B2\u7A81" }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "\u5347\u7EA7\u95EE\u9898\u4E0E\u53EF\u9009\u9009\u9879" }) }, { additionalProperties: true, required: [] });
+    AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
+    AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
+  }
+});
+
+// src/dossier-resolution.ts
+var init_dossier_resolution = __esm({
+  "src/dossier-resolution.ts"() {
+    "use strict";
+    init_judge_output();
+  }
+});
+
+// src/doctor-auditor.ts
+var DOCTOR_AUDIT_TOOL_NAME, tool;
+var init_doctor_auditor = __esm({
+  "src/doctor-auditor.ts"() {
+    "use strict";
+    init_auditor_dossier_tool();
+    init_auditor_soul();
+    init_compliance_transport();
+    init_dossier_resolution();
+    DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
+    tool = createComplianceDecisionTool(
+      DOCTOR_AUDIT_TOOL_NAME,
+      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u592A\u533B\u7F72\u5BA1\u5211\uFF09\u3002"
+    );
+  }
+});
+
+// src/judge-auditor.ts
+var JUDGE_AUDIT_TOOL_NAME, auditDecisionTool;
+var init_judge_auditor = __esm({
+  "src/judge-auditor.ts"() {
+    "use strict";
+    init_compliance_transport();
+    init_auditor_dossier_tool();
+    init_auditor_soul();
+    init_dossier_resolution();
+    JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
+    auditDecisionTool = createComplianceDecisionTool(
+      JUDGE_AUDIT_TOOL_NAME,
+      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5927\u7406\u5BFA\u5BA1\u5211\uFF09\u3002"
+    );
+  }
+});
+
+// src/pi/known-failure.ts
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "" ? value : void 0;
+}
+function sessionStopDetails(input) {
+  const details = {};
+  const errorMessage = nonEmptyString(input.errorMessage);
+  if (errorMessage !== void 0) details.errorMessage = errorMessage;
+  const api = nonEmptyString(input.api);
+  if (api !== void 0) details.api = api;
+  const rawStopReason = nonEmptyString(input.rawStopReason);
+  if (rawStopReason !== void 0) details.rawStopReason = rawStopReason;
+  const testimony = hasUpstreamErrorTestimony(input);
+  if (testimony) {
+    const provider = nonEmptyString(input.provider);
+    if (provider !== void 0) details.provider = provider;
+    const model = nonEmptyString(input.model);
+    if (model !== void 0) details.model = model;
+  }
+  if (typeof input.httpStatus === "number") details.httpStatus = input.httpStatus;
+  if (input.diagnostics !== void 0) details.diagnostics = input.diagnostics;
+  if (testimony) Object.assign(details, projectConfirmedRemotePayload(input));
+  return details;
+}
+function knownFailureFromProviderStop(input) {
+  if (input.stopReason !== "error" && input.stopReason !== "aborted") return void 0;
+  const diagnostic = nonEmptyString(input.errorMessage);
+  const details = sessionStopDetails(input);
+  return {
+    cause: hasUpstreamErrorTestimony(input) ? "provider" : "unrecognized",
+    ...diagnostic === void 0 ? {} : { diagnostic },
+    ...Object.keys(details).length === 0 ? {} : { details }
+  };
+}
+var init_known_failure = __esm({
+  "src/pi/known-failure.ts"() {
+    "use strict";
+    init_upstream_error_testimony();
+    init_upstream_error_testimony();
+  }
+});
+
+// src/reviewer-git-snapshot.ts
+var init_reviewer_git_snapshot = __esm({
+  "src/reviewer-git-snapshot.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-preflight-error.ts
+var init_reviewer_preflight_error = __esm({
+  "src/reviewer-preflight-error.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-pinned-git.ts
+import { execFile as execFile3 } from "node:child_process";
+import { promisify as promisify3 } from "node:util";
+var execFileAsync3;
+var init_reviewer_pinned_git = __esm({
+  "src/reviewer-pinned-git.ts"() {
+    "use strict";
+    init_reviewer_git_snapshot();
+    init_sha256();
+    init_reviewer_preflight_error();
+    execFileAsync3 = promisify3(execFile3);
+  }
+});
+
+// src/reviewer-prompt-identity.ts
+var init_reviewer_prompt_identity = __esm({
+  "src/reviewer-prompt-identity.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-scope-prompt.ts
+var init_reviewer_scope_prompt = __esm({
+  "src/reviewer-scope-prompt.ts"() {
+    "use strict";
+  }
+});
+
+// src/reviewer-construction.ts
+var REVIEWER_CONSTRUCTION_RECIPE, REVIEWER_AXIS_OUTPUT_ADAPTER;
+var init_reviewer_construction = __esm({
+  "src/reviewer-construction.ts"() {
+    "use strict";
+    init_sha256();
+    init_reviewer_scope_prompt();
+    REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
+      recipeId: "reviewer-common-bundle",
+      version: 1,
+      runtimeVersion: "1",
+      implementationSha256: sha256Hex("reviewer-common-bundle:v1:direct-text-prompts")
+    });
+    REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
+      adapterId: "reviewer-axis-output",
+      version: 1
+    });
+  }
+});
+
+// src/reviewer-dispatch.ts
+var REVIEWER_PREFLIGHT_VIOLATIONS;
+var init_reviewer_dispatch = __esm({
+  "src/reviewer-dispatch.ts"() {
+    "use strict";
+    init_reviewer_git_snapshot();
+    init_reviewer_pinned_git();
+    init_reviewer_pinned_git();
+    init_reviewer_prompt_identity();
+    init_sha256();
+    init_reviewer_construction();
+    init_reviewer_construction();
+    init_reviewer_preflight_error();
+    init_sha256();
+    init_reviewer_prompt_identity();
+    REVIEWER_PREFLIGHT_VIOLATIONS = ["base-invalid", "range-invalid", "prompt-identity-invalid", "target-drift"];
+  }
+});
+
+// src/public-cli/reviewer-dispatch-rejection.ts
+import { readFile as readFile13, unlink as unlink3 } from "node:fs/promises";
+import { join as join16 } from "node:path";
+function isReviewerPreflightViolation(value) {
+  return typeof value === "string" && REVIEWER_PREFLIGHT_VIOLATIONS.includes(value);
+}
+function reviewerDispatchRejectionPath(runDirectory) {
+  return join16(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+}
+async function clearReviewerDispatchRejection(runDirectory) {
+  try {
+    await unlink3(reviewerDispatchRejectionPath(runDirectory));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+async function readReviewerDispatchRejection(runDirectory) {
+  let raw;
+  try {
+    raw = await readFile13(reviewerDispatchRejectionPath(runDirectory), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return void 0;
+    }
+    throw error;
+  }
+  const parsed = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    const error = new Error("Reviewer dispatch rejection page must be a JSON object");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
+  }
+  const record4 = parsed;
+  if (typeof record4.diagnostic !== "string" || record4.diagnostic.trim() === "" || !Array.isArray(record4.violations) || record4.violations.length === 0 || record4.violations.some((value) => !isReviewerPreflightViolation(value))) {
+    const error = new Error("Reviewer dispatch rejection page has unusable required fields");
+    error.name = "ReviewerDispatchRejectionContractError";
+    throw error;
+  }
+  return {
+    cause: "activation",
+    diagnostic: record4.diagnostic,
+    identity: { name: "ReviewerDispatchRejectionError" },
+    details: { violations: Object.freeze([...record4.violations]) }
+  };
+}
+var REVIEWER_DISPATCH_REJECTION_FILE;
+var init_reviewer_dispatch_rejection = __esm({
+  "src/public-cli/reviewer-dispatch-rejection.ts"() {
+    "use strict";
+    init_reviewer_dispatch();
+    REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
+  }
+});
+
+// src/collector-evidence.ts
+var COLLECTOR_ELIGIBILITY_MS;
+var init_collector_evidence = __esm({
+  "src/collector-evidence.ts"() {
+    "use strict";
+    COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
+  }
+});
+
+// src/collector-github.ts
+var init_collector_github = __esm({
+  "src/collector-github.ts"() {
+    "use strict";
+  }
+});
+
+// src/collector-tool-schemas.ts
+var collectorObserveArgsSchema, collectorRequestArgsSchema, collectorWaitArgsSchema, collectorOutputArgsSchema;
+var init_collector_tool_schemas = __esm({
+  "src/collector-tool-schemas.ts"() {
+    "use strict";
+    init_build();
+    init_collector_evidence();
+    init_terminating_infrastructure();
+    collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
+    collectorRequestArgsSchema = typebox_exports.Object({
+      requestId: typebox_exports.String({ minLength: 1, description: "\u914D\u7F6E\u8BF7\u6C42\u8EAB\u4EFD" }),
+      snapshotId: typebox_exports.String({ minLength: 1, description: "\u6700\u65B0\u7559\u5B58\u89C2\u5BDF\u5FEB\u7167" })
+    }, { additionalProperties: false });
+    collectorWaitArgsSchema = typebox_exports.Object({
+      durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "\u7B49\u5F85\u6BEB\u79D2\uFF1B\u5355\u6B21\u4E0A\u9650\u4E94\u5206\u949F\u4E14\u4E0D\u8D85\u5269\u4F59\u8D44\u683C" })
+    }, { additionalProperties: false });
+    collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
+      typebox_exports.Object({}, { additionalProperties: true })
+    );
+    collectorOutputArgsSchema.required = [];
+  }
+});
+
+// src/collector-ledger.ts
+var COLLECTOR_OBSERVE_TOOL, COLLECTOR_REQUEST_TOOL, COLLECTOR_WAIT_TOOL;
+var init_collector_ledger = __esm({
+  "src/collector-ledger.ts"() {
+    "use strict";
+    init_value2();
+    init_collector_evidence();
+    init_collector_github();
+    init_collector_tool_schemas();
+    init_collector_output();
+    COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
+    COLLECTOR_REQUEST_TOOL = "ak_collector_request";
+    COLLECTOR_WAIT_TOOL = "ak_collector_wait";
+  }
+});
+
+// src/work-subject-identity.ts
+var init_work_subject_identity = __esm({
+  "src/work-subject-identity.ts"() {
+    "use strict";
+    init_activation_ledger_topology();
+  }
+});
+
+// src/navigator-invocation-identity.ts
+function buildNavigatorInfrastructureFailureFact() {
+  return {
+    kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
+    source: "shared-role-lifecycle",
+    reasonCode: "host_failure"
+  };
+}
+function hasNavigatorInfrastructureFailureBase(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record4 = value;
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
+    if (!Object.hasOwn(record4, key)) return false;
+  }
+  return record4.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record4.source === "shared-role-lifecycle" && record4.reasonCode === "host_failure";
+}
+function invocationPhaseFromUnknown(value) {
+  if (value === null || value === "plan" || value === "apply") return value;
+  return void 0;
+}
+function parseInvocationMarkerIdentity(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
+  const record4 = data;
+  const invocationId = record4.invocationId;
+  if (typeof invocationId !== "string") return void 0;
+  const trimmedId = invocationId.trim();
+  if (!isUuidV7(trimmedId)) return void 0;
+  if (typeof record4.role !== "string" || record4.role.trim() === "") return void 0;
+  const phase = invocationPhaseFromUnknown(record4.phase);
+  if (phase === void 0) return void 0;
+  if (typeof record4.subjectKey !== "string" || record4.subjectKey.trim() === "") return void 0;
+  return {
+    invocationId: trimmedId,
+    role: record4.role,
+    phase,
+    subjectKey: record4.subjectKey
+  };
+}
+function classifyPackagedRoleTerminalResult(message) {
+  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  if (typeof message.details === "object" && message.details !== null && message.details.submissionDisposition === "pending-round-closure") return { kind: "nonterminal" };
+  const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
+  const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : void 0;
+  if (message.isError === true) {
+    if (infraFact === void 0) return { kind: "nonterminal" };
+    return { kind: "infrastructure", fact: infraFact };
+  }
+  if (message.isError === false) {
+    if (infraFact !== void 0) return { kind: "nonterminal" };
+    return { kind: "accepted" };
+  }
+  return { kind: "nonterminal" };
+}
+function isAcceptedPackagedRoleTerminalResult(message) {
+  return classifyPackagedRoleTerminalResult(message).kind === "accepted";
+}
+function durableTerminalAt(entries, index) {
+  const entry = entries[index];
+  const message = entry?.type === "custom" && entry.customType === "ak-role-submission-closure" ? typeof entry.data === "object" && entry.data !== null ? entry.data : void 0 : entry?.type === "message" && entry.message?.role === "toolResult" ? entry.message : void 0;
+  if (typeof message?.toolName !== "string") return void 0;
+  const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
+  if (role === void 0) return void 0;
+  const classification = classifyPackagedRoleTerminalResult(message);
+  if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {
     return void 0;
   }
   return {
-    cause: "provider",
-    identity: {
-      name: "MissingProviderCredential",
-      code: model.provider
-    }
+    index,
+    role,
+    toolName: message.toolName,
+    classification: classification.kind,
+    message
   };
 }
-function missingCredentialPreDispatchFailure(model, credentials) {
-  const knownFailure = knownFailureForMissingProviderCredential(model, credentials);
-  if (knownFailure === void 0) return void 0;
-  return {
-    timedOut: false,
-    code: 1,
-    stderr: `Missing credential for provider ${String(knownFailure.identity?.code ?? "unknown")}`,
-    knownFailure
-  };
+function findLatestDurablePackagedRoleTerminal(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const terminal = durableTerminalAt(entries, i);
+    if (terminal !== void 0) return terminal;
+  }
+  return void 0;
 }
-function postRunMissingCredentialFailure(result2, model, credentials) {
-  if (!(result2.timedOut || result2.code !== 0)) return void 0;
-  return knownFailureForMissingProviderCredential(model, credentials);
-}
-var init_public_run_credentials = __esm({
-  "src/public-cli/public-run-credentials.ts"() {
+var NAVIGATOR_INVOCATION_ENTRY, NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS, PACKAGED_ROLE_OUTPUT_TOOLS;
+var init_navigator_invocation_identity = __esm({
+  "src/navigator-invocation-identity.ts"() {
     "use strict";
-    init_config2();
+    init_packaged_role_registry();
+    init_uuidv7();
+    init_work_subject_identity();
+    NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+    NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
+    NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
+      "kind",
+      "source",
+      "reasonCode"
+    ];
+    PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
+      PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
+    );
   }
 });
 
@@ -20175,781 +21834,28 @@ var init_terminal = __esm({
   }
 });
 
-// src/ledger-session-read.ts
-import { readFile as readFile9 } from "node:fs/promises";
-function isRecord5(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-async function readLedgerSessionJsonl(path) {
-  const text = await readFile9(path, "utf8");
-  const lines = text.split("\n");
-  const rows = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line2 = lines[index];
-    if (!line2.trim()) continue;
-    let row;
-    try {
-      row = JSON.parse(line2);
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-      const completedByTerminator = index < lines.length - 1;
-      if (completedByTerminator) {
-        throw new LedgerSessionJsonlError(
-          `malformed JSONL record in ${path} at line ${index + 1}: ${error.message}`,
-          { path, line: index + 1, prefixRows: rows }
-        );
-      }
-      break;
-    }
-    if (!isRecord5(row)) {
-      const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
-      throw new LedgerSessionJsonlError(
-        `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
-        { path, line: index + 1, prefixRows: rows }
-      );
-    }
-    rows.push(row);
-  }
-  return rows;
-}
-function extractSessionTimestampSpan(rows) {
-  let startedAt;
-  let endedAt;
-  for (const row of rows) {
-    if (typeof row.timestamp !== "string" || !row.timestamp) continue;
-    if (startedAt === void 0) startedAt = row.timestamp;
-    endedAt = row.timestamp;
-  }
-  return {
-    ...startedAt !== void 0 ? { startedAt } : {},
-    ...endedAt !== void 0 ? { endedAt } : {}
-  };
-}
-function extractSessionModelSequence(rows) {
-  const seen = /* @__PURE__ */ new Set();
-  const ordered = [];
-  const push = (raw) => {
-    const model = raw.trim();
-    if (model === "" || seen.has(model)) return;
-    seen.add(model);
-    ordered.push(model);
-  };
-  for (const row of rows) {
-    if (row.type === "model_change" && typeof row.modelId === "string") {
-      push(row.modelId);
-    }
-    const message = isRecord5(row.message) ? row.message : void 0;
-    if (message?.role === "assistant" && typeof message.model === "string") {
-      push(message.model);
-    }
-  }
-  return ordered;
-}
-function bashCommandFirstLine(command) {
-  const match = /^[^\r\n]*/.exec(command);
-  return match?.[0] ?? "";
-}
-function extractSessionToolIntervals(rows) {
-  const order = [];
-  const openById = /* @__PURE__ */ new Map();
-  for (const row of rows) {
-    const rowTimestamp = typeof row.timestamp === "string" ? row.timestamp : void 0;
-    const message = isRecord5(row.message) ? row.message : void 0;
-    if (message?.role === "assistant" && Array.isArray(message.content)) {
-      const callTimestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : rowTimestamp;
-      for (const part of message.content) {
-        if (!isRecord5(part) || part.type !== "toolCall") continue;
-        if (typeof part.id !== "string" || part.id.length === 0) {
-          throw new Error("toolCall frame missing string id");
-        }
-        if (typeof part.name !== "string" || part.name.length === 0) {
-          throw new Error(`toolCall ${part.id} missing string name`);
-        }
-        if (callTimestamp === void 0 || callTimestamp.length === 0) {
-          throw new Error(`toolCall ${part.id} missing timestamp`);
-        }
-        if (openById.has(part.id)) {
-          throw new Error(`duplicate toolCall id ${part.id}`);
-        }
-        const args = isRecord5(part.arguments) ? part.arguments : void 0;
-        const command = part.name === "bash" && args !== void 0 && typeof args.command === "string" ? bashCommandFirstLine(args.command) : void 0;
-        const interval = {
-          toolCallId: part.id,
-          toolName: part.name,
-          startedAt: callTimestamp,
-          ...command !== void 0 ? { command } : {}
-        };
-        order.push(interval);
-        openById.set(part.id, interval);
-      }
-    }
-    if (message?.role === "toolResult") {
-      if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) {
-        throw new Error("toolResult frame missing string toolCallId");
-      }
-      const resultTimestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : rowTimestamp;
-      if (resultTimestamp === void 0 || resultTimestamp.length === 0) {
-        throw new Error(`toolResult ${message.toolCallId} missing timestamp`);
-      }
-      const open4 = openById.get(message.toolCallId);
-      if (open4 === void 0) {
-        const toolName = typeof message.toolName === "string" && message.toolName.length > 0 ? message.toolName : "unknown";
-        order.push({
-          toolCallId: message.toolCallId,
-          toolName,
-          startedAt: resultTimestamp,
-          endedAt: resultTimestamp
-        });
-        continue;
-      }
-      if (open4.endedAt !== void 0) {
-        throw new Error(`duplicate toolResult for toolCallId ${message.toolCallId}`);
-      }
-      open4.endedAt = resultTimestamp;
-    }
-  }
-  return order.map((interval) => {
-    const base = {
-      toolCallId: interval.toolCallId,
-      toolName: interval.toolName,
-      startedAt: interval.startedAt,
-      ...interval.command !== void 0 ? { command: interval.command } : {}
-    };
-    return interval.endedAt === void 0 ? base : { ...base, endedAt: interval.endedAt };
-  });
-}
-var LedgerSessionJsonlError;
-var init_ledger_session_read = __esm({
-  "src/ledger-session-read.ts"() {
-    "use strict";
-    LedgerSessionJsonlError = class extends Error {
-      path;
-      line;
-      prefixRows;
-      constructor(message, init) {
-        super(message);
-        this.name = "LedgerSessionJsonlError";
-        this.path = init.path;
-        this.line = init.line;
-        this.prefixRows = init.prefixRows;
-      }
-    };
-  }
-});
-
-// src/analyst-gate-cycles-read.ts
-import { readdir as readdir3 } from "node:fs/promises";
-import { join as join12 } from "node:path";
-function isRecord6(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function isMissingDirectoryError(error) {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-function normalizeOfficerArg(raw) {
-  if (typeof raw !== "string") return void 0;
-  return OFFICER_ARG_ALIASES[raw.trim()];
-}
-function asStringFindings(value) {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item) => typeof item === "string");
-}
-function optionalDispatchReason(raw) {
-  if (typeof raw !== "string") return void 0;
-  if (raw.trim() === "") return void 0;
-  return raw;
-}
-function isGateTerminatingToolName(toolName) {
-  return DISPATCH_TOOLS.has(toolName) || OFFICER_TOOL_TO_FACE[toolName] !== void 0;
-}
-function acceptedGateReceiptIds(rows) {
-  const accepted = /* @__PURE__ */ new Set();
-  for (const row of rows) {
-    const message = isRecord6(row.message) ? row.message : void 0;
-    if (message?.role !== "toolResult") continue;
-    if (typeof message.toolCallId !== "string" || message.toolCallId.length === 0) continue;
-    if (message.isError === false) accepted.add(message.toolCallId);
-  }
-  return accepted;
-}
-function extractLastAcceptedGateToolCall(rows) {
-  const acceptedIds = acceptedGateReceiptIds(rows);
-  let last;
-  for (const row of rows) {
-    const message = isRecord6(row.message) ? row.message : void 0;
-    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-    for (const part of message.content) {
-      if (!isRecord6(part) || part.type !== "toolCall") continue;
-      if (typeof part.id !== "string" || part.id.length === 0) continue;
-      if (!acceptedIds.has(part.id)) continue;
-      if (typeof part.name !== "string" || part.name.length === 0) continue;
-      if (!isGateTerminatingToolName(part.name)) continue;
-      last = {
-        toolName: part.name,
-        args: isRecord6(part.arguments) ? part.arguments : void 0
-      };
-    }
-  }
-  return last;
-}
-function requireAcceptedGateStatus(args, filePath) {
-  if (args === void 0 || typeof args.status !== "string" || args.status.trim() === "") {
-    throw new Error(
-      `accepted gate receipt missing usable status in ${filePath}`
-    );
-  }
-  return args.status.trim();
-}
-function requireAcceptedGateSpan(rows, filePath) {
-  const span = extractSessionTimestampSpan(rows);
-  if (span.startedAt === void 0 || span.endedAt === void 0) {
-    throw new Error(
-      `accepted gate volume missing session timestamp span in ${filePath}`
-    );
-  }
-  const startedMs = Date.parse(span.startedAt);
-  const endedMs = Date.parse(span.endedAt);
-  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs) || endedMs < startedMs) {
-    throw new Error(
-      `accepted gate volume has unusable timestamp span in ${filePath}`
-    );
-  }
-  return {
-    startedAt: span.startedAt,
-    endedAt: span.endedAt,
-    wallMs: endedMs - startedMs
-  };
-}
-async function classifyAuditorVolume(filePath) {
-  const rows = await readLedgerSessionJsonl(filePath);
-  const call = extractLastAcceptedGateToolCall(rows);
-  if (call === void 0) return void 0;
-  const span = requireAcceptedGateSpan(rows, filePath);
-  const status = requireAcceptedGateStatus(call.args, filePath);
-  const findings = asStringFindings(call.args?.findings);
-  const findingsCount = findings.length;
-  if (DISPATCH_TOOLS.has(call.toolName)) {
-    if (status !== "dispatch") {
-      throw new Error(
-        `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`
-      );
-    }
-    const officer2 = normalizeOfficerArg(call.args?.officer);
-    if (officer2 === void 0) {
-      throw new Error(
-        `accepted dispatch receipt missing or unknown officer in ${filePath}`
-      );
-    }
-    const reason = optionalDispatchReason(call.args?.reason);
-    return {
-      kind: "dispatch",
-      startedAt: span.startedAt,
-      officer: officer2,
-      status,
-      ...reason === void 0 ? {} : { reason }
-    };
-  }
-  const officer = OFFICER_TOOL_TO_FACE[call.toolName];
-  if (officer === void 0) {
-    throw new Error(
-      `accepted gate receipt has unknown officer tool ${call.toolName} in ${filePath}`
-    );
-  }
-  return {
-    kind: "officer",
-    startedAt: span.startedAt,
-    endedAt: span.endedAt,
-    officer,
-    status,
-    findings,
-    findingsCount,
-    officerWallMs: span.wallMs
-  };
-}
-function pairGateRounds(volumes) {
-  const ordered = [...volumes].sort((a, b) => {
-    if (a.startedAt !== b.startedAt) return a.startedAt.localeCompare(b.startedAt);
-    if (a.kind !== b.kind) return a.kind === "dispatch" ? -1 : 1;
-    return 0;
-  });
-  const usedOfficerIdx = /* @__PURE__ */ new Set();
-  const rounds = [];
-  for (let i = 0; i < ordered.length; i += 1) {
-    const vol = ordered[i];
-    if (vol.kind !== "dispatch") continue;
-    let match;
-    for (let j = i + 1; j < ordered.length; j += 1) {
-      if (usedOfficerIdx.has(j)) continue;
-      const candidate = ordered[j];
-      if (candidate.kind !== "officer") continue;
-      if (candidate.officer !== vol.officer) continue;
-      match = { index: j, officer: candidate };
-      break;
-    }
-    if (match === void 0) continue;
-    usedOfficerIdx.add(match.index);
-    rounds.push({
-      roundIndex: rounds.length + 1,
-      officer: match.officer.officer,
-      status: match.officer.status,
-      officerWallMs: match.officer.officerWallMs,
-      officerStartedAt: match.officer.startedAt,
-      officerEndedAt: match.officer.endedAt,
-      findings: match.officer.findings,
-      findingsCount: match.officer.findingsCount,
-      dispatchStatus: vol.status,
-      ...vol.reason === void 0 ? {} : { dispatchReason: vol.reason }
-    });
-  }
-  return rounds;
-}
-async function readAnalystGateCyclesFromAuditorRoles(auditorRolesDirectory) {
-  let names;
-  try {
-    const entries = await readdir3(auditorRolesDirectory, { withFileTypes: true });
-    names = entries.filter((e) => e.isFile() && e.name.endsWith(".jsonl")).map((e) => e.name).sort();
-  } catch (error) {
-    if (isMissingDirectoryError(error)) return [];
-    throw error;
-  }
-  const volumes = [];
-  for (const name of names) {
-    const classified = await classifyAuditorVolume(join12(auditorRolesDirectory, name));
-    if (classified !== void 0) volumes.push(classified);
-  }
-  return pairGateRounds(volumes);
-}
-var DISPATCH_TOOLS, OFFICER_TOOL_TO_FACE, OFFICER_ARG_ALIASES;
-var init_analyst_gate_cycles_read = __esm({
-  "src/analyst-gate-cycles-read.ts"() {
-    "use strict";
-    init_ledger_session_read();
-    DISPATCH_TOOLS = /* @__PURE__ */ new Set(["ak_menxia_output", "ak_gatekeeper_output"]);
-    OFFICER_TOOL_TO_FACE = {
-      ak_jishizhong_output: "inspector",
-      ak_inspector_output: "inspector",
-      ak_fubaolang_output: "notary",
-      ak_notary_output: "notary"
-    };
-    OFFICER_ARG_ALIASES = {
-      jishizhong: "inspector",
-      inspector: "inspector",
-      fubaolang: "notary",
-      notary: "notary"
-    };
-  }
-});
-
-// src/session-opening-materials.ts
-var packageRootUrl;
-var init_session_opening_materials = __esm({
-  "src/session-opening-materials.ts"() {
-    "use strict";
-    packageRootUrl = new URL("..", import.meta.url);
-  }
-});
-
-// src/auditor-soul.ts
-var init_auditor_soul = __esm({
-  "src/auditor-soul.ts"() {
-    "use strict";
-    init_session_opening_materials();
-  }
-});
-
-// src/auditor-dossier-tool.ts
-var init_auditor_dossier_tool = __esm({
-  "src/auditor-dossier-tool.ts"() {
-    "use strict";
-    init_build();
-  }
-});
-
-// src/engine-detour-tool.ts
-var engineDetourArgsSchema;
-var init_engine_detour_tool = __esm({
-  "src/engine-detour-tool.ts"() {
-    "use strict";
-    init_build();
-    init_engine_detour();
-    engineDetourArgsSchema = typebox_exports.Object(
-      {
-        argv: typebox_exports.Array(typebox_exports.String({ minLength: 1 }), {
-          minItems: 1,
-          description: "\u9996\u9879\u4E3A PATH \u4E2D\u7684\u53EF\u6267\u884C\u6587\u4EF6\uFF0C\u5176\u4F59\u9879\u4E3A\u53C2\u6570\u3002"
-        })
-      },
-      { additionalProperties: false }
-    );
-  }
-});
-
-// src/receipt-delivery-policy.ts
-function isRecord7(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function parseNoReceiptLifecycleFacts(input) {
-  if (!isRecord7(input) || typeof input.terminalToolCalled !== "boolean" || input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT || input.sessionCompletion !== "settled-without-accepted-receipt" || input.acceptedReceipt !== false || typeof input.runPointer !== "string" || input.runPointer.trim() === "" || typeof input.attemptPointer !== "string" || input.attemptPointer.trim() === "" || !Array.isArray(input.rejectedReceipts) || !input.rejectedReceipts.every((item) => isRecord7(item) && typeof item.reason === "string")) {
-    throw new TypeError("malformed no-receipt lifecycle facts");
-  }
-  return {
-    terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map((item) => ({
-      reason: item.reason,
-      diagnosticAvailable: item.reason.trim() !== ""
-    })),
-    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
-    sessionCompletion: "settled-without-accepted-receipt",
-    runPointer: input.runPointer,
-    attemptPointer: input.attemptPointer,
-    acceptedReceipt: false
-  };
-}
-var RECEIPT_DELIVERY_TURN_LIMIT, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE;
-var init_receipt_delivery_policy = __esm({
-  "src/receipt-delivery-policy.ts"() {
-    "use strict";
-    RECEIPT_DELIVERY_TURN_LIMIT = 2;
-    NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle";
-  }
-});
-
-// src/stream-idle-guard.ts
-var init_stream_idle_guard = __esm({
-  "src/stream-idle-guard.ts"() {
-    "use strict";
-  }
-});
-
-// src/evidence-child-executor.ts
-var init_evidence_child_executor = __esm({
-  "src/evidence-child-executor.ts"() {
-    "use strict";
-    init_compliance_transport();
-    init_engine_detour_tool();
-    init_engine_detour();
-    init_engine_material();
-    init_session_opening_materials();
-    init_config2();
-    init_receipt_delivery_policy();
-    init_stream_idle_guard();
-    init_upstream_error_testimony();
-  }
-});
-
-// src/compliance-transport.ts
-function createComplianceDecisionTool(name, description) {
-  return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
-    return { content: [{ type: "text", text: "\u5BA1\u8BA1\u51B3\u8BAE\u5DF2\u6536" }], details: params, terminate: true };
-  } };
-}
-function readListField(value) {
-  return Array.isArray(value) ? value : value === void 0 ? [] : [value];
-}
-function readComplianceCandidate(arguments_, usage) {
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
-    throw new ComplianceCandidateUnreadableError(
-      { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ },
-      arguments_,
-      usage
-    );
-  }
-  const args = arguments_;
-  const status = args.status;
-  if (status === "pass") return { status, ...usage === void 0 ? {} : { usage } };
-  if (status === "revise") return { status, violations: readListField(args.violations), ...usage === void 0 ? {} : { usage } };
-  if (status === "escalate") return { status, ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}, ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}, ...usage === void 0 ? {} : { usage } };
-  throw new ComplianceCandidateUnreadableError(
-    { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" },
-    arguments_,
-    usage
-  );
-}
-var ComplianceCandidateUnreadableError, nonblank2, decisionGateSchema, complianceDecisionSchema, COMPLIANCE_RESPONSE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE;
-var init_compliance_transport = __esm({
-  "src/compliance-transport.ts"() {
-    "use strict";
-    init_build();
-    init_evidence_child_executor();
-    init_auditor_dossier_tool();
-    ComplianceCandidateUnreadableError = class extends Error {
-      observation;
-      candidate;
-      usage;
-      constructor(observation, candidate, usage) {
-        const detail = observation.kind === "non-object-arguments" ? `${observation.kind}:${observation.type}` : observation.kind === "object-status-unreadable" ? `${observation.kind}:${observation.status}` : observation.kind === "missing-subject" ? `${observation.kind}:${observation.subject}` : observation.kind;
-        super(`Compliance candidate unreadable: ${detail}`);
-        this.name = "ComplianceCandidateUnreadableError";
-        this.observation = observation;
-        this.candidate = candidate;
-        if (usage !== void 0) this.usage = usage;
-      }
-    };
-    nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-    decisionGateSchema = typebox_exports.Object({ question: nonblank2, options: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
-    complianceDecisionSchema = typebox_exports.Object({ status: typebox_exports.Unknown({ description: "pass | revise | escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), violations: typebox_exports.Array(nonblank2, { description: "\u89C2\u5BDF\u5230\u7684\u5408\u89C4\u8FDD\u89C4" }), conflicts: typebox_exports.Array(nonblank2, { description: "\u672A\u51B3\u6743\u5A01\u6216\u6267\u884C\u51B2\u7A81" }), decisionGate: typebox_exports.Union([decisionGateSchema, typebox_exports.Null()], { description: "\u5347\u7EA7\u95EE\u9898\u4E0E\u53EF\u9009\u9009\u9879" }) }, { additionalProperties: true, required: [] });
-    COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
-    AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
-    AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
-  }
-});
-
-// src/dossier-resolution.ts
-var init_dossier_resolution = __esm({
-  "src/dossier-resolution.ts"() {
-    "use strict";
-    init_judge_output();
-  }
-});
-
-// src/doctor-auditor.ts
-var DOCTOR_AUDIT_TOOL_NAME, tool;
-var init_doctor_auditor = __esm({
-  "src/doctor-auditor.ts"() {
-    "use strict";
-    init_auditor_dossier_tool();
-    init_auditor_soul();
-    init_compliance_transport();
-    init_dossier_resolution();
-    DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
-    tool = createComplianceDecisionTool(
-      DOCTOR_AUDIT_TOOL_NAME,
-      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u592A\u533B\u7F72\u5BA1\u5211\uFF09\u3002"
-    );
-  }
-});
-
-// src/judge-auditor.ts
-var JUDGE_AUDIT_TOOL_NAME, auditDecisionTool;
-var init_judge_auditor = __esm({
-  "src/judge-auditor.ts"() {
-    "use strict";
-    init_compliance_transport();
-    init_auditor_dossier_tool();
-    init_auditor_soul();
-    init_dossier_resolution();
-    JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
-    auditDecisionTool = createComplianceDecisionTool(
-      JUDGE_AUDIT_TOOL_NAME,
-      "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5927\u7406\u5BFA\u5BA1\u5211\uFF09\u3002"
-    );
-  }
-});
-
-// src/collector-evidence.ts
-var COLLECTOR_ELIGIBILITY_MS;
-var init_collector_evidence = __esm({
-  "src/collector-evidence.ts"() {
-    "use strict";
-    COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
-  }
-});
-
-// src/collector-github.ts
-var init_collector_github = __esm({
-  "src/collector-github.ts"() {
-    "use strict";
-  }
-});
-
-// src/collector-tool-schemas.ts
-var collectorObserveArgsSchema, collectorRequestArgsSchema, collectorWaitArgsSchema, collectorOutputArgsSchema;
-var init_collector_tool_schemas = __esm({
-  "src/collector-tool-schemas.ts"() {
-    "use strict";
-    init_build();
-    init_collector_evidence();
-    init_terminating_infrastructure();
-    collectorObserveArgsSchema = typebox_exports.Object({}, { additionalProperties: false });
-    collectorRequestArgsSchema = typebox_exports.Object({
-      requestId: typebox_exports.String({ minLength: 1, description: "\u914D\u7F6E\u8BF7\u6C42\u8EAB\u4EFD" }),
-      snapshotId: typebox_exports.String({ minLength: 1, description: "\u6700\u65B0\u7559\u5B58\u89C2\u5BDF\u5FEB\u7167" })
-    }, { additionalProperties: false });
-    collectorWaitArgsSchema = typebox_exports.Object({
-      durationMs: typebox_exports.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "\u7B49\u5F85\u6BEB\u79D2\uFF1B\u5355\u6B21\u4E0A\u9650\u4E94\u5206\u949F\u4E14\u4E0D\u8D85\u5269\u4F59\u8D44\u683C" })
-    }, { additionalProperties: false });
-    collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
-      typebox_exports.Object({}, { additionalProperties: true })
-    );
-    collectorOutputArgsSchema.required = [];
-  }
-});
-
-// src/collector-ledger.ts
-var COLLECTOR_OBSERVE_TOOL, COLLECTOR_REQUEST_TOOL, COLLECTOR_WAIT_TOOL;
-var init_collector_ledger = __esm({
-  "src/collector-ledger.ts"() {
-    "use strict";
-    init_value2();
-    init_collector_evidence();
-    init_collector_github();
-    init_collector_tool_schemas();
-    init_collector_output();
-    COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
-    COLLECTOR_REQUEST_TOOL = "ak_collector_request";
-    COLLECTOR_WAIT_TOOL = "ak_collector_wait";
-  }
-});
-
-// src/work-subject-identity.ts
-var init_work_subject_identity = __esm({
-  "src/work-subject-identity.ts"() {
-    "use strict";
-    init_activation_ledger_topology();
-  }
-});
-
-// src/navigator-invocation-identity.ts
-function buildNavigatorInfrastructureFailureFact() {
-  return {
-    kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
-    source: "shared-role-lifecycle",
-    reasonCode: "host_failure"
-  };
-}
-function hasNavigatorInfrastructureFailureBase(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record4 = value;
-  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
-    if (!Object.hasOwn(record4, key)) return false;
-  }
-  return record4.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record4.source === "shared-role-lifecycle" && record4.reasonCode === "host_failure";
-}
-function invocationPhaseFromUnknown(value) {
-  if (value === null || value === "plan" || value === "apply") return value;
-  return void 0;
-}
-function parseInvocationMarkerIdentity(data) {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
-  const record4 = data;
-  const invocationId = record4.invocationId;
-  if (typeof invocationId !== "string") return void 0;
-  const trimmedId = invocationId.trim();
-  if (!isUuidV7(trimmedId)) return void 0;
-  if (typeof record4.role !== "string" || record4.role.trim() === "") return void 0;
-  const phase = invocationPhaseFromUnknown(record4.phase);
-  if (phase === void 0) return void 0;
-  if (typeof record4.subjectKey !== "string" || record4.subjectKey.trim() === "") return void 0;
-  return {
-    invocationId: trimmedId,
-    role: record4.role,
-    phase,
-    subjectKey: record4.subjectKey
-  };
-}
-function classifyPackagedRoleTerminalResult(message) {
-  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
-  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
-  const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
-  const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : void 0;
-  if (message.isError === true) {
-    if (infraFact === void 0) return { kind: "nonterminal" };
-    return { kind: "infrastructure", fact: infraFact };
-  }
-  if (message.isError === false) {
-    if (infraFact !== void 0) return { kind: "nonterminal" };
-    return { kind: "accepted" };
-  }
-  return { kind: "nonterminal" };
-}
-function isAcceptedPackagedRoleTerminalResult(message) {
-  return classifyPackagedRoleTerminalResult(message).kind === "accepted";
-}
-function durableTerminalAt(entries, index) {
-  const entry = entries[index];
-  if (entry?.type !== "message") return void 0;
-  const message = entry.message;
-  if (message?.role !== "toolResult") return void 0;
-  if (typeof message.toolName !== "string") return void 0;
-  const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
-  if (role === void 0) return void 0;
-  const classification = classifyPackagedRoleTerminalResult(message);
-  if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {
-    return void 0;
-  }
-  return {
-    index,
-    role,
-    toolName: message.toolName,
-    classification: classification.kind,
-    message
-  };
-}
-function isInvocationMarkerEntry(entry) {
-  return entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY;
-}
-function findLatestDurablePackagedRoleTerminal(entries) {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const terminal = durableTerminalAt(entries, i);
-    if (terminal !== void 0) return terminal;
-  }
-  return void 0;
-}
-function bindCurrentDurableTerminalToMarker(entries) {
-  const terminal = findLatestDurablePackagedRoleTerminal(entries);
-  if (terminal === void 0) return { kind: "absent" };
-  let markerIndex = -1;
-  for (let i = terminal.index - 1; i >= 0; i -= 1) {
-    if (isInvocationMarkerEntry(entries[i])) {
-      markerIndex = i;
-      break;
-    }
-  }
-  if (markerIndex < 0) {
-    return { kind: "unbound", terminal };
-  }
-  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
-  if (marker === void 0) {
-    return { kind: "unbound", terminal };
-  }
-  let windowEnd = entries.length;
-  for (let i = markerIndex + 1; i < entries.length; i += 1) {
-    if (isInvocationMarkerEntry(entries[i])) {
-      windowEnd = i;
-      break;
-    }
-  }
-  let durableCount = 0;
-  for (let i = markerIndex + 1; i < windowEnd; i += 1) {
-    if (durableTerminalAt(entries, i) !== void 0) durableCount += 1;
-  }
-  if (durableCount !== 1) return { kind: "ambiguous" };
-  if (terminal.index <= markerIndex || terminal.index >= windowEnd) {
-    return { kind: "ambiguous" };
-  }
-  return {
-    kind: "bound",
-    terminal,
-    marker: { ...marker, index: markerIndex }
-  };
-}
-function isReceiptSettlementBindingClear(entries) {
-  return bindCurrentDurableTerminalToMarker(entries).kind !== "ambiguous";
-}
-var NAVIGATOR_INVOCATION_ENTRY, NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS, PACKAGED_ROLE_OUTPUT_TOOLS;
-var init_navigator_invocation_identity = __esm({
-  "src/navigator-invocation-identity.ts"() {
-    "use strict";
-    init_packaged_role_registry();
-    init_uuidv7();
-    init_work_subject_identity();
-    NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
-    NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
-    NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
-      "kind",
-      "source",
-      "reasonCode"
-    ];
-    PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
-      PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
-    );
-  }
-});
-
 // src/public-cli/settlement.ts
-import { randomUUID } from "node:crypto";
-import { appendFile, readFile as readFile10, readdir as readdir4, writeFile as writeFile5 } from "node:fs/promises";
-import { dirname as dirname7, join as join13 } from "node:path";
+import { randomUUID as randomUUID3 } from "node:crypto";
+import { appendFile as appendFile2, readFile as readFile14, readdir as readdir5, writeFile as writeFile6 } from "node:fs/promises";
+import { dirname as dirname9, join as join17 } from "node:path";
+function sealedLedgerHome(admitted) {
+  return homeFromRunDirectory(admitted.runDirectory);
+}
+async function sealedLedgerOutcome(admitted) {
+  return readSealedSubmission(admitted.projectRoot, admitted.runId, sealedLedgerHome(admitted));
+}
+async function auditEscalationLedgerOutcome(admitted, role) {
+  const projection = await readAuditEscalationSubmission(
+    admitted.projectRoot,
+    admitted.runId,
+    sealedLedgerHome(admitted)
+  );
+  if (projection?.role !== role) return void 0;
+  return projection;
+}
+function coordinatesFromAdmitted(authority, admitted) {
+  return authority.decode(admitted.principal);
+}
 function isChildDiagnosticFloodLine(line2) {
   if (/^at\s+/.test(line2)) return true;
   if (line2.startsWith("event:")) return true;
@@ -21009,10 +21915,10 @@ function presentControlledFailure(failure, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile10(sessionFile, "utf8");
+    await readFile14(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
-    if (isMissingPathError2(error)) return { state: "missing" };
+    if (isMissingPathError3(error)) return { state: "missing" };
     return {
       state: "unreadable",
       diagnostic: error instanceof Error ? error.message || error.name : String(error)
@@ -21122,7 +22028,7 @@ function explicitInternalKnownFailureClassificationInput(failure) {
     ...failure.details === void 0 ? {} : { knownDetails: failure.details }
   };
 }
-function isMissingPathError2(error) {
+function isMissingPathError3(error) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 function sessionReadFailure(error, fallbackMessage) {
@@ -21151,7 +22057,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile10(sessionFile, "utf8");
+  const text = await readFile14(sessionFile, "utf8");
   const entries = [];
   for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -21198,14 +22104,6 @@ function extractSessionProviderStop(entries) {
   }
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
-    const response = isRecord8(entry.data) && isRecord8(entry.data.response) ? entry.data.response : void 0;
-    const stop = sessionProviderStopFromAssistant(response);
-    if (stop !== void 0) return stop;
-    break;
-  }
-  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
-    const entry = entries[i];
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "assistant") continue;
@@ -21213,7 +22111,31 @@ function extractSessionProviderStop(entries) {
   }
   return void 0;
 }
+async function readSitianRetainedAuditorProviderStop(sessionFile) {
+  try {
+    const { recordFile } = resolveSitianRecordPath({
+      level: "event",
+      kind: "auditor",
+      sessionParent: sessionFile,
+      // Path is driven by sessionParent when under ledger home; cwd is a fallback only.
+      cwd: dirname9(sessionFile)
+    });
+    const { records: records2 } = await readSitianRecords(recordFile);
+    for (let i = records2.length - 1; i >= 0; i -= 1) {
+      const payload = records2[i]?.payload;
+      if (!isRecord11(payload) || !isRecord11(payload.response)) continue;
+      if (typeof payload.type === "string") continue;
+      const stop = sessionProviderStopFromAssistant(payload.response);
+      if (stop !== void 0) return stop;
+      break;
+    }
+  } catch {
+  }
+  return void 0;
+}
 async function readSessionProviderStop(sessionFile) {
+  const retained = await readSitianRetainedAuditorProviderStop(sessionFile);
+  if (retained !== void 0) return retained;
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);
@@ -21222,23 +22144,23 @@ async function readSessionProviderStop(sessionFile) {
   }
 }
 async function readBoundEvidenceChildKnownFailure(sessionFile) {
-  const childDirectory = join13(dirname7(sessionFile), "evidence-children");
+  const childDirectory = join17(dirname9(sessionFile), "evidence-children");
   let names;
   try {
-    names = await readdir4(childDirectory);
+    names = await readdir5(childDirectory);
   } catch (error) {
-    if (isMissingPathError2(error)) return void 0;
+    if (isMissingPathError3(error)) return void 0;
     throw sessionReadFailure(error, "failed to read bound evidence-child session directory");
   }
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join13(childDirectory, file));
+      entries = await readBoundSessionEntries(join17(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered evidence-child session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord8(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord11(header) || header.parentSession !== sessionFile) continue;
     const stop = extractSessionProviderStop(entries);
     if (stop === void 0) continue;
     const primary = knownFailureFromProviderStop(stop);
@@ -21257,19 +22179,19 @@ async function loadBoundAuditorVolumes(sessionFile) {
   try {
     parentEntries = await readBoundSessionEntries(sessionFile);
   } catch (error) {
-    if (isMissingPathError2(error)) return void 0;
+    if (isMissingPathError3(error)) return void 0;
     throw sessionReadFailure(error, "failed to read parent session for auditor binding");
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === void 0) return void 0;
   const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
   const isResumeEnvelope = (msg) => {
-    if (!isRecord8(msg) || msg.role !== "user") return false;
+    if (!isRecord11(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof msg.content === "string" ? msg.content : void 0;
     if (text === RESUME_ENVELOPE) return true;
     const content = msg.content;
     if (Array.isArray(content)) {
-      return content.some((p) => isRecord8(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+      return content.some((p) => isRecord11(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
     }
     return false;
   };
@@ -21281,26 +22203,26 @@ async function loadBoundAuditorVolumes(sessionFile) {
     latestParentUserIndex = i;
     break;
   }
-  const childDirectory = join13(dirname7(sessionFile), "auditor-roles");
+  const childDirectory = join17(dirname9(sessionFile), "auditor-roles");
   let names;
   try {
-    names = await readdir4(childDirectory);
+    names = await readdir5(childDirectory);
   } catch (error) {
-    if (isMissingPathError2(error)) return void 0;
+    if (isMissingPathError3(error)) return void 0;
     throw sessionReadFailure(error, "failed to read bound auditor session directory");
   }
   const valid = [];
   for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
     let entries;
     try {
-      entries = await readBoundSessionEntries(join13(childDirectory, file));
+      entries = await readBoundSessionEntries(join17(childDirectory, file));
     } catch (error) {
       throw sessionReadFailure(error, "failed to read discovered auditor session");
     }
     const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord8(header) || header.parentSession !== sessionFile) continue;
+    if (!isRecord11(header) || header.parentSession !== sessionFile) continue;
     const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
-    const bindingParent = isRecord8(bindingEntry?.data) && isRecord8(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
+    const bindingParent = isRecord11(bindingEntry?.data) && isRecord11(bindingEntry.data.parent) ? bindingEntry.data.parent : void 0;
     const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : void 0;
     const attemptEntryIndex = attemptEntryId === void 0 ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
     if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
@@ -21319,11 +22241,11 @@ function complianceFailureFromAuditorVolumes(volumes) {
     if (stop === void 0) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
       const entry = entries[i];
-      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord8(entry.data)) continue;
-      const parent = isRecord8(entry.data.parent) ? entry.data.parent : void 0;
-      const failure = isRecord8(entry.data.failure) ? entry.data.failure : void 0;
+      if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord11(entry.data)) continue;
+      const parent = isRecord11(entry.data.parent) ? entry.data.parent : void 0;
+      const failure = isRecord11(entry.data.failure) ? entry.data.failure : void 0;
       if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || failure?.cause !== "provider" && failure?.cause !== "unrecognized") continue;
-      const identity = isRecord8(failure.identity) ? failure.identity : void 0;
+      const identity = isRecord11(failure.identity) ? failure.identity : void 0;
       return {
         cause: failure.cause === "provider" ? "provider" : "unrecognized",
         ...identity === void 0 ? {} : { identity: {
@@ -21331,7 +22253,7 @@ function complianceFailureFromAuditorVolumes(volumes) {
           ...typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}
         } },
         ...typeof failure.diagnostic === "string" ? { diagnostic: failure.diagnostic } : {},
-        ...isRecord8(failure.details) ? { details: failure.details } : {}
+        ...isRecord11(failure.details) ? { details: failure.details } : {}
       };
     }
   }
@@ -21378,9 +22300,9 @@ function typedFailedTerminatingToolKnownFailure(entries) {
     if (classification.kind !== "infrastructure") continue;
     if (typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
     if (boundRoleToolCallForResult(attemptEntries, i, message, message.toolName) === void 0) continue;
-    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord8(part) && part.type === "text" && typeof part.text === "string") : void 0;
-    const diagnostic = isRecord8(textPart) ? textPart.text : void 0;
-    const details = isRecord8(message.details) ? message.details : classification.fact;
+    const textPart = Array.isArray(message.content) ? message.content.find((part) => isRecord11(part) && part.type === "text" && typeof part.text === "string") : void 0;
+    const diagnostic = isRecord11(textPart) ? textPart.text : void 0;
+    const details = isRecord11(message.details) ? message.details : classification.fact;
     return {
       cause: "output",
       identity: { name: message.toolName, code: message.toolCallId },
@@ -21429,7 +22351,7 @@ async function resolveAuditedRunnerFailureResolution(input) {
     );
     if (terminatingFailure !== void 0) return resolutionOf(terminatingFailure);
   } catch (error) {
-    if (!isMissingPathError2(error)) {
+    if (!isMissingPathError3(error)) {
       const failure = sessionReadFailure(error, "failed to recover typed terminating-tool failure");
       return resolutionOf({
         cause: "session",
@@ -21505,9 +22427,6 @@ async function resolveAuditedRunnerFailureResolution(input) {
     typedHttp
   );
 }
-async function resolveAuditedRunnerKnownFailure(input) {
-  return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;
-}
 async function resolveControlledFailureResumeObservation(input) {
   if (input.typedHttpObservationSettled === true) {
     const observation = input.typedHttpObservation;
@@ -21541,7 +22460,7 @@ function controlledFailureInputFromResolution(resolution) {
     } : {}
   };
 }
-function isRecord8(value) {
+function isRecord11(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function safelyRead(object, key) {
@@ -21568,7 +22487,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   const statusBase = judgeStatus;
   if (statusBase === "continue") {
     const fix = safelyRead(verdict, "fix");
-    if (fix.readable && isRecord8(fix.value)) {
+    if (fix.readable && isRecord11(fix.value)) {
       const summary = safelyRead(fix.value, "summary");
       if (summary.readable && typeof summary.value === "string") {
         facts.fixSummary = summary.value;
@@ -21578,7 +22497,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
     if (classes.readable && Array.isArray(classes.value)) {
       try {
         facts.classes = classes.value.map((entry) => {
-          if (!isRecord8(entry)) throw new Error("unreadable Judge class");
+          if (!isRecord11(entry)) throw new Error("unreadable Judge class");
           return {
             name: entry.name,
             owner: entry.owner,
@@ -21593,7 +22512,7 @@ function judgeDecisiveFacts(verdict, judgeStatus) {
   }
   if (statusBase === "escalate") {
     const gate = safelyRead(verdict, "decisionGate");
-    if (gate.readable && isRecord8(gate.value)) {
+    if (gate.readable && isRecord11(gate.value)) {
       const question = safelyRead(gate.value, "question");
       const options = safelyRead(gate.value, "options");
       if (question.readable && typeof question.value === "string") {
@@ -21639,7 +22558,7 @@ function fixerDecisiveFacts(output) {
     facts.reason = reason.value;
   }
   const blockerRead = safelyRead(candidate, "blocker");
-  if (statusBase === "refused" && blockerRead.readable && isRecord8(blockerRead.value)) {
+  if (statusBase === "refused" && blockerRead.readable && isRecord11(blockerRead.value)) {
     const cause = safelyRead(blockerRead.value, "cause");
     if (cause.readable && typeof cause.value === "string") facts.blockerCause = cause.value;
     const prerequisiteId = safelyRead(blockerRead.value, "prerequisiteId");
@@ -21651,13 +22570,13 @@ function fixerDecisiveFacts(output) {
     const blockers = [];
     try {
       for (const entry of classResults.value) {
-        if (!isRecord8(entry)) throw new Error("unreadable class result");
+        if (!isRecord11(entry)) throw new Error("unreadable class result");
         const name = safelyRead(entry, "name");
         const disposition = safelyRead(entry, "disposition");
         if (!name.readable || !disposition.readable) throw new Error("unreadable class result");
         rows.push({ name: name.value, disposition: disposition.value });
         const blocker = safelyRead(entry, "blocker");
-        if (disposition.value === "refused" && blocker.readable && isRecord8(blocker.value)) blockers.push(blocker.value);
+        if (disposition.value === "refused" && blocker.readable && isRecord11(blocker.value)) blockers.push(blocker.value);
       }
       facts.classResultCount = rows.length;
       facts.classDispositions = rows;
@@ -21690,7 +22609,7 @@ function collectorDecisiveFacts(receipt) {
   if (groups.readable && Array.isArray(groups.value)) {
     try {
       facts.groups = groups.value.map((group) => {
-        if (!isRecord8(group)) throw new Error("unreadable Collector group");
+        if (!isRecord11(group)) throw new Error("unreadable Collector group");
         const identity = safelyRead(group, "identity");
         const attendance = safelyRead(group, "attendance");
         const materials = safelyRead(group, "materials");
@@ -21724,7 +22643,7 @@ function doctorDecisiveFacts(output) {
     return facts;
   }
   const caseValue = safelyRead(candidate, "case");
-  if (caseValue.readable && isRecord8(caseValue.value)) {
+  if (caseValue.readable && isRecord11(caseValue.value)) {
     const issueNumber = safelyRead(caseValue.value, "issueNumber");
     const runsPath = safelyRead(caseValue.value, "runsPath");
     if (issueNumber.readable && issueNumber.value !== void 0) facts.issueNumber = issueNumber.value;
@@ -21735,7 +22654,7 @@ function doctorDecisiveFacts(output) {
   return facts;
 }
 function reviewerAxes(value) {
-  if (!isRecord8(value)) return [];
+  if (!isRecord11(value)) return [];
   return ["standards", "spec"].filter((axis) => {
     const projected = safelyRead(value, axis);
     return projected.readable && projected.value !== void 0;
@@ -21850,14 +22769,6 @@ function assertCollectorReceiptMatchesAdmitted(receipt, admitted) {
     );
   }
 }
-function auditToolNameForRole(role) {
-  switch (role) {
-    case "judge":
-      return JUDGE_AUDIT_TOOL_NAME;
-    case "doctor":
-      return DOCTOR_AUDIT_TOOL_NAME;
-  }
-}
 function boundRoleToolCallForResult(entries, resultIndex, message, outputToolName) {
   const callId = message.toolCallId;
   if (typeof callId !== "string" || callId.trim() === "") return void 0;
@@ -21868,7 +22779,7 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
     const candidateMessage = entries[index]?.message;
     if (candidateMessage?.role === "assistant" && Array.isArray(candidateMessage.content)) {
       for (const part of candidateMessage.content) {
-        if (!isRecord8(part) || part.type !== "toolCall" || part.id !== callId) {
+        if (!isRecord11(part) || part.type !== "toolCall" || part.id !== callId) {
           continue;
         }
         if (part.name !== outputToolName) return void 0;
@@ -21883,95 +22794,8 @@ function boundRoleToolCallForResult(entries, resultIndex, message, outputToolNam
   }
   return calls.length === 1 && resultCount === 1 && matchingResultIndex === resultIndex && calls[0].callIndex < resultIndex ? calls[0] : void 0;
 }
-function sameAuditValue(left, right) {
-  if (Object.is(left, right)) return true;
-  if (Array.isArray(left) && Array.isArray(right)) {
-    return left.length === right.length && left.every(
-      (value, index) => sameAuditValue(value, right[index])
-    );
-  }
-  if (isRecord8(left) && isRecord8(right)) {
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-    return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.hasOwn(right, key) && sameAuditValue(left[key], right[key]));
-  }
-  return false;
-}
-function snapshotAuditDetails(details) {
-  const snapshot = /* @__PURE__ */ Object.create(null);
-  for (const key of Object.keys(details)) {
-    Object.defineProperty(snapshot, key, {
-      value: details[key],
-      enumerable: true,
-      configurable: true,
-      writable: true
-    });
-  }
-  return snapshot;
-}
-function boundAuditEscalationForResult(entries, resultIndex, message, role, outputToolName) {
-  const roleCall = boundRoleToolCallForResult(
-    entries,
-    resultIndex,
-    message,
-    outputToolName
-  );
-  if (roleCall === void 0) return void 0;
-  const retained = boundRetainedAuditResponse(
-    entries,
-    roleCall.callIndex,
-    resultIndex,
-    auditToolNameForRole(role)
-  );
-  if (retained === void 0) return void 0;
-  try {
-    const decision = readComplianceCandidate(retained.candidate);
-    if (decision.status !== "escalate") return void 0;
-    const details = message.details;
-    if (!isAuditEscalationResult(details) || !isRecord8(details)) return void 0;
-    const projectedDetails = snapshotAuditDetails(details);
-    const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
-    const hasDetailsConflicts = Object.hasOwn(projectedDetails, "conflicts");
-    if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
-    if (hasDecisionConflicts && !sameAuditValue(projectedDetails.conflicts, decision.conflicts)) return void 0;
-    const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
-    const hasDetailsGate = Object.hasOwn(projectedDetails, "auditDecisionGate");
-    if (hasDecisionGate !== hasDetailsGate) return void 0;
-    if (hasDecisionGate && !sameAuditValue(projectedDetails.auditDecisionGate, decision.decisionGate)) return void 0;
-    return { decision, details: projectedDetails };
-  } catch {
-    return void 0;
-  }
-}
-function isUnboundAuditEscalationFace(details) {
-  try {
-    if (isAuditEscalationResult(details)) return true;
-  } catch {
-  }
-  if (!isRecord8(details)) return false;
-  const kind = safelyRead(details, "kind");
-  return kind.readable && kind.value === "audit_escalation";
-}
-function boundRetainedAuditResponse(entries, callIndex, resultIndex, auditToolName) {
-  const matches = [];
-  for (let index = callIndex + 1; index < resultIndex; index += 1) {
-    const entry = entries[index];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) {
-      continue;
-    }
-    if (!isRecord8(entry.data) || !isRecord8(entry.data.response)) continue;
-    const response = entry.data.response;
-    if (!Array.isArray(response.content)) continue;
-    const calls = response.content.filter(
-      (part) => isRecord8(part) && part.type === "toolCall"
-    );
-    if (calls.length !== 1 || calls[0]?.name !== auditToolName) continue;
-    matches.push({ candidate: calls[0]?.arguments });
-  }
-  return matches.length === 1 ? matches[0] : void 0;
-}
-async function appendRunAttemptHistory(admitted, outcome) {
-  const entries = await readBoundSessionEntries(admitted.sessionFile);
+async function appendRunAttemptHistory(source, outcome) {
+  const entries = await readBoundSessionEntries(source.sessionFile);
   let parentId = null;
   let priorEntries = 0;
   for (const entry of entries) {
@@ -21981,63 +22805,37 @@ async function appendRunAttemptHistory(admitted, outcome) {
     }
   }
   const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
+  const attemptData = {
+    sequence: priorEntries + 1,
+    role: source.role,
+    runId: source.runId,
+    recordedAt: timestamp2,
+    outcome
+  };
   const line2 = `${JSON.stringify({
     type: "custom",
     customType: ATTEMPT_HISTORY_ENTRY_TYPE,
-    data: {
-      sequence: priorEntries + 1,
-      role: admitted.role,
-      runId: admitted.runId,
-      recordedAt: timestamp2,
-      outcome
-    },
-    id: randomUUID(),
+    data: attemptData,
+    id: randomUUID3(),
     parentId,
     timestamp: timestamp2
   })}
 `;
-  await appendFile(admitted.sessionFile, line2, "utf8");
-}
-function extractJudgeRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "judge",
-      JUDGE_OUTPUT_TOOL_NAME
-    );
-    if (escalation !== void 0) {
-      return {
-        kind: "audit_escalation",
-        role: "judge",
-        status: "audit_escalation",
-        decisiveFacts: { ...escalation.details }
-      };
-    }
-    if (isUnboundAuditEscalationFace(details)) continue;
-    if (!isRecord8(details)) continue;
-    const statusRead = safelyRead(details, "judgeStatus");
-    if (!statusRead.readable || typeof statusRead.value !== "string") continue;
-    const judgeStatus = statusRead.value;
-    const statusBase = judgeStatus;
-    if (statusBase !== "converged" && statusBase !== "continue" && statusBase !== "escalate") continue;
-    return {
-      kind: "accepted",
-      role: "judge",
-      status: judgeStatus,
-      decisiveFacts: judgeDecisiveFacts(details, judgeStatus)
-    };
+  await appendFile2(source.sessionFile, line2, "utf8");
+  try {
+    sitianReport({
+      level: "event",
+      kind: "attempt-history",
+      subject: { runId: source.runId },
+      sessionParent: source.sessionFile,
+      payload: {
+        type: ATTEMPT_HISTORY_ENTRY_TYPE,
+        ...attemptData
+      },
+      source: "settlement"
+    });
+  } catch {
   }
-  return void 0;
 }
 function navigatorPhaseValue(value) {
   if (value === "plan" || value === "apply") return value;
@@ -22053,7 +22851,7 @@ function parseNavigatorAttendanceDetails(details) {
   const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string" ? { advisoryDiagnostic: details.routePlaybookReadFailure } : {};
   if (disposition === "recommendation") {
     const next = details.next;
-    if (!isRecord8(next) || typeof next.role !== "string") {
+    if (!isRecord11(next) || typeof next.role !== "string") {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -22061,7 +22859,7 @@ function parseNavigatorAttendanceDetails(details) {
       };
     }
     const reason = typeof details.reason === "string" ? details.reason : "";
-    const route = Array.isArray(details.route) ? details.route.filter(isRecord8).map((target) => ({
+    const route = Array.isArray(details.route) ? details.route.filter(isRecord11).map((target) => ({
       role: String(target.role),
       phase: navigatorPhaseValue(target.phase)
     })) : void 0;
@@ -22123,13 +22921,13 @@ function projectTerminalGateFact(rounds) {
 }
 async function extractGateFactFromSessionDirectory(sessionDirectory) {
   const rounds = await readAnalystGateCyclesFromAuditorRoles(
-    join13(sessionDirectory, "auditor-roles")
+    join17(sessionDirectory, "auditor-roles")
   );
   return projectTerminalGateFact(rounds);
 }
 async function withOptionalGateProjection(base, sessionDirectory) {
   const secondaryEvidence = base.roleOutcome.kind === "failure" ? base.roleOutcome.decisiveFacts.secondaryEvidence : void 0;
-  if (isRecord8(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
+  if (isRecord11(secondaryEvidence) && secondaryEvidence.kind === "role_infrastructure_failure" && (secondaryEvidence.stage === "gatekeeper" || secondaryEvidence.stage === "inspector" || secondaryEvidence.stage === "notary")) return base;
   const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
   return gate === void 0 ? base : { ...base, gate };
 }
@@ -22169,7 +22967,7 @@ function extractNavigatorFact(entries) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord8(details)) {
+      if (!isRecord11(details)) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -22197,12 +22995,12 @@ function extractNavigatorFact(entries) {
     reason: "Navigator attendance is missing from the session"
   };
 }
-async function extractNavigatorFactFromAdmittedSession(admitted) {
+async function extractNavigatorFactFromAdmittedSession(sessionFile) {
   try {
-    const entries = await readBoundSessionEntries(admitted.sessionFile);
+    const entries = await readBoundSessionEntries(sessionFile);
     return extractNavigatorFact(entries);
   } catch (error) {
-    if (isMissingPathError2(error)) {
+    if (isMissingPathError3(error)) {
       return {
         disposition: "unavailable",
         source: "unknown",
@@ -22216,12 +23014,12 @@ async function extractNavigatorFactFromAdmittedSession(admitted) {
     };
   }
 }
-async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishJudgeArtifacts(admitted, roleOutcome, coordinates) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
-  await writeFile5(
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
+  await writeFile6(
     reportPath,
     `${JSON.stringify(
       {
@@ -22235,13 +23033,13 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
 `,
     "utf8"
   );
-  await writeFile5(
+  await writeFile6(
     evidencePath,
     `${JSON.stringify(
       {
         runId: admitted.runId,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -22261,12 +23059,12 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
     { kind: "evidence", path: evidencePath }
   ];
 }
-async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishCoderArtifacts(admitted, roleOutcome, coordinates, options = {}) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
-  await writeFile5(
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
+  await writeFile6(
     reportPath,
     `${JSON.stringify(
       {
@@ -22282,15 +23080,15 @@ async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, op
 `,
     "utf8"
   );
-  await writeFile5(
+  await writeFile6(
     evidencePath,
     `${JSON.stringify(
       {
         runId: admitted.runId,
         role: "coder",
         phase: admitted.phase,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         taskPath: admitted.taskPath,
         attachments: admitted.attachments.map((a) => ({
@@ -22312,64 +23110,45 @@ async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, op
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractCoderRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      validateAcceptedDetails(CODER_OUTPUT_TOOL_NAME, message.details);
-      const output = validateAcceptedCoderDetails(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "coder",
-        status: output.status,
-        decisiveFacts: coderDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
-async function readLawfulSettlementEntries(admitted) {
+async function readLawfulSettlementEntries(sessionFile) {
   try {
-    return await readBoundSessionEntries(admitted.sessionFile);
+    return await readBoundSessionEntries(sessionFile);
   } catch (error) {
-    if (isMissingPathError2(error)) return void 0;
+    if (isMissingPathError3(error)) return void 0;
     throw error instanceof Error && error.knownCause === "session" ? error : sessionReadFailure(error, "session unreadable");
   }
 }
-async function readLawfulJudgeRoleOutcome(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  return extractJudgeRoleOutcome(entries);
+async function readLawfulJudgeRoleOutcome(admitted, authority) {
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role === "judge") {
+    const details = sealed.decisiveFacts;
+    return {
+      kind: "accepted",
+      role: "judge",
+      status: sealed.status,
+      decisiveFacts: judgeDecisiveFacts(details, sealed.status)
+    };
+  }
+  return auditEscalationLedgerOutcome(admitted, "judge");
 }
-async function hasLawfulJudgeTerminalResult(admitted) {
+async function hasLawfulJudgeTerminalResult(admitted, authority) {
   try {
-    const outcome = await readLawfulJudgeRoleOutcome(admitted);
+    const outcome = await readLawfulJudgeRoleOutcome(admitted, authority);
     return outcome !== void 0 && isLawfulTypedTerminalOutcome(outcome);
   } catch {
     return false;
   }
 }
-async function settleLawfulJudgeTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const roleOutcome = extractJudgeRoleOutcome(entries);
-  if (roleOutcome === void 0) {
-    return void 0;
-  }
+async function settleLawfulJudgeTerminalResult(admitted, authority) {
+  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority);
+  if (roleOutcome === void 0) return void 0;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishJudgeArtifacts(
     admitted,
     roleOutcome,
-    admitted.sessionDirectory
+    coordinates
   );
   return withOptionalGateProjection(
     {
@@ -22378,35 +23157,42 @@ async function settleLawfulJudgeTerminalResult(admitted) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    coordinates.sessionDirectory
   );
 }
-async function trySettleJudgeTerminalResult(admitted) {
-  return settleLawfulJudgeTerminalResult(admitted);
+async function trySettleJudgeTerminalResult(admitted, authority) {
+  return settleLawfulJudgeTerminalResult(admitted, authority);
 }
-async function settleLawfulCoderTerminalResult(admitted, options = {}) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractCoderRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+async function settleLawfulCoderTerminalResult(admitted, authority, options = {}) {
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "coder") return void 0;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const output = validateAcceptedCoderDetails(sealed.decisiveFacts);
+  const roleOutcome = {
+    kind: "accepted",
+    role: "coder",
+    status: sealed.status,
+    decisiveFacts: coderDecisiveFacts(output)
+  };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCoderArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
+    roleOutcome,
+    coordinates,
     {
-      coderOutput: extracted.output,
+      coderOutput: output,
       ...options.methodProvenance === void 0 ? {} : { methodProvenance: options.methodProvenance }
     }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    coordinates.sessionDirectory
   );
 }
 function sessionMessageText(message) {
@@ -22437,12 +23223,12 @@ function extractFixerMethodInvocations(entries, options) {
   }
   return Object.freeze(observed);
 }
-async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishFixerArtifacts(admitted, roleOutcome, coordinates, options) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
-  await writeFile5(
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
+  await writeFile6(
     reportPath,
     `${JSON.stringify(
       {
@@ -22458,15 +23244,15 @@ async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, op
 `,
     "utf8"
   );
-  await writeFile5(
+  await writeFile6(
     evidencePath,
     `${JSON.stringify(
       {
         runId: admitted.runId,
         role: "fixer",
         phase: admitted.phase,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         packetPath: admitted.packetPath,
         ...admitted.prerequisitesPath === void 0 ? {} : { prerequisitesPath: admitted.prerequisitesPath },
@@ -22493,38 +23279,19 @@ async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, op
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractFixerRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);
-      const output = validateFixerOutput(details);
-      const outcome = {
-        kind: "accepted",
-        role: "fixer",
-        status: output.status,
-        decisiveFacts: fixerDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
-async function settleLawfulFixerTerminalResult(admitted, options) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractFixerRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+async function settleLawfulFixerTerminalResult(admitted, authority, options) {
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "fixer") return void 0;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const output = validateFixerOutput(sealed.decisiveFacts);
+  const roleOutcome = {
+    kind: "accepted",
+    role: "fixer",
+    status: sealed.status,
+    decisiveFacts: fixerDecisiveFacts(output)
+  };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
@@ -22534,30 +23301,30 @@ async function settleLawfulFixerTerminalResult(admitted, options) {
   });
   const artifacts = await publishFixerArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
+    roleOutcome,
+    coordinates,
     {
-      ...extracted.output === void 0 ? {} : { fixerOutput: extracted.output },
+      fixerOutput: output,
       methodProvenance: options.methodProvenance,
       methodInvocations
     }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishCollectorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
-  await writeFile5(
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
+  await writeFile6(
     reportPath,
     `${JSON.stringify(
       {
@@ -22572,7 +23339,7 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
 `,
     "utf8"
   );
-  await writeFile5(
+  await writeFile6(
     evidencePath,
     `${JSON.stringify(
       {
@@ -22581,8 +23348,8 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
         prNumber: admitted.prNumber,
         repository: admitted.repository.canonical,
         manifestDigest: admitted.manifestDigest,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -22602,42 +23369,19 @@ async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractCollectorRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const receipt = validateAcceptedCollectorReceipt(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "collector",
-        status: "collected",
-        decisiveFacts: collectorDecisiveFacts(receipt)
-      };
-      return { receipt, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
-async function settleLawfulCollectorTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractCollectorRoleOutcome(entries);
-  if (extracted === void 0) {
+async function settleLawfulCollectorTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "collector") {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
       if (residual === void 0) continue;
       const candidate = residual.candidate;
-      const duration = isRecord8(candidate) ? candidate.durationMs : void 0;
+      const duration = isRecord11(candidate) ? candidate.durationMs : void 0;
       if (Number.isSafeInteger(duration) && duration >= 1 && duration <= 9e5) {
         continue;
       }
@@ -22654,33 +23398,40 @@ async function settleLawfulCollectorTerminalResult(admitted) {
     }
     return void 0;
   }
-  assertCollectorReceiptMatchesAdmitted(extracted.receipt, admitted);
+  const receipt = validateAcceptedCollectorReceipt(roleOutcome.decisiveFacts);
+  assertCollectorReceiptMatchesAdmitted(receipt, admitted);
+  const accepted = {
+    kind: "accepted",
+    role: "collector",
+    status: roleOutcome.status,
+    decisiveFacts: collectorDecisiveFacts(receipt)
+  };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
-    { collectorReceipt: extracted.receipt }
+    accepted,
+    coordinates,
+    { collectorReceipt: receipt }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleCollectorTerminalResult(admitted) {
-  return settleLawfulCollectorTerminalResult(admitted);
+async function trySettleCollectorTerminalResult(admitted, authority) {
+  return settleLawfulCollectorTerminalResult(admitted, authority);
 }
-async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishDoctorArtifacts(admitted, roleOutcome, coordinates, options = {}) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
-  await writeFile5(
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
+  await writeFile6(
     reportPath,
     `${JSON.stringify(
       {
@@ -22695,7 +23446,7 @@ async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, o
 `,
     "utf8"
   );
-  await writeFile5(
+  await writeFile6(
     evidencePath,
     `${JSON.stringify(
       {
@@ -22704,8 +23455,8 @@ async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, o
         issueNumber: admitted.issueNumber,
         caseRunsPath: admitted.caseRunsPath,
         caseIdentity: admitted.caseIdentity,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -22725,56 +23476,34 @@ async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, o
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractDoctorRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "doctor",
-      DOCTOR_OUTPUT_TOOL_NAME
+async function settleLawfulDoctorTerminalResult(admitted, authority) {
+  const sealed = await sealedLedgerOutcome(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  if (sealed?.role !== "doctor") {
+    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor");
+    if (escalation === void 0) return void 0;
+    const artifacts2 = await publishDoctorArtifacts(admitted, escalation, coordinates);
+    return withOptionalGateProjection(
+      {
+        roleOutcome: escalation,
+        navigator: extractNavigatorFact(entries),
+        artifacts: artifacts2,
+        runId: admitted.runId
+      },
+      sessionDirectory
     );
-    if (escalation !== void 0) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "doctor",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details }
-        }
-      };
-    }
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      const output = validateRecordedDoctorOutput(details);
-      const outcome = {
-        kind: "accepted",
-        role: "doctor",
-        status: output.status,
-        decisiveFacts: doctorDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
   }
-  return void 0;
-}
-async function settleLawfulDoctorTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractDoctorRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
-  if (extracted.output !== void 0 && String(extracted.output.status) === "completed") {
-    const completedCase = extracted.output.case;
+  const output = validateRecordedDoctorOutput(sealed.decisiveFacts);
+  const roleOutcome = {
+    kind: "accepted",
+    role: "doctor",
+    status: sealed.status,
+    decisiveFacts: doctorDecisiveFacts(output)
+  };
+  if (String(output.status) === "completed") {
+    const completedCase = output.case;
     if (completedCase.issueNumber !== admitted.caseIdentity.issueNumber || completedCase.runsPath !== admitted.caseIdentity.runsPath) {
       const error = new Error(
         "Doctor receipt case identity does not match admitted case identity"
@@ -22787,52 +23516,29 @@ async function settleLawfulDoctorTerminalResult(admitted) {
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishDoctorArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
-    extracted.output === void 0 ? {} : { doctorOutput: extracted.output }
+    roleOutcome,
+    coordinates,
+    { doctorOutput: output }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleDoctorTerminalResult(admitted) {
-  return settleLawfulDoctorTerminalResult(admitted);
+async function trySettleDoctorTerminalResult(admitted, authority) {
+  return settleLawfulDoctorTerminalResult(admitted, authority);
 }
-function extractNotaryRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== NOTARY_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const output = validateRecordedNotaryOutput(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "notary",
-        status: String(output.status),
-        decisiveFacts: notaryDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
-async function settleLawfulNotaryTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractNotaryRoleOutcome(entries);
-  if (extracted === void 0) {
+async function settleLawfulNotaryTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "notary") {
     let acceptedNonUsable;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
@@ -22848,7 +23554,7 @@ async function settleLawfulNotaryTerminalResult(admitted) {
           cause: "output",
           diagnostic: residual.diagnostic,
           details: { candidate: residual.candidate, acceptedReceipt: false }
-        });
+        }, authority);
       }
       if (acceptedNonUsable === void 0 && message.toolName === NOTARY_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
         try {
@@ -22863,50 +23569,37 @@ async function settleLawfulNotaryTerminalResult(admitted) {
         cause: "output",
         diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
         details: { candidate: acceptedNonUsable, acceptedReceipt: false }
-      });
+      }, authority);
     }
     return void 0;
   }
+  const output = validateRecordedNotaryOutput(roleOutcome.decisiveFacts);
+  const accepted = {
+    kind: "accepted",
+    role: "notary",
+    status: roleOutcome.status,
+    decisiveFacts: notaryDecisiveFacts(output)
+  };
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts: [],
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-function extractCountersignRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== COUNTERSIGN_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const verdict = validateRecordedCountersignOutput(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "countersign",
-        status: String(verdict.countersignStatus),
-        decisiveFacts: { countersignStatus: String(verdict.countersignStatus) }
-      };
-      return { verdict, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
+async function trySettleNotaryTerminalResult(admitted, authority) {
+  return settleLawfulNotaryTerminalResult(admitted, authority);
 }
-async function settleLawfulCountersignTerminalResult(admitted) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractCountersignRoleOutcome(entries);
-  if (extracted === void 0) {
+async function settleLawfulCountersignTerminalResult(admitted, authority) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "countersign") {
     let acceptedNonUsable;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
@@ -22922,7 +23615,7 @@ async function settleLawfulCountersignTerminalResult(admitted) {
           cause: "output",
           diagnostic: residual.diagnostic,
           details: { candidate: residual.candidate, acceptedReceipt: false }
-        });
+        }, authority);
       }
       if (acceptedNonUsable === void 0 && message.toolName === COUNTERSIGN_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
         try {
@@ -22937,49 +23630,49 @@ async function settleLawfulCountersignTerminalResult(admitted) {
         cause: "output",
         diagnostic: "\u7ED9\u4E8B\u4E2D\u56DE\u6267\u65E0\u663E\u5F0F \u7F72/\u5C01\u9A73/\u4E0A\u5448",
         details: { candidate: acceptedNonUsable, acceptedReceipt: false }
-      });
+      }, authority);
     }
     return void 0;
   }
+  const verdict = validateRecordedCountersignOutput(roleOutcome.decisiveFacts);
+  const accepted = {
+    kind: "accepted",
+    role: "countersign",
+    status: roleOutcome.status,
+    decisiveFacts: { countersignStatus: String(verdict.countersignStatus) }
+  };
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts: [],
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleCountersignTerminalResult(admitted) {
-  return settleLawfulCountersignTerminalResult(admitted);
+async function trySettleCountersignTerminalResult(admitted, authority) {
+  return settleLawfulCountersignTerminalResult(admitted, authority);
 }
-async function trySettleNotaryTerminalResult(admitted) {
-  return settleLawfulNotaryTerminalResult(admitted);
+async function trySettleCoderTerminalResult(admitted, authority, options = {}) {
+  return settleLawfulCoderTerminalResult(admitted, authority, options);
 }
-async function trySettleCoderTerminalResult(admitted, options = {}) {
-  return settleLawfulCoderTerminalResult(admitted, options);
-}
-async function hasLawfulCoderTerminalResult(admitted) {
+async function hasLawfulCoderTerminalResult(admitted, authority) {
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
-    if (entries === void 0) return false;
-    const extracted = extractCoderRoleOutcome(entries);
-    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "coder";
   } catch {
     return false;
   }
 }
-async function trySettleFixerTerminalResult(admitted, options) {
-  return settleLawfulFixerTerminalResult(admitted, options);
+async function trySettleFixerTerminalResult(admitted, authority, options) {
+  return settleLawfulFixerTerminalResult(admitted, authority, options);
 }
-async function hasLawfulFixerTerminalResult(admitted) {
+async function hasLawfulFixerTerminalResult(admitted, authority) {
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
-    if (entries === void 0) return false;
-    const extracted = extractFixerRoleOutcome(entries);
-    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "fixer";
   } catch {
     return false;
   }
@@ -23000,12 +23693,12 @@ function extractReviewerMethodInvocations(entries, options) {
   }
   return Object.freeze(observed);
 }
-async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishReviewerArtifacts(admitted, roleOutcome, coordinates, options) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
-  await writeFile5(
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
+  await writeFile6(
     reportPath,
     `${JSON.stringify(
       {
@@ -23020,14 +23713,14 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
 `,
     "utf8"
   );
-  await writeFile5(
+  await writeFile6(
     evidencePath,
     `${JSON.stringify(
       {
         runId: admitted.runId,
         role: "reviewer",
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
         authorityRefs: [...admitted.authorityRefs],
@@ -23056,37 +23749,19 @@ async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory,
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractReviewerRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      const receipt = validateRuntimeReviewerReceipt(details);
-      const outcome = {
-        kind: "accepted",
-        role: "reviewer",
-        status: receipt.status,
-        decisiveFacts: reviewerDecisiveFacts(receipt)
-      };
-      return { receipt, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return void 0;
-}
-async function settleLawfulReviewerTerminalResult(admitted, options) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractReviewerRoleOutcome(entries);
-  if (extracted === void 0) return void 0;
+async function settleLawfulReviewerTerminalResult(admitted, authority, options) {
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "reviewer") return void 0;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const receipt = validateRuntimeReviewerReceipt(sealed.decisiveFacts);
+  const roleOutcome = {
+    kind: "accepted",
+    role: "reviewer",
+    status: sealed.status,
+    decisiveFacts: reviewerDecisiveFacts(receipt)
+  };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
@@ -23096,33 +23771,31 @@ async function settleLawfulReviewerTerminalResult(admitted, options) {
   });
   const artifacts = await publishReviewerArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
+    roleOutcome,
+    coordinates,
     {
-      ...extracted.receipt === void 0 ? {} : { reviewerReceipt: extracted.receipt },
+      reviewerReceipt: receipt,
       methodProvenance: options.methodProvenance,
       methodInvocations
     }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleReviewerTerminalResult(admitted, options) {
-  return settleLawfulReviewerTerminalResult(admitted, options);
+async function trySettleReviewerTerminalResult(admitted, authority, options) {
+  return settleLawfulReviewerTerminalResult(admitted, authority, options);
 }
-async function hasLawfulReviewerTerminalResult(admitted) {
+async function hasLawfulReviewerTerminalResult(admitted, authority) {
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
-    if (entries === void 0) return false;
-    const extracted = extractReviewerRoleOutcome(entries);
-    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "reviewer";
   } catch {
     return false;
   }
@@ -23156,12 +23829,12 @@ function extractMergerMethodInvocations(entries, options) {
   }
   return Object.freeze(observed);
 }
-async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+async function publishMergerArtifacts(admitted, roleOutcome, coordinates, options) {
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join13(artifactsDir, "report.json");
-  const evidencePath = join13(artifactsDir, "evidence.json");
-  await writeFile5(
+  const reportPath = join17(artifactsDir, "report.json");
+  const evidencePath = join17(artifactsDir, "evidence.json");
+  await writeFile6(
     reportPath,
     `${JSON.stringify(
       {
@@ -23176,14 +23849,14 @@ async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, o
 `,
     "utf8"
   );
-  await writeFile5(
+  await writeFile6(
     evidencePath,
     `${JSON.stringify(
       {
         runId: admitted.runId,
         role: "merger",
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         mergerInputPath: admitted.mergerInputPath,
         derived: admitted.derived,
@@ -23208,46 +23881,27 @@ async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, o
     { kind: "evidence", path: evidencePath }
   ];
 }
-function extractMergerRoleOutcome(entries) {
-  if (!isReceiptSettlementBindingClear(entries)) return void 0;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const output = validateMergerOutput(message.details);
-      const outcome = {
-        kind: "accepted",
-        role: "merger",
-        status: output.status,
-        decisiveFacts: mergerDecisiveFacts(output)
-      };
-      return { output, outcome };
-    } catch {
-      continue;
+async function settleLawfulMergerTerminalResult(admitted, authority, options) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "merger") {
+    const latestOutcome = await readLatestSubmissionOutcome(
+      admitted.projectRoot,
+      admitted.runId,
+      sealedLedgerHome(admitted)
+    );
+    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "non-sole-round") {
+      return void 0;
     }
-  }
-  return void 0;
-}
-async function settleLawfulMergerTerminalResult(admitted, options) {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === void 0) return void 0;
-  const extracted = extractMergerRoleOutcome(entries);
-  if (extracted === void 0) {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === void 0) continue;
-      const callMessage = entries[residual.callIndex]?.message;
-      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content) ? callMessage.content.filter((part) => isRecord8(part) && part.type === "toolCall") : [];
-      const attemptId = isRecord8(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
-      if (calls.length !== 1 || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME || !attemptId.readable || attemptId.value !== admitted.runId) {
-        continue;
-      }
+      const attemptId = isRecord11(residual.candidate) ? safelyRead(residual.candidate, "attemptId") : { readable: true, value: void 0 };
+      if (!attemptId.readable || attemptId.value !== admitted.runId) continue;
       try {
         validateMergerOutput(residual.candidate, admitted.runId);
       } catch {
@@ -23265,6 +23919,13 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
     }
     return void 0;
   }
+  const output = validateMergerOutput(roleOutcome.decisiveFacts, admitted.runId);
+  const accepted = {
+    kind: "accepted",
+    role: "merger",
+    status: roleOutcome.status,
+    decisiveFacts: mergerDecisiveFacts(output)
+  };
   const methodInvocations = extractMergerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -23275,33 +23936,31 @@ async function settleLawfulMergerTerminalResult(admitted, options) {
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishMergerArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
+    accepted,
+    coordinates,
     {
-      mergerOutput: extracted.output,
+      mergerOutput: output,
       methodProvenance: options.methodProvenance,
       methodInvocations
     }
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
 }
-async function trySettleMergerTerminalResult(admitted, options) {
-  return settleLawfulMergerTerminalResult(admitted, options);
+async function trySettleMergerTerminalResult(admitted, authority, options) {
+  return settleLawfulMergerTerminalResult(admitted, authority, options);
 }
-async function hasLawfulMergerTerminalResult(admitted) {
+async function hasLawfulMergerTerminalResult(admitted, authority) {
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
-    if (entries === void 0) return false;
-    const extracted = extractMergerRoleOutcome(entries);
-    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "merger";
   } catch {
     return false;
   }
@@ -23325,13 +23984,13 @@ function publicationAttemptFromError(path, error) {
 }
 function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   const dirs = [];
-  for (const dir of [baseDir, runDirectory, dirname7(runDirectory)]) {
+  for (const dir of [baseDir, runDirectory, dirname9(runDirectory)]) {
     if (!dirs.includes(dir)) dirs.push(dir);
   }
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join13(runDirectory, "artifacts");
+  const artifactsDir = join17(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -23347,13 +24006,13 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join13(dir, `${stem}.${randomUUID()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join17(dir, `${stem}.${randomUUID3()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
     const payload = issues.length === 0 ? basePayload : { ...basePayload, publicationIssues: issues };
     try {
-      await writeFile5(
+      await writeFile6(
         path,
         `${JSON.stringify(payload, null, 2)}
 `,
@@ -23377,40 +24036,41 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   error.publicationAttempts = issues;
   throw error;
 }
-async function publishFailureArtifacts(admitted, failure) {
+async function publishFailureArtifacts(admitted, failure, authority) {
+  const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
   try {
-    await appendRunAttemptHistory(admitted, {
+    await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile }, {
       kind: "failure",
       role: admitted.role,
       ...failure
     });
   } catch (error) {
-    priorIssues.push(publicationAttemptFromError(admitted.sessionFile, error));
+    priorIssues.push(publicationAttemptFromError(sessionFile, error));
   }
-  const underArtifacts = baseDir === join13(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join17(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join13(baseDir, "error.json"),
-    join13(baseDir, "error.settlement.json"),
-    join13(admitted.runDirectory, "error.settlement.json")
+    join17(baseDir, "error.json"),
+    join17(baseDir, "error.settlement.json"),
+    join17(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join13(baseDir, "error.settlement.json"),
-    join13(baseDir, "error.json")
+    join17(baseDir, "error.settlement.json"),
+    join17(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join13(baseDir, "evidence.json"),
-    join13(baseDir, "evidence.settlement.json"),
-    join13(admitted.runDirectory, "evidence.settlement.json")
+    join17(baseDir, "evidence.json"),
+    join17(baseDir, "evidence.settlement.json"),
+    join17(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join13(baseDir, "evidence.settlement.json"),
-    join13(baseDir, "evidence.json")
+    join17(baseDir, "evidence.settlement.json"),
+    join17(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -23430,8 +24090,8 @@ async function publishFailureArtifacts(admitted, failure) {
   );
   const evidencePayload = {
     runId: admitted.runId,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
+    sessionDirectory,
+    sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     attachments: admitted.attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -23493,9 +24153,11 @@ function redactNavigatorFactForPublicTerminal(navigator, runId) {
   }
   return { ...navigator, ...advisoryDiagnostic };
 }
-async function settleFailureTerminalResult(admitted, failure, options = {}) {
+async function settleFailureTerminalResult(admitted, failure, authority, options = {}) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   if (failure.cause === "output") {
-    const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => void 0);
+    const entries = await readBoundSessionEntries(sessionFile).catch(() => void 0);
     if (entries !== void 0) {
       let attemptStart = 0;
       for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -23514,11 +24176,11 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
             return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts: decisiveFacts2 },
-                navigator: await extractNavigatorFactFromAdmittedSession(admitted),
+                navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
                 artifacts: [],
                 runId: admitted.runId
               },
-              admitted.sessionDirectory
+              sessionDirectory
             );
           }
         } catch {
@@ -23526,8 +24188,8 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       }
     }
   }
-  const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
-  const artifacts = await publishFailureArtifacts(admitted, failure);
+  const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
+  const artifacts = await publishFailureArtifacts(admitted, failure, authority);
   const decisiveFacts = {
     cause: failure.cause,
     diagnostic: failure.diagnostic
@@ -23561,7 +24223,7 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
         artifacts: [],
         resume: options.resume
       },
-      admitted.sessionDirectory
+      sessionDirectory
     );
   }
   const roleOutcome = {
@@ -23578,11 +24240,8 @@ async function settleFailureTerminalResult(admitted, failure, options = {}) {
       artifacts,
       runId: admitted.runId
     },
-    admitted.sessionDirectory
+    sessionDirectory
   );
-}
-async function settleJudgeFailureTerminalResult(admitted, failure, options = {}) {
-  return settleFailureTerminalResult(admitted, failure, options);
 }
 function presentFailureTerminal(terminal, io) {
   if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
@@ -23601,11 +24260,14 @@ var init_settlement = __esm({
   "src/public-cli/settlement.ts"() {
     "use strict";
     init_analyst_gate_cycles_read();
+    init_sitian_facade();
+    init_submission_ledger();
     init_audit_escalation();
     init_auditor_soul();
     init_doctor_auditor();
     init_judge_auditor();
-    init_explicit_internal();
+    init_known_failure();
+    init_reviewer_dispatch_rejection();
     init_run_lifecycle();
     init_compliance_transport();
     init_collector_ledger();
@@ -23644,11 +24306,77 @@ var init_settlement = __esm({
   }
 });
 
+// src/public-cli/turn-request.ts
+function resolveResumeModel(explicitModel, admittedModel) {
+  return explicitModel ?? admittedModel;
+}
+function projectRoleTurnRequest(admitted, roleDetails, options) {
+  const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
+  if (cwd === void 0) throw new Error("admitted invocation missing working directory");
+  if (admitted.principal === void 0) throw new Error("admitted invocation missing principal");
+  const effectiveModel = resolveResumeModel(options.model, admitted.model);
+  return {
+    principal: admitted.principal,
+    activation: roleDetails.activation,
+    methods: roleDetails.methods ?? [],
+    continuation: options.continuation,
+    ...effectiveModel === void 0 ? {} : { model: effectiveModel },
+    ...options.engine === void 0 ? {} : { engine: options.engine },
+    cwd,
+    home: options.home,
+    agentDir: options.agentDir,
+    runDirectory: admitted.runDirectory,
+    ...options.correlationId === void 0 || options.correlationId.trim() === "" ? {} : { correlationId: options.correlationId },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs }
+  };
+}
+var init_turn_request = __esm({
+  "src/public-cli/turn-request.ts"() {
+    "use strict";
+  }
+});
+
+// src/public-cli/public-run-credentials.ts
+function knownFailureForMissingProviderCredential(model, credentials) {
+  if (model === void 0 || credentials === void 0) return void 0;
+  if (model.provider !== "openai-codex" && model.provider !== "xai") return void 0;
+  if (!missingPublicProviderCredential(model.provider, credentials)) {
+    return void 0;
+  }
+  return {
+    cause: "provider",
+    identity: {
+      name: "MissingProviderCredential",
+      code: model.provider
+    }
+  };
+}
+function missingCredentialPreDispatchFailure(model, credentials) {
+  const knownFailure = knownFailureForMissingProviderCredential(model, credentials);
+  if (knownFailure === void 0) return void 0;
+  return {
+    timedOut: false,
+    code: 1,
+    stderr: `Missing credential for provider ${String(knownFailure.identity?.code ?? "unknown")}`,
+    knownFailure
+  };
+}
+function postRunMissingCredentialFailure(result2, model, credentials) {
+  if (!(result2.timedOut || result2.code !== 0)) return void 0;
+  return knownFailureForMissingProviderCredential(model, credentials);
+}
+var init_public_run_credentials = __esm({
+  "src/public-cli/public-run-credentials.ts"() {
+    "use strict";
+    init_config2();
+  }
+});
+
 // src/public-cli/auto-resume.ts
 import { constants as fsConstants } from "node:fs";
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { appendFile as appendFile2, lstat as lstat5, mkdir as mkdir4, open as open2, readFile as readFile11 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { randomUUID as randomUUID4 } from "node:crypto";
+import { lstat as lstat5, mkdir as mkdir4, open as open2 } from "node:fs/promises";
+import { join as join18 } from "node:path";
 function presentTerminal(terminal, io) {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
     presentFailureTerminal(terminal, io);
@@ -23667,7 +24395,7 @@ async function finalizeExceptionRunBestEffort(runDirectory, io) {
   }
 }
 function runArtifactsDirectory(runDirectory) {
-  return join14(runDirectory, "artifacts");
+  return join18(runDirectory, "artifacts");
 }
 async function ensureRealArtifactsDirectory(runDirectory) {
   const runStat = await lstat5(runDirectory);
@@ -23681,7 +24409,7 @@ async function ensureRealArtifactsDirectory(runDirectory) {
       throw new Error("dispatch error retention: artifacts path is not a real directory");
     }
   } catch (error) {
-    if (!isMissingPathError3(error)) throw error;
+    if (!isMissingPathError4(error)) throw error;
     await mkdir4(artifactsDir, { recursive: true });
     const created = await lstat5(artifactsDir);
     if (created.isSymbolicLink() || !created.isDirectory()) {
@@ -23713,7 +24441,7 @@ function serializeThrownValue(value, depth = 0, seen = /* @__PURE__ */ new WeakS
   }
   return value;
 }
-function isMissingPathError3(error) {
+function isMissingPathError4(error) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 function transferNestedValue(value, depth, seen) {
@@ -23748,11 +24476,11 @@ function jsonSafeReplacer() {
     return value;
   };
 }
-async function retainDispatchError(admitted, attempt, error) {
+async function retainDispatchError(admitted, principalAuthority, sessionAppender, attempt, error) {
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-  const filePath = join14(
+  const filePath = join18(
     artifactsDir,
-    `dispatch-error-attempt-${attempt}-${randomUUID2()}.json`
+    `dispatch-error-attempt-${attempt}-${randomUUID4()}.json`
   );
   const payload = `${JSON.stringify(
     {
@@ -23785,23 +24513,13 @@ async function retainDispatchError(admitted, attempt, error) {
   }
   let pointerError;
   try {
-    const text = await readFile11(admitted.sessionFile, "utf8");
-    let parentId = null;
-    for (const line2 of text.trim().split("\n").filter(Boolean)) {
-      const entry = JSON.parse(line2);
-      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
-    }
     const timestamp2 = (/* @__PURE__ */ new Date()).toISOString();
-    const pointerLine = `${JSON.stringify({
-      type: "custom",
-      customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
-      data: { version: 1, attempt, file: filePath, recordedAt: timestamp2 },
-      id: randomUUID2(),
-      parentId,
-      timestamp: timestamp2
-    })}
-`;
-    await appendFile2(admitted.sessionFile, pointerLine, "utf8");
+    await sessionAppender(
+      principalAuthority,
+      admitted.principal,
+      DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
+      { version: 1, attempt, file: filePath, recordedAt: timestamp2 }
+    );
   } catch (error2) {
     pointerError = error2;
   } finally {
@@ -23849,7 +24567,7 @@ async function runWithAutoResumeLoop(options) {
   parseAutoResumeLimit(limit);
   let autoResumeAttempts = 0;
   let isFirst = true;
-  let currentExtraArgs = options.buildInitialArgs();
+  let currentPayload = options.buildInitialPayload();
   let dispatchOrdinal = 0;
   let lastThrownError;
   let everyAttemptThrew = true;
@@ -23870,12 +24588,18 @@ async function runWithAutoResumeLoop(options) {
     }
     let result2;
     try {
-      result2 = await options.dispatch(currentExtraArgs, lease, isFirst, dummyIo);
+      result2 = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
     } catch (error) {
       lastThrownError = error;
       const attempt = dispatchOrdinal;
       try {
-        const { file, pointerError } = await retainDispatchError(options.admitted, attempt, error);
+        const { file, pointerError } = await retainDispatchError(
+          options.admitted,
+          options.principalAuthority,
+          options.sessionAppender,
+          attempt,
+          error
+        );
         retainedErrorFiles.push(file);
         options.io.stderr(
           `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}
@@ -23912,7 +24636,7 @@ async function runWithAutoResumeLoop(options) {
         if (terminal !== void 0) presentTerminal(terminal, options.io);
         return result2;
       }
-      if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+      if (!await options.principalAuthority.isAvailable(options.admitted.principal)) {
         if (terminal !== void 0) presentTerminal(terminal, options.io);
         return result2;
       }
@@ -23934,7 +24658,7 @@ async function runWithAutoResumeLoop(options) {
           terminal
         };
       }
-      if (!await isSessionPrincipalAvailable(options.admitted.sessionFile)) {
+      if (!await options.principalAuthority.isAvailable(options.admitted.principal)) {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,
@@ -23953,7 +24677,7 @@ async function runWithAutoResumeLoop(options) {
       }
     }
     autoResumeAttempts++;
-    currentExtraArgs = options.buildResumeArgs();
+    currentPayload = options.buildResumePayload();
     isFirst = false;
   }
 }
@@ -23972,70 +24696,10 @@ var init_auto_resume = __esm({
   }
 });
 
-// src/public-cli/coder-run.ts
-import { writeFile as writeFile6 } from "node:fs/promises";
-import { join as join15 } from "node:path";
-function buildCoderActivationExtraArgs(admitted, options) {
-  const prompt = buildCoderTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  const skillArgs = admitted.phase === "apply" ? [
-    "--skill",
-    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
-  ] : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
-}
-function buildCoderResumeActivationExtraArgs(admitted, options) {
-  const skillArgs = admitted.phase === "apply" ? [
-    "--skill",
-    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
-  ] : [];
-  return [
-    "--no-skills",
-    ...skillArgs,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "coder",
-    "--ak-coder-phase",
-    admitted.phase,
-    "--ak-coder-task",
-    admitted.taskPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
-}
-async function presentControlledFailure2(admitted, failureInput, io) {
+// src/public-cli/post-admission.ts
+import { writeFile as writeFile7 } from "node:fs/promises";
+import { join as join19 } from "node:path";
+async function presentControlledFailure2(admitted, failureInput, adapters, authority, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
@@ -24045,7 +24709,7 @@ async function presentControlledFailure2(admitted, failureInput, io) {
     } : {}
   });
   const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 && admitted.principal !== void 0 ? await inspectJudgeSession(authority.decode(admitted.principal).sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -24057,23 +24721,25 @@ async function presentControlledFailure2(admitted, failureInput, io) {
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
-  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
+  let resumable = false;
   const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile
-  );
-  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
-    hasLawfulTerminalResult,
-    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
-  });
+  if (adapters.isResumableRole === true && admitted.principal !== void 0) {
+    const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
+    const hasLawful = adapters.hasLawfulTerminalResult !== void 0 ? await adapters.hasLawfulTerminalResult(admitted, authority) : false;
+    resumable = sessionPrincipalAvailable && isV1ResumableFailure({
+      hasLawfulTerminalResult: hasLawful,
+      ...typedHttp429 === void 0 ? {} : { typedHttp429 }
+    });
+  }
   if (resumable && typedHttp429 !== void 0) {
     await markRunResumable(admitted.runDirectory, typedHttp429);
   } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+    await markRunTerminal(admitted.runDirectory);
   }
   const terminal = await settleFailureTerminalResult(
     admitted,
     failure,
+    authority,
     resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
   );
   presentFailureTerminal(terminal, io);
@@ -24083,8 +24749,16 @@ async function presentControlledFailure2(admitted, failureInput, io) {
     terminal
   };
 }
-async function dispatchAdmittedCoder(input) {
-  const { admitted, env, io, extraArgs, lease, methodProvenance, effectiveEngine } = input;
+function presentSecondaryTerminal(terminal, io) {
+  if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
+    presentFailureTerminal(terminal, io);
+  } else {
+    io.stdout(formatTerminalResult(terminal));
+  }
+}
+async function dispatchPostAdmissionTurn(input) {
+  const { admitted, env, io, request, lease, adapters, effectiveEngine } = input;
+  const shouldPresent = adapters.shouldPresentSettled ?? ((terminal) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -24094,34 +24768,19 @@ async function dispatchAdmittedCoder(input) {
       return await presentControlledFailure2(
         admitted,
         missingCredential,
+        adapters,
+        env.principalAuthority,
         io
       );
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
+    if (adapters.beforeDispatch !== void 0) {
+      await adapters.beforeDispatch(admitted);
     }
     let result2;
     try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
+      result2 = await env.roleTurnHost.executeTurn(request);
     } catch (error) {
       return await presentControlledFailure2(
         admitted,
@@ -24131,22 +24790,22 @@ async function dispatchAdmittedCoder(input) {
           stderr: "",
           thrown: error
         },
+        adapters,
+        env.principalAuthority,
         io
       );
     }
     try {
-      await writeFile6(
-        join15(admitted.runDirectory, "stderr.log"),
+      await writeFile7(
+        join19(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
     } catch {
     }
-    let lawful;
+    let settled;
     try {
-      lawful = await trySettleCoderTerminalResult(admitted, {
-        ...methodProvenance === void 0 ? {} : { methodProvenance }
-      });
+      settled = await adapters.trySettle(admitted, env.principalAuthority);
     } catch (error) {
       return await presentControlledFailure2(
         admitted,
@@ -24156,26 +24815,42 @@ async function dispatchAdmittedCoder(input) {
           stderr: result2.stderr,
           thrown: error
         },
+        adapters,
+        env.principalAuthority,
         io
       );
     }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
+    if (settled !== void 0 && shouldPresent(settled)) {
+      await markRunTerminal(admitted.runDirectory);
+      io.stdout(formatTerminalResult(settled));
       return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
         admitted,
-        terminal: lawful
+        terminal: settled
       };
     }
+    if (adapters.trySettleSecondary !== void 0) {
+      const secondary = await adapters.trySettleSecondary(admitted, env.principalAuthority);
+      if (secondary !== void 0) {
+        await markRunTerminal(admitted.runDirectory);
+        presentSecondaryTerminal(secondary, io);
+        return {
+          exitCode: exitCodeForTerminalOutcome(secondary.roleOutcome),
+          admitted,
+          terminal: secondary
+        };
+      }
+    }
+    const sessionFile = admitted.principal !== void 0 ? env.principalAuthority.decode(admitted.principal).sessionFile : "";
+    const runnerKnownFailure = adapters.resolveRunnerKnownFailure !== void 0 && sessionFile !== "" ? await adapters.resolveRunnerKnownFailure({ result: result2, sessionFile }) : result2.knownFailure;
     const credentialFailure = postRunMissingCredentialFailure(
       result2,
       env.model,
       env.credentials
     );
     const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
+      runner: runnerKnownFailure,
+      sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory
     });
@@ -24187,11 +24862,131 @@ async function dispatchAdmittedCoder(input) {
         stderr: result2.stderr,
         ...controlledFailureInputFromResolution(resolution)
       },
+      adapters,
+      env.principalAuthority,
       io
     );
   } finally {
     await lease.release();
   }
+}
+async function runPostAdmissionOneShot(input) {
+  const { admitted, env, io, request, adapters, effectiveEngine } = input;
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(
+      admitted.runDirectory,
+      (diagnostic) => io.stderr(diagnostic)
+    );
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2, admitted };
+    }
+    throw error;
+  }
+  return await dispatchPostAdmissionTurn({
+    admitted,
+    env,
+    io,
+    request,
+    lease,
+    adapters,
+    ...effectiveEngine === void 0 ? {} : { effectiveEngine }
+  });
+}
+async function runPostAdmissionResumable(input) {
+  const { admitted, env, io, buildInitialRequest, buildResumeRequest, adapters, effectiveEngine } = input;
+  return runWithAutoResumeLoop({
+    admitted,
+    principalAuthority: env.principalAuthority,
+    io,
+    sessionAppender: env.sessionAppender,
+    autoResumeLimit: env.autoResumeLimit,
+    buildInitialPayload: buildInitialRequest,
+    buildResumePayload: buildResumeRequest,
+    dispatch: (request, lease, isFirst, attemptIo) => dispatchPostAdmissionTurn({
+      admitted,
+      env: {
+        ...env,
+        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+      },
+      io: attemptIo,
+      request,
+      lease,
+      adapters,
+      ...isFirst && effectiveEngine !== void 0 ? { effectiveEngine } : {}
+    })
+  });
+}
+async function runPostAdmissionManualResume(input) {
+  const { admitted, env, io, request, adapters } = input;
+  const effectiveModel = resolveResumeModel(env.model, admitted.model);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+  const result2 = await dispatchPostAdmissionTurn({
+    admitted,
+    env: {
+      ...env,
+      ...effectiveModel === void 0 ? {} : { model: effectiveModel },
+      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
+    },
+    io,
+    request,
+    lease,
+    adapters
+  });
+  if (result2.terminal !== void 0) {
+    result2.terminal.autoResumeCount = 0;
+  }
+  return result2;
+}
+var init_post_admission = __esm({
+  "src/public-cli/post-admission.ts"() {
+    "use strict";
+    init_turn_request();
+    init_public_run_credentials();
+    init_run_lifecycle();
+    init_settlement();
+    init_terminal();
+    init_auto_resume();
+  }
+});
+
+// src/public-cli/coder-run.ts
+function coderMethods(phase, packageRoot2) {
+  return phase === "apply" ? [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "tdd") }] : [];
+}
+function buildCoderTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
+    admitted,
+    {
+      activation: {
+        role: "coder",
+        phase: admitted.phase,
+        taskPath: admitted.taskPath
+      },
+      methods: coderMethods(admitted.phase, options.packageRoot)
+    },
+    options
+  );
+}
+function coderAdapters(methodProvenance) {
+  return {
+    trySettle: (admitted, authority) => trySettleCoderTerminalResult(admitted, authority, {
+      ...methodProvenance === void 0 ? {} : { methodProvenance }
+    }),
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulCoderTerminalResult(admitted, authority),
+    isResumableRole: true
+  };
 }
 async function runPublicCoder(argv, env, io, parseCoderArgv2) {
   let admitted;
@@ -24199,6 +24994,7 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     const parsed = parseCoderArgv2(argv);
     admitted = await admitCoderInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -24214,7 +25010,7 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let methodProvenance;
   if (admitted.phase === "apply") {
     try {
@@ -24233,44 +25029,56 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
           thrown: error,
           knownCause: "activation"
         },
+        coderAdapters(),
+        env.principalAuthority,
         io
       );
     }
   }
-  return runWithAutoResumeLoop({
+  return await runPostAdmissionResumable({
     admitted,
+    env,
     io,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildCoderActivationExtraArgs(admitted, {
+    buildInitialRequest: () => buildCoderTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "initial",
+        prompt: buildCoderTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
     }),
-    buildResumeArgs: () => buildCoderResumeActivationExtraArgs(admitted, {
+    buildResumeRequest: () => buildCoderTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedCoder({
-      admitted,
-      env: {
-        ...env,
-        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-      },
-      io: attemptIo,
-      extraArgs,
-      lease,
-      ...methodProvenance === void 0 ? {} : { methodProvenance },
-      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
-    })
+    adapters: coderAdapters(methodProvenance),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicCoderResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableCoderRun(env.home, request.runId);
+    loaded = await loadResumableCoderRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -24279,16 +25087,6 @@ async function runPublicCoderResume(request, env, io) {
     throw error;
   }
   const { admitted } = loaded;
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
   let methodProvenance;
   if (admitted.phase === "apply") {
     try {
@@ -24298,7 +25096,6 @@ async function runPublicCoderResume(request, env, io) {
       );
       methodProvenance = material.provenance;
     } catch (error) {
-      await lease.release();
       return await presentControlledFailure2(
         admitted,
         {
@@ -24308,217 +25105,61 @@ async function runPublicCoderResume(request, env, io) {
           thrown: error,
           knownCause: "activation"
         },
+        coderAdapters(),
+        env.principalAuthority,
         io
       );
     }
   }
-  const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
+  const turnRequest = buildCoderTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
-  const result2 = await dispatchAdmittedCoder({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
+    env,
     io,
-    extraArgs,
-    lease,
-    ...methodProvenance === void 0 ? {} : { methodProvenance }
+    request: turnRequest,
+    adapters: coderAdapters(methodProvenance)
   });
-  if (result2.terminal !== void 0) {
-    result2.terminal.autoResumeCount = 0;
-  }
-  return result2;
 }
 var init_coder_run = __esm({
   "src/public-cli/coder-run.ts"() {
     "use strict";
-    init_engine_detour();
     init_engine_material();
     init_method_skill();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_public_run_credentials();
     init_run_lifecycle();
-    init_auto_resume();
     init_settlement();
+    init_turn_request();
+    init_post_admission();
   }
 });
 
 // src/public-cli/collector-run.ts
-import { writeFile as writeFile7 } from "node:fs/promises";
-import { join as join16 } from "node:path";
-function buildCollectorActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildCollectorTransportPrompt(
+function buildCollectorTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options)
+    {
+      activation: {
+        role: "collector",
+        repo: admitted.repository.display,
+        pr: String(admitted.prNumber),
+        ...admitted.requestManifestPath === void 0 ? {} : { requestManifestPath: admitted.requestManifestPath }
+      }
+    },
+    options
   );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "collector",
-    "--ak-collector-repo",
-    admitted.repository.display,
-    "--ak-collector-pr",
-    String(admitted.prNumber),
-    ...admitted.requestManifestPath === void 0 ? [] : ["--ak-collector-request-manifest", admitted.requestManifestPath],
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
-}
-async function presentControlledFailure3(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
-    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
-    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
-    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
-    ...session === void 0 ? {} : { session }
-  });
-  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(admitted, failure);
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedCollector(input) {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials
-    );
-    if (missingCredential !== void 0) {
-      return await presentControlledFailure3(
-        admitted,
-        missingCredential,
-        io
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure3(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile7(
-        join16(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleCollectorTerminalResult(admitted);
-    } catch (error) {
-      return await presentControlledFailure3(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const infrastructureFailure = await readCollectorInfrastructureFailure(
-      admitted.sessionFile
-    );
-    const credentialFailure = postRunMissingCredentialFailure(
-      result2,
-      env.model,
-      env.credentials
-    );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
-      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
-        cause: infrastructureFailure.cause,
-        diagnostic: infrastructureFailure.diagnostic,
-        ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
-      }),
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory
-    });
-    return await presentControlledFailure3(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
 }
 async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
   let admitted;
@@ -24526,6 +25167,7 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
     const parsed = parseCollectorArgv2(argv);
     admitted = await admitCollectorInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       prNumber: parsed.prNumber,
       instruction: parsed.instruction,
@@ -24543,256 +25185,62 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  const extraArgs = buildCollectorActivationExtraArgs(admitted, {
+  await markRunAdmitted(admitted, env.principalAuthority);
+  const turnRequest = buildCollectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "initial",
+      prompt: buildCollectorTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...env.engine === void 0 ? {} : { engine: env.engine }, packageRoot: env.packageRoot }))
+    }
   });
-  return await dispatchAdmittedCollector({
+  return await runPostAdmissionOneShot({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
+    env,
     io,
-    extraArgs,
-    lease,
+    request: turnRequest,
+    adapters: {
+      trySettle: (admitted2, authority) => trySettleCollectorTerminalResult(admitted2, authority),
+      shouldPresentSettled: () => true,
+      resolveRunnerKnownFailure: async ({ result: result2, sessionFile }) => {
+        const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
+        return result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+          cause: infrastructureFailure.cause,
+          diagnostic: infrastructureFailure.diagnostic,
+          ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+        });
+      }
+    },
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_collector_run = __esm({
   "src/public-cli/collector-run.ts"() {
     "use strict";
-    init_engine_detour();
     init_engine_material();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_public_run_credentials();
+    init_post_admission();
     init_run_lifecycle();
     init_settlement();
-  }
-});
-
-// src/public-cli/one-shot-dispatch.ts
-import { writeFile as writeFile8 } from "node:fs/promises";
-import { join as join17 } from "node:path";
-async function presentControlledFailure4(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(failureInput.knownFailure),
-    ...session === void 0 ? {} : { session }
-  });
-  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  const terminal = await settleFailureTerminalResult(admitted, failure);
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-function presentSecondaryTerminal(terminal, io) {
-  if (terminal.roleOutcome.kind === "failure") {
-    presentFailureTerminal(terminal, io);
-  } else {
-    io.stdout(formatTerminalResult(terminal));
-  }
-}
-async function dispatchAdmittedOneShotRole(input) {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine, adapters } = input;
-  const shouldPresent = adapters.shouldPresentSettled ?? ((_terminal) => true);
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials
-    );
-    if (missingCredential !== void 0) {
-      return await presentControlledFailure4(admitted, missingCredential, io);
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = env.correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure4(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile8(
-        join17(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let settled;
-    try {
-      settled = await adapters.trySettle(admitted);
-    } catch (error) {
-      return await presentControlledFailure4(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (settled !== void 0 && shouldPresent(settled)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(settled));
-      return {
-        exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
-        admitted,
-        terminal: settled
-      };
-    }
-    if (adapters.trySettleSecondary !== void 0) {
-      const secondary = await adapters.trySettleSecondary(admitted);
-      if (secondary !== void 0) {
-        await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-        presentSecondaryTerminal(secondary, io);
-        return {
-          exitCode: exitCodeForTerminalOutcome(secondary.roleOutcome),
-          admitted,
-          terminal: secondary
-        };
-      }
-    }
-    const credentialFailure = postRunMissingCredentialFailure(
-      result2,
-      env.model,
-      env.credentials
-    );
-    const knownFailure = await resolveAuditedRunnerKnownFailure({
-      runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory
-    });
-    return await presentControlledFailure4(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...knownFailure === void 0 ? {} : { knownFailure }
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
-}
-async function runAdmittedOneShotRole(input) {
-  const { admitted, env, io, extraArgs, adapters, effectiveEngine } = input;
-  await markRunAdmitted(admitted);
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(
-      admitted.runDirectory,
-      (diagnostic) => io.stderr(diagnostic)
-    );
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2, admitted };
-    }
-    throw error;
-  }
-  return await dispatchAdmittedOneShotRole({
-    admitted,
-    env,
-    io,
-    extraArgs,
-    lease,
-    adapters,
-    ...effectiveEngine === void 0 ? {} : { effectiveEngine }
-  });
-}
-var init_one_shot_dispatch = __esm({
-  "src/public-cli/one-shot-dispatch.ts"() {
-    "use strict";
-    init_engine_detour();
-    init_explicit_internal();
-    init_public_run_credentials();
-    init_run_lifecycle();
-    init_settlement();
+    init_turn_request();
   }
 });
 
 // src/public-cli/countersign-run.ts
-function buildCountersignActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildCountersignTransportPrompt(
+function buildCountersignTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options)
+    {
+      activation: { role: "countersign" }
+    },
+    options
   );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "countersign",
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
 }
 async function runPublicCountersign(argv, env, io, parseCountersignArgv2) {
   let admitted;
@@ -24800,6 +25248,7 @@ async function runPublicCountersign(argv, env, io, parseCountersignArgv2) {
     const parsed = parseCountersignArgv2(argv);
     admitted = await admitCountersignInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -24815,19 +25264,33 @@ async function runPublicCountersign(argv, env, io, parseCountersignArgv2) {
     }
     throw error;
   }
-  const extraArgs = buildCountersignActivationExtraArgs(admitted, {
+  await markRunAdmitted(admitted, env.principalAuthority);
+  const turnRequest = buildCountersignTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...env.correlationId === void 0 || env.correlationId.trim() === "" ? {} : { correlationId: env.correlationId },
+    continuation: {
+      kind: "initial",
+      prompt: buildCountersignTransportPrompt(
+        admitted,
+        engineSessionMaterialFromOptions({
+          ...env.engine === void 0 ? {} : { engine: env.engine },
+          packageRoot: env.packageRoot
+        })
+      )
+    }
   });
-  return await runAdmittedOneShotRole({
+  return await runPostAdmissionOneShot({
     admitted,
     env,
     io,
-    extraArgs,
+    request: turnRequest,
     adapters: {
-      trySettle: trySettleCountersignTerminalResult,
+      trySettle: (admitted2, authority) => trySettleCountersignTerminalResult(admitted2, authority),
       // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true
     },
@@ -24840,37 +25303,22 @@ var init_countersign_run = __esm({
     init_engine_material();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_one_shot_dispatch();
+    init_post_admission();
+    init_run_lifecycle();
     init_settlement();
+    init_turn_request();
   }
 });
 
 // src/public-cli/doctor-run.ts
-function buildDoctorActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildDoctorTransportPrompt(
+function buildDoctorTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options)
+    {
+      activation: { role: "doctor", casePath: admitted.caseRunsPath }
+    },
+    options
   );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "doctor",
-    "--ak-doctor-case",
-    admitted.caseRunsPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
 }
 async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
   let admitted;
@@ -24878,6 +25326,7 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     const parsed = parseDoctorArgv2(argv);
     admitted = await admitDoctorInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       issueNumber: parsed.issueNumber,
       instruction: parsed.instruction,
@@ -24894,19 +25343,27 @@ async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
     }
     throw error;
   }
-  const extraArgs = buildDoctorActivationExtraArgs(admitted, {
+  await markRunAdmitted(admitted, env.principalAuthority);
+  const turnRequest = buildDoctorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...env.correlationId === void 0 || env.correlationId.trim() === "" ? {} : { correlationId: env.correlationId },
+    continuation: {
+      kind: "initial",
+      prompt: buildDoctorTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...env.engine === void 0 ? {} : { engine: env.engine }, packageRoot: env.packageRoot }))
+    }
   });
-  return await runAdmittedOneShotRole({
+  return await runPostAdmissionOneShot({
     admitted,
     env,
     io,
-    extraArgs,
+    request: turnRequest,
     adapters: {
-      trySettle: trySettleDoctorTerminalResult,
+      trySettle: (admitted2, authority) => trySettleDoctorTerminalResult(admitted2, authority),
       shouldPresentSettled: (terminal) => isLawfulTypedTerminalOutcome(terminal.roleOutcome)
     },
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
@@ -24918,247 +25375,49 @@ var init_doctor_run = __esm({
     init_engine_material();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_one_shot_dispatch();
+    init_post_admission();
+    init_run_lifecycle();
     init_settlement();
     init_terminal();
+    init_turn_request();
   }
 });
 
 // src/public-cli/fixer-run.ts
-import { writeFile as writeFile9 } from "node:fs/promises";
-import { join as join18 } from "node:path";
-function buildFixerActivationExtraArgs(admitted, options) {
-  const prompt = buildFixerTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs"
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
+function fixerMethods(packageRoot2) {
   return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
+    { kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "diagnosing-bugs") },
+    { kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "tdd") }
   ];
 }
-function buildFixerResumeActivationExtraArgs(admitted, options) {
-  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "diagnosing-bugs"
-  );
-  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
-  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
-  return [
-    "--no-skills",
-    "--skill",
-    diagnosisSkillPath,
-    "--skill",
-    tddSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "fixer",
-    "--ak-fixer-phase",
-    admitted.phase,
-    "--ak-fix-packet",
-    admitted.packetPath,
-    ...prerequisiteArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
-}
-async function presentControlledFailure5(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...failureInput.typedHttpObservationSettled === true ? {
-      typedHttpObservationSettled: true,
-      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
-    } : {}
-  });
-  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
-    ...session === void 0 ? {} : { session }
-  });
-  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
-  const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile
-  );
-  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
-    hasLawfulTerminalResult,
-    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
-  });
-  if (resumable && typedHttp429 !== void 0) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  }
-  const terminal = await settleFailureTerminalResult(
+function buildFixerTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
     admitted,
-    failure,
-    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
-  );
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedFixer(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials
-    );
-    if (missingCredential !== void 0) {
-      return await presentControlledFailure5(
-        admitted,
-        missingCredential,
-        io
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure5(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile9(
-        join18(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleFixerTerminalResult(admitted, {
-        methodProvenance: methodMaterial.provenance,
-        methodSkillPath: methodMaterial.skillPath,
-        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-          env.packageRoot,
-          "diagnosing-bugs"
-        )
-      });
-    } catch (error) {
-      return await presentControlledFailure5(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const credentialFailure = postRunMissingCredentialFailure(
-      result2,
-      env.model,
-      env.credentials
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory
-    });
-    return await presentControlledFailure5(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...controlledFailureInputFromResolution(resolution)
+    {
+      activation: {
+        role: "fixer",
+        phase: admitted.phase,
+        packetPath: admitted.packetPath,
+        ...admitted.prerequisitesPath === void 0 ? {} : { prerequisitesPath: admitted.prerequisitesPath }
       },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
+      methods: fixerMethods(options.packageRoot)
+    },
+    options
+  );
+}
+function fixerAdapters(packageRoot2, methodMaterial) {
+  return {
+    trySettle: (admitted, authority) => methodMaterial === void 0 ? Promise.resolve(void 0) : trySettleFixerTerminalResult(admitted, authority, {
+      methodProvenance: methodMaterial.provenance,
+      methodSkillPath: methodMaterial.skillPath,
+      methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+        packageRoot2,
+        "diagnosing-bugs"
+      )
+    }),
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulFixerTerminalResult(admitted, authority),
+    isResumableRole: true
+  };
 }
 async function loadFixerMethodMaterial(packageRoot2) {
   return await loadPackagedMethodSkillMaterial(packageRoot2, "diagnosing-bugs");
@@ -25169,6 +25428,7 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     const parsed = parseFixerArgv2(argv);
     admitted = await admitFixerInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
@@ -25185,12 +25445,12 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let methodMaterial;
   try {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
   } catch (error) {
-    return await presentControlledFailure5(
+    return await presentControlledFailure2(
       admitted,
       {
         timedOut: false,
@@ -25198,43 +25458,55 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
         stderr: "",
         thrown: error
       },
+      fixerAdapters(env.packageRoot),
+      env.principalAuthority,
       io
     );
   }
-  return runWithAutoResumeLoop({
+  return await runPostAdmissionResumable({
     admitted,
+    env,
     io,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildFixerActivationExtraArgs(admitted, {
+    buildInitialRequest: () => buildFixerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "initial",
+        prompt: buildFixerTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
     }),
-    buildResumeArgs: () => buildFixerResumeActivationExtraArgs(admitted, {
+    buildResumeRequest: () => buildFixerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedFixer({
-      admitted,
-      env: {
-        ...env,
-        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-      },
-      io: attemptIo,
-      extraArgs,
-      lease,
-      methodMaterial,
-      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
-    })
+    adapters: fixerAdapters(env.packageRoot, methodMaterial),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicFixerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableFixerRun(env.home, request.runId);
+    loaded = await loadResumableFixerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -25243,22 +25515,11 @@ async function runPublicFixerResume(request, env, io) {
     throw error;
   }
   const { admitted } = loaded;
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
-    return await presentControlledFailure5(
+    return await presentControlledFailure2(
       admitted,
       {
         timedOut: false,
@@ -25266,71 +25527,55 @@ async function runPublicFixerResume(request, env, io) {
         stderr: "",
         thrown: error
       },
+      fixerAdapters(env.packageRoot),
+      env.principalAuthority,
       io
     );
   }
-  const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
+  const turnRequest = buildFixerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
-  const result2 = await dispatchAdmittedFixer({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
+    env,
     io,
-    extraArgs,
-    lease,
-    methodMaterial
+    request: turnRequest,
+    adapters: fixerAdapters(env.packageRoot, methodMaterial)
   });
-  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
-  return result2;
 }
 var init_fixer_run = __esm({
   "src/public-cli/fixer-run.ts"() {
     "use strict";
-    init_engine_detour();
     init_engine_material();
     init_method_skill();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_public_run_credentials();
     init_run_lifecycle();
-    init_auto_resume();
     init_settlement();
+    init_turn_request();
+    init_post_admission();
   }
 });
 
 // src/public-cli/notary-run.ts
-function buildNotaryActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildNotaryTransportPrompt(
+function buildNotaryTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options)
+    {
+      activation: { role: "notary", sourceRun: admitted.sourceRunPath }
+    },
+    options
   );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "notary",
-    "--ak-notary-source-run",
-    admitted.sourceRunPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
 }
 async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
   let admitted;
@@ -25338,6 +25583,7 @@ async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
     const parsed = parseNotaryArgv2(argv);
     admitted = await admitNotaryInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       sourceRun: parsed.sourceRun,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
@@ -25352,19 +25598,27 @@ async function runPublicNotary(argv, env, io, parseNotaryArgv2) {
     }
     throw error;
   }
-  const extraArgs = buildNotaryActivationExtraArgs(admitted, {
+  await markRunAdmitted(admitted, env.principalAuthority);
+  const turnRequest = buildNotaryTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.engine === void 0 ? {} : { engine: env.engine },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...env.correlationId === void 0 || env.correlationId.trim() === "" ? {} : { correlationId: env.correlationId },
+    continuation: {
+      kind: "initial",
+      prompt: buildNotaryTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...env.engine === void 0 ? {} : { engine: env.engine }, packageRoot: env.packageRoot }))
+    }
   });
-  return await runAdmittedOneShotRole({
+  return await runPostAdmissionOneShot({
     admitted,
     env,
     io,
-    extraArgs,
+    request: turnRequest,
     adapters: {
-      trySettle: trySettleNotaryTerminalResult,
+      trySettle: (admitted2, authority) => trySettleNotaryTerminalResult(admitted2, authority),
       // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true
     },
@@ -25377,223 +25631,31 @@ var init_notary_run = __esm({
     init_engine_material();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_one_shot_dispatch();
+    init_post_admission();
+    init_run_lifecycle();
     init_settlement();
+    init_turn_request();
   }
 });
 
 // src/public-cli/judge-run.ts
-import { writeFile as writeFile10 } from "node:fs/promises";
-import { join as join19 } from "node:path";
-function buildJudgeActivationExtraArgs(admitted, options = {}) {
-  const prompt = buildJudgeTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    // Exact Pi session file principal (SessionManager.open), not directory-latest.
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "judge",
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
+function buildJudgeTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(admitted, { activation: { role: "judge" } }, options);
 }
-function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "judge",
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
-}
-async function presentControlledFailure6(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...failureInput.typedHttpObservationSettled === true ? {
-      typedHttpObservationSettled: true,
-      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
-    } : {}
-  });
-  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
-    ...session === void 0 ? {} : { session }
-  });
-  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
-  const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile
-  );
-  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
-    hasLawfulTerminalResult,
-    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
-  });
-  if (resumable && typedHttp429 !== void 0) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  }
-  const terminal = await settleJudgeFailureTerminalResult(
-    admitted,
-    failure,
-    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
-  );
-  presentFailureTerminal(terminal, io);
+function judgeAdapters() {
   return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedJudge(input) {
-  const { admitted, env, io, extraArgs, lease, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials
-    );
-    if (missingCredential !== void 0) {
-      return await presentControlledFailure6(
-        admitted,
-        missingCredential,
-        io
-      );
-    }
-    await markRunRunning(
-      admitted.runDirectory,
-      env.model,
-      effectiveEngine
-    );
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      // Public-run marker so Navigator work context prefers admitted instruction
-      // and role-runtime can record typed provider HTTP observations.
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure6(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile10(
-        join19(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleJudgeTerminalResult(admitted);
-    } catch (error) {
-      return await presentControlledFailure6(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
-      admitted.sessionFile
-    );
-    const credentialFailure = postRunMissingCredentialFailure(
-      result2,
-      env.model,
-      env.credentials
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+    trySettle: (admitted, authority) => trySettleJudgeTerminalResult(admitted, authority),
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulJudgeTerminalResult(admitted, authority),
+    isResumableRole: true,
+    resolveRunnerKnownFailure: async ({ result: result2, sessionFile }) => {
+      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+      return result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
         cause: infrastructureFailure.cause,
         diagnostic: infrastructureFailure.diagnostic,
         ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
-      }),
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory
-    });
-    return await presentControlledFailure6(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...controlledFailureInputFromResolution(resolution)
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
+      });
+    }
+  };
 }
 async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
   let admitted;
@@ -25601,6 +25663,7 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     const parsed = parseJudgeArgv2(argv);
     admitted = await admitJudgeInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -25615,39 +25678,51 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
-  return runWithAutoResumeLoop({
+  await markRunAdmitted(admitted, env.principalAuthority);
+  return await runPostAdmissionResumable({
     admitted,
+    env,
     io,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildJudgeActivationExtraArgs(admitted, {
+    buildInitialRequest: () => buildJudgeTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "initial",
+        prompt: buildJudgeTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
     }),
-    buildResumeArgs: () => buildJudgeResumeActivationExtraArgs(admitted, {
+    buildResumeRequest: () => buildJudgeTurnRequest(admitted, {
+      packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedJudge({
-      admitted,
-      env: {
-        ...env,
-        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-      },
-      io: attemptIo,
-      extraArgs,
-      lease,
-      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
-    })
+    adapters: judgeAdapters(),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableJudgeRun(env.home, request.runId);
+    loaded = await loadResumableJudgeRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -25656,275 +25731,78 @@ async function runPublicResume(request, env, io) {
     throw error;
   }
   const { admitted } = loaded;
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
-  const extraArgs = buildJudgeResumeActivationExtraArgs(admitted, {
+  const turnRequest = buildJudgeTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
-  const result2 = await dispatchAdmittedJudge({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
+    env,
     io,
-    extraArgs,
-    lease
+    request: turnRequest,
+    adapters: judgeAdapters()
   });
-  if (result2.terminal !== void 0) {
-    result2.terminal.autoResumeCount = 0;
-  }
-  return result2;
 }
 var init_judge_run = __esm({
   "src/public-cli/judge-run.ts"() {
     "use strict";
-    init_engine_detour();
     init_engine_material();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_public_run_credentials();
     init_run_lifecycle();
-    init_auto_resume();
     init_settlement();
+    init_turn_request();
+    init_post_admission();
   }
 });
 
 // src/public-cli/merger-run.ts
-import { mkdir as mkdir5, writeFile as writeFile11 } from "node:fs/promises";
-import { join as join20, resolve as resolve7 } from "node:path";
-function buildMergerActivationExtraArgs(admitted, options) {
-  const prompt = buildMergerTransportPrompt(
-    admitted,
-    engineSessionMaterialFromOptions(options)
-  );
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "resolving-merge-conflicts"
-  );
+import { mkdir as mkdir5, writeFile as writeFile8 } from "node:fs/promises";
+import { join as join20, resolve as resolve8 } from "node:path";
+function mergerMethods(packageRoot2) {
   return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "merger",
-    "--ak-merger-input",
-    admitted.mergerInputPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
+    {
+      kind: "skill",
+      path: resolvePackagedMethodSkillPath(packageRoot2, "resolving-merge-conflicts")
+    }
   ];
 }
-function buildMergerResumeActivationExtraArgs(admitted, options) {
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "resolving-merge-conflicts"
-  );
-  return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "merger",
-    "--ak-merger-input",
-    admitted.mergerInputPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
-}
-async function presentControlledFailure7(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...failureInput.typedHttpObservationSettled === true ? {
-      typedHttpObservationSettled: true,
-      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
-    } : {}
-  });
-  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
-    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
-    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
-    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
-    ...session === void 0 ? {} : { session }
-  });
-  const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
-  const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile
-  );
-  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
-    hasLawfulTerminalResult,
-    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
-  });
-  if (resumable && typedHttp429 !== void 0) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  }
-  const terminal = await settleFailureTerminalResult(
+function buildMergerTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
     admitted,
-    failure,
-    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
-  );
-  presentFailureTerminal(terminal, io);
-  return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedMerger(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials
-    );
-    if (missingCredential !== void 0) {
-      return await presentControlledFailure7(
-        admitted,
-        missingCredential,
-        io
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure7(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile11(
-        join20(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleMergerTerminalResult(admitted, {
-        methodProvenance: methodMaterial.provenance,
-        methodSkillPath: methodMaterial.skillPath,
-        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-          env.packageRoot,
-          "resolving-merge-conflicts"
-        )
-      });
-    } catch (error) {
-      return await presentControlledFailure7(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const credentialFailure = postRunMissingCredentialFailure(
-      result2,
-      env.model,
-      env.credentials
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: result2.knownFailure,
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory
-    });
-    return await presentControlledFailure7(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...controlledFailureInputFromResolution(resolution)
+    {
+      activation: {
+        role: "merger",
+        inputPath: admitted.mergerInputPath
       },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
+      methods: mergerMethods(options.packageRoot)
+    },
+    options
+  );
+}
+function mergerAdapters(packageRoot2, methodMaterial) {
+  return {
+    trySettle: (admitted, authority) => methodMaterial === void 0 ? Promise.resolve(void 0) : trySettleMergerTerminalResult(admitted, authority, {
+      methodProvenance: methodMaterial.provenance,
+      methodSkillPath: methodMaterial.skillPath,
+      methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+        packageRoot2,
+        "resolving-merge-conflicts"
+      )
+    }),
+    shouldPresentSettled: (t) => isLawfulTypedTerminalOutcome(t.roleOutcome) || t.roleOutcome.kind === "incomplete",
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulMergerTerminalResult(admitted, authority),
+    isResumableRole: true
+  };
 }
 async function loadMergerMethodMaterial(packageRoot2) {
   return await loadPackagedMethodSkillMaterial(
@@ -25933,9 +25811,21 @@ async function loadMergerMethodMaterial(packageRoot2) {
   );
 }
 async function admitMergerShellForActivationFailure(options) {
-  const projectRoot = resolve7(options.project ?? options.cwd);
+  const projectRoot = resolve8(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
-  const { ledgerHome, bookKey, runDirectory, sessionDirectory, sessionFile } = roleRunSessionCoordinates({ cwd: projectRoot, runId, role: "merger", home: options.home });
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "merger",
+    home: options.home
+  });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   await mkdir5(runDirectory, { recursive: true });
   const emptyDerived = {
@@ -25947,7 +25837,7 @@ async function admitMergerShellForActivationFailure(options) {
   };
   const admittedRequestPath = join20(runDirectory, "admitted-request.json");
   const mergerInputPath = join20(runDirectory, "merger-input.json");
-  await writeFile11(
+  await writeFile8(
     admittedRequestPath,
     `${JSON.stringify(
       {
@@ -25959,7 +25849,9 @@ async function admitMergerShellForActivationFailure(options) {
         instructionEmpty: false,
         mergerInputPath,
         derived: emptyDerived,
-        attachments: []
+        attachments: [],
+        sessionDirectory,
+        sessionFile
       },
       null,
       2
@@ -25976,11 +25868,21 @@ async function admitMergerShellForActivationFailure(options) {
     instructionEmpty: false,
     attachments: [],
     runDirectory,
-    sessionDirectory,
-    sessionFile,
+    principal,
     admittedRequestPath,
     mergerInputPath,
     derived: emptyDerived
+  };
+}
+function mergerTurnOptions(admitted, env) {
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId }
   };
 }
 async function runPublicMerger(argv, env, io, parseMergerArgv2) {
@@ -25998,6 +25900,7 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
   try {
     admitted = await admitMergerInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -26013,13 +25916,14 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
     if (error instanceof MergerEnvelopeDerivationError) {
       const shell = await admitMergerShellForActivationFailure({
         home: env.home,
+        principalAuthority: env.principalAuthority,
         cwd: env.cwd,
         instruction: parsed.instruction,
         ...parsed.project === void 0 ? {} : { project: parsed.project },
         ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
       });
-      await markRunAdmitted(shell);
-      return await presentControlledFailure7(
+      await markRunAdmitted(shell, env.principalAuthority);
+      return await presentControlledFailure2(
         shell,
         {
           timedOut: false,
@@ -26029,17 +25933,19 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
           knownCause: "activation",
           knownDiagnostic: error.message
         },
+        mergerAdapters(env.packageRoot),
+        env.principalAuthority,
         io
       );
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let methodMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
-    return await presentControlledFailure7(
+    return await presentControlledFailure2(
       admitted,
       {
         timedOut: false,
@@ -26048,43 +25954,49 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
         thrown: error,
         knownCause: "activation"
       },
+      mergerAdapters(env.packageRoot),
+      env.principalAuthority,
       io
     );
   }
-  return runWithAutoResumeLoop({
+  return await runPostAdmissionResumable({
     admitted,
+    env,
     io,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildMergerActivationExtraArgs(admitted, {
+    buildInitialRequest: () => buildMergerTurnRequest(admitted, {
+      ...mergerTurnOptions(admitted, env),
+      continuation: {
+        kind: "initial",
+        prompt: buildMergerTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
+    }),
+    buildResumeRequest: () => buildMergerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    buildResumeArgs: () => buildMergerResumeActivationExtraArgs(admitted, {
-      packageRoot: env.packageRoot,
-      ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
-    }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedMerger({
-      admitted,
-      env: {
-        ...env,
-        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-      },
-      io: attemptIo,
-      extraArgs,
-      lease,
-      methodMaterial,
-      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
-    })
+    adapters: mergerAdapters(env.packageRoot, methodMaterial),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicMergerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableMergerRun(env.home, request.runId);
+    loaded = await loadResumableMergerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -26093,22 +26005,11 @@ async function runPublicMergerResume(request, env, io) {
     throw error;
   }
   const { admitted } = loaded;
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
-    return await presentControlledFailure7(
+    return await presentControlledFailure2(
       admitted,
       {
         timedOut: false,
@@ -26117,288 +26018,89 @@ async function runPublicMergerResume(request, env, io) {
         thrown: error,
         knownCause: "activation"
       },
+      mergerAdapters(env.packageRoot),
+      env.principalAuthority,
       io
     );
   }
-  const extraArgs = buildMergerResumeActivationExtraArgs(admitted, {
+  const turnRequest = buildMergerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
-  const result2 = await dispatchAdmittedMerger({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
+    env,
     io,
-    extraArgs,
-    lease,
-    methodMaterial
+    request: turnRequest,
+    adapters: mergerAdapters(env.packageRoot, methodMaterial)
   });
-  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
-  return result2;
 }
 var init_merger_run = __esm({
   "src/public-cli/merger-run.ts"() {
     "use strict";
     init_activation_ledger_topology();
-    init_archivist_role_run_coordinates();
-    init_engine_detour();
     init_engine_material();
     init_method_skill();
     init_uuidv7();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_public_run_credentials();
     init_run_lifecycle();
-    init_auto_resume();
     init_settlement();
+    init_turn_request();
+    init_post_admission();
   }
 });
 
 // src/public-cli/reviewer-run.ts
-import { writeFile as writeFile12 } from "node:fs/promises";
-import { join as join21 } from "node:path";
-function buildReviewerTicketNumberArgs(ticketNumber) {
-  return ticketNumber === void 0 ? [] : ["--ak-review-ticket-number", String(ticketNumber)];
+function reviewerMethods(packageRoot2) {
+  return [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot2, "code-review") }];
 }
-function buildReviewerActivationExtraArgs(admitted, options) {
-  const prompt = buildReviewerTransportPrompt(
+function buildReviewerTurnRequest(admitted, options) {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options)
+    {
+      activation: {
+        role: "reviewer",
+        baseRevision: admitted.baseRevision,
+        authorityRefs: admitted.authorityRefs,
+        ...admitted.ticketNumber === void 0 ? {} : { ticketNumber: admitted.ticketNumber }
+      },
+      methods: reviewerMethods(options.packageRoot)
+    },
+    options
   );
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "code-review"
-  );
-  const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
-  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
-  return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "reviewer",
-    "--ak-review-base",
-    admitted.baseRevision,
-    ...authorityRefArgs,
-    ...ticketNumberArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt
-  ];
 }
-function buildReviewerResumeActivationExtraArgs(admitted, options) {
-  const skillPath = resolvePackagedMethodSkillPath(
-    options.packageRoot,
-    "code-review"
-  );
-  const authorityRefArgs = admitted.authorityRefs.length === 0 ? [] : ["--ak-review-authority-refs", JSON.stringify([...admitted.authorityRefs])];
-  const ticketNumberArgs = buildReviewerTicketNumberArgs(admitted.ticketNumber);
-  return [
-    "--no-skills",
-    "--skill",
-    skillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...options.extraPiArgs ?? [],
-    "--ak-role",
-    "reviewer",
-    "--ak-review-base",
-    admitted.baseRevision,
-    ...authorityRefArgs,
-    ...ticketNumberArgs,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    selectResumeContinuationPrompt(options.message)
-  ];
-}
-async function presentControlledFailure8(admitted, failureInput, io) {
-  const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const resumeObservation = await resolveControlledFailureResumeObservation({
-    runDirectory: admitted.runDirectory,
-    ...failureInput.typedHttpObservationSettled === true ? {
-      typedHttpObservationSettled: true,
-      ...failureInput.typedHttpObservation === void 0 ? {} : { typedHttpObservation: failureInput.typedHttpObservation }
-    } : {}
-  });
-  const knownFailure = failureInput.knownFailure ?? resumeObservation.observationReadFailure;
-  const session = !hasThrown && !failureInput.timedOut && knownFailure === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
-  const failure = classifyPostAdmissionFailure({
-    timedOut: failureInput.timedOut,
-    code: failureInput.code,
-    stderr: failureInput.stderr,
-    ...hasThrown ? { thrown: failureInput.thrown } : {},
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
-    ...session === void 0 ? {} : { session }
-  });
-  const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
-  const typedHttp429 = resumeObservation.typedHttp429;
-  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
-    admitted.sessionFile
-  );
-  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
-    hasLawfulTerminalResult,
-    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
-  });
-  if (resumable && typedHttp429 !== void 0) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-  }
-  const terminal = await settleFailureTerminalResult(
-    admitted,
-    failure,
-    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
-  );
-  presentFailureTerminal(terminal, io);
+function reviewerAdapters(packageRoot2, methodMaterial) {
   return {
-    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted,
-    terminal
-  };
-}
-async function dispatchAdmittedReviewer(input) {
-  const { admitted, env, io, extraArgs, lease, methodMaterial, effectiveEngine } = input;
-  try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials
-    );
-    if (missingCredential !== void 0) {
-      return await presentControlledFailure8(
-        admitted,
-        missingCredential,
-        io
-      );
-    }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
-    await clearTypedProviderHttpObservation(admitted.runDirectory);
-    await clearReviewerDispatchRejection(admitted.runDirectory);
-    const childEnv = {
-      ...process.env,
-      HOME: env.home,
-      PI_CODING_AGENT_DIR: env.agentDir,
-      AK_ROLE_RUN_DIR: admitted.runDirectory
-    };
-    applyEngineChildEnv(childEnv, env.engine);
-    const correlationId = admitted.correlationId ?? env.correlationId;
-    if (correlationId !== void 0 && correlationId.trim() !== "") {
-      childEnv.AK_CORRELATION_ID = correlationId;
-    }
-    let result2;
-    try {
-      result2 = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs,
-        cwd: admitted.projectRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        env: childEnv,
-        timeoutMs: env.timeoutMs,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-    } catch (error) {
-      return await presentControlledFailure8(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error
-        },
-        io
-      );
-    }
-    try {
-      await writeFile12(
-        join21(admitted.runDirectory, "stderr.log"),
-        result2.stderr,
-        "utf8"
-      );
-    } catch {
-    }
-    let lawful;
-    try {
-      lawful = await trySettleReviewerTerminalResult(admitted, {
-        methodProvenance: methodMaterial.provenance,
-        methodSkillPath: methodMaterial.skillPath,
-        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-          env.packageRoot,
-          "code-review"
-        )
-      });
-    } catch (error) {
-      return await presentControlledFailure8(
-        admitted,
-        {
-          timedOut: false,
-          code: result2.code,
-          stderr: result2.stderr,
-          thrown: error
-        },
-        io
-      );
-    }
-    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
-      io.stdout(formatTerminalResult(lawful));
-      return {
-        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-        admitted,
-        terminal: lawful
-      };
-    }
-    const infrastructureFailure = await readEngineDetourInfrastructureFailure(
-      admitted.sessionFile
-    );
-    const credentialFailure = postRunMissingCredentialFailure(
-      result2,
-      env.model,
-      env.credentials
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: infrastructureFailure === void 0 ? result2.knownFailure : {
+    beforeDispatch: (admitted) => clearReviewerDispatchRejection(admitted.runDirectory),
+    trySettle: (admitted, authority) => methodMaterial === void 0 ? Promise.resolve(void 0) : trySettleReviewerTerminalResult(admitted, authority, {
+      methodProvenance: methodMaterial.provenance,
+      methodSkillPath: methodMaterial.skillPath,
+      methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+        packageRoot2,
+        "code-review"
+      )
+    }),
+    hasLawfulTerminalResult: (admitted, authority) => hasLawfulReviewerTerminalResult(admitted, authority),
+    isResumableRole: true,
+    resolveRunnerKnownFailure: async ({ result: result2, sessionFile }) => {
+      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+      return infrastructureFailure === void 0 ? result2.knownFailure : {
         cause: infrastructureFailure.cause,
         diagnostic: infrastructureFailure.diagnostic,
         ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
-      },
-      sessionFile: admitted.sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory
-    });
-    return await presentControlledFailure8(
-      admitted,
-      {
-        timedOut: result2.timedOut,
-        code: result2.code,
-        stderr: result2.stderr,
-        ...controlledFailureInputFromResolution(resolution)
-      },
-      io
-    );
-  } finally {
-    await lease.release();
-  }
+      };
+    }
+  };
 }
 async function loadReviewerMethodMaterial(packageRoot2) {
   return await loadPackagedMethodSkillMaterial(packageRoot2, "code-review");
@@ -26409,6 +26111,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     const parsed = parseReviewerArgv2(argv);
     admitted = await admitReviewerInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -26425,12 +26128,12 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     }
     throw error;
   }
-  await markRunAdmitted(admitted);
+  await markRunAdmitted(admitted, env.principalAuthority);
   let methodMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    return await presentControlledFailure8(
+    return await presentControlledFailure2(
       admitted,
       {
         timedOut: false,
@@ -26438,43 +26141,55 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
         stderr: "",
         thrown: error
       },
+      reviewerAdapters(env.packageRoot),
+      env.principalAuthority,
       io
     );
   }
-  return runWithAutoResumeLoop({
+  return await runPostAdmissionResumable({
     admitted,
+    env,
     io,
-    // #422: pass-through only; the loop entry resolves the default and validates the domain once.
-    autoResumeLimit: env.autoResumeLimit,
-    buildInitialArgs: () => buildReviewerActivationExtraArgs(admitted, {
+    buildInitialRequest: () => buildReviewerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
       ...env.engine === void 0 ? {} : { engine: env.engine },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "initial",
+        prompt: buildReviewerTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...env.engine === void 0 ? {} : { engine: env.engine },
+            packageRoot: env.packageRoot
+          })
+        )
+      }
     }),
-    buildResumeArgs: () => buildReviewerResumeActivationExtraArgs(admitted, {
+    buildResumeRequest: () => buildReviewerTurnRequest(admitted, {
       packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
       ...env.model === void 0 ? {} : { model: env.model },
-      ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+      ...env.engine === void 0 ? {} : { engine: env.engine },
+      ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+      ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+      continuation: {
+        kind: "resume",
+        prompt: selectResumeContinuationPrompt()
+      }
     }),
-    dispatch: (extraArgs, lease, isFirst, attemptIo) => dispatchAdmittedReviewer({
-      admitted,
-      env: {
-        ...env,
-        ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-      },
-      io: attemptIo,
-      extraArgs,
-      lease,
-      methodMaterial,
-      ...isFirst && env.engine !== void 0 ? { effectiveEngine: env.engine } : {}
-    })
+    adapters: reviewerAdapters(env.packageRoot, methodMaterial),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 async function runPublicReviewerResume(request, env, io) {
   let loaded;
   try {
-    loaded = await loadResumableReviewerRun(env.home, request.runId);
+    loaded = await loadResumableReviewerRun(env.home, request.runId, env.principalAuthority);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -26483,22 +26198,11 @@ async function runPublicReviewerResume(request, env, io) {
     throw error;
   }
   const { admitted } = loaded;
-  let lease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
-    }
-    throw error;
-  }
   let methodMaterial;
   try {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
-    await lease.release();
-    return await presentControlledFailure8(
+    return await presentControlledFailure2(
       admitted,
       {
         timedOut: false,
@@ -26506,43 +26210,44 @@ async function runPublicReviewerResume(request, env, io) {
         stderr: "",
         thrown: error
       },
+      reviewerAdapters(env.packageRoot),
+      env.principalAuthority,
       io
     );
   }
-  const extraArgs = buildReviewerResumeActivationExtraArgs(admitted, {
+  const turnRequest = buildReviewerTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...env.model === void 0 ? {} : { model: env.model },
-    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs },
-    ...request.message === void 0 ? {} : { message: request.message }
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
   });
-  const result2 = await dispatchAdmittedReviewer({
+  return await runPostAdmissionManualResume({
     admitted,
-    env: {
-      ...env,
-      ...admitted.correlationId === void 0 ? {} : { correlationId: admitted.correlationId }
-    },
+    env,
     io,
-    extraArgs,
-    lease,
-    methodMaterial
+    request: turnRequest,
+    adapters: reviewerAdapters(env.packageRoot, methodMaterial)
   });
-  if (result2.terminal !== void 0) result2.terminal.autoResumeCount = 0;
-  return result2;
 }
 var init_reviewer_run = __esm({
   "src/public-cli/reviewer-run.ts"() {
     "use strict";
-    init_engine_detour();
     init_engine_material();
     init_method_skill();
-    init_explicit_internal();
     init_cli_errors();
     init_invocation();
-    init_config2();
-    init_public_run_credentials();
     init_run_lifecycle();
-    init_auto_resume();
+    init_reviewer_dispatch_rejection();
     init_settlement();
+    init_turn_request();
+    init_post_admission();
   }
 });
 
@@ -26581,14 +26286,14 @@ var init_analyst_book_key = __esm({
 });
 
 // src/atomic-write.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
-import { rename, rm, writeFile as writeFile13 } from "node:fs/promises";
-import { dirname as dirname8, join as join22 } from "node:path";
+import { randomUUID as randomUUID5 } from "node:crypto";
+import { rename, rm, writeFile as writeFile9 } from "node:fs/promises";
+import { dirname as dirname10, join as join21 } from "node:path";
 async function writeFileAtomically(destination, contents) {
-  const parent = dirname8(destination);
-  const temporary = join22(parent, `.atomic-write-${randomUUID3()}.tmp`);
+  const parent = dirname10(destination);
+  const temporary = join21(parent, `.atomic-write-${randomUUID5()}.tmp`);
   try {
-    await writeFile13(temporary, contents);
+    await writeFile9(temporary, contents);
     await rename(temporary, destination);
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => void 0);
@@ -26602,17 +26307,17 @@ var init_atomic_write = __esm({
 });
 
 // src/analyst-index.ts
-import { open as open3, readFile as readFile12, unlink as unlink4 } from "node:fs/promises";
-import { dirname as dirname9, join as join23 } from "node:path";
+import { open as open3, readFile as readFile15, unlink as unlink4 } from "node:fs/promises";
+import { dirname as dirname11, join as join22 } from "node:path";
 function sleep(ms) {
-  return new Promise((resolve9) => {
-    setTimeout(resolve9, ms);
+  return new Promise((resolve10) => {
+    setTimeout(resolve10, ms);
   });
 }
 async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   const indexPath = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname9(indexPath));
-  const lockPath = join23(dirname9(indexPath), LIBRARY_INDEX_LOCK_NAME);
+  ensureRealDirectoryTree(ledgerHome, dirname11(indexPath));
+  const lockPath = join22(dirname11(indexPath), LIBRARY_INDEX_LOCK_NAME);
   assertLedgerFileInsideHome(lockPath, ledgerHome);
   const startedAt = Date.now();
   while (true) {
@@ -26639,7 +26344,7 @@ async function withAnalystLibraryIndexLock(ledgerHome, fn) {
   }
 }
 function analystLibraryIndexPath(ledgerHome) {
-  return join23(ledgerHome, "analyst", "library-index.json");
+  return join22(ledgerHome, "analyst", "library-index.json");
 }
 function rowFromIssueMetricsPage(page) {
   return {
@@ -26730,7 +26435,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
   const path = analystLibraryIndexPath(ledgerHome);
   let raw;
   try {
-    raw = await readFile12(path, "utf8");
+    raw = await readFile15(path, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
       return void 0;
@@ -26748,7 +26453,7 @@ async function readAnalystLibraryIndexPage(ledgerHome) {
 }
 async function writeAnalystLibraryIndexPage(ledgerHome, page) {
   const path = analystLibraryIndexPath(ledgerHome);
-  ensureRealDirectoryTree(ledgerHome, dirname9(path));
+  ensureRealDirectoryTree(ledgerHome, dirname11(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -26933,160 +26638,24 @@ var init_analyst_cohort = __esm({
   }
 });
 
-// src/run-terminal-artifacts.ts
-import { readdir as readdir5, readFile as readFile13 } from "node:fs/promises";
-import { basename as basename5, dirname as dirname10, join as join24 } from "node:path";
-function isMissingPathError4(error) {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
-}
-function errorText2(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-function isRecord9(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function readUsableTerminalArtifactBody(body) {
-  if (body === null) {
-    return { ok: false, reason: "terminal artifact JSON value is null" };
-  }
-  if (!isRecord9(body)) {
-    return {
-      ok: false,
-      reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`
-    };
-  }
-  if (typeof body.role !== "string" || body.role.trim() === "") {
-    return {
-      ok: false,
-      reason: "terminal artifact missing nonblank producer-owned role field"
-    };
-  }
-  return { ok: true, body };
-}
-async function readTerminalArtifactAtPath(path, file) {
-  let raw;
-  try {
-    raw = await readFile13(path, "utf8");
-  } catch (error) {
-    if (isMissingPathError4(error)) return void 0;
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason: errorText2(error)
-    };
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason: error instanceof Error ? error.message : `terminal artifact JSON parse failed: ${String(error)}`
-    };
-  }
-  const usable = readUsableTerminalArtifactBody(parsed);
-  if (!usable.ok) {
-    return {
-      status: "unreadable",
-      file,
-      path,
-      reason: usable.reason
-    };
-  }
-  return { status: "present", file, path, body: usable.body };
-}
-async function listUniqueErrorFallbackPaths(directories) {
-  const found = [];
-  for (const dir of directories) {
-    let names;
-    try {
-      names = await readdir5(dir);
-    } catch (error) {
-      if (isMissingPathError4(error)) continue;
-      throw error;
-    }
-    for (const name of names.sort((a, b) => a.localeCompare(b))) {
-      if (!UNIQUE_ERROR_FALLBACK_NAME.test(name)) continue;
-      found.push(join24(dir, name));
-    }
-  }
-  return found;
-}
-function runIdFromRunDirectory(runDirectory) {
-  const name = basename5(runDirectory);
-  const at = name.lastIndexOf("@");
-  if (at <= 0 || at === name.length - 1) return void 0;
-  return name.slice(0, at);
-}
-function presentUniqueFallbackBoundToRun(body, expectedRunId) {
-  if (expectedRunId === void 0) return false;
-  return typeof body.runId === "string" && body.runId === expectedRunId;
-}
-async function readRunTerminalArtifact(runDirectory) {
-  const artifactsDir = join24(runDirectory, "artifacts");
-  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join24(artifactsDir, file);
-    const read3 = await readTerminalArtifactAtPath(path, file);
-    if (read3 !== void 0) return read3;
-  }
-  for (const relative3 of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join24(runDirectory, relative3);
-    const read3 = await readTerminalArtifactAtPath(path, "error.json");
-    if (read3 !== void 0) return read3;
-  }
-  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
-    const read3 = await readTerminalArtifactAtPath(path, "error.json");
-    if (read3 !== void 0) return read3;
-  }
-  const expectedRunId = runIdFromRunDirectory(runDirectory);
-  for (const path of await listUniqueErrorFallbackPaths([dirname10(runDirectory)])) {
-    const read3 = await readTerminalArtifactAtPath(path, "error.json");
-    if (read3 === void 0) continue;
-    if (read3.status === "present") {
-      if (!presentUniqueFallbackBoundToRun(read3.body, expectedRunId)) continue;
-      return read3;
-    }
-  }
-  return { status: "absent" };
-}
-var RUN_TERMINAL_ARTIFACT_FILES, RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS, UNIQUE_ERROR_FALLBACK_NAME;
-var init_run_terminal_artifacts = __esm({
-  "src/run-terminal-artifacts.ts"() {
-    "use strict";
-    RUN_TERMINAL_ARTIFACT_FILES = [
-      "report.json",
-      "error.json",
-      "audit-incomplete.json"
-    ];
-    RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
-      "artifacts/error.settlement.json",
-      "error.settlement.json"
-    ];
-    UNIQUE_ERROR_FALLBACK_NAME = /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
-  }
-});
-
 // src/analyst-ledger.ts
-import { readdir as readdir6, readFile as readFile14 } from "node:fs/promises";
-import { join as join25 } from "node:path";
+import { readdir as readdir6, readFile as readFile16 } from "node:fs/promises";
+import { join as join23 } from "node:path";
 function isMissingPathError5(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function errorText3(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function isRecord10(value) {
+function isRecord12(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readExistingRunLifecycleState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile14(join25(runDirectory, "run-state.json"), "utf8")
+      await readFile16(join23(runDirectory, "run-state.json"), "utf8")
     );
-    if (!isRecord10(raw) || typeof raw.state !== "string") return void 0;
+    if (!isRecord12(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
   } catch {
     return void 0;
@@ -27116,13 +26685,13 @@ async function listLedgerBookNames(booksRoot) {
 async function readInvocationScopeFields(runDirectory) {
   let raw;
   try {
-    raw = await readFile14(join25(runDirectory, "invocation.json"), "utf8");
+    raw = await readFile16(join23(runDirectory, "invocation.json"), "utf8");
   } catch (error) {
     if (isMissingPathError5(error)) return void 0;
     throw error;
   }
   const parsed = JSON.parse(raw);
-  if (!isRecord10(parsed)) return void 0;
+  if (!isRecord12(parsed)) return void 0;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return void 0;
   }
@@ -27148,15 +26717,15 @@ function decideIssueScope(input) {
 }
 async function resolveSessionFile(runDirectory) {
   try {
-    const raw = await readFile14(join25(runDirectory, "invocation.json"), "utf8");
+    const raw = await readFile16(join23(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
-    if (isRecord10(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
+    if (isRecord12(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
     }
   } catch (error) {
     if (!isMissingPathError5(error)) throw error;
   }
-  return join25(runDirectory, "session", "session.jsonl");
+  return join23(runDirectory, "session", "session.jsonl");
 }
 async function classifyScopedRun(input) {
   const missingSources = [];
@@ -27267,7 +26836,7 @@ async function classifyScopedRun(input) {
   let gateCycles;
   try {
     gateCycles = await readAnalystGateCyclesFromAuditorRoles(
-      join25(input.runDirectory, "session", "auditor-roles")
+      join23(input.runDirectory, "session", "auditor-roles")
     );
   } catch (error) {
     return {
@@ -27299,7 +26868,7 @@ async function classifyScopedRun(input) {
 async function scanAnalystIssueRuns(input) {
   const ledgerHome = resolveActivationLedgerHome();
   const scopeTicketNumber = input.ticketNumber;
-  const booksRoot = join25(ledgerHome, "books");
+  const booksRoot = join23(ledgerHome, "books");
   let wholeBook = false;
   let scopeRootIdentity;
   let bookNames;
@@ -27331,7 +26900,7 @@ async function scanAnalystIssueRuns(input) {
   const unreadable = [];
   const scopeConflicts = [];
   for (const book of bookNames) {
-    const runsDir = join25(booksRoot, book, "runs");
+    const runsDir = join23(booksRoot, book, "runs");
     let runNames;
     try {
       const entries = await readdir6(runsDir, { withFileTypes: true });
@@ -27343,7 +26912,7 @@ async function scanAnalystIssueRuns(input) {
     for (const runName of runNames) {
       const parsed = parseRunDirectoryName2(runName);
       if (parsed === void 0) continue;
-      const runDirectory = join25(runsDir, runName);
+      const runDirectory = join23(runsDir, runName);
       let scopeFields;
       try {
         scopeFields = await readInvocationScopeFields(runDirectory);
@@ -27391,7 +26960,7 @@ var init_analyst_ledger = __esm({
 });
 
 // src/analyst-metric-families/acceptance-success-rework.ts
-function isRecord11(value) {
+function isRecord13(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan(span) {
@@ -27400,21 +26969,21 @@ function wallMsFromSpan(span) {
 function findCollectorGroups(body) {
   if (Array.isArray(body.groups)) return body.groups;
   const receipt = body.receipt;
-  if (isRecord11(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
+  if (isRecord13(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
   const outcome = body.outcome;
-  if (isRecord11(outcome)) {
+  if (isRecord13(outcome)) {
     const facts = outcome.decisiveFacts;
-    if (isRecord11(facts) && Array.isArray(facts.groups)) return facts.groups;
+    if (isRecord13(facts) && Array.isArray(facts.groups)) return facts.groups;
   }
   return void 0;
 }
 function extractStatus(body) {
   const outcome = body.outcome;
-  if (isRecord11(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
+  if (isRecord13(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
     return outcome.status;
   }
   const receipt = body.receipt;
-  if (isRecord11(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
+  if (isRecord13(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
     return receipt.status;
   }
   if (typeof body.status === "string" && body.status.trim() !== "") {
@@ -28038,21 +27607,21 @@ var init_leg_wall_clock = __esm({
 });
 
 // src/analyst-metric-families/round-timeline.ts
-function isRecord12(value) {
+function isRecord14(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan2(startedAt, endedAt) {
   return Date.parse(endedAt) - Date.parse(startedAt);
 }
 function readOutcomeStatus(body) {
-  if (!isRecord12(body.outcome)) return void 0;
+  if (!isRecord14(body.outcome)) return void 0;
   const status = body.outcome.status;
   if (typeof status !== "string" || status.trim() === "") return void 0;
   return status;
 }
 function readClassCount(body) {
-  if (!isRecord12(body.outcome)) return void 0;
-  if (!isRecord12(body.outcome.decisiveFacts)) return void 0;
+  if (!isRecord14(body.outcome)) return void 0;
+  if (!isRecord14(body.outcome.decisiveFacts)) return void 0;
   const classCount = body.outcome.decisiveFacts.classCount;
   if (typeof classCount !== "number" || !Number.isFinite(classCount)) {
     return void 0;
@@ -28195,8 +27764,8 @@ var init_analyst_metric_family = __esm({
 });
 
 // src/analyst-page.ts
-import { createHash as createHash4 } from "node:crypto";
-import { dirname as dirname11, join as join26 } from "node:path";
+import { createHash as createHash5 } from "node:crypto";
+import { dirname as dirname12, join as join24 } from "node:path";
 function analystIssuePageKey(address) {
   const parts = ["book", address.bookKey];
   if (address.issueNumber !== void 0) {
@@ -28204,10 +27773,10 @@ function analystIssuePageKey(address) {
   } else if (address.scopeRootIdentity !== void 0) {
     parts.push("root", physicalPathIdentity(address.scopeRootIdentity));
   }
-  return createHash4("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
+  return createHash5("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
 }
 function analystIssuePagePath(ledgerHome, address) {
-  return join26(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
+  return join24(ledgerHome, "analyst", "issues", `${analystIssuePageKey(address)}.json`);
 }
 function analystIssuePageAddressFromPage(page) {
   return {
@@ -28326,7 +27895,7 @@ async function buildAnalystIssueMetricsPage(input) {
 }
 async function writeAnalystIssueMetricsPage(ledgerHome, page) {
   const path = analystIssuePagePath(ledgerHome, analystIssuePageAddressFromPage(page));
-  ensureRealDirectoryTree(ledgerHome, dirname11(path));
+  ensureRealDirectoryTree(ledgerHome, dirname12(path));
   assertLedgerFileInsideHome(path, ledgerHome);
   await writeFileAtomically(path, `${JSON.stringify(page, null, 2)}
 `);
@@ -28343,7 +27912,7 @@ var init_analyst_page = __esm({
 });
 
 // src/analyst-entry.ts
-import { readFile as readFile15 } from "node:fs/promises";
+import { readFile as readFile17 } from "node:fs/promises";
 function isMissingPathError6(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -28373,7 +27942,7 @@ async function readOrComputeAnalystIssuePage(input, options) {
     ...issueNumber === void 0 && input.bookKey === void 0 ? { scopeRootIdentity: projectRoot } : {}
   });
   try {
-    const raw = await readFile15(pagePath, "utf8");
+    const raw = await readFile17(pagePath, "utf8");
     const page = JSON.parse(raw);
     if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
       return { mode: "issue", page, pagePath };
@@ -28467,7 +28036,7 @@ async function runAnalystModelGroupsMode(input) {
       scopeRootIdentity: projectRoot
     });
     try {
-      const raw = await readFile15(pagePath, "utf8");
+      const raw = await readFile17(pagePath, "utf8");
       JSON.parse(raw);
     } catch (error) {
       if (!isMissingPathError6(error)) {
@@ -28566,8 +28135,8 @@ var init_analyst_entry = __esm({
 });
 
 // src/public-cli/analyst-run.ts
-import { readFile as readFile16 } from "node:fs/promises";
-import { isAbsolute as isAbsolute7, resolve as resolve8 } from "node:path";
+import { readFile as readFile18 } from "node:fs/promises";
+import { isAbsolute as isAbsolute7, resolve as resolve9 } from "node:path";
 function resolveAnalystIssueBookKeyFromCwd(cwd = process.cwd()) {
   try {
     return resolveBookKeyFromGit(cwd);
@@ -28616,10 +28185,10 @@ async function buildAnalystSweepModeInputFromAttachmentPaths(attachmentPaths) {
     );
   }
   const sourcePath = attachmentPaths[0];
-  const absolute = isAbsolute7(sourcePath) ? sourcePath : resolve8(sourcePath);
+  const absolute = isAbsolute7(sourcePath) ? sourcePath : resolve9(sourcePath);
   let bytes;
   try {
-    bytes = await readFile16(absolute);
+    bytes = await readFile18(absolute);
   } catch (error) {
     throw new CliUsageError(
       `analyst sweep attachment is not a readable regular file: ${sourcePath}`,
@@ -28737,8 +28306,8 @@ __export(cli_exports, {
   runAkRole: () => runAkRole
 });
 import { realpath as realpath6 } from "node:fs/promises";
-import { homedir as homedir3 } from "node:os";
-import { join as join27 } from "node:path";
+import { homedir as homedir2 } from "node:os";
+import { join as join25 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
   const taken = options.takeDashed(tokens);
@@ -28761,14 +28330,72 @@ function takePublicGlobalFlag(argv, index, options) {
       raw: taken.value
     };
   }
-  if (taken.def.id === "engine") {
+  if (taken.def.id === "engine" || taken.def.id === "host") {
     return {
-      flag: "engine",
+      flag: taken.def.id,
       consume: consumed,
       value: taken.value
     };
   }
   return void 0;
+}
+function resolveRoleTurnHost(env, options) {
+  const piHost = env.roleTurnHost ?? createPiRoleTurnHost({
+    packageRoot: env.packageRoot,
+    principalAuthority: options.principalAuthority,
+    ...options.extraPiArgs === void 0 ? {} : { extraPiArgs: options.extraPiArgs },
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
+    recordLaunchedPiIdentity,
+    recordLaunchedRolePackageIdentity,
+    observeLaunchedRolePackageIdentity
+  });
+  const adapters = env.hostAdapters ?? [{ name: "pi", create: () => ({ ok: true, host: piHost }) }];
+  const hostName = options.seat.host;
+  const adapter = adapters.find((candidate) => candidate.name === hostName);
+  const model = options.seat.selection === void 0 ? "unconfigured" : `${options.seat.selection.provider}/${options.seat.selection.model}`;
+  const registeredHosts = adapters.map(({ name }) => name);
+  if (adapter === void 0) {
+    throw new HostSelectionError(
+      { kind: "host-unregistered", host: hostName, seat: options.role, model },
+      registeredHosts
+    );
+  }
+  const selected = adapter.create({ role: options.role, model: options.seat.selection });
+  if (!selected.ok) {
+    throw new HostSelectionError(
+      { kind: "host-model-mismatch", host: hostName, seat: options.role, model },
+      registeredHosts
+    );
+  }
+  return selected.host;
+}
+function createRoleEnvironment(env, options) {
+  const role = options.role;
+  const extraPiArgs = role === "coder" ? env.coderExtraPiArgs : role === "fixer" ? env.fixerExtraPiArgs : role === "reviewer" ? env.reviewerExtraPiArgs : role === "merger" ? env.mergerExtraPiArgs : role === "judge" ? env.judgeExtraPiArgs : role === "collector" ? env.collectorExtraPiArgs : role === "doctor" ? env.doctorExtraPiArgs : role === "notary" ? env.notaryExtraPiArgs : void 0;
+  const timeoutMs = role === "coder" ? env.coderTimeoutMs : role === "fixer" ? env.fixerTimeoutMs : role === "reviewer" ? env.reviewerTimeoutMs : role === "merger" ? env.mergerTimeoutMs : role === "judge" ? env.judgeTimeoutMs : role === "collector" ? env.collectorTimeoutMs : role === "doctor" ? env.doctorTimeoutMs : role === "notary" ? env.notaryTimeoutMs : void 0;
+  const injectModel = options.seat.selection !== void 0 && (options.resume !== true || options.seat.source === "invocation");
+  return {
+    home: options.home,
+    principalAuthority: env.principalAuthority,
+    agentDir: options.agentDir,
+    sessionAppender: appendPiSessionCustomEntry,
+    packageRoot: env.packageRoot,
+    roleTurnHost: resolveRoleTurnHost(env, {
+      role,
+      seat: options.seat,
+      principalAuthority: env.principalAuthority,
+      ...extraPiArgs === void 0 ? {} : { extraPiArgs },
+      ...timeoutMs === void 0 ? {} : { timeoutMs }
+    }),
+    cwd: options.cwd,
+    ...options.credentials === void 0 ? {} : { credentials: options.credentials },
+    ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+    ...injectModel ? { model: options.seat.selection } : {},
+    ...projectSeatEngine(options.seat),
+    ...timeoutMs === void 0 ? {} : { timeoutMs },
+    ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
+    ...options.config?.autoResumeLimit === void 0 ? {} : { autoResumeLimit: options.config.autoResumeLimit }
+  };
 }
 function defaultIo() {
   return {
@@ -28781,10 +28408,10 @@ function defaultIo() {
   };
 }
 function resolveHome(env) {
-  return env.home ?? process.env.HOME ?? homedir3();
+  return env.home ?? process.env.HOME ?? homedir2();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join27(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join25(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -28797,6 +28424,7 @@ function parseArgv(argv) {
   let model;
   let thinking;
   let engine;
+  let host;
   let help = false;
   const positional = [];
   const globalOptions = createTypedOptionConsumer(PUBLIC_GLOBAL_OPTIONS);
@@ -28833,11 +28461,12 @@ function parseArgv(argv) {
         args.splice(0, taken.consume);
         continue;
       }
-      if (taken.flag === "engine") {
-        if (taken.value === void 0) {
-          throw new CliUsageError("--engine requires a value");
+      if (taken.flag === "engine" || taken.flag === "host") {
+        if (taken.value === void 0 || taken.value.trim() === "") {
+          throw new CliUsageError(`--${taken.flag} requires a value`);
         }
-        engine = taken.value;
+        if (taken.flag === "engine") engine = taken.value;
+        else host = taken.value;
         args.splice(0, taken.consume);
         continue;
       }
@@ -28852,6 +28481,7 @@ function parseArgv(argv) {
     ...model === void 0 ? {} : { model },
     ...thinking === void 0 ? {} : { thinking },
     ...engine === void 0 ? {} : { engine },
+    ...host === void 0 ? {} : { host },
     help
   };
 }
@@ -28869,13 +28499,14 @@ function parseResumeRequest(args) {
   return { runId };
 }
 function invocationFromParsed(parsed) {
-  if (parsed.model === void 0 && parsed.thinking === void 0 && parsed.engine === void 0) {
+  if (parsed.model === void 0 && parsed.thinking === void 0 && parsed.engine === void 0 && parsed.host === void 0) {
     return void 0;
   }
   return {
     ...parsed.model === void 0 ? {} : { model: parsed.model },
     ...parsed.thinking === void 0 ? {} : { thinking: parsed.thinking },
-    ...parsed.engine === void 0 ? {} : { engine: parsed.engine }
+    ...parsed.engine === void 0 ? {} : { engine: parsed.engine },
+    ...parsed.host === void 0 ? {} : { host: parsed.host }
   };
 }
 function requireLegalEngineName(name) {
@@ -28888,14 +28519,14 @@ function requireLegalEngineName(name) {
     );
   }
 }
-function requireEngineAxisSeat(seat, verb) {
+function requireCallableSeat(seat, axis, verb) {
   if (isAutomaticConfigurableSeat(seat)) {
     throw new CliUsageError(
       `config ${verb} refuses ${seat}: no independent activation path; storing would be silently ineffective`
     );
   }
-  if (!isEngineAxisSeat(seat)) {
-    throw new CliUsageError(`unknown engine-axis seat: ${seat}`);
+  if (!isPublicCallableRole(seat)) {
+    throw new CliUsageError(`unknown ${axis}-axis seat: ${seat}`);
   }
 }
 function projectSeatEngine(seat) {
@@ -28904,7 +28535,7 @@ function projectSeatEngine(seat) {
 function loadAndValidateConfig(home, packageRoot2) {
   return loadPublicCliConfig(home).then((config) => {
     try {
-      validatePublicCliConfigEngines(config, packageRoot2);
+      validatePublicCliConfigAxes(config, packageRoot2);
     } catch (error) {
       throw new CliUsageError(
         error instanceof Error ? error.message : String(error),
@@ -29033,7 +28664,7 @@ function renderPersistentSeatModel(selection) {
   return model === void 0 ? "-" : formatModelSpec(model);
 }
 function renderConfig(config) {
-  const lines = ["seat	model	engine"];
+  const lines = ["seat	model	engine	host"];
   const keys = Object.keys(config.seats);
   if (keys.length === 0) {
     lines.push("(empty)");
@@ -29042,7 +28673,8 @@ function renderConfig(config) {
       const selection = config.seats[seat];
       if (selection === void 0) continue;
       const engine = selection.engine === void 0 ? "-" : selection.engine;
-      lines.push(`${seat}	${renderPersistentSeatModel(selection)}	${engine}`);
+      const host = selection.host === void 0 ? "-" : selection.host;
+      lines.push(`${seat}	${renderPersistentSeatModel(selection)}	${engine}	${host}`);
     }
   }
   lines.push(`autoResumeLimit	${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
@@ -29062,10 +28694,9 @@ async function runConfigCommand(args, home, packageRoot2, io) {
 `);
       } else {
         const engine = selection.engine === void 0 ? "-" : selection.engine;
-        io.stdout(
-          `${args[1]}	${renderPersistentSeatModel(selection)}	${engine}
-`
-        );
+        const host = selection.host === void 0 ? "-" : selection.host;
+        io.stdout(`${args[1]}	${renderPersistentSeatModel(selection)}	${engine}	${host}
+`);
       }
       return 0;
     }
@@ -29117,6 +28748,23 @@ async function runConfigCommand(args, home, packageRoot2, io) {
     io.stdout(renderConfig(config));
     return 0;
   }
+  if (args[0] === "set-host" || args[0] === "unset-host") {
+    const unset = args[0] === "unset-host";
+    if (args.length !== (unset ? 2 : 3)) {
+      throw new CliUsageError(`usage: ak-role config ${args[0]} <seat>${unset ? "" : " <name>"}`);
+    }
+    const seat = args[1];
+    requireCallableSeat(seat, "host", unset ? "unset-host" : "set-host");
+    let config = await loadAndValidateConfig(home, packageRoot2);
+    try {
+      config = setPersistentSeatHost(config, seat, unset ? void 0 : args[2]);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
   if (args[0] === "set-engine") {
     if (args.length !== 3) {
       throw new CliUsageError(
@@ -29125,7 +28773,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
     }
     const seat = args[1];
     const name = args[2];
-    requireEngineAxisSeat(seat, "set-engine");
+    requireCallableSeat(seat, "engine", "set-engine");
     requireLegalEngineName(name);
     let config = await loadAndValidateConfig(home, packageRoot2);
     try {
@@ -29147,7 +28795,7 @@ async function runConfigCommand(args, home, packageRoot2, io) {
       );
     }
     const seat = args[1];
-    requireEngineAxisSeat(seat, "unset-engine");
+    requireCallableSeat(seat, "engine", "unset-engine");
     let config = await loadAndValidateConfig(home, packageRoot2);
     try {
       config = setPersistentSeatEngine(config, seat, void 0);
@@ -29191,8 +28839,18 @@ async function runAkRole(argv, env) {
   const io = env.io ?? defaultIo();
   const home = resolveHome(env);
   try {
-    env = { ...env, packageRoot: await realpath6(env.packageRoot) };
+    env = {
+      ...env,
+      packageRoot: await realpath6(env.packageRoot),
+      principalAuthority: env.principalAuthority ?? piDurablePrincipalAuthority
+    };
     const parsed = parseArgv(argv);
+    if (parsed.host !== void 0 && parsed.command === "resume") {
+      throw new CliUsageError("resume cannot change host");
+    }
+    if (parsed.host !== void 0 && !parsed.help && parsed.command !== void 0 && parsed.command !== "help" && !isPublicCallableRole(parsed.command)) {
+      throw new CliUsageError(`host axis is role commands only; refused command ${parsed.command}`);
+    }
     if (parsed.engine !== void 0) {
       requireLegalEngineName(parsed.engine);
       if (!parsed.help && parsed.command !== void 0 && parsed.command !== "help" && !isPublicCallableRole(parsed.command)) {
@@ -29255,18 +28913,16 @@ async function runAkRole(argv, env) {
       if (resumeRole === "coder") {
         const result3 = await runPublicCoderResume(
           resumeRequest,
-          {
+          createRoleEnvironment(env, {
+            role: "coder",
             home,
             agentDir,
-            packageRoot: env.packageRoot,
             cwd,
             credentials,
-            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-            ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
-            ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
-          },
+            seat,
+            config,
+            resume: true
+          }),
           io
         );
         return {
@@ -29277,18 +28933,16 @@ async function runAkRole(argv, env) {
       if (resumeRole === "fixer") {
         const result3 = await runPublicFixerResume(
           resumeRequest,
-          {
+          createRoleEnvironment(env, {
+            role: "fixer",
             home,
             agentDir,
-            packageRoot: env.packageRoot,
             cwd,
             credentials,
-            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-            ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
-            ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
-          },
+            seat,
+            config,
+            resume: true
+          }),
           io
         );
         return {
@@ -29299,18 +28953,16 @@ async function runAkRole(argv, env) {
       if (resumeRole === "reviewer") {
         const result3 = await runPublicReviewerResume(
           resumeRequest,
-          {
+          createRoleEnvironment(env, {
+            role: "reviewer",
             home,
             agentDir,
-            packageRoot: env.packageRoot,
             cwd,
             credentials,
-            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-            ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
-            ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
-          },
+            seat,
+            config,
+            resume: true
+          }),
           io
         );
         return {
@@ -29321,18 +28973,16 @@ async function runAkRole(argv, env) {
       if (resumeRole === "merger") {
         const result3 = await runPublicMergerResume(
           resumeRequest,
-          {
+          createRoleEnvironment(env, {
+            role: "merger",
             home,
             agentDir,
-            packageRoot: env.packageRoot,
             cwd,
             credentials,
-            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-            ...seat.selection === void 0 ? {} : { model: seat.selection },
-            ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
-            ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs }
-          },
+            seat,
+            config,
+            resume: true
+          }),
           io
         );
         return {
@@ -29342,18 +28992,16 @@ async function runAkRole(argv, env) {
       }
       const result2 = await runPublicResume(
         resumeRequest,
-        {
+        createRoleEnvironment(env, {
+          role: "judge",
           home,
           agentDir,
-          packageRoot: env.packageRoot,
           cwd,
           credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
-          ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs }
-        },
+          seat,
+          config,
+          resume: true
+        }),
         io
       );
       return {
@@ -29377,22 +29025,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicJudge(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
-          ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.judge.parse
       );
@@ -29414,18 +29047,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicCountersign(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-        },
+        createRoleEnvironment(env, { role: "countersign", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.countersign.parse
       );
@@ -29447,22 +29069,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicCoder(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
-          ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.coder.parse
       );
@@ -29484,22 +29091,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicFixer(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
-          ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.fixer.parse
       );
@@ -29521,20 +29113,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicCollector(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.collectorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.collectorExtraPiArgs },
-          ...env.collectorTimeoutMs === void 0 ? {} : { timeoutMs: env.collectorTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-        },
+        createRoleEnvironment(env, { role: "collector", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.collector.parse
       );
@@ -29556,22 +29135,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicReviewer(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
-          ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.reviewer.parse
       );
@@ -29593,20 +29157,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicDoctor(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.doctorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.doctorExtraPiArgs },
-          ...env.doctorTimeoutMs === void 0 ? {} : { timeoutMs: env.doctorTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-        },
+        createRoleEnvironment(env, { role: "doctor", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.doctor.parse
       );
@@ -29628,20 +29179,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicNotary(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.notaryExtraPiArgs === void 0 ? {} : { extraPiArgs: env.notaryExtraPiArgs },
-          ...env.notaryTimeoutMs === void 0 ? {} : { timeoutMs: env.notaryTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
-        },
+        createRoleEnvironment(env, { role: "notary", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.notary.parse
       );
@@ -29663,22 +29201,7 @@ async function runAkRole(argv, env) {
       );
       const result2 = await runPublicMerger(
         parsed.args,
-        {
-          home,
-          agentDir,
-          packageRoot: env.packageRoot,
-          cwd,
-          credentials,
-          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
-          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
-          ...seat.selection === void 0 ? {} : { model: seat.selection },
-          ...projectSeatEngine(seat),
-          ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
-          ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs },
-          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-          // #422: effective auto-resume ceiling resolved once here; the loop never re-reads disk.
-          ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
-        },
+        createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.merger.parse
       );
@@ -29698,6 +29221,11 @@ async function runAkRole(argv, env) {
     }
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
+    if (error instanceof HostSelectionError) {
+      const registered = error.registeredHosts.join(", ");
+      io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}; registered: ${registered}`));
+      return { exitCode: 1, hostFailure: error.failure };
+    }
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
       return { exitCode: 2 };
@@ -29711,14 +29239,15 @@ async function runAkRole(argv, env) {
     return { exitCode: 1 };
   }
 }
-var PUBLIC_ROLE_ARGV, PUBLIC_GLOBAL_OPTIONS, THINKING_LEVELS2;
+var PUBLIC_ROLE_ARGV, PUBLIC_GLOBAL_OPTIONS, HostSelectionError, THINKING_LEVELS2;
 var init_cli = __esm({
   "src/public-cli/cli.ts"() {
     "use strict";
+    init_durable_principal();
     init_engine_material();
     init_config2();
     init_cli_errors();
-    init_explicit_internal();
+    init_role_turn_host();
     init_invocation();
     init_option_definitions();
     init_coder_run();
@@ -29735,7 +29264,7 @@ var init_cli = __esm({
     init_run_lifecycle();
     init_registry2();
     init_settlement();
-    init_explicit_internal();
+    init_role_turn_host();
     init_cli_errors();
     PUBLIC_ROLE_ARGV = {
       judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
@@ -29751,6 +29280,15 @@ var init_cli = __esm({
       analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") }
     };
     PUBLIC_GLOBAL_OPTIONS = optionsForOwner("global");
+    HostSelectionError = class extends Error {
+      constructor(failure, registeredHosts) {
+        super(failure.kind);
+        this.failure = failure;
+        this.registeredHosts = registeredHosts;
+      }
+      failure;
+      registeredHosts;
+    };
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",
       "minimal",
@@ -29764,8 +29302,8 @@ var init_cli = __esm({
 });
 
 // src/public-cli/main.ts
-import { existsSync as existsSync3 } from "node:fs";
-import { dirname as dirname12, join as join28 } from "node:path";
+import { existsSync as existsSync5 } from "node:fs";
+import { dirname as dirname13, join as join26 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/host-pi-runtime.ts
@@ -29852,10 +29390,10 @@ function linkPackage(packageRoot2, name, targetDir) {
 }
 
 // src/public-cli/main.ts
-var here = dirname12(fileURLToPath(import.meta.url));
+var here = dirname13(fileURLToPath(import.meta.url));
 function resolvePackageRoot(binDir) {
-  const canonical = join28(binDir, "..", "..");
-  if (existsSync3(join28(canonical, "package.json"))) {
+  const canonical = join26(binDir, "..", "..");
+  if (existsSync5(join26(canonical, "package.json"))) {
     return canonical;
   }
   return binDir;

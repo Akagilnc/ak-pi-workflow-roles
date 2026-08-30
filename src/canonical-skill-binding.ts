@@ -2,7 +2,8 @@ import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
-import { parseSkillBlock, stripFrontmatter } from "@earendil-works/pi-coding-agent";
+import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
+import type { HostSkillExpansionEvidence } from "./host-contracts.ts";
 export type CanonicalSkillName = "tdd" | "code-review";
 
 export type CanonicalSkillSnapshot = Readonly<{
@@ -26,7 +27,7 @@ export type CanonicalSkillBinding<Name extends CanonicalSkillName = CanonicalSki
   snapshot: CanonicalSkillSnapshot;
   invocation(originalRequest: string): string;
   captureExpansion(
-    prompt: string,
+    evidence: HostSkillExpansionEvidence | undefined,
     originalRequest: string,
   ): CanonicalSkillEvidence<Name> | undefined;
 }>;
@@ -34,6 +35,33 @@ export type CanonicalSkillBinding<Name extends CanonicalSkillName = CanonicalSki
 export type AnyCanonicalSkillBinding =
   | CanonicalSkillBinding<"tdd">
   | CanonicalSkillBinding<"code-review">;
+
+export function captureCanonicalSkillExpansion<Name extends CanonicalSkillName>(
+  name: Name,
+  snapshot: CanonicalSkillSnapshot,
+  configuredPath: string,
+  evidence: HostSkillExpansionEvidence | undefined,
+  originalRequest: string,
+): CanonicalSkillEvidence<Name> | undefined {
+  const matchedPath =
+    evidence?.location === configuredPath
+      ? configuredPath
+      : evidence?.location === snapshot.path
+        ? snapshot.path
+        : undefined;
+  const expectedContent = matchedPath === undefined
+    ? undefined
+    : `References are relative to ${dirname(matchedPath)}.\n\n${snapshot.body}`;
+  if (
+    evidence?.name !== name
+    || matchedPath === undefined
+    || evidence.content !== expectedContent
+    || evidence.userMessage !== originalRequest
+  ) {
+    return undefined;
+  }
+  return Object.freeze({ ...evidence, name });
+}
 
 export class CanonicalSkillUnavailableError extends Error {
   readonly code = "canonical-skill-unavailable" as const;
@@ -75,32 +103,14 @@ export async function loadCanonicalSkillBinding(
     invocation(originalRequest) {
       return `/skill:${name} ${originalRequest}`;
     },
-    captureExpansion(prompt, originalRequest) {
-      const parsed = parseSkillBlock(prompt);
-      const matchedPath =
-        parsed?.location === configuredPath
-          ? configuredPath
-          : parsed?.location === snapshot.path
-            ? snapshot.path
-            : undefined;
-      const expectedContent = matchedPath === undefined
-        ? undefined
-        : `References are relative to ${dirname(matchedPath)}.\n\n${snapshot.body}`;
-      const userMessage = parsed?.userMessage ?? "";
-      if (
-        parsed?.name !== name ||
-        matchedPath === undefined ||
-        parsed.content !== expectedContent ||
-        userMessage !== originalRequest
-      ) {
-        return undefined;
-      }
-      return Object.freeze({
+    captureExpansion(evidence, originalRequest) {
+      return captureCanonicalSkillExpansion(
         name,
-        location: parsed.location,
-        content: parsed.content,
-        userMessage,
-      });
+        snapshot,
+        configuredPath,
+        evidence,
+        originalRequest,
+      );
     },
   };
   return Object.freeze(binding) as AnyCanonicalSkillBinding;

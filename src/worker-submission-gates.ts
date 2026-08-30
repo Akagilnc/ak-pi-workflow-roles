@@ -2,13 +2,21 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
   createRecordSession,
   type RecordSessionParent,
   WORKER_SUBMISSION_GATE_KIND,
 } from "./archivist-record-entry.ts";
+import { sitianReport } from "./sitian-facade.ts";
+import {
+  WorkerCommitReminderError,
+  WorkerPrefixReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "./submission-errors.ts";
+
+export { WorkerCommitReminderError, WorkerPrefixReminderError, WorkerUnfinishedReasonReminderError } from "./submission-errors.ts";
 
 export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
@@ -23,30 +31,6 @@ const HOOK_FILE = "reference-transaction";
 /** Open platform-prefix domain (constitution #10) — not a closed singleton. */
 const PLATFORM_PREFIX = /^[A-Za-z][A-Za-z0-9_-]*:/;
 const UNFINISHED_REASON_BOUNCE_LIMIT = 2;
-
-export class WorkerCommitReminderError extends Error {
-  readonly code = "worker_commit_reminder" as const;
-  constructor() {
-    super("未观察到 commit");
-    this.name = "WorkerCommitReminderError";
-  }
-}
-
-export class WorkerPrefixReminderError extends Error {
-  readonly code = "worker_prefix_reminder" as const;
-  constructor() {
-    super("观察到缺前缀 commit");
-    this.name = "WorkerPrefixReminderError";
-  }
-}
-
-export class WorkerUnfinishedReasonReminderError extends Error {
-  readonly code = "worker_unfinished_reason_reminder" as const;
-  constructor() {
-    super("本次 unfinished 回执未含 reason；本接缝缺由至多打回两次。");
-    this.name = "WorkerUnfinishedReasonReminderError";
-  }
-}
 
 export type WorkerSubmissionGateParent = RecordSessionParent;
 
@@ -275,6 +259,18 @@ export function createWorkerSubmissionGate(): {
         version: 1,
         head: baseline,
       });
+      sitianReport({
+        level: "event",
+        kind: "gate",
+        cwd,
+        ...(parent?.getSessionFile() ? { sessionParent: parent.getSessionFile() } : {}),
+        payload: {
+          type: WORKER_COMMIT_BASELINE_ENTRY_TYPE,
+          version: 1,
+          head: baseline,
+        },
+        source: "worker-submission-gates",
+      });
     },
     assertAcceptable(status, details) {
       if (status === "unfinished" && !unfinishedReasonPresent(details)) {
@@ -291,6 +287,16 @@ export function createWorkerSubmissionGate(): {
       if (!headMoved && !reminded) {
         reminded = true;
         record?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
+        sitianReport({
+          level: "event",
+          kind: "gate",
+          cwd: root,
+          payload: {
+            type: WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
+            version: 1,
+          },
+          source: "worker-submission-gates",
+        });
         throw new WorkerCommitReminderError();
       }
       reminded = true;
@@ -307,6 +313,16 @@ export function createWorkerSubmissionGate(): {
       }
       prefixReminded = true;
       record?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
+      sitianReport({
+        level: "event",
+        kind: "gate",
+        cwd: root,
+        payload: {
+          type: WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
+          version: 1,
+        },
+        source: "worker-submission-gates",
+      });
       throw new WorkerPrefixReminderError();
     },
   };

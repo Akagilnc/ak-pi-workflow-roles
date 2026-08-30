@@ -43,7 +43,7 @@ import {
 import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
-import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
@@ -53,9 +53,12 @@ import {
   runNodeSubprocess,
   runPiSubprocess,
   machineLedgerHome,
+  seedAgentDirModelsJsonFromFaux,
   withActivationHome,
+  withAgentDirProviderFixture,
   withHermeticHome,
   withInProcessPi,
+  withInstitutionalProviderFixture,
   withColdInstalledPackage,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
@@ -101,9 +104,11 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         installed("src/doctor-auditor.ts"),
       ]);
 
+      const faux = fauxProvider({ provider: "installed-auditor", api: "openai-responses" });
       const context = {
-        model: { provider: "installed-auditor", id: "installed-auditor", api: "openai-responses" },
+        model: faux.getModel(),
         modelRegistry: {
+          getProvider() { return faux.provider; },
           async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
           async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
         },
@@ -118,6 +123,9 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       await mkdir(resolve(runDirectory, "attachments"));
       await mkdir(resolve(runDirectory, "artifacts"));
       await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n");
+      await writeInstitutionalSeatTable(runDirectory, {
+        auditor: seatSelection("installed-auditor", "installed-auditor"),
+      });
       context.sessionManager = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
       context.sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
       context.sessionManager.appendMessage({
@@ -129,8 +137,8 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       });
       context.sessionManager.appendCustomEntry("ak_doctor_audit_candidate", { version: 1, testimony: {} });
       const roles = [
-        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)({ context }) },
-        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)({ context }) },
+        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: () => judge.createPiJudgeAuditor()({ context }) },
+        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: () => doctor.createPiDoctorAuditor()({ context }) },
       ] as const;
       // #470: judge = constitution + soul + audit-law + quality-law; doctor omits audit-law.
       // #495 S6: reviewer auditor roster retired.
@@ -139,22 +147,28 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       const installedQualityLaw = await readFile(resolve(installedRoot, "souls/quality-law.md"), "utf8");
       const expectedAuditorPrompt = async (name: string, soulPath: string) => {
         const soul = await readFile(soulPath, "utf8");
+        // Child session appends cwd (process default when context.cwd is unset).
+        const cwdSuffix = `\nCurrent working directory: ${process.cwd()}`;
         if (name === "doctor") {
-          return `${installedConstitution}\n\n${soul}`;
+          return `${installedConstitution}\n\n${soul}${cwdSuffix}`;
         }
-        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}`;
+        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}${cwdSuffix}`;
       };
       const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
         let prompt = "";
-        const completion: ComplianceCompletion = async (_model, request) => {
-          calls += 1;
-          prompt = request.systemPrompt ?? "";
-          const locator = request.tools?.find((tool) => tool.name === "ak_get_run_dossier");
-          assert.ok(locator, `${role.name} must expose the shared dossier locator`);
-          return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-        };
-        await role.run(completion);
+        faux.setResponses([
+          // faux resolveResponse(step, context, streamOptions, state, requestModel) — context first.
+          (context: any) => {
+            calls += 1;
+            prompt = context.systemPrompt ?? "";
+            const locator = context.tools?.find((tool: any) => tool.name === "ak_get_run_dossier");
+            assert.ok(locator, `${role.name} must expose the shared dossier locator`);
+            return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+          },
+        ]);
+        // #518 S3: auditor child resolves auth from models.json, not ambient getProvider.
+        await withInstitutionalProviderFixture(faux, () => role.run());
         assert.equal(calls, 1, `${role.name} audit must make one decision call`);
         assert.equal(
           prompt,
@@ -174,7 +188,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         const edited = await run(roles[0]);
         assert.equal(
           edited,
-          `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}`,
+          `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}\nCurrent working directory: ${process.cwd()}`,
         );
         for (const role of roles.slice(1)) {
           const unchanged = await run(role);
@@ -189,18 +203,18 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         const original = await readFile(role.soulPath, "utf8");
         await rm(role.soulPath, { force: true });
         try {
-          await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
+          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
         } finally {
           await writeFile(role.soulPath, original, "utf8");
         }
 
         await writeFile(role.soulPath, " \n", "utf8");
-        await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), new RegExp(`${role.name} auditor Soul is blank`));
+        await assert.rejects(role.run(), new RegExp(`${role.name} auditor Soul is blank`));
 
         await rm(role.soulPath, { force: true });
         await mkdir(role.soulPath);
         try {
-          await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
+          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
         } finally {
           await rm(role.soulPath, { recursive: true, force: true });
           await writeFile(role.soulPath, original, "utf8");
@@ -257,12 +271,32 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           return [activeModel];
         },
       };
+      // #518 S3: institutional children read models.json — seed mock HTTP, then layer
+      // the resolved auth fields the child must put on its real outbound request.
+      let latestChildRequestHeaders: import("node:http").IncomingHttpHeaders | undefined;
+      let auditChildRequestHeaders: import("node:http").IncomingHttpHeaders | undefined;
+      const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir, {
+        observers: {
+          onRequest({ headers }) {
+            latestChildRequestHeaders = headers;
+          },
+        },
+      });
+      try {
       const modelsPath = resolve(agentDir, "models.json");
+      const seededDoc = JSON.parse(await readFile(modelsPath, "utf8")) as {
+        providers?: Record<string, Record<string, unknown>>;
+      };
+      const providerDoc = seededDoc.providers?.[activeModel.provider] ?? {};
       await writeFile(
         modelsPath,
         JSON.stringify({
           providers: {
+            ...(seededDoc.providers ?? {}),
             [activeModel.provider]: {
+              ...providerDoc,
+              apiKey: "resolved-secret",
+              headers: { "x-resolved-auth": "yes" },
               modelOverrides: {
                 [activeModel.id]: {
                   headers: { "x-model-route": "audit-tenant" },
@@ -279,7 +313,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         faux,
         model: activeModel,
         provider: authResolvedProvider,
-        modelsPath,
+        modelsPath: null,
         additionalExtensionPaths: [packageEntrypoint(manifest)],
         systemPrompt: "INTEGRATION BASE PROMPT",
         mode: "json",
@@ -298,19 +332,11 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
 
         let judgeContext: Context | undefined;
         let auditContext: Context | undefined;
-        let auditDispatch:
-          | {
-            baseUrl: string | undefined;
-            apiKey: string | undefined;
-            headers: Record<string, string | null> | undefined;
-            env: Record<string, string> | undefined;
-          }
-          | undefined;
         // Developer exact-session shape: bare judge -p prompt is the only work
         // context (no authority.md / role-input). Navigator must recover it and
         // still deliver one correlated recommendation after accepted terminal.
         const developerPrompt = "Exercise audited terminating acceptance.";
-        const response = (context: Context, requestOptions?: unknown, _state?: unknown, requestModel?: { baseUrl?: string }) => {
+        const response = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
           const province = scriptProvincePass(names, "notary");
           if (province !== undefined) return province;
@@ -326,17 +352,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
             auditContext = context;
-            const options = requestOptions as {
-              apiKey?: string;
-              headers?: Record<string, string | null>;
-              env?: Record<string, string>;
-            } | undefined;
-            auditDispatch = {
-              baseUrl: requestModel?.baseUrl,
-              apiKey: options?.apiKey,
-              headers: options?.headers,
-              env: options?.env,
-            };
+            // Snapshot the mock HTTP headers that just arrived for this child turn.
+            auditChildRequestHeaders = latestChildRequestHeaders;
             return fauxAssistantMessage(
               fauxToolCall(
                 SOUL_AUDIT_TOOL_NAME,
@@ -369,16 +386,15 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         );
         const seenAuditContext = auditContext as Context | undefined;
         assert.ok(seenAuditContext);
+        // Parent still carries defaultBaseUrl; child auth is models.json (S3), not ambient inherit.
         assert.notEqual(activeModel.baseUrl, resolvedBaseUrl);
-        assert.deepEqual(auditDispatch, {
-          baseUrl: resolvedBaseUrl,
-          apiKey: "resolved-secret",
-          headers: {
-            "x-resolved-auth": "yes",
-            "x-model-route": "audit-tenant",
-          },
-          env: { RESOLVED_TENANT: "integration" },
-        });
+        // Prove the auditor child consumed resolved auth on the real outbound HTTP request
+        // (models.json → openai-completions → mock), not by re-reading the fixture file.
+        assert.ok(auditChildRequestHeaders, "auditor child must hit the seeded mock HTTP entry");
+        assert.equal(auditChildRequestHeaders.authorization, "Bearer resolved-secret");
+        assert.equal(auditChildRequestHeaders["x-resolved-auth"], "yes");
+        assert.equal(auditChildRequestHeaders["x-model-route"], "audit-tenant");
+        assert.notEqual(seeded.baseUrl, defaultBaseUrl);
         const auditInput = seenAuditContext.messages.find(
           (message) => message.role === "user",
         );
@@ -409,8 +425,16 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.ok(acceptedResult?.type === "message");
         assert.equal(acceptedResult.message.role, "toolResult");
         assert.equal(acceptedResult.message.isError, false);
-        // Receipt details stay contract-pure — Navigator must not rewrite them.
+        // #575 sole-final barrier: execute projects a pending-round-closure candidate;
+        // sealed decisive facts stay contract-pure — Navigator must not rewrite them.
         assert.deepEqual(acceptedResult.message.details, {
+          submissionDisposition: "pending-round-closure",
+        });
+        const judgeClosure = sessionManager
+          .getEntries()
+          .filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+        assert.equal(judgeClosure.length, 1, "exactly one sealed Judge submission closure");
+        assert.deepEqual((judgeClosure[0] as { data?: { details?: unknown } }).data?.details, {
           judgeStatus: "converged",
         });
         const entries = sessionManager.getEntries();
@@ -470,6 +494,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         );
       });
       } finally {
+        await seeded.close();
+      }
+      } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
         else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       }
@@ -487,11 +514,13 @@ test("packaged judge escalation emits one typed human decision", async () => {
         provider: "ak-judge-escalation-offline",
         tokenSize: { min: 1000, max: 1000 },
       });
+      await withAgentDirProviderFixture(faux, agentDir, async () => {
       await withInProcessPi({
         activationLedgerSession: true,
         cwd: packageRoot,
         agentDir,
         faux,
+        modelsPath: null,
         additionalExtensionPaths: [packageEntrypoint(manifest)],
         systemPrompt: "JUDGE ESCALATION INTEGRATION PROMPT",
         mode: "print",
@@ -545,24 +574,34 @@ test("packaged judge escalation emits one typed human decision", async () => {
         }
         const toolResult = result.message;
         assert.equal(toolResult.isError, false);
-        // Audit face + delivered judge verdict retained together (ADR 0055).
-        assert.equal(toolResult.details.kind, "audit_escalation");
-        assert.deepEqual(toolResult.details.conflicts, [
+        // #575 sole-final barrier: execute projects a pending-round-closure candidate;
+        // audit escalation face + delivered judge verdict arrive on the typed closure (ADR 0055).
+        assert.deepEqual(toolResult.details, { submissionDisposition: "pending-round-closure" });
+        const escalationClosure = sessionManager
+          .getEntries()
+          .filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+        assert.equal(escalationClosure.length, 1, "exactly one typed escalation closure");
+        const escalationDetails = (escalationClosure[0] as { data?: { details?: unknown } }).data?.details as {
+          kind?: unknown;
+          conflicts?: unknown;
+          auditDecisionGate?: unknown;
+          judgeStatus?: unknown;
+        };
+        assert.equal(escalationDetails.kind, "audit_escalation");
+        assert.deepEqual(escalationDetails.conflicts, [
           "Soul authority conflicts with controlling authority",
         ]);
-        assert.deepEqual(toolResult.details.auditDecisionGate, {
+        assert.deepEqual(escalationDetails.auditDecisionGate, {
           question: "Which authority governs this verdict?",
           options: ["Soul", "Controlling authority"],
         });
-        assert.equal(
-          (toolResult.details as { judgeStatus?: unknown }).judgeStatus,
-          "converged",
-        );
-        assert.equal(isAuditEscalationResult(toolResult.details), true);
+        assert.equal(escalationDetails.judgeStatus, "converged");
+        assert.equal(isAuditEscalationResult(escalationDetails), true);
         assert.throws(
-          () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),
+          () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, escalationDetails),
           (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
         );
+      });
       });
     },
   );
@@ -625,11 +664,13 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           provider: "ak-coder-offline",
           tokenSize: { min: 1000, max: 1000 },
         });
+        await withAgentDirProviderFixture(faux, agentDir, async () => {
         await withInProcessPi({
           activationLedgerSession: true,
           cwd: work,
           agentDir,
           faux,
+          modelsPath: null,
           additionalExtensionPaths: [packageEntrypoint(manifest)],
           additionalSkillPaths: [tddSkillPath],
           systemPrompt: "CODER INTEGRATION BASE PROMPT",
@@ -779,7 +820,11 @@ test("packaged coder apply proves canonical native tdd expansion including colli
               accepted.message.role === "toolResult",
           );
           assert.equal(accepted.message.isError, false);
-          assert.deepEqual(accepted.message.details, row.output);
+          assert.deepEqual(accepted.message.details, { submissionDisposition: "pending-round-closure" });
+          const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+          assert.equal(closure.length, 1, "exactly one sealed Coder submission closure");
+          assert.deepEqual((closure[0] as { data?: { details?: unknown } }).data?.details, row.output);
+        });
         });
       },
     );
@@ -819,11 +864,13 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           provider: `ak-fixer-offline-${phase}`,
           tokenSize: { min: 1000, max: 1000 },
         });
+        await withAgentDirProviderFixture(faux, agentDir, async () => {
         await withInProcessPi({
           activationLedgerSession: true,
           cwd: work,
           agentDir,
           faux,
+          modelsPath: null,
           additionalExtensionPaths: [packageEntrypoint(manifest)],
           systemPrompt: "FIXER INTEGRATION BASE PROMPT",
           mode: "print",
@@ -967,7 +1014,14 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
             ),
             fauxAssistantMessage(`singleton rejection observed for ${phase}`),
           ]);
-          await session.prompt(`Reject a mixed final batch in ${phase}.`);
+          const previousExitCode = process.exitCode;
+          try {
+            await session.prompt(`Reject a mixed final batch in ${phase}.`);
+          } finally {
+            // In-process Pi simulates the print/json CLI subprocess exit code;
+            // the typed mixed-batch rejection must not leak into the test runner.
+            process.exitCode = previousExitCode;
+          }
           const mixed = sessionManager.getEntries().find(
             (entry) =>
               entry.type === "message" &&
@@ -1008,7 +1062,11 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               accepted.message.role === "toolResult",
           );
           assert.equal(accepted.message.isError, false);
-          assert.deepEqual(accepted.message.details, output);
+          assert.deepEqual(accepted.message.details, { submissionDisposition: "pending-round-closure" });
+          const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+          assert.equal(closure.length, 1, "exactly one sealed Fixer submission closure");
+          assert.deepEqual((closure[0] as { data?: { details?: unknown } }).data?.details, output);
+        });
         });
       }
     },

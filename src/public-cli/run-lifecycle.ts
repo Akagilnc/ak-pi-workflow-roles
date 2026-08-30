@@ -1,3 +1,7 @@
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+} from "../host-contracts.ts";
 /**
  * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
  * States: admitted → running → resumable | terminal.
@@ -5,7 +9,7 @@
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
-import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -24,6 +28,8 @@ export {
 } from "../typed-provider-http.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
+import { THINKING_LEVELS } from "./config.ts";
+import type { PublicThinkingLevel } from "./registry.ts";
 import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
@@ -156,103 +162,222 @@ export async function writeRoleRunState(
   );
 }
 
-export async function readRoleRunState(
+/**
+ * Uninterpreted principal wire as stored on run-state.json.
+ * Legacy rows may omit sessionFile; only DurablePrincipalAuthority decodes it.
+ */
+type RoleRunPrincipalWire = {
+  readonly sessionDirectory: string;
+  readonly sessionFile?: string;
+};
+
+/** Envelope I/O only — principal payload is carried uninterpreted. */
+type RoleRunStateDisk = {
+  readonly runId: string;
+  readonly role: RoleRunRecord["role"];
+  readonly state: RoleRunState;
+  readonly bookKey: string;
+  readonly projectRoot: string;
+  readonly runDirectory: string;
+  readonly admittedRequestPath: string;
+  readonly principalWire: RoleRunPrincipalWire;
+  readonly phase?: CoderPhase | FixerPhase;
+  readonly resumable?: TypedHttp429Observation;
+};
+
+async function readRoleRunStateDisk(
   runDirectory: string,
-): Promise<RoleRunRecord | undefined> {
+): Promise<RoleRunStateDisk | undefined> {
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return undefined;
   }
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      return undefined;
-    }
-    const record = raw as Record<string, unknown>;
-    if (typeof record.runId !== "string" || record.runId.trim() === "") {
-      return undefined;
-    }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  if (typeof record.runId !== "string" || record.runId.trim() === "") {
+    return undefined;
+  }
+  if (
+    record.role !== "judge" &&
+    record.role !== "coder" &&
+    record.role !== "fixer" &&
+    record.role !== "collector" &&
+    record.role !== "doctor" &&
+    record.role !== "reviewer" &&
+    record.role !== "merger" &&
+    record.role !== "notary" &&
+    record.role !== "countersign"
+  ) {
+    return undefined;
+  }
+  if (
+    record.state !== "admitted" &&
+    record.state !== "running" &&
+    record.state !== "resumable" &&
+    record.state !== "terminal"
+  ) {
+    return undefined;
+  }
+  if (typeof record.bookKey !== "string") return undefined;
+  if (typeof record.projectRoot !== "string") return undefined;
+  if (typeof record.sessionDirectory !== "string") return undefined;
+  if (typeof record.admittedRequestPath !== "string") return undefined;
+  const runDir =
+    typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
+      ? record.runDirectory
+      : runDirectory;
+  // Principal wire stays uninterpreted — authority owns legacy sessionFile fallback.
+  const principalWire: RoleRunPrincipalWire = {
+    sessionDirectory: record.sessionDirectory,
+    ...(typeof record.sessionFile === "string"
+      ? { sessionFile: record.sessionFile }
+      : {}),
+  };
+  let resumable: TypedHttp429Observation | undefined;
+  if (record.resumable !== undefined && record.resumable !== null) {
     if (
-      record.role !== "judge" &&
-      record.role !== "coder" &&
-      record.role !== "fixer" &&
-      record.role !== "collector" &&
-      record.role !== "doctor" &&
-      record.role !== "reviewer" &&
-      record.role !== "merger" &&
-      record.role !== "notary" &&
-      record.role !== "countersign"
+      typeof record.resumable === "object" &&
+      !Array.isArray(record.resumable)
     ) {
-      return undefined;
-    }
-    if (
-      record.state !== "admitted" &&
-      record.state !== "running" &&
-      record.state !== "resumable" &&
-      record.state !== "terminal"
-    ) {
-      return undefined;
-    }
-    if (typeof record.bookKey !== "string") return undefined;
-    if (typeof record.projectRoot !== "string") return undefined;
-    if (typeof record.sessionDirectory !== "string") return undefined;
-    if (typeof record.admittedRequestPath !== "string") return undefined;
-    const runDir =
-      typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
-        ? record.runDirectory
-        : runDirectory;
-    // Legacy states predate sessionFile. Their persisted session directory is
-    // the authority for the historical principal, even if project topology moved.
-    const sessionFile =
-      typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
-        ? record.sessionFile
-        : join(record.sessionDirectory, "session.jsonl");
-    let resumable: TypedHttp429Observation | undefined;
-    if (record.resumable !== undefined && record.resumable !== null) {
+      const r = record.resumable as Record<string, unknown>;
       if (
-        typeof record.resumable === "object" &&
-        !Array.isArray(record.resumable)
+        r.httpStatus === 429 &&
+        typeof r.provider === "string" &&
+        isV1ResumableProvider(r.provider)
       ) {
-        const r = record.resumable as Record<string, unknown>;
-        if (
-          r.httpStatus === 429 &&
-          typeof r.provider === "string" &&
-          isV1ResumableProvider(r.provider)
-        ) {
-          resumable = { httpStatus: 429, provider: r.provider };
-        }
+        resumable = { httpStatus: 429, provider: r.provider };
       }
     }
-    const phase =
-      record.phase === "plan" || record.phase === "apply"
-        ? record.phase
-        : undefined;
+  }
+  const phase =
+    record.phase === "plan" || record.phase === "apply"
+      ? record.phase
+      : undefined;
+  return {
+    runId: record.runId,
+    role: record.role,
+    state: record.state,
+    bookKey: record.bookKey,
+    projectRoot: record.projectRoot,
+    runDirectory: runDir,
+    admittedRequestPath: record.admittedRequestPath,
+    principalWire,
+    ...(phase === undefined ? {} : { phase }),
+    ...(resumable === undefined ? {} : { resumable }),
+  };
+}
+
+async function writeRoleRunStateDisk(
+  runDirectory: string,
+  disk: RoleRunStateDisk,
+): Promise<void> {
+  const payload = {
+    runId: disk.runId,
+    role: disk.role,
+    state: disk.state,
+    bookKey: disk.bookKey,
+    projectRoot: disk.projectRoot,
+    runDirectory: disk.runDirectory,
+    sessionDirectory: disk.principalWire.sessionDirectory,
+    ...(disk.principalWire.sessionFile === undefined
+      ? {}
+      : { sessionFile: disk.principalWire.sessionFile }),
+    admittedRequestPath: disk.admittedRequestPath,
+    ...(disk.phase === undefined ? {} : { phase: disk.phase }),
+    ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
+  };
+  await writeFile(
+    join(runDirectory, RUN_STATE_FILE),
+    `${JSON.stringify(payload, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+/** One authority.decode of the uninterpreted wire → record + opaque principal (frozen wire itself). */
+function materializeRoleRunFromDisk(
+  disk: RoleRunStateDisk,
+  authority: DurablePrincipalAuthority,
+): { readonly run: RoleRunRecord; readonly principal: DurablePrincipal } | undefined {
+  try {
+    const coordinates = authority.decode(disk.principalWire);
     return {
-      runId: record.runId,
-      role: record.role,
-      state: record.state,
-      bookKey: record.bookKey,
-      projectRoot: record.projectRoot,
-      sessionDirectory: record.sessionDirectory,
-      sessionFile,
-      runDirectory: runDir,
-      admittedRequestPath: record.admittedRequestPath,
-      ...(phase === undefined ? {} : { phase }),
-      ...(resumable === undefined ? {} : { resumable }),
+      principal: disk.principalWire as unknown as DurablePrincipal,
+      run: {
+        runId: disk.runId,
+        role: disk.role,
+        state: disk.state,
+        bookKey: disk.bookKey,
+        projectRoot: disk.projectRoot,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
+        runDirectory: disk.runDirectory,
+        admittedRequestPath: disk.admittedRequestPath,
+        ...(disk.phase === undefined ? {} : { phase: disk.phase }),
+        ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
+      },
     };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read durable run-state and materialize principal coordinates through the
+ * injected host authority (legacy sessionFile fallback lives only in the codec).
+ */
+export async function readRoleRunState(
+  runDirectory: string,
+  authority: DurablePrincipalAuthority,
+): Promise<RoleRunRecord | undefined> {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === undefined) return undefined;
+  return materializeRoleRunFromDisk(disk, authority)?.run;
+}
+
+/**
+ * Envelope identity only — no principal payload interpretation.
+ * Used by notary locator / role peek that never consume session coordinates.
+ */
+export async function readRoleRunIdentity(
+  runDirectory: string,
+): Promise<
+  | {
+      readonly runId: string;
+      readonly role: RoleRunRecord["role"];
+      readonly bookKey: string;
+      readonly runDirectory: string;
+      readonly state: RoleRunState;
+    }
+  | undefined
+> {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === undefined) return undefined;
+  return {
+    runId: disk.runId,
+    role: disk.role,
+    bookKey: disk.bookKey,
+    runDirectory: disk.runDirectory,
+    state: disk.state,
+  };
 }
 
 export async function markRunAdmitted(
   admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<void> {
+  const { sessionDirectory, sessionFile } = authority.decode(admitted.principal);
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
     role: admitted.role,
     state: "admitted",
     bookKey: admitted.bookKey,
     projectRoot: admitted.projectRoot,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
+    sessionDirectory,
+    sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     ...(
       admitted.role === "coder" || admitted.role === "fixer"
@@ -275,27 +400,25 @@ export async function markRunRunning(
   effectiveModel?: InvocationEffectiveModel,
   effectiveEngine?: string,
 ): Promise<void> {
-  if (effectiveModel !== undefined || effectiveEngine !== undefined) {
-    await recordEffectiveInvocationModel(
-      runDirectory,
-      effectiveModel,
-      effectiveEngine,
-    );
-  }
-  const current = await readRoleRunState(runDirectory);
+  await recordEffectiveInvocationModel(
+    runDirectory,
+    effectiveModel,
+    effectiveEngine,
+  );
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark running: run state missing");
   }
-  // Omit resumable while a writer is active.
-  await writeRoleRunState(runDirectory, {
+  // Omit resumable while a writer is active. Principal wire is passed through uninterpreted.
+  await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
     state: "running",
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
+    runDirectory: current.runDirectory,
     admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
     ...(current.phase === undefined ? {} : { phase: current.phase }),
   });
 }
@@ -305,11 +428,11 @@ export async function markRunResumable(
   runDirectory: string,
   observation: TypedHttp429Observation,
 ): Promise<void> {
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark resumable: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     ...current,
     state: "resumable",
     resumable: observation,
@@ -317,37 +440,32 @@ export async function markRunResumable(
 }
 
 export async function markRunTerminal(runDirectory: string): Promise<void> {
-  const current = await readRoleRunState(runDirectory);
+  const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark terminal: run state missing");
   }
-  await writeRoleRunState(runDirectory, {
+  await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
     state: "terminal",
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
-    sessionDirectory: current.sessionDirectory,
-    sessionFile: current.sessionFile,
+    runDirectory: current.runDirectory,
     admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
     ...(current.phase === undefined ? {} : { phase: current.phase }),
   });
 }
 
 /**
- * True when the durable Pi session file principal exists as a regular file.
+ * True when the host authority reports the durable principal available.
  * Resume must reopen this exact principal; directory-latest is not identity.
  */
-export async function isSessionPrincipalAvailable(
-  sessionFile: string,
+export async function isDurablePrincipalAvailable(
+  principal: DurablePrincipal,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
-  if (sessionFile.trim() === "") return false;
-  try {
-    const st = await lstat(sessionFile);
-    return st.isFile() && !st.isSymbolicLink();
-  } catch {
-    return false;
-  }
+  return authority.isAvailable(principal);
 }
 
 export class RunWriterLeaseHeldError extends Error {
@@ -384,231 +502,77 @@ export function describeErrorIdentity(error: unknown): string {
   return `${name}${code}${message}`;
 }
 
-function errorCodeOf(error: unknown): unknown {
-  return (error as { code?: unknown }).code;
-}
-
 /**
- * Signal-0 liveness probe. Only ESRCH proves absence; any other refusal
- * (e.g. EPERM) means the holder process exists.
- */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return errorCodeOf(error) !== "ESRCH";
-  }
-}
-
-type WriterLockAutopsy =
-  | { verdict: "absent"; readFailure?: unknown }
-  | { verdict: "dead"; pid: number }
-  | { verdict: "alive"; pid: number };
-
-/**
- * Holder autopsy for an existing writer.lock (#552). "absent" covers no file,
- * no parseable pid (a live creator mid-acquisition reads as empty, and so does
- * the crash-window leftover), and unreadable files — absent alone never
- * authorizes reclaim; only a "dead" verdict does. A non-ENOENT read failure
- * still decides "absent" but rides along as readFailure so the true cause can
- * land in the cleanup sink instead of being laundered away.
- */
-async function autopsyWriterLock(lockPath: string): Promise<WriterLockAutopsy> {
-  let content: string;
-  try {
-    content = await readFile(lockPath, "utf8");
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return { verdict: "absent" };
-    return { verdict: "absent", readFailure: error };
-  }
-  const pid = Number.parseInt(content.trim(), 10);
-  if (!Number.isInteger(pid) || pid <= 0) return { verdict: "absent" };
-  return isProcessAlive(pid) ? { verdict: "alive", pid } : { verdict: "dead", pid };
-}
-
-function describeAutopsy(autopsy: WriterLockAutopsy): string {
-  switch (autopsy.verdict) {
-    case "alive":
-      return `live pid ${autopsy.pid}`;
-    case "dead":
-      return `dead pid ${autopsy.pid}`;
-    case "absent":
-      return autopsy.readFailure !== undefined
-        ? "unreadable lock"
-        : "absent or unparseable holder";
-  }
-}
-
-/**
- * Remove one lock whose re-read autopsy is still a verified-dead holder, or
- * leave it for the next round otherwise. The pre-unlink re-read guard means a
- * concurrent writer that re-locked between the autopsy and the unlink cannot
- * have its live lock stolen. Residual race: a writer can still re-lock between
- * the re-read and the unlink itself; POSIX offers no compare-and-delete, and
- * this narrows the window to a single syscall pair.
- */
-async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): Promise<boolean> {
-  const current = await autopsyWriterLock(lockPath);
-  if (current.verdict !== "dead") return false;
-  try {
-    await unlink(lockPath);
-    return true;
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return false;
-    if (errorCodeOf(error) !== "EACCES") throw error;
-    await chmod(runDirectory, 0o755);
-    await unlink(lockPath);
-    return true;
-  }
-}
-
-async function createWriterLease(
-  lockPath: string,
-  runDirectory: string,
-  reportCleanupFailure: (error: unknown) => void,
-): Promise<RunWriterLease> {
-  const handle = await open(lockPath, "wx");
-  try {
-    await handle.writeFile(`${process.pid}\n`, "utf8");
-  } catch (error) {
-    await handle.close().catch(() => undefined);
-    await unlink(lockPath).catch(() => undefined);
-    throw error;
-  }
-  let released = false;
-  return {
-    lockPath,
-    async release() {
-      if (released) return;
-      released = true;
-      await handle.close().catch(() => undefined);
-      try {
-        await unlink(lockPath);
-      } catch (error) {
-        if (errorCodeOf(error) === "EACCES") {
-          try {
-            await chmod(runDirectory, 0o755);
-            await unlink(lockPath);
-          } catch (retryError) {
-            // best-effort cleanup: a stale lock left here is reclaimed by the
-            // next acquire's holder autopsy, but the true chmod/unlink cause
-            // must be recorded, not swallowed.
-            reportCleanupFailure(retryError);
-          }
-        } else {
-          // non-EACCES unlink failure is best-effort settlement cleanup; record true cause.
-          reportCleanupFailure(error);
-        }
-      }
-    },
-  };
-}
-
-const WRITER_LEASE_RECLAIM_ROUNDS = 3;
-
-/**
- * Acquire the one-writer lease for a Role run. Exclusive create — no second
- * writer; a concurrent acquire rejects without dispatch.
- *
- * A contested lock gets a holder autopsy before rejection (#552): only a
- * verified-dead holder pid — parseable pid, signal-0 ESRCH, and still dead on
- * the pre-unlink re-read — authorizes reclaim, because no writer is left to
- * release the lock; acquire then retries the create. An empty, unparseable, or
- * unreadable lock proves no dead holder (a live creator is mid-acquisition
- * between the exclusive create and its pid write), so it rejects as
- * RunWriterLeaseHeldError naming the path and the lock stays on disk — a
- * crash-window empty lock blocking a resume is that refusal's known residue,
- * not safely fixable by unlink here. A live holder rejects the same typed
- * error naming the pid and path. A pid recycled by an unrelated process reads
- * as alive — that degrades to the same typed rejection, never worse than the
- * pre-#552 behavior. Reclaim rounds are bounded by
- * WRITER_LEASE_RECLAIM_ROUNDS; a lock that stays contested (e.g. a reclaim
- * race repeatedly lost) surfaces the same typed error instead of spinning.
+ * Acquire the one-writer lease for a Role run. Concurrent acquire rejects
+ * without dispatch. Exclusive create — no second writer.
  *
  * `onCleanupFailure` receives a non-terminal diagnostic line when release-time
- * lock cleanup fails, a contested lock cannot be read, or a stale lock is
- * reclaimed (the #556 orphan-pi residual declaration). Release stays
- * best-effort (a stale lock is reclaimed by the next acquire's autopsy), but
- * the true error identity must still land somewhere observable — silent
- * swallowing is forbidden.
+ * lock cleanup fails. Release stays best-effort (a stale lock resurfaces as
+ * RunWriterLeaseHeldError on next acquire), but the true error identity must
+ * still land somewhere observable — silent swallowing is forbidden.
  */
 export async function acquireRunWriterLease(
   runDirectory: string,
   onCleanupFailure?: (diagnostic: string) => void,
 ): Promise<RunWriterLease> {
-  const reportDiagnostic = (diagnostic: string): void => {
-    // Single sink exit for every non-terminal writer-lease diagnostic (#556):
-    // a throwing onCleanupFailure must not propagate through release() or
-    // acquire() — both are best-effort by contract. Template wording stays at
-    // the call sites, never inside this wrapper. The default io.stderr writes
-    // raw, so this exit guarantees the line delimiter.
-    const line = diagnostic.endsWith("\n") ? diagnostic : `${diagnostic}\n`;
-    try {
-      onCleanupFailure?.(line);
-    } catch {
-      // diagnostic-sink failure is itself best-effort; never break acquire()/release().
-    }
-  };
   const reportCleanupFailure = (error: unknown): void => {
-    reportDiagnostic(
-      `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
-    );
+    // Sink isolation: a throwing onCleanupFailure must not propagate through
+    // release() — release stays best-effort by contract. The true cleanup
+    // cause has already been handed to the sink as its argument.
+    try {
+      onCleanupFailure?.(
+        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+      );
+    } catch {
+      // diagnostic-sink failure is itself best-effort; never break release().
+    }
   };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
-  let lastAutopsy: WriterLockAutopsy = { verdict: "absent" };
-  // The reclaim budget: every successful reclaim is immediately followed by a
-  // fresh create attempt, including the budget's last one (the previous shape
-  // exited after a final-round reclaim with the path already clear).
-  for (let reclaimsLeft = WRITER_LEASE_RECLAIM_ROUNDS; ; reclaimsLeft -= 1) {
+  try {
+    const handle = await open(lockPath, "wx");
     try {
-      return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
+      await handle.writeFile(`${process.pid}\n`, "utf8");
     } catch (error) {
-      if (errorCodeOf(error) !== "EEXIST") throw error;
+      await handle.close().catch(() => undefined);
+      await unlink(lockPath).catch(() => undefined);
+      throw error;
     }
-    lastAutopsy = await autopsyWriterLock(lockPath);
-    if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== undefined) {
-      // 失败诚实: a lock we could not read must land its true read cause
-      // somewhere observable — recorded, but never treated as proof of death.
-      reportCleanupFailure(lastAutopsy.readFailure);
+    let released = false;
+    return {
+      lockPath,
+      async release() {
+        if (released) return;
+        released = true;
+        await handle.close().catch(() => undefined);
+        try {
+          await unlink(lockPath);
+        } catch (error) {
+          if ((error as { code?: unknown }).code === "EACCES") {
+            try {
+              await chmod(runDirectory, 0o755);
+              await unlink(lockPath);
+            } catch (retryError) {
+              // best-effort cleanup: stale lock will surface as lease-held on next acquire (exit 2),
+              // but the true chmod/unlink cause must be recorded, not swallowed.
+              reportCleanupFailure(retryError);
+            }
+          } else {
+            // non-EACCES unlink failure is best-effort settlement cleanup; record true cause.
+            reportCleanupFailure(error);
+          }
+        }
+      },
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "EEXIST"
+    ) {
+      throw new RunWriterLeaseHeldError();
     }
-    if (lastAutopsy.verdict === "alive") {
-      throw new RunWriterLeaseHeldError(
-        `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`,
-      );
-    }
-    if (lastAutopsy.verdict === "absent") {
-      // #552 mechanical criterion: stale = holder pid verified dead. An
-      // empty lock (a live creator is mid-acquisition before its pid write)
-      // or an unreadable one proves no dead holder — unlinking here could
-      // steal a live writer's lock, so reject typed and leave the lock.
-      throw new RunWriterLeaseHeldError(
-        lastAutopsy.readFailure !== undefined
-          ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place`
-          : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`,
-      );
-    }
-    if (reclaimsLeft <= 0) break;
-    let reclaimed = false;
-    try {
-      reclaimed = await reclaimStaleWriterLock(lockPath, runDirectory);
-    } catch (reclaimError) {
-      throw new RunWriterLeaseHeldError(
-        `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
-      );
-    }
-    // #556 residual declaration, facts only, and only on the fact of removal:
-    // the pid-only autopsy proves the CLI holder died; its pi child may outlive
-    // it and keep writing this run. Declare — do not guard.
-    if (reclaimed) {
-      reportDiagnostic(
-        `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run — check for a surviving pi process on this run before continuing`,
-      );
-    }
+    throw error;
   }
-  throw new RunWriterLeaseHeldError(
-    `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,
-  );
 }
 
 /**
@@ -660,6 +624,8 @@ type LoadedAdmittedRequestFields = {
   readonly derived?: DerivedMergerEnvelope;
   readonly correlationId?: string;
   readonly ticketNumber?: number;
+  /** Effective model restored from the invocation identity page on resume. */
+  readonly model?: InvocationEffectiveModel;
 };
 
 /** Restore optional correlation + typed ticketNumber from a durable admitted page. */
@@ -695,8 +661,10 @@ function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
 async function loadResumableRunRecord(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority,
 ): Promise<{
   readonly run: RoleRunRecord;
+  readonly principal: DurablePrincipal;
   readonly observation?: TypedHttp429Observation;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }> {
@@ -704,14 +672,19 @@ async function loadResumableRunRecord(
   if (runDirectory === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  const run = await readRoleRunState(runDirectory);
-  if (run === undefined) {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   // #416: removed terminal/resumable gates per owner decision "根本不要有限制" (2026-08-22).
   // Only the exact Pi session principal check remains as honest failure.
-  // Exact Pi session principal must be present before resume dispatches.
-  if (!(await isSessionPrincipalAvailable(run.sessionFile))) {
+  // One authority.decode of the uninterpreted wire yields both principal and record.
+  const materialized = materializeRoleRunFromDisk(disk, authority);
+  if (materialized === undefined) {
+    throw new CliUsageError(`unknown role run id: ${runId}`);
+  }
+  const { run, principal } = materialized;
+  if (!(await isDurablePrincipalAvailable(principal, authority))) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`,
     );
@@ -825,39 +798,50 @@ async function loadResumableRunRecord(
       { cause: error },
     );
   }
-  if (correlationId === undefined || ticketNumber === undefined) {
-    try {
-      const invocationRaw: unknown = JSON.parse(
-        await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
-      );
-      if (
-        invocationRaw !== null &&
-        typeof invocationRaw === "object" &&
-        !Array.isArray(invocationRaw)
-      ) {
-        const fromInvocation = parsePersistedTicketIdentity(
-          invocationRaw as Record<string, unknown>,
-        );
+  let model: InvocationEffectiveModel | undefined;
+  try {
+    const invocationRaw: unknown = JSON.parse(
+      await readFile(join(run.runDirectory, "invocation.json"), "utf8"),
+    );
+    if (
+      invocationRaw !== null &&
+      typeof invocationRaw === "object" &&
+      !Array.isArray(invocationRaw)
+    ) {
+      const rec = invocationRaw as Record<string, unknown>;
+      if (typeof rec.provider === "string" && typeof rec.model === "string") {
+        model = {
+          provider: rec.provider,
+          model: rec.model,
+          ...(typeof rec.thinking === "string" &&
+          THINKING_LEVELS.has(rec.thinking as PublicThinkingLevel)
+            ? { thinking: rec.thinking as PublicThinkingLevel }
+            : {}),
+        };
+      }
+      if (correlationId === undefined || ticketNumber === undefined) {
+        const fromInvocation = parsePersistedTicketIdentity(rec);
         if (correlationId === undefined) correlationId = fromInvocation.correlationId;
         if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
       }
-    } catch (error) {
-      if (
-        !(
-          error instanceof Error &&
-          "code" in error &&
-          (error as { code?: unknown }).code === "ENOENT"
-        )
-      ) {
-        throw new CliUsageError(
-          `role run invocation identity is unreadable: ${runId}`,
-          { cause: error },
-        );
-      }
+    }
+  } catch (error) {
+    if (
+      !(
+        error instanceof Error &&
+        "code" in error &&
+        (error as { code?: unknown }).code === "ENOENT"
+      )
+    ) {
+      throw new CliUsageError(
+        `role run invocation identity is unreadable: ${runId}`,
+        { cause: error },
+      );
     }
   }
   return {
     run,
+    principal,
     ...(run.resumable === undefined ? {} : { observation: run.resumable }),
     admittedFields: {
       instruction,
@@ -874,6 +858,7 @@ async function loadResumableRunRecord(
       ...(derived === undefined ? {} : { derived }),
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
+      ...(model === undefined ? {} : { model }),
     },
   };
 }
@@ -910,8 +895,9 @@ export type LoadedResumableReviewerRun = {
 export async function loadResumableJudgeRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableJudgeRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "judge") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not judge`,
@@ -926,9 +912,9 @@ export async function loadResumableJudgeRun(
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -945,8 +931,9 @@ export async function loadResumableJudgeRun(
 export async function loadResumableCoderRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableCoderRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "coder") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not coder`,
@@ -979,10 +966,10 @@ export async function loadResumableCoderRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -999,8 +986,9 @@ export async function loadResumableCoderRun(
 export async function loadResumableFixerRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableFixerRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "fixer") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not fixer`,
@@ -1034,14 +1022,14 @@ export async function loadResumableFixerRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...(loaded.admittedFields.prerequisitesPath === undefined
       ? {}
       : { prerequisitesPath: loaded.admittedFields.prerequisitesPath }),
     prerequisites,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -1062,8 +1050,9 @@ export async function loadResumableFixerRun(
 export async function loadResumableReviewerRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableReviewerRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "reviewer") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`,
@@ -1084,11 +1073,11 @@ export async function loadResumableReviewerRun(
     instructionEmpty: loaded.admittedFields.instructionEmpty,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -1111,8 +1100,9 @@ export type LoadedResumableMergerRun = {
 export async function loadResumableMergerRun(
   home: string,
   runId: string,
+  authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableMergerRun> {
-  const loaded = await loadResumableRunRecord(home, runId);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   if (loaded.run.role !== "merger") {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not merger`,
@@ -1144,11 +1134,11 @@ export async function loadResumableMergerRun(
     instructionEmpty: false,
     attachments: loaded.admittedFields.attachments,
     runDirectory: loaded.run.runDirectory,
-    sessionDirectory: loaded.run.sessionDirectory,
-    sessionFile: loaded.run.sessionFile,
+    principal: loaded.principal,
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
   return {
@@ -1175,6 +1165,6 @@ export async function peekRoleRunRole(
 > {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
-  const run = await readRoleRunState(runDirectory);
+  const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }

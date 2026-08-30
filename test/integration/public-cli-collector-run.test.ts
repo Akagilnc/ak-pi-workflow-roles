@@ -7,6 +7,8 @@ import test from "node:test";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import { packageRoot, piCli, runPiSubprocess, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 
 function seedProject(project: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: project });
@@ -109,7 +111,10 @@ if (path.endsWith('/user')) reply(200, {login:'fixture'}); else if (path.include
       collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
       collectorTimeoutMs: 90_000,
       io: { stdout() {}, stderr: (text) => stderr.push(text) },
-      piRunner: async (args, options) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
         assert.ok(args.some((arg) => arg.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE)));
         const subprocess = await runPiSubprocess([...args], {
           cwd: options.cwd,
@@ -118,6 +123,8 @@ if (path.endsWith('/user')) reply(200, {login:'fixture'}); else if (path.include
         });
         return { code: subprocess.code, stdout: subprocess.stdout, stderr: subprocess.stderr, timedOut: subprocess.localTimeout, args: [...args] };
       },
+            extraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+          }),
     });
 
     assert.equal(result.exitCode, 1, stderr.join(""));

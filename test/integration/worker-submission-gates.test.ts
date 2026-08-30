@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -532,7 +534,10 @@ test("①② durability via real createRecordSession survives resume; no second 
             stdout: (t: string) => { stdout.push(t); },
             stderr: (t: string) => { stderr.push(t); },
           },
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             const sessionFile = args[args.indexOf("--session") + 1]!;
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             const packetPath = args[args.indexOf("--ak-fix-packet") + 1]!;
@@ -581,6 +586,7 @@ test("①② durability via real createRecordSession survives resume; no second 
               args: [...args],
             };
           },
+          }),
         },
       );
     } finally {

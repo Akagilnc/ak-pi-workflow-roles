@@ -1,10 +1,12 @@
 import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { HostContext } from "./host-contracts.ts";
 
-import { executeAuditorChild, type AuditorCompletion, type AuditorDecisionTool } from "./evidence-child-executor.ts";
+import { executeAuditorChild, type AuditorDecisionTool } from "./evidence-child-executor.ts";
 import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
+import { GatekeeperDecisionError } from "./submission-errors.ts";
 
 export const GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
 export const INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
@@ -49,37 +51,22 @@ function gateSeatLabel(stage: "gatekeeper" | "inspector" | "notary"): string {
   }
 }
 
-function nonPassMessage(result: GatekeeperNonPassResult): string {
-  // Message text is what pi-agent-core createErrorToolResult exposes to the model.
-  if (result.status === "bounce") {
-    const findings = result.findings.length === 0 ? "（无 findings）" : result.findings.join("; ");
-    return `门下省打回重写，findings：${findings}`;
-  }
-  return `门下省 ${result.status}（${result.stage}）：${result.reason}`;
-}
-
-/** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
-export class GatekeeperDecisionError extends Error {
-  readonly result: GatekeeperNonPassResult;
-  constructor(result: GatekeeperNonPassResult) {
-    super(nonPassMessage(result));
-    this.name = "GatekeeperDecisionError";
-    this.result = result;
-  }
-}
+export { GatekeeperDecisionError } from "./submission-errors.ts";
 
 export type RunGatekeeperOptions = {
-  readonly context: ExtensionContext;
+  readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  readonly runCompletion?: AuditorCompletion;
   readonly loadSoul?: (role: "gatekeeper" | "inspector" | "notary") => Promise<string>;
+  /** Run directory carrying the institutional resolution page (#518). Derives
+   * from context when absent. */
+  readonly runDirectory?: string;
 };
 
 export type GatekeeperPassHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
+  failInfrastructure(error: unknown, ctx: ExtensionContext | HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
-  bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
+  bindSubmissionNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
 };
 
 // Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
@@ -144,10 +131,18 @@ function asStringArray(value: unknown): readonly string[] {
 /** Serializable stand-in when the child tool call had no arguments object. */
 export const MISSING_ARGUMENTS_SUBMISSION = Object.freeze({ missing: "arguments" as const });
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Keep original decision bytes for the next reader; undefined becomes a serializable missing-args fact. */
 function retainedSubmission(decision: unknown): unknown {
   // undefined must not be stored: JSON drops it and the missing-args fact vanishes.
-  return decision === undefined ? MISSING_ARGUMENTS_SUBMISSION : decision;
+  // Through the real provider adapter an undefined root argument arrives as an
+  // empty object after serialization; that must also project a missing-args fact.
+  return decision === undefined || (isRecord(decision) && Object.keys(decision).length === 0)
+    ? MISSING_ARGUMENTS_SUBMISSION
+    : decision;
 }
 
 /**
@@ -219,7 +214,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       tool: createGatekeeperOutputTool(),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
     });
   } catch (error) {
     return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
@@ -242,7 +237,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
       dossierTool: subjectTool(options.subject),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.runCompletion === undefined ? {} : { runCompletion: options.runCompletion }),
+      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
     });
     if (officerRun.noReceiptLifecycle !== undefined) {
       return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
@@ -255,7 +250,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
 
 /** Project GatekeeperResult onto a submit path: transport→failInfrastructure; bounce/no_receipt→typed throw; pass silent. */
 export async function requireGatekeeperPass(options: {
-  readonly context: ExtensionContext;
+  readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
   readonly hostActions: GatekeeperPassHostActions;
@@ -280,6 +275,6 @@ export async function requireGatekeeperPass(options: {
     options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
   }
   // Envelope owns the execute→tool_result bridge; this module only projects + throws.
-  options.hostActions.bindGatekeeperNonPass(options.toolCallId, gatekeeper);
+  options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
   throw new GatekeeperDecisionError(gatekeeper);
 }

@@ -1,7 +1,7 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { Type } from "typebox";
 
+import { stringEnum } from "./host-contracts.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
@@ -16,7 +16,7 @@ export type { CountersignVerdict };
 export const countersignVerdictSchema = withInfrastructureFailureDeclaration(
   Type.Object(
     {
-      countersignStatus: StringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate" }),
+      countersignStatus: stringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate" }),
       fix: Type.Optional(
         Type.Object(
           { summary: Type.String({ minLength: 1, description: "退回摘要" }) },

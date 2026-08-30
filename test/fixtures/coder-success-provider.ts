@@ -1,13 +1,17 @@
 /**
  * Offline faux provider for cold-installed Public Coder production-chain proofs.
  * Emits one lawful completed ak_coder_output after Pi expands package-owned TDD.
+ * Supports injected typed 429 provider stop via AK_TEST_PROVIDER_STOP=1.
  */
 import {
+  createAssistantMessageEventStream,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
+  type Api,
   type Context,
-  type Provider,
+  type Model,
+  type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -18,10 +22,10 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
 } from "../../src/role-runtime.ts";
 
-export default function coderSuccessProvider(pi: ExtensionAPI): void {
+export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<void> {
   const faux = fauxProvider({
-    api: "ak-coder-offline",
-    provider: "ak-coder-offline",
+    api: "openai-completions",
+    provider: "openai-codex",
     tokenSize: { min: 1000, max: 1000 },
   });
   const respond = async (context: Context) => {
@@ -68,28 +72,64 @@ export default function coderSuccessProvider(pi: ExtensionAPI): void {
       { stopReason: "toolUse" },
     );
   };
-  // Public process: Navigator prepare + Coder completed. Gate ① may bounce the first
-  // completed (zero new commit) once; same payload resubmit is the confirm path, then
-  // scripted Gatekeeper → Inspector pass (officer choice is fixture, not oracle).
-  faux.setResponses([respond, respond, respond, respond, respond]);
+  faux.setResponses(Array.from({ length: 20 }, () => respond));
 
   const model = faux.getModel();
-  const provider: Provider = {
-    ...faux.provider,
-    auth: {
-      apiKey: {
-        name: "Offline Coder success fixture",
-        async resolve() {
-          return { auth: { apiKey: "offline" } };
-        },
+  const providerConfig = {
+    name: "Offline Coder success fixture",
+    baseUrl: "http://127.0.0.1:9999",
+    apiKey: "offline",
+    api: "openai-completions" as const,
+    models: [
+      {
+        id: model.id,
+        name: model.name,
+        reasoning: false,
+        input: ["text", "image"] as Array<"image" | "text">,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 16384,
       },
-    },
-    getModels() {
-      return [model];
+    ],
+    streamSimple(
+      requestModel: Model<Api>,
+      streamContext: Context,
+      options?: SimpleStreamOptions,
+    ) {
+      const toolNames = streamContext.tools?.map((tool) => tool.name) ?? [];
+      if (
+        process.env.AK_TEST_PROVIDER_STOP === "1" &&
+        !toolNames.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+      ) {
+        const stream = createAssistantMessageEventStream();
+        const human = fauxAssistantMessage([], {
+          stopReason: "error",
+          errorMessage: "Rate limit reached (429)",
+        });
+        queueMicrotask(() => {
+          void (async () => {
+            await options?.onResponse?.({ status: 429, headers: {} }, requestModel);
+            stream.push({ type: "error", reason: "error", error: human });
+            stream.end(human);
+          })();
+        });
+        return stream;
+      }
+      return faux.provider.streamSimple(requestModel as never, streamContext as never, options as never);
     },
   };
-  pi.registerProvider(provider);
+
+  pi.registerProvider("openai-codex", providerConfig);
+  pi.registerProvider("ak-coder-offline", providerConfig);
+
+  // Institutional children resolve openai-codex via models.json (#518 S3).
+  const { seedAgentDirModelsJsonFromFaux } = await import("../helpers/pi-test-harness.ts");
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR, {
+    providerId: "openai-codex",
+  });
+
   pi.on("session_shutdown", () => {
     console.error(`CODER_SUCCESS_PROVIDER_CALLS=${faux.state.callCount}`);
+    void seeded.close();
   });
 }

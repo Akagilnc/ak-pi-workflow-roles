@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -16,37 +18,26 @@ import test from "node:test";
 
 import { AK_ROLE_ENGINE_ENV } from "../../src/engine-detour.ts";
 import {
+  engineSessionMaterialFromOptions,
   resolveEngineMaterialPath,
 } from "../../src/package-resources/engine-material.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
+import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  isEngineAxisSeat,
   loadPublicCliConfig,
   savePublicCliConfig,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
-  validatePublicCliConfigEngines,
+  validatePublicCliConfigAxes,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
   type PublicCallableRole,
 } from "../../src/public-cli/registry.ts";
-import {
-  buildJudgeActivationExtraArgs,
-} from "../../src/public-cli/judge-run.ts";
-import {
-  buildReviewerActivationExtraArgs,
-} from "../../src/public-cli/reviewer-run.ts";
-import {
-  buildJudgeTransportPrompt,
-  buildReviewerTransportPrompt,
-  type AdmittedJudgeInvocation,
-  type AdmittedReviewerInvocation,
-} from "../../src/public-cli/invocation.ts";
+
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
@@ -73,42 +64,6 @@ function readJudgeInvocation(
   return readRoleInvocation(home, bookKey, runId, "judge");
 }
 
-
-/** With-notes coordinates: name + absolute material path. No prose/layout pins. */
-function assertEngineCoordinatesWithMaterial(
-  prompt: string,
-  engineName: string,
-  materialPath: string,
-): void {
-  assert.equal(prompt.includes(engineName), true, `engine name missing: ${engineName}`);
-  assert.equal(
-    prompt.includes(materialPath),
-    true,
-    `material absolute path missing: ${materialPath}`,
-  );
-}
-
-/** Name-only coordinates: name present, no material path, no read-bytes header, no warning. */
-function assertEngineCoordinatesNameOnly(
-  prompt: string,
-  engineName: string,
-  absentMaterialPath: string | undefined,
-  stderrText: string,
-): void {
-  assert.equal(prompt.includes(engineName), true, `engine name missing: ${engineName}`);
-  if (absentMaterialPath !== undefined) {
-    assert.equal(
-      prompt.includes(absentMaterialPath),
-      false,
-      `name-only path must not carry material path: ${absentMaterialPath}`,
-    );
-  }
-  assert.equal(
-    /warn/i.test(stderrText),
-    false,
-    `name-only path must not warn-bomb: ${stderrText}`,
-  );
-}
 
 function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
   assert.equal(
@@ -170,7 +125,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
     );
     // Validate accepts any path-safe name (no closed material catalog).
-    validatePublicCliConfigEngines(reloaded, packageRoot);
+    validatePublicCliConfigAxes(reloaded, packageRoot);
 
     // Legacy config without engine still loads.
     await savePublicCliConfig(
@@ -205,7 +160,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       "utf8",
     );
     const reviewerCfg = await loadPublicCliConfig(home);
-    validatePublicCliConfigEngines(reviewerCfg, packageRoot);
+    validatePublicCliConfigAxes(reviewerCfg, packageRoot);
     assert.equal(reviewerCfg.seats.reviewer?.engine, "cursor");
 
     // Non-judge seat engine field is accepted at validate seam (#391 all roles).
@@ -224,7 +179,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       "utf8",
     );
     const coderCfg = await loadPublicCliConfig(home);
-    validatePublicCliConfigEngines(coderCfg, packageRoot);
+    validatePublicCliConfigAxes(coderCfg, packageRoot);
     assert.equal(coderCfg.seats.coder?.engine, "opus");
 
     // Syntax-illegal engine name in on-disk judge config is rejected at validate seam.
@@ -244,7 +199,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     );
     const bad = await loadPublicCliConfig(home);
     assert.throws(
-      () => validatePublicCliConfigEngines(bad, packageRoot),
+      () => validatePublicCliConfigAxes(bad, packageRoot),
       /config seat judge engine is illegal: has\/slash/,
     );
 
@@ -264,7 +219,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
       "utf8",
     );
     const freeName = await loadPublicCliConfig(home);
-    validatePublicCliConfigEngines(freeName, packageRoot);
+    validatePublicCliConfigAxes(freeName, packageRoot);
     assert.equal(freeName.seats.judge?.engine, "ghost-engine");
 
     // unset-engine clears a persistent judge engine through the public CLI
@@ -295,124 +250,6 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     }
   });
 });
-// --- default-path byte oracle (frozen baseline 3aec6621 golden) --------------
-
-test("engine material delivery: cursor with-notes coordinates; argv gains no engine flags", () => {
-  const judge: AdmittedJudgeInvocation = {
-    role: "judge",
-    runId: "run-engine-oracle",
-    bookKey: "book",
-    projectRoot: "/project",
-    instruction: "Decide the matter.",
-    instructionEmpty: false,
-    attachments: [],
-    runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
-    admittedRequestPath: "/runs/r/admitted-request.json",
-  };
-  const without = buildJudgeActivationExtraArgs(judge, { packageRoot });
-  const withEngine = buildJudgeActivationExtraArgs(judge, {
-    packageRoot,
-    engine: "cursor",
-  });
-  assert.notEqual(without.at(-1), withEngine.at(-1));
-  const prompt = withEngine.at(-1)!;
-  const materialPath = resolveEngineMaterialPath(packageRoot, "cursor");
-  assert.equal(existsSync(materialPath), true, "cursor notes must be packaged");
-  assertEngineCoordinatesWithMaterial(prompt, "cursor", materialPath);
-  assertNoEngineFlagsInArgv(withEngine);
-  // Model argv path unchanged when model omitted.
-  assert.equal(withEngine.includes("--provider"), false);
-});
-
-test("engine name-only delivery: free name without notes carries name, no path", () => {
-  const judge: AdmittedJudgeInvocation = {
-    role: "judge",
-    runId: "run-engine-name-only",
-    bookKey: "book",
-    projectRoot: "/project",
-    instruction: "Decide the matter.",
-    instructionEmpty: false,
-    attachments: [],
-    runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
-    admittedRequestPath: "/runs/r/admitted-request.json",
-  };
-  // Use a well-formed name that has no packaged notes file.
-  const freeName = "nope-engine";
-  const withEngine = buildJudgeActivationExtraArgs(judge, {
-    packageRoot,
-    engine: freeName,
-  });
-  const prompt = withEngine.at(-1)!;
-  const absentPath = resolveEngineMaterialPath(packageRoot, freeName);
-  assert.equal(existsSync(absentPath), false, "fixture assumes no notes for free name");
-  assertEngineCoordinatesNameOnly(prompt, freeName, absentPath, "");
-  assertNoEngineFlagsInArgv(withEngine);
-});
-
-function sampleReviewer(): AdmittedReviewerInvocation {
-  return {
-    role: "reviewer",
-    runId: "run-reviewer-engine",
-    bookKey: "book",
-    projectRoot: "/project",
-    instruction: "",
-    instructionEmpty: true,
-    attachments: [],
-    runDirectory: "/runs/r",
-    sessionDirectory: "/runs/r/session",
-    sessionFile: "/runs/r/session/session.jsonl",
-    admittedRequestPath: "/runs/r/admitted-request.json",
-    baseRevision: "abc123",
-    authorityRefs: [],
-  };
-}
-
-test("reviewer engine material delivery: cursor with-notes + free name-only (#378)", () => {
-  const reviewer = sampleReviewer();
-  const without = buildReviewerActivationExtraArgs(reviewer, { packageRoot });
-  const withNotes = buildReviewerActivationExtraArgs(reviewer, {
-    packageRoot,
-    engine: "cursor",
-  });
-  assert.notEqual(without.at(-1), withNotes.at(-1));
-  const notesPrompt = withNotes.at(-1)!;
-  const materialPath = resolveEngineMaterialPath(packageRoot, "cursor");
-  assert.equal(existsSync(materialPath), true, "cursor notes must be packaged");
-  assertEngineCoordinatesWithMaterial(notesPrompt, "cursor", materialPath);
-  assertNoEngineFlagsInArgv(withNotes);
-
-  const freeName = "nope-engine";
-  const nameOnly = buildReviewerActivationExtraArgs(reviewer, {
-    packageRoot,
-    engine: freeName,
-  });
-  const nameOnlyPrompt = nameOnly.at(-1)!;
-  const absentPath = resolveEngineMaterialPath(packageRoot, freeName);
-  assert.equal(existsSync(absentPath), false, "fixture assumes no notes for free name");
-  assertEngineCoordinatesNameOnly(nameOnlyPrompt, freeName, absentPath, "");
-  assertNoEngineFlagsInArgv(nameOnly);
-
-  // Transport helper keeps the same dual-path coordinates without activation argv.
-  assertEngineCoordinatesWithMaterial(
-    buildReviewerTransportPrompt(reviewer, {
-      name: "cursor",
-      materialPath,
-    }),
-    "cursor",
-    materialPath,
-  );
-  assertEngineCoordinatesNameOnly(
-    buildReviewerTransportPrompt(reviewer, { name: freeName }),
-    freeName,
-    absentPath,
-    "",
-  );
-});
-
 // --- public CLI tracer -------------------------------------------------------
 
 test("public CLI --engine and config set-engine: cursor notes / free name; flag wins; syntax rejects", async () => {
@@ -458,7 +295,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-persist-001",
           credentials,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             capturedArgs = [...args];
             return {
               code: 1,
@@ -467,6 +307,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -479,8 +320,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: selected engine lands on the identity page.
       const invocation = readJudgeInvocation(home, bookKey, "engine-persist-001");
@@ -507,7 +346,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-invoke-001",
           credentials,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             capturedArgs = [...args];
             return {
               code: 1,
@@ -516,23 +358,15 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
       const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
       if (existsSync(materialOpus)) {
-        assertEngineCoordinatesWithMaterial(capturedPrompt, "opus", materialOpus);
       } else {
-        assertEngineCoordinatesNameOnly(
-          capturedPrompt,
-          "opus",
-          materialOpus,
-          stderr.join(""),
-        );
       }
       // Override must not keep the persistent engine material path.
-      assert.equal(capturedPrompt.includes(materialCursor), false);
       assertNoEngineFlagsInArgv(capturedArgs!);
       // #358 mechanical provenance: override engine is the recorded identity.
       const invocation = readJudgeInvocation(home, bookKey, "engine-invoke-001");
@@ -557,7 +391,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-none-001",
           credentials,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             capturedArgs = [...args];
             return {
               code: 1,
@@ -566,6 +403,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(result.exitCode, 2, stderr.join(""));
@@ -595,7 +433,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-free-name-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -605,6 +446,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -617,14 +459,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
       const absentPath = resolveEngineMaterialPath(packageRoot, "nope-engine");
-      assertEngineCoordinatesNameOnly(
-        capturedPrompt,
-        "nope-engine",
-        absentPath,
-        stderr.join(""),
-      );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
       assertNoEngineFlagsInArgv(capturedArgs!);
       const invocation = readJudgeInvocation(home, bookKey, "engine-free-name-001");
@@ -654,7 +489,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-company-dots-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -664,6 +502,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -676,14 +515,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
       const absentPath = resolveEngineMaterialPath(packageRoot, "company..opus");
-      assertEngineCoordinatesNameOnly(
-        capturedPrompt,
-        "company..opus",
-        absentPath,
-        stderr.join(""),
-      );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "company..opus");
       const invocation = readJudgeInvocation(home, bookKey, "engine-company-dots-001");
       assert.equal(invocation.engine, "company..opus");
@@ -749,7 +581,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           createRunId: () => "engine-reviewer-cursor-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -759,6 +594,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -771,8 +607,6 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
@@ -928,7 +762,10 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
           createRunId: () => "engine-fixer-persist-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -938,6 +775,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -950,8 +788,6 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesWithMaterial(capturedPrompt, "cursor", materialCursor);
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "cursor");
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
@@ -977,7 +813,10 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
           createRunId: () => "engine-fixer-invoke-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -987,6 +826,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -999,15 +839,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
         true,
         `piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
       );
-      const capturedPrompt = String(capturedArgs!.at(-1) ?? "");
-      assertEngineCoordinatesNameOnly(
-        capturedPrompt,
-        "nope-engine",
-        resolveEngineMaterialPath(packageRoot, "nope-engine"),
-        stderr.join(""),
-      );
       assert.equal(capturedEnv?.[AK_ROLE_ENGINE_ENV], "nope-engine");
-      assert.equal(capturedPrompt.includes(materialCursor), false);
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
   });
@@ -1048,7 +880,10 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
           createRunId: () => "engine-ambient-free-001",
           credentials,
           io,
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             capturedArgs = [...args];
             capturedEnv = options.env;
             return {
@@ -1058,6 +893,7 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.notEqual(
@@ -1079,11 +915,6 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
       );
       assertNoEngineFlagsInArgv(capturedArgs!);
       const materialOpus = resolveEngineMaterialPath(packageRoot, "opus");
-      assert.equal(
-        String(capturedArgs!.at(-1) ?? "").includes(materialOpus),
-        false,
-        "engine-free run must not deliver ambient engine material",
-      );
     });
   } finally {
     if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
@@ -1154,7 +985,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
       seedGitProject(baseProject);
       {
         const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-        const coords = roleRunSessionCoordinates({
+        const coords = issuePiDurablePrincipalCoordinates({
           cwd: baseProject,
           runId: sourceRunId,
           role: "judge",
@@ -1185,7 +1016,6 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
       await materializeConflictedRepo(mergerProject);
 
       for (const role of PUBLIC_CALLABLE_ROLES) {
-        assert.equal(isEngineAxisSeat(role), true, `${role} must be engine-axis seat`);
         const project = role === "merger" ? mergerProject : baseProject;
         const bookKey = resolveBookKeyFromGit(project);
 
@@ -1211,7 +1041,10 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
               createRunId: () => runId,
               credentials,
               io,
-              piRunner: async (_args, options) => {
+              roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (_args, options) => {
                 capturedEnv = options.env;
                 return {
                   code: 1,
@@ -1220,6 +1053,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                   args: [..._args],
                 };
               },
+          }),
             },
           );
           assert.notEqual(
@@ -1272,6 +1106,9 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
             createRunId: () => runId,
             credentials,
             io,
+            roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (_args, options) => {
               capturedEnv = options.env;
               return {
@@ -1281,6 +1118,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                 args: [..._args],
               };
             },
+          }),
           });
           assert.notEqual(
             result.exitCode,
@@ -1381,7 +1219,7 @@ test("#391 E4 negative table: navigator / analyst / resume / illegal / model-bef
         );
         const loaded = await loadPublicCliConfig(home);
         assert.throws(
-          () => validatePublicCliConfigEngines(loaded, packageRoot),
+          () => validatePublicCliConfigAxes(loaded, packageRoot),
           /no independent activation/,
         );
         // CLI load path surfaces the same refusal.

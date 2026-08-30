@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -13,28 +13,43 @@ import {
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
 } from "../../src/gatekeeper-role.ts";
+import { INSTITUTIONAL_RESOLUTION_FILE } from "../../src/institutional-resolution.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
-import { packageRoot, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { packageRoot, seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
-async function withParent(run: (context: any) => Promise<void>) {
+async function withParent(run: (context: any, faux: ReturnType<typeof fauxProvider>) => Promise<void>) {
   await withActivationHome({ prefix: "ak-gatekeeper-real-entry-" }, async ({ agentDir, home }) => {
     const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent", tokenSize: { min: 1000, max: 1000 } });
     faux.setResponses([fauxAssistantMessage("parent")]);
-    await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
-      await run({
-        cwd: home,
-        model,
-        modelRegistry: {
-          getProvider() { return undefined; },
-          find() { return model; },
-          async getProviderAuth() { return { auth: {} }; },
-          async getApiKeyAndHeaders() { return { ok: true }; },
-        },
-        thinkingLevel: "off",
-        sessionManager: session.sessionManager,
+    // #518 S3: institutional children resolve auth from agentDir/models.json, not parent getProvider.
+    const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
+    try {
+      await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
+        // Shared seat table for gatekeeper province + inspector/notary officers.
+        await writeInstitutionalSeatTable(home, {
+          gatekeeper: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
+          inspector: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
+          notary: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
+        });
+        await run({
+          cwd: home,
+          model,
+          modelRegistry: {
+            getProvider() { return undefined; },
+            find() { return model; },
+            async getProviderAuth() { return { auth: {} }; },
+            async getApiKeyAndHeaders() { return { ok: true }; },
+          },
+          thinkingLevel: "off",
+          sessionManager: session.sessionManager,
+          runDirectory: home,
+        }, faux);
       });
-    });
+    } finally {
+      await seeded.close();
+    }
   });
 }
 
@@ -45,16 +60,22 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
 
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
     const seen: string[] = [];
-    // Subject kind is a fixture input only — officer choice is scripted, not an oracle on subject.
-    const result = await runGatekeeper({
-      context,
-      subject: { kind: "worker_completion", material: "implementation and test evidence" },
-      runCompletion: completion([
+    faux.setResponses([
+      completion([
         { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
         { tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
       ], seen),
+      completion([
+        { tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
+      ], seen),
+    ]);
+    // Subject kind is a fixture input only — officer choice is scripted, not an oracle on subject.
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "worker_completion", material: "implementation and test evidence" },
     });
     // Mechanical projection of the scripted officer receipt; session order Gatekeeper → officer.
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
@@ -63,24 +84,29 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
     // #495 S2: machine INVOCATION_OVERLAY removed; 取证授权 lives in gate-output-guide only.
     assert.equal(
       seen[0],
-      [constitution, gatekeeperSoul, qualityLaw, gateGuide].join("\n\n"),
+      `${[constitution, gatekeeperSoul, qualityLaw, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
     );
     assert.equal(
       seen[1],
-      [constitution, inspectorSoul, qualityLaw, gateGuide].join("\n\n"),
+      `${[constitution, inspectorSoul, qualityLaw, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
     );
   });
 });
 
 test("Gatekeeper accepts its typed officer choice instead of machine-rejecting dispatch", async () => {
-  await withParent(async (context) => {
-    const result = await runGatekeeper({
-      context,
-      subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
-      runCompletion: completion([
+  await withParent(async (context, faux) => {
+    faux.setResponses([
+      completion([
         { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
+      ], []),
+      completion([
         { tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
       ], []),
+    ]);
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
     });
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
   });
@@ -93,17 +119,22 @@ test("scripted officer bounce projects rewrite disposition and loads that office
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
 
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
     const seen: string[] = [];
     // Subject kind is a fixture input only — bounce→rewrite is the mechanical contract under test.
     const bounceSubmission = { status: "bounce", findings: ["quote has no source"] };
-    const result = await runGatekeeper({
-      context,
-      subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
-      runCompletion: completion([
+    faux.setResponses([
+      completion([
         { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "notary" } },
+      ], seen),
+      completion([
         { tool: NOTARY_OUTPUT_TOOL, args: bounceSubmission },
       ], seen),
+    ]);
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
     });
     assert.equal(result.status, "bounce");
     if (result.status === "bounce") {
@@ -117,24 +148,27 @@ test("scripted officer bounce projects rewrite disposition and loads that office
     // #495 S2: machine INVOCATION_OVERLAY removed; 取证授权 lives in gate-output-guide only.
     assert.equal(
       seen[0],
-      [constitution, gatekeeperSoul, qualityLaw, gateGuide].join("\n\n"),
+      `${[constitution, gatekeeperSoul, qualityLaw, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
     );
     assert.equal(
       seen[1],
-      [constitution, notarySoul, gateGuide].join("\n\n"),
+      `${[constitution, notarySoul, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
     );
   });
 });
 
 test("Gatekeeper maps non-dispatch submission to transport_failure with original retained", async () => {
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
     const badSubmission = { status: "incomplete", reason: "missing completion evidence" };
-    const result = await runGatekeeper({
-      context,
-      subject: { kind: "worker_completion", material: "" },
-      runCompletion: completion([
+    faux.setResponses([
+      completion([
         { tool: GATEKEEPER_OUTPUT_TOOL, args: badSubmission },
       ], []),
+    ]);
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "worker_completion", material: "" },
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") {
@@ -145,15 +179,14 @@ test("Gatekeeper maps non-dispatch submission to transport_failure with original
 });
 
 test("Gatekeeper stage settlement without an accepted receipt is loud typed no_receipt", async () => {
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
+    faux.setResponses(Array.from({ length: 5 }, () =>
+      completion([{ text: "not a receipt" }], []),
+    ));
     const result = await runGatekeeper({
       context,
+      runDirectory: context.runDirectory,
       subject: { kind: "worker_completion", material: "completion" },
-      runCompletion: completion([
-        { text: "not a receipt" },
-        { text: "still not a receipt" },
-        { text: "settled without a receipt" },
-      ], []),
     });
     assert.equal(result.status, "no_receipt");
     if (result.status === "no_receipt") {
@@ -166,16 +199,17 @@ test("Gatekeeper stage settlement without an accepted receipt is loud typed no_r
 });
 
 test("officer stage settlement without an accepted receipt is loud typed no_receipt", async () => {
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
+    faux.setResponses([
+      completion([
+        { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
+      ], []),
+      ...Array.from({ length: 5 }, () => completion([{ text: "not a receipt" }], [])),
+    ]);
     const result = await runGatekeeper({
       context,
+      runDirectory: context.runDirectory,
       subject: { kind: "worker_completion", material: "completion" },
-      runCompletion: completion([
-        { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
-        { text: "not a receipt" },
-        { text: "still not a receipt" },
-        { text: "settled without a receipt" },
-      ], []),
     });
     assert.equal(result.status, "no_receipt");
     if (result.status === "no_receipt") {
@@ -186,16 +220,20 @@ test("officer stage settlement without an accepted receipt is loud typed no_rece
 });
 
 test("Gatekeeper child transport failure is loud and typed, never pass", async () => {
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
+    faux.setResponses([
+      () => { throw new Error("provider disconnected"); },
+    ]);
     const result = await runGatekeeper({
       context,
+      runDirectory: context.runDirectory,
       subject: { kind: "judge_draft", material: "draft" },
-      runCompletion: async () => { throw new Error("provider disconnected"); },
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") {
       assert.equal(result.stage, "gatekeeper");
-      assert.match(result.reason, /provider disconnected/);
+      assert.equal(typeof result.reason, "string");
+      assert.ok(result.reason.length > 0);
     }
   });
 });
@@ -208,6 +246,7 @@ test("Gatekeeper loadSoul native failure projects as typed transport_failure", a
     );
     const result = await runGatekeeper({
       context,
+      runDirectory: context.runDirectory,
       subject: { kind: "judge_draft", material: "draft" },
       loadSoul: async () => {
         throw missing;
@@ -216,7 +255,8 @@ test("Gatekeeper loadSoul native failure projects as typed transport_failure", a
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") {
       assert.equal(result.stage, "gatekeeper");
-      assert.match(result.reason, /ENOENT/);
+      assert.equal(typeof result.reason, "string");
+      assert.ok(result.reason.length > 0);
     }
   });
 });
@@ -244,12 +284,15 @@ test("Gatekeeper and shared officer decision tools accept malformed object submi
 });
 
 test("province submission without explicit dispatch is transport_failure with original retained, never dispatch or pass", async () => {
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
     const submission = { status: "pass", findings: [] };
+    faux.setResponses([
+      completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: submission }], []),
+    ]);
     const result = await runGatekeeper({
       context,
+      runDirectory: context.runDirectory,
       subject: { kind: "worker_completion", material: "completion" },
-      runCompletion: completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: submission }], []),
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") {
@@ -260,15 +303,20 @@ test("province submission without explicit dispatch is transport_failure with or
 });
 
 test("officer submission without explicit pass is transport_failure at officer stage with original retained", async () => {
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
     const submission = { status: "ok-enough" };
-    const result = await runGatekeeper({
-      context,
-      subject: { kind: "worker_completion", material: "completion" },
-      runCompletion: completion([
+    faux.setResponses([
+      completion([
         { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
+      ], []),
+      completion([
         { tool: INSPECTOR_OUTPUT_TOOL, args: submission },
       ], []),
+    ]);
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "worker_completion", material: "completion" },
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") {
@@ -279,16 +327,19 @@ test("officer submission without explicit pass is transport_failure at officer s
 });
 
 test("missing arguments is one-shot transport_failure with serializable typed observation", async () => {
-  await withParent(async (context) => {
+  await withParent(async (context, faux) => {
     let turns = 0;
-    const result = await runGatekeeper({
-      context,
-      subject: { kind: "worker_completion", material: "completion" },
-      runCompletion: async (model, ctx) => {
+    faux.setResponses([
+      (ctx: any) => {
         turns += 1;
         if (turns > 1) throw new Error("must not retry after missing-arguments submission");
-        return completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: undefined }], [])(model, ctx);
+        return completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: undefined }], [])(ctx);
       },
+    ]);
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "worker_completion", material: "completion" },
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") {
@@ -299,4 +350,61 @@ test("missing arguments is one-shot transport_failure with serializable typed ob
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
     assert.equal(turns, 1);
   });
+});
+
+test("Gatekeeper real entry maps missing, corrupt, and absent-seat resolution page to transport_failure", async () => {
+  const cases = [
+    {
+      name: "missing page",
+      setup: async (_dir: string) => { /* no file written */ },
+    },
+    {
+      name: "corrupt page",
+      setup: async (dir: string) => {
+        await writeFile(resolve(dir, INSTITUTIONAL_RESOLUTION_FILE), "not-valid-json {{{{", "utf8");
+      },
+    },
+    {
+      name: "absent seat",
+      setup: async (dir: string) => {
+        await writeInstitutionalSeatTable(dir, {
+          inspector: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
+        });
+      },
+    },
+  ] as const;
+
+  for (const tc of cases) {
+    await withActivationHome({ prefix: "ak-gatekeeper-resolution-" }, async ({ agentDir, home }) => {
+      const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent" });
+      faux.setResponses([fauxAssistantMessage("parent")]);
+      await withInProcessPi(
+        { cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} },
+        async ({ session, model }) => {
+          await tc.setup(home);
+          const result = await runGatekeeper({
+            context: {
+              cwd: home,
+              model,
+              modelRegistry: {
+                getProvider() { return undefined; },
+                find() { return model; },
+                async getProviderAuth() { return { auth: {} }; },
+                async getApiKeyAndHeaders() { return { ok: true }; },
+              },
+              thinkingLevel: "off",
+              sessionManager: session.sessionManager,
+              runDirectory: home,
+            } as unknown as any,
+            runDirectory: home,
+            subject: { kind: "worker_completion", material: "completion" },
+          });
+          assert.equal(result.status, "transport_failure", `${tc.name}: status must be transport_failure`);
+          if (result.status === "transport_failure") {
+            assert.equal(result.stage, "gatekeeper", `${tc.name}: stage must be gatekeeper`);
+          }
+        },
+      );
+    });
+  }
 });

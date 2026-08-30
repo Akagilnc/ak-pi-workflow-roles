@@ -163,8 +163,7 @@ test("packaged tdd binding captures expansion against package skill path only", 
     // Use binding snapshot paths for exact expansion (realpath may differ by OS).
     const location = binding.snapshot.path;
     const expectedContent = `References are relative to ${binding.snapshot.baseDir}.\n\n${binding.snapshot.body}`;
-    const prompt = `<skill name="tdd" location="${location}">\n${expectedContent}\n</skill>\n\n${request}`;
-    assert.deepEqual(binding.captureExpansion(prompt, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "tdd", location, content: expectedContent, userMessage: request }, request), {
       name: "tdd",
       location,
       content: expectedContent,
@@ -174,8 +173,7 @@ test("packaged tdd binding captures expansion against package skill path only", 
     // Configured (non-realpath) package path spelling is also accepted.
     const configuredPath = resolvePackagedMethodSkillPath(packageRoot, "tdd");
     const configuredExpected = `References are relative to ${dirname(configuredPath)}.\n\n${binding.snapshot.body}`;
-    const configuredPrompt = `<skill name="tdd" location="${configuredPath}">\n${configuredExpected}\n</skill>\n\n${request}`;
-    assert.deepEqual(binding.captureExpansion(configuredPrompt, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "tdd", location: configuredPath, content: configuredExpected, userMessage: request }, request), {
       name: "tdd",
       location: configuredPath,
       content: configuredExpected,
@@ -183,8 +181,7 @@ test("packaged tdd binding captures expansion against package skill path only", 
     });
 
     // Ambient home path must not satisfy package binding.
-    const homeFake = `<skill name="tdd" location="/tmp/fake-home/.agents/skills/tdd/SKILL.md">\n${expectedContent}\n</skill>\n\n${request}`;
-    assert.equal(binding.captureExpansion(homeFake, request), undefined);
+    assert.equal(binding.captureExpansion({ name: "tdd", location: "/tmp/fake-home/.agents/skills/tdd/SKILL.md", content: expectedContent, userMessage: request }, request), undefined);
   });
 });
 
@@ -233,18 +230,14 @@ test("packaged code-review loads adapted two-axis method without Matt setup", as
 
 test("packaged code-review binding captures expansion against package skill path only", async () => {
   await withEmptyHome(async () => {
-    const binding = await loadPackagedCanonicalSkillBinding(
-      packageRoot,
-      "code-review",
-    );
+    const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "code-review");
     assert.equal(binding.name, "code-review");
     const request = "Review the branch since main.";
     assert.equal(binding.invocation(request), `/skill:code-review ${request}`);
 
     const location = binding.snapshot.path;
     const expectedContent = `References are relative to ${binding.snapshot.baseDir}.\n\n${binding.snapshot.body}`;
-    const prompt = `<skill name="code-review" location="${location}">\n${expectedContent}\n</skill>\n\n${request}`;
-    assert.deepEqual(binding.captureExpansion(prompt, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "code-review", location, content: expectedContent, userMessage: request }, request), {
       name: "code-review",
       location,
       content: expectedContent,
@@ -256,16 +249,14 @@ test("packaged code-review binding captures expansion against package skill path
       "code-review",
     );
     const configuredExpected = `References are relative to ${dirname(configuredPath)}.\n\n${binding.snapshot.body}`;
-    const configuredPrompt = `<skill name="code-review" location="${configuredPath}">\n${configuredExpected}\n</skill>\n\n${request}`;
-    assert.deepEqual(binding.captureExpansion(configuredPrompt, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "code-review", location: configuredPath, content: configuredExpected, userMessage: request }, request), {
       name: "code-review",
       location: configuredPath,
       content: configuredExpected,
       userMessage: request,
     });
 
-    const homeFake = `<skill name="code-review" location="/tmp/fake-home/.agents/skills/code-review/SKILL.md">\n${expectedContent}\n</skill>\n\n${request}`;
-    assert.equal(binding.captureExpansion(homeFake, request), undefined);
+    assert.equal(binding.captureExpansion({ name: "code-review", location: "/tmp/fake-home/.agents/skills/code-review/SKILL.md", content: expectedContent, userMessage: request }, request), undefined);
   });
 });
 

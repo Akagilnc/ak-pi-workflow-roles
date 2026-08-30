@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #420 整改：自 test/unit/public-cli-reviewer.test.ts 按性质移出（起真 Pi 子进程，
 // 不属开发内环快档）。契约不变：激活拒绝经真实入口落 violation code 与诊断进卷宗。
 import assert from "node:assert/strict";
@@ -41,7 +43,10 @@ test("reviewer activation rejection lands violation code and diagnostic in books
         createRunId: () => "run-reviewer-reject-diagnostic",
         reviewerTimeoutMs: 60_000,
         io,
-        piRunner: async (args, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
           const subprocess = await runPiSubprocess([...args], {
             cwd: options.cwd,
             env: {
@@ -57,6 +62,7 @@ test("reviewer activation rejection lands violation code and diagnostic in books
             args: [...args],
           };
         },
+          }),
       },
     );
 
