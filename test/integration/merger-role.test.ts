@@ -11,7 +11,6 @@ import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
 import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { activationExtensionContext, packageRoot, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { mkdirSync } from "node:fs";

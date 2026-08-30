@@ -13,7 +13,6 @@ import {
 } from "../../src/collector-role.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { CollectorClock } from "../../src/collector-evidence.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { createFakeGitHubTransport, samplePull, sampleUser } from "../helpers/fake-github-transport.ts";
 import { withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
