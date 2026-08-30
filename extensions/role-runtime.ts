@@ -44,7 +44,7 @@ import {
   packagedRoleMetadata,
 } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
-import { loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
+import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
@@ -265,6 +265,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
+    loadInspectorSoul: () => loadGatekeeperSessionMaterials("inspector"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {

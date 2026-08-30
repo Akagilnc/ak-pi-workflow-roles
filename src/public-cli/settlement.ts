@@ -93,6 +93,7 @@ import {
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../inspector-contracts.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -100,6 +101,7 @@ import {
   type AdmittedDoctorInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedInspectorInvocation,
   type AdmittedMergerInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
@@ -3055,6 +3057,32 @@ export async function trySettleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulDoctorTerminalResult(admitted);
+}
+
+export async function trySettleInspectorTerminalResult(
+  admitted: AdmittedInspectorInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined || !isReceiptSettlementBindingClear(entries)) return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult" || message.toolName !== INSPECTOR_OUTPUT_TOOL_NAME) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
+    const details = message.details;
+    if (typeof details !== "object" || details === null) continue;
+    const status = Reflect.get(details, "status");
+    if (status !== "pass" && status !== "bounce") continue;
+    const findings = Reflect.get(details, "findings");
+    const terminal: TerminalResult = {
+      roleOutcome: {
+        kind: "accepted", role: "inspector", status,
+        decisiveFacts: { findings },
+      },
+      navigator: extractNavigatorFact(entries), artifacts: [], runId: admitted.runId,
+    };
+    return withOptionalGateProjection(terminal, admitted.sessionDirectory);
+  }
+  return undefined;
 }
 
 /** Lawful Notary accepted outcome (pass/bounce). */
