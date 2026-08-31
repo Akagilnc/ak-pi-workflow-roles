@@ -3,8 +3,24 @@
  * Cheap engine selects decision-related blocks from a frozen candidate set.
  * Every claimed quote must pass mechanical reverse-verify before entry.
  */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { runEngineDetourOnce } from "./engine-detour.ts";
 import type { DiaristSourceBlock } from "./diarist-mechanical.ts";
+
+/** Owner-domain method material for collector semantic judgment (ADR 0073/0075). */
+export const DIARIST_COLLECT_METHOD_RELATIVE = "resources/diarist-collect.md" as const;
+
+const packageRootUrl = new URL("..", import.meta.url);
+
+/** Absolute path to packaged diarist-collect method material. */
+export function resolveDiaristCollectMethodPath(
+  packageRoot: string = fileURLToPath(packageRootUrl),
+): string {
+  return join(packageRoot, DIARIST_COLLECT_METHOD_RELATIVE);
+}
 
 /** One LLM-selected block reference into the candidate set. */
 export type DiaristLlmSelection = {
@@ -169,12 +185,14 @@ export function parseDiaristLlmStdout(
 }
 
 /**
- * Machine kickoff text only (ADR 0073): start session, deliver material, describe output shape.
- * Semantic judgment lives in owner-domain method material — not here.
+ * Machine kickoff text only (ADR 0073): start session, deliver material paths, describe output shape.
+ * Semantic judgment lives in owner-domain method material — delivered by path, not restated here.
  */
 export function buildDiaristCollectorPrompt(input: {
   readonly ticketNumber: number;
   readonly candidates: readonly DiaristSourceBlock[];
+  /** Absolute path to owner-domain diarist-collect method material. */
+  readonly methodPath: string;
 }): string {
   const catalog = input.candidates.map((block, index) => ({
     candidateIndex: index,
@@ -185,6 +203,8 @@ export function buildDiaristCollectorPrompt(input: {
   }));
   return [
     `起居郎收集器。票号 #${input.ticketNumber}。`,
+    "本次配置的方法材料：",
+    `- ${input.methodPath}`,
     "材料：已冻结来源对话块目录（JSON）。",
     "输出形状：单一 JSON 对象",
     '{"selections":[{"candidateIndex":0,"quotes":["transcript 连续原文子串"],"triage":"relevant|context|irrelevant","note":"可选"}]}',
@@ -200,6 +220,8 @@ export type HermesDiaristCollectorOptions = {
   readonly env?: NodeJS.ProcessEnv;
   /** Extra argv after executable (before -z). */
   readonly extraArgv?: readonly string[];
+  /** Package root for resolving diarist-collect method material. */
+  readonly packageRoot?: string;
 };
 
 /**
@@ -210,12 +232,18 @@ export function createHermesDiaristCollector(
   options: HermesDiaristCollectorOptions = {},
 ): DiaristLlmCollector {
   const executable = options.executable ?? "hermes";
+  const methodPath = resolveDiaristCollectMethodPath(options.packageRoot);
+  if (!existsSync(methodPath)) {
+    throw new Error(`diarist collect method material missing (${methodPath})`);
+  }
   return async (input) => {
     const prompt = buildDiaristCollectorPrompt({
       ticketNumber: input.ticketNumber,
       candidates: input.candidates,
+      methodPath,
     });
     // hermes -z takes the prompt as one argv entry (no temp file).
+    // --ignore-rules keeps host identity out; method path is delivered in the prompt.
     const argv = [
       executable,
       ...(options.extraArgv ?? []),

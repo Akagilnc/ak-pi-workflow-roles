@@ -36,6 +36,10 @@ import {
   buildNotaryTransportPrompt,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
+import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
+import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
+import { projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import {
   readRoleRunState,
@@ -660,6 +664,50 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
     if (result.terminal.roleOutcome.kind === "failure") {
       assert.equal(result.terminal.roleOutcome.role, "notary");
     }
+  });
+});
+
+test("notary --ticket rides admitted → turn activation → pi/grok flags + transport prompt", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await seedCanonicalSourceRun(home, project);
+
+    const bare = `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`;
+    const parsed = parseNotaryArgv(["--source-run", bare, "--ticket", "582"]);
+    assert.equal(parsed.ticket, 582);
+
+    const admitted = await admitNotaryInvocation({
+      home,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      sourceRun: parsed.sourceRun,
+      ticket: parsed.ticket,
+      createRunId: () => "01a0notary-0000-7000-8000-00000000nt02",
+    });
+    assert.equal(admitted.ticketNumber, 582);
+
+    const prompt = buildNotaryTransportPrompt(admitted);
+    assert.ok(prompt.includes("#582"));
+
+    const turn = buildNotaryTurnRequest(admitted, {
+      packageRoot,
+      home,
+      agentDir: join(home, ".pi"),
+      continuation: { kind: "initial", prompt },
+    });
+    assert.equal(turn.activation.role, "notary");
+    assert.ok(turn.activation.role === "notary");
+    assert.equal(turn.activation.ticketNumber, 582);
+
+    const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
+    const flagAt = piArgv.indexOf("--ak-notary-ticket-number");
+    assert.ok(flagAt >= 0, "pi argv must carry notary ticket flag");
+    assert.equal(piArgv[flagAt + 1], "582");
+
+    const grokFlags = projectGrokActivationFlags(turn as RoleTurnRequest);
+    assert.equal(grokFlags.get("ak-notary-ticket-number"), "582");
   });
 });
 

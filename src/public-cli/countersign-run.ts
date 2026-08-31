@@ -4,10 +4,15 @@
  * (#572 / ADR 0074 / ADR 0075). One-shot: 署/封驳/上呈，无 resume.
  * Diarist is a prior station on the court pipeline, not a countersign call.
  */
-import { readFile } from "node:fs/promises";
-
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { runDiarist, type DiaristRunResult } from "../diarist.ts";
+import {
+  createDiaristIssueFaceFetcher,
+  resolveDiaristGithubOrigin,
+  runDiarist,
+  type DiaristIssueFace,
+  type DiaristIssueFaceFetcher,
+  type DiaristRunResult,
+} from "../diarist.ts";
 import type { DiaristLlmCollector } from "../diarist-llm-collector.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -42,6 +47,8 @@ export type CountersignRunEnv = PostAdmissionEnv & {
   onDiaristResult?: (result: DiaristRunResult) => void;
   /** Test seam: override Claude projects root for diarist source enum. */
   projectsRoot?: string;
+  /** Test seam: inject issue-face fetch (undefined result = soft unavailable). */
+  diaristIssueFaceFetcher?: DiaristIssueFaceFetcher;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -140,51 +147,52 @@ export async function runPublicCountersign(
 
 /**
  * Court-pipeline prior station: refresh ticket-provenance before countersign turn.
- * Caller-invisible — collector failures persist on the volume diagnostic; source-read
+ * Caller-invisible — collector failures append durable volume diagnostics; source-read
  * and watermark honesty failures propagate (失败诚实).
  * Missing ticketNumber skips the station (no subject key).
+ *
+ * Issue body/comments come from the shared GitHub seam only. Attachments stay
+ * attachments — never merged and mislabeled as issue-body-comment.
  */
 export async function runCountersignDiaristStation(
   admitted: AdmittedCountersignInvocation,
-  env: Pick<
-    CountersignRunEnv,
-    "diaristCollector" | "onDiaristResult" | "cwd"
-  > & { readonly projectsRoot?: string },
+  env: Pick<CountersignRunEnv, "diaristCollector" | "onDiaristResult" | "cwd"> &
+    {
+      readonly projectsRoot?: string;
+      readonly packageRoot?: string;
+      readonly diaristIssueFaceFetcher?: DiaristIssueFaceFetcher;
+    },
 ): Promise<DiaristRunResult | undefined> {
   if (admitted.ticketNumber === undefined) return undefined;
 
-  let ticketBody: string | undefined;
-  let ticketBodyPath: string | undefined;
-  for (const attachment of admitted.attachments) {
-    let text: string;
-    try {
-      text = await readFile(attachment.frozenPath, "utf8");
-    } catch (error) {
-      // Bound frozen ticket material unreadable — do not wash into "no face".
-      throw new Error(
-        `countersign diarist station: frozen attachment unreadable (${attachment.frozenPath})`,
-        { cause: error },
-      );
-    }
-    ticketBody =
-      ticketBody === undefined ? text : `${ticketBody}\n${text}`;
-    ticketBodyPath =
-      ticketBodyPath === undefined
-        ? attachment.frozenPath
-        : `${ticketBodyPath}+${attachment.frozenPath}`;
-  }
+  const issueFace = await loadBoundIssueFace(admitted, env);
 
   const result = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
-    ...(ticketBody === undefined ? {} : { ticketBody }),
-    ...(ticketBodyPath === undefined ? {} : { ticketBodyPath }),
+    ...(issueFace === undefined ? {} : { issueFace }),
     sessionCwds: [admitted.projectRoot, env.cwd],
     ...(env.projectsRoot === undefined ? {} : { projectsRoot: env.projectsRoot }),
+    ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
     ...(env.diaristCollector === undefined
       ? {}
       : { collector: env.diaristCollector }),
   });
   env.onDiaristResult?.(result);
   return result;
+}
+
+async function loadBoundIssueFace(
+  admitted: AdmittedCountersignInvocation,
+  env: Pick<CountersignRunEnv, "diaristIssueFaceFetcher">,
+): Promise<DiaristIssueFace | undefined> {
+  if (admitted.ticketNumber === undefined) return undefined;
+  const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
+  if (origin === undefined) return undefined;
+  const fetcher = env.diaristIssueFaceFetcher ?? createDiaristIssueFaceFetcher();
+  return await fetcher({
+    owner: origin.owner,
+    repo: origin.repo,
+    ticketNumber: admitted.ticketNumber,
+  });
 }

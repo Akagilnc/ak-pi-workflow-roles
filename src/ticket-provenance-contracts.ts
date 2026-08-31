@@ -27,11 +27,13 @@ export type TicketProvenanceSourceKind =
  * - llm-semantic: LLM collector selected the block (after mechanical reverse-verify)
  * - mechanical-prescreen: historical only (no production writer; kept for volume projection)
  * - quote-verify-failed: diagnostic only — quote failed verbatim check (not a diary entry)
+ * - collector-failed: diagnostic only — collector/engine failure true cause (append-only history)
  */
 export type TicketProvenanceBasisMethod =
   | "llm-semantic"
   | "mechanical-prescreen"
-  | "quote-verify-failed";
+  | "quote-verify-failed"
+  | "collector-failed";
 
 /** Basis for inclusion — LLM judgment plus mechanical anchor notes for audit. */
 export type TicketProvenanceBasis = {
@@ -85,6 +87,7 @@ const BASIS_METHODS = new Set<string>([
   "llm-semantic",
   "mechanical-prescreen",
   "quote-verify-failed",
+  "collector-failed",
 ]);
 
 /**

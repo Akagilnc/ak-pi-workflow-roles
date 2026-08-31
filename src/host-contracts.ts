@@ -106,7 +106,12 @@ export type RoleTurnActivation =
       readonly requestManifestPath?: string;
     }
   | { readonly role: "doctor"; readonly casePath: string }
-  | { readonly role: "notary"; readonly sourceRun: string }
+  | {
+      readonly role: "notary";
+      readonly sourceRun: string;
+      /** Optional --ticket for court-diary lookup (ADR 0075). */
+      readonly ticketNumber?: number;
+    }
   | {
       readonly role: "countersign";
       /** Admitted ticket binding for Notary inner-gate material (ADR 0075). */

@@ -40,6 +40,7 @@ export type DiaristSourceReadReason =
   | "readdir-failed"
   | "file-unreadable"
   | "jsonl-line-unparseable"
+  | "adr-missing"
   | "adr-unreadable";
 
 export class DiaristSourceReadError extends Error {
@@ -326,39 +327,67 @@ export function readCcSessionBlocks(
   return blocks;
 }
 
+/** One frozen GitHub issue comment for the issue-face candidate stream. */
+export type DiaristIssueComment = {
+  readonly id: number;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly htmlUrl: string;
+};
+
 /**
- * Ticket face as frozen issue body / decree material.
- * Whole body is one issue-body-comment block; 「」 spans also surface as
- * ticket-decree-block candidates (same typed stream — no prose exclusion).
+ * Frozen GitHub issue face (body + comments) for diarist source enum.
+ * Soft-unavailable fetch yields undefined upstream — never invent face from attachments.
  */
-export function readTicketFaceBlocks(input: {
-  readonly ticketBody: string;
-  readonly sourcePath?: string;
+export type DiaristIssueFace = {
+  readonly body: string;
+  readonly bodyUrl: string;
+  readonly comments: readonly DiaristIssueComment[];
+};
+
+/**
+ * Issue body + comments + 「」 decree spans as typed source blocks.
+ * Each block keeps its own sourceRef (url / comment id) — never merge attachments here.
+ */
+export function readIssueFaceBlocks(input: {
+  readonly face: DiaristIssueFace;
   readonly timestamp?: string;
 }): DiaristSourceBlock[] {
-  const body = input.ticketBody;
-  if (body.trim() === "") return [];
-  const timestamp = input.timestamp ?? new Date(0).toISOString();
-  const path = input.sourcePath ?? "ticket-face";
-  const blocks: DiaristSourceBlock[] = [
-    {
+  const fallbackTs = input.timestamp ?? new Date(0).toISOString();
+  const blocks: DiaristSourceBlock[] = [];
+  const body = input.face.body;
+  if (body.trim() !== "") {
+    blocks.push({
       sourceKind: "issue-body-comment",
-      sourceRef: { path, entryId: "body" },
+      sourceRef: { url: input.face.bodyUrl, entryId: "body" },
       transcript: body,
-      timestamp,
+      timestamp: fallbackTs,
       isUserTurn: true,
       isNotification: false,
-    },
-  ];
-  // Each long 「」 quote is also a decree-block candidate (owner verbatim anchors).
-  const quotes = extractCornerQuotes(body);
-  for (let i = 0; i < quotes.length; i += 1) {
-    const q = quotes[i]!;
+    });
+    const quotes = extractCornerQuotes(body);
+    for (let i = 0; i < quotes.length; i += 1) {
+      const q = quotes[i]!;
+      blocks.push({
+        sourceKind: "ticket-decree-block",
+        sourceRef: { url: input.face.bodyUrl, entryId: `decree-${i + 1}` },
+        transcript: q,
+        timestamp: fallbackTs,
+        isUserTurn: true,
+        isNotification: false,
+      });
+    }
+  }
+  for (const comment of input.face.comments) {
+    if (comment.body.trim() === "") continue;
     blocks.push({
-      sourceKind: "ticket-decree-block",
-      sourceRef: { path, entryId: `decree-${i + 1}` },
-      transcript: q,
-      timestamp,
+      sourceKind: "issue-body-comment",
+      sourceRef: {
+        url: comment.htmlUrl,
+        entryId: comment.id,
+      },
+      transcript: comment.body,
+      timestamp: comment.createdAt || fallbackTs,
       isUserTurn: true,
       isNotification: false,
     });
@@ -368,7 +397,7 @@ export function readTicketFaceBlocks(input: {
 
 /**
  * Read applicable ADR files as decision-key source blocks.
- * Missing path → skip (not declared present). Present but unreadable → throw.
+ * Referenced path missing or unreadable → typed DiaristSourceReadError (失败诚实).
  */
 export function readAdrDecisionKeyBlocks(input: {
   readonly cwd: string;
@@ -379,7 +408,13 @@ export function readAdrDecisionKeyBlocks(input: {
   const blocks: DiaristSourceBlock[] = [];
   for (const rel of input.adrPaths) {
     const abs = resolve(input.cwd, rel);
-    if (!existsSync(abs)) continue;
+    if (!existsSync(abs)) {
+      throw new DiaristSourceReadError(
+        "adr-missing",
+        abs,
+        `diarist referenced ADR missing (${rel})`,
+      );
+    }
     let text: string;
     try {
       text = readFileSync(abs, "utf8");

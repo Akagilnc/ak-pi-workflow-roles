@@ -41,7 +41,14 @@ export function buildNotaryTurnRequest(
   return projectRoleTurnRequest(
     admitted,
     {
-      activation: { role: "notary" as const, sourceRun: admitted.sourceRunPath },
+      activation: {
+        role: "notary" as const,
+        sourceRun: admitted.sourceRunPath,
+        // Admitted --ticket rides activation → flag → role read surface (ADR 0075).
+        ...(admitted.ticketNumber === undefined
+          ? {}
+          : { ticketNumber: admitted.ticketNumber }),
+      },
     },
     options,
   );
