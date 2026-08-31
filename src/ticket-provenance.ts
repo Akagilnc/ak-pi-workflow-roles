@@ -260,11 +260,6 @@ export async function readTicketProvenance(
       skipped += 1;
       continue;
     }
-    // quote-verify-failed keeps real source pointer but is not a diary body row.
-    if (entry.basis.method === "quote-verify-failed") {
-      skipped += 1;
-      continue;
-    }
     entries.push(entry);
   }
   return { entries, diagnostics, records, recordFile, skipped };
@@ -417,6 +412,27 @@ export function appendIssueSourceFailureDiagnostic(input: {
       cause: input.cause,
       recordedAt,
       reason: input.reason,
+    },
+  });
+}
+
+/** Quote reverse-verify failure — single diagnostic expression (not a diary entry). */
+export function appendQuoteVerifyFailureDiagnostic(input: {
+  readonly ticketNumber: number;
+  readonly cwd: string;
+  readonly cause: string;
+  readonly recordedAt?: string;
+}): RecordPointer {
+  const recordedAt = input.recordedAt ?? new Date().toISOString();
+  return appendTicketProvenanceDiagnostic({
+    ticketNumber: input.ticketNumber,
+    cwd: input.cwd,
+    source: "diarist-quote-verify",
+    diagnostic: {
+      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+      diagnosticKind: "quote-verify-failed",
+      cause: input.cause,
+      recordedAt,
     },
   });
 }

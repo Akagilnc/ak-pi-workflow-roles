@@ -681,6 +681,8 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "ak-doctor-case",
     "ak-merger-input",
     "ak-notary-source-run",
+    "ak-notary-ticket-number",
+    "ak-countersign-ticket-number",
     "ak-collector-repo",
     "ak-collector-pr",
     "ak-collector-request-manifest",

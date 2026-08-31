@@ -4,10 +4,14 @@
  * filter, and verbatim quote reverse-verify. Never a production relevance gate.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
+import {
+  pathContainedIn,
+  physicallyContainedIn,
+} from "./activation-ledger-topology.ts";
 import type {
   TicketProvenanceEntry,
   TicketProvenanceSourceKind,
@@ -41,7 +45,8 @@ export type DiaristSourceReadReason =
   | "file-unreadable"
   | "jsonl-line-unparseable"
   | "adr-missing"
-  | "adr-unreadable";
+  | "adr-unreadable"
+  | "adr-escape";
 
 export class DiaristSourceReadError extends Error {
   readonly code = "diarist-source-read" as const;
@@ -397,7 +402,8 @@ export function readIssueFaceBlocks(input: {
 
 /**
  * Read applicable ADR files as decision-key source blocks.
- * Referenced path missing or unreadable → typed DiaristSourceReadError (失败诚实).
+ * Real IO seam owns lexical + physical containment under cwd (ADR 0038).
+ * Missing / unreadable / escape → typed DiaristSourceReadError (失败诚实).
  */
 export function readAdrDecisionKeyBlocks(input: {
   readonly cwd: string;
@@ -406,8 +412,28 @@ export function readAdrDecisionKeyBlocks(input: {
 }): DiaristSourceBlock[] {
   const timestamp = input.timestamp ?? new Date(0).toISOString();
   const blocks: DiaristSourceBlock[] = [];
+  const cwdAbs = resolve(input.cwd);
+  let cwdReal: string;
+  try {
+    cwdReal = realpathSync(cwdAbs);
+  } catch (error) {
+    throw new DiaristSourceReadError(
+      "adr-unreadable",
+      cwdAbs,
+      `diarist ADR cwd is not resolvable (${cwdAbs})`,
+      { cause: error },
+    );
+  }
   for (const rel of input.adrPaths) {
-    const abs = resolve(input.cwd, rel);
+    const abs = resolve(cwdAbs, rel);
+    // Lexical containment before any read (ADR 0038 — real IO seam only).
+    if (abs !== cwdAbs && !pathContainedIn(cwdAbs, abs)) {
+      throw new DiaristSourceReadError(
+        "adr-escape",
+        abs,
+        `diarist referenced ADR escapes cwd (${rel})`,
+      );
+    }
     if (!existsSync(abs)) {
       throw new DiaristSourceReadError(
         "adr-missing",
@@ -415,14 +441,32 @@ export function readAdrDecisionKeyBlocks(input: {
         `diarist referenced ADR missing (${rel})`,
       );
     }
-    let text: string;
+    let realAbs: string;
     try {
-      text = readFileSync(abs, "utf8");
+      realAbs = realpathSync(abs);
     } catch (error) {
       throw new DiaristSourceReadError(
         "adr-unreadable",
         abs,
-        `diarist ADR file unreadable (${abs})`,
+        `diarist ADR path is not resolvable (${abs})`,
+        { cause: error },
+      );
+    }
+    if (realAbs !== cwdReal && !physicallyContainedIn(cwdReal, realAbs)) {
+      throw new DiaristSourceReadError(
+        "adr-escape",
+        abs,
+        `diarist referenced ADR escapes cwd physically (${rel})`,
+      );
+    }
+    let text: string;
+    try {
+      text = readFileSync(realAbs, "utf8");
+    } catch (error) {
+      throw new DiaristSourceReadError(
+        "adr-unreadable",
+        realAbs,
+        `diarist ADR file unreadable (${realAbs})`,
         { cause: error },
       );
     }
@@ -439,9 +483,27 @@ export function readAdrDecisionKeyBlocks(input: {
   return blocks;
 }
 
+/** Reference anchors for one llm-semantic entry (ticket + mechanical + claimed). */
+export function projectLlmSemanticAnchors(input: {
+  readonly anchors: DiaristAnchorSet;
+  readonly quotes: readonly string[];
+}): string[] {
+  const out: string[] = [`#${input.anchors.ticketNumber}`];
+  const seen = new Set<string>(out);
+  for (const q of [...input.anchors.quotes, ...input.quotes]) {
+    if (seen.has(q)) continue;
+    seen.add(q);
+    out.push(q);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
 /**
  * Build an llm-semantic entry after reverse-verify succeeds.
  * `quotes` are the LLM-claimed quotes that must be verbatim in transcript.
+ * Failure returns failedQuotes only — caller records a single diagnostic (not a
+ * disguised diary entry / dead basis.method).
  */
 export function blockToLlmEntry(
   block: DiaristSourceBlock,
@@ -454,25 +516,15 @@ export function blockToLlmEntry(
   | { readonly ok: true; readonly entry: TicketProvenanceEntry }
   | {
       readonly ok: false;
-      readonly diagnostic: TicketProvenanceEntry;
       readonly failedQuotes: readonly string[];
+      readonly cause: string;
     } {
   const verify = verifyQuotesVerbatim(block.transcript, input.quotes);
   if (!verify.ok) {
     return {
       ok: false,
       failedQuotes: verify.failedQuotes,
-      diagnostic: {
-        basis: {
-          method: "quote-verify-failed",
-          anchors: [`#${input.anchors.ticketNumber}`],
-          note: `verbatim verify failed: ${verify.failedQuotes.join(" | ")}`,
-        },
-        sourceKind: block.sourceKind,
-        sourceRef: block.sourceRef,
-        transcript: block.transcript,
-        timestamp: block.timestamp,
-      },
+      cause: `verbatim verify failed: ${verify.failedQuotes.join(" | ")}`,
     };
   }
   return {
@@ -480,10 +532,10 @@ export function blockToLlmEntry(
     entry: {
       basis: {
         method: "llm-semantic",
-        anchors: [
-          `#${input.anchors.ticketNumber}`,
-          ...input.quotes.slice(0, 8),
-        ],
+        anchors: projectLlmSemanticAnchors({
+          anchors: input.anchors,
+          quotes: input.quotes,
+        }),
         ...(input.note === undefined ? {} : { note: input.note }),
       },
       sourceKind: block.sourceKind,
