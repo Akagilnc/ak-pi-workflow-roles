@@ -125,6 +125,8 @@ export async function prepareGrokRoleEnvelope(options: {
   const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
   let rejection: { readonly code: string; readonly toolCallIds: readonly string[] } | undefined;
+  let sealedNotify: (() => void) | undefined;
+  const sealed = new Promise<void>((resolve) => { sealedNotify = resolve; });
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID();
   await mkdir(request.runDirectory, { recursive: true });
 
@@ -149,7 +151,10 @@ export async function prepareGrokRoleEnvelope(options: {
       getSessionFile: () => sessionFile,
       getHeader: () => ({ type: "session", id: runId }),
       setSessionFile(path) { sessionFile = path; },
-      appendCustomEntry(customType, data) { customEntries.push({ customType, data }); },
+      appendCustomEntry(customType, data) {
+        customEntries.push({ customType, data });
+        if (customType === "ak-role-submission-closure") sealedNotify?.();
+      },
     },
     abort() {},
   };
@@ -397,6 +402,7 @@ export async function prepareGrokRoleEnvelope(options: {
     systemPrompt,
     prompt,
     closeRound,
+    whenSealed: () => sealed,
     dispose,
   };
 }
