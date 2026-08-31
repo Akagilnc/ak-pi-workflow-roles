@@ -13,6 +13,7 @@ import test from "node:test";
 
 import {
   bindProductionGrokIsolation,
+  NO_PRODUCTION_GROK_PRIMARY_FAILURE,
   openProductionGrokHome,
   settleProductionGrokHomeCleanup,
   withProductionGrokIsolation,
@@ -20,10 +21,9 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const CONTROLLED_HOME_PREFIX = "ak-grok-home-";
-/** Path whose recursive rm fails with EPERM on macOS/Linux — cleanup-failure oracle. */
+/** Path whose recursive rm fails — cleanup-failure oracle (errno is platform-local). */
 const UNREMOVABLE_HOME = "/dev/null";
 const TURN_CLEANUP_MESSAGE = "production grok isolation turn and cleanup failed";
-const OPEN_CLEANUP_MESSAGE = "production grok home open failed and its cleanup also failed";
 
 function under(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
@@ -113,6 +113,27 @@ test("withProductionGrokIsolation preserves the primary failure and still remove
   }
 });
 
+test("withProductionGrokIsolation rethrows undefined primary and still removes controlled home", async () => {
+  const operatorHome = await seedOperatorHome();
+  let observedHome = "";
+  try {
+    let rejected: { settled: false } | { settled: true; value: unknown } = { settled: false };
+    try {
+      await withProductionGrokIsolation(operatorHome, packageRoot, async (binding) => {
+        observedHome = binding.controlledHome;
+        return Promise.reject(undefined);
+      });
+    } catch (error) {
+      rejected = { settled: true, value: error };
+    }
+    assert.deepEqual(rejected, { settled: true, value: undefined });
+    assert.notEqual(observedHome, "");
+    await assert.rejects(access(observedHome));
+  } finally {
+    await rm(operatorHome, { recursive: true, force: true });
+  }
+});
+
 test("openProductionGrokHome cleans a partial root when auth copy fails", async () => {
   const operatorHome = await mkdtemp(join(tmpdir(), "ak-grok-op-noauth-"));
   try {
@@ -131,37 +152,33 @@ test("openProductionGrokHome cleans a partial root when auth copy fails", async 
 });
 
 test("settleProductionGrokHomeCleanup surfaces cleanup failure alone", async () => {
-  // Sole rm settlement authority for with/open — wrapping rm in .catch(()=>{}) goes red here.
+  // Sole rm settlement authority for with/open — silent catch goes red here.
+  // Contract is non-Aggregate cleanup failure; platform errno is not part of it.
   await assert.rejects(
-    () => settleProductionGrokHomeCleanup(UNREMOVABLE_HOME, undefined, TURN_CLEANUP_MESSAGE),
-    (error: unknown) =>
-      error instanceof Error
-      && (error as NodeJS.ErrnoException).code === "EPERM"
-      && !(error instanceof AggregateError),
+    () =>
+      settleProductionGrokHomeCleanup(
+        UNREMOVABLE_HOME,
+        NO_PRODUCTION_GROK_PRIMARY_FAILURE,
+        TURN_CLEANUP_MESSAGE,
+      ),
+    (error: unknown) => error instanceof Error && !(error instanceof AggregateError),
   );
 });
 
-test("settleProductionGrokHomeCleanup aggregates primary failure with cleanup failure", async () => {
-  const primary = new Error("turn-primary-failure");
+test("settleProductionGrokHomeCleanup aggregates undefined primary with cleanup failure", async () => {
+  // Shortest primary+cleanup proof; primary=undefined is the sentinel-collision case.
   await assert.rejects(
-    () => settleProductionGrokHomeCleanup(UNREMOVABLE_HOME, primary, TURN_CLEANUP_MESSAGE),
+    () =>
+      settleProductionGrokHomeCleanup(
+        UNREMOVABLE_HOME,
+        { present: true, value: undefined },
+        TURN_CLEANUP_MESSAGE,
+      ),
     (error: unknown) =>
       error instanceof AggregateError
-      && error.message === TURN_CLEANUP_MESSAGE
-      && error.errors[0] === primary
       && error.errors.length === 2
-      && error.cause === primary,
-  );
-});
-
-test("settleProductionGrokHomeCleanup aggregates open primary failure with cleanup failure", async () => {
-  const primary = new Error("auth-copy-failed");
-  await assert.rejects(
-    () => settleProductionGrokHomeCleanup(UNREMOVABLE_HOME, primary, OPEN_CLEANUP_MESSAGE),
-    (error: unknown) =>
-      error instanceof AggregateError
-      && error.message === OPEN_CLEANUP_MESSAGE
-      && error.errors[0] === primary
-      && error.errors.length === 2,
+      && error.errors[0] === undefined
+      && error.errors[1] instanceof Error
+      && error.cause === undefined,
   );
 });

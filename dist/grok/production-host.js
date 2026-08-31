@@ -11303,19 +11303,22 @@ function createGrokSessionIdentityAuthority(authority) {
 function resolveGrokBinary(operatorHome) {
   return join19(operatorHome, ".grok", "bin", "grok");
 }
+var NO_PRODUCTION_GROK_PRIMARY_FAILURE = {
+  present: false
+};
 async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, concurrentMessage) {
   try {
     await rm3(controlledHome, { recursive: true, force: true });
   } catch (cleanupFailure) {
-    if (primaryFailure !== void 0) {
-      throw new AggregateError([primaryFailure, cleanupFailure], concurrentMessage, {
-        cause: primaryFailure
+    if (primaryFailure.present) {
+      throw new AggregateError([primaryFailure.value, cleanupFailure], concurrentMessage, {
+        cause: primaryFailure.value
       });
     }
     throw cleanupFailure;
   }
-  if (primaryFailure !== void 0) {
-    throw primaryFailure;
+  if (primaryFailure.present) {
+    throw primaryFailure.value;
   }
 }
 async function openProductionGrokHome(operatorHome) {
@@ -11326,7 +11329,7 @@ async function openProductionGrokHome(operatorHome) {
   } catch (error) {
     await settleProductionGrokHomeCleanup(
       controlledHome,
-      error,
+      { present: true, value: error },
       "production grok home open failed and its cleanup also failed"
     );
     throw error;
@@ -11349,15 +11352,13 @@ async function bindProductionGrokIsolation(operatorHome, packageRoot) {
 }
 async function withProductionGrokIsolation(operatorHome, packageRoot, run) {
   let binding;
-  let primaryFailure;
+  let primaryFailure = NO_PRODUCTION_GROK_PRIMARY_FAILURE;
   let value;
-  let succeeded = false;
   try {
     binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
     value = await run(binding);
-    succeeded = true;
   } catch (error) {
-    primaryFailure = error;
+    primaryFailure = { present: true, value: error };
   }
   if (binding !== void 0) {
     await settleProductionGrokHomeCleanup(
@@ -11366,10 +11367,7 @@ async function withProductionGrokIsolation(operatorHome, packageRoot, run) {
       "production grok isolation turn and cleanup failed"
     );
   }
-  if (primaryFailure !== void 0) throw primaryFailure;
-  if (!succeeded) {
-    throw new Error("production grok isolation ended without result");
-  }
+  if (primaryFailure.present) throw primaryFailure.value;
   return value;
 }
 function createGrokRoleRuntimeDependencies(packageRoot) {
@@ -11471,6 +11469,7 @@ function createProductionGrokRoleTurnHost(options) {
   };
 }
 export {
+  NO_PRODUCTION_GROK_PRIMARY_FAILURE,
   bindProductionGrokIsolation,
   createGrokRoleRuntimeDependencies,
   createProductionGrokRoleTurnHost,
