@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, mkdir, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
@@ -319,10 +319,86 @@ type InspectItem = {
   readonly source?: { readonly type?: unknown; readonly path?: unknown };
 };
 
+export type GrokInspectionClassificationOptions = Readonly<{
+  /**
+   * Calling-repo projectInstructions whose path is carried by HEAD and whose
+   * working-tree bytes match that blob (#521 repo-instructions-are-shared-material).
+   * These are shared repo material — not privateActive, not AK package injection.
+   */
+  readonly headMatchedProjectInstructionPaths?: ReadonlySet<string>;
+}>;
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * True when `absolutePath` is a blob at the calling repo's current HEAD and the
+ * on-disk bytes Grok would read match that blob. Untracked, dirty, outside the
+ * work tree, or unreadable paths fail closed.
+ */
+export async function isHeadMatchedProjectInstruction(
+  repositoryCwd: string,
+  absolutePath: string,
+): Promise<boolean> {
+  if (absolutePath === "" || absolutePath.includes("\0")) return false;
+  try {
+    const { stdout: topLevelOut } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: repositoryCwd,
+      encoding: "utf8",
+    });
+    const topLevel = await realpath(topLevelOut.trim());
+    const resolvedPath = await realpath(absolutePath);
+    const relative = pathRelative(topLevel, resolvedPath);
+    if (relative === "" || relative.startsWith("..") || isAbsolute(relative) || relative.includes("\0")) {
+      return false;
+    }
+    const { stdout: headBlob } = await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", `HEAD:${relative}`],
+      { cwd: topLevel, encoding: "utf8" },
+    );
+    const { stdout: workBlob } = await execFileAsync(
+      "git",
+      ["hash-object", "--", resolvedPath],
+      { cwd: topLevel, encoding: "utf8" },
+    );
+    return headBlob.trim() === workBlob.trim();
+  } catch {
+    return false;
+  }
+}
+
+function inspectItemPath(value: InspectItem): string {
+  if (typeof value.source?.path === "string") return value.source.path;
+  if (typeof value.path === "string") return value.path;
+  return "";
+}
+
+function isInspectItemActive(value: InspectItem): boolean {
+  return value.disabled !== true && value.enabled !== false && value.compatibilityStatus !== "disabled";
+}
+
+/** Collect active projectInstruction paths for HEAD-blob provenance resolution. */
+export function listActiveProjectInstructionPaths(document: Readonly<Record<string, unknown>>): readonly string[] {
+  const items = document.projectInstructions;
+  if (!Array.isArray(items)) return [];
+  const paths: string[] = [];
+  for (const value of items as InspectItem[]) {
+    if (!isInspectItemActive(value)) continue;
+    const path = inspectItemPath(value);
+    if (path !== "") paths.push(path);
+  }
+  return paths;
+}
+
 /** Classify first-party inspect JSON by provenance; wording and item counts are irrelevant. */
-export function classifyGrokInspection(document: Readonly<Record<string, unknown>>, packageRoot: string): GrokControlledInspection {
+export function classifyGrokInspection(
+  document: Readonly<Record<string, unknown>>,
+  packageRoot: string,
+  options: GrokInspectionClassificationOptions = {},
+): GrokControlledInspection {
   const privateActive = new Set<string>();
   const akActive = new Set<string>();
+  const headMatched = options.headMatchedProjectInstructionPaths ?? new Set<string>();
   const externalCompat = document.externalCompat as { cells?: unknown } | undefined;
   if (Array.isArray(externalCompat?.cells)) {
     for (const cell of externalCompat.cells as Array<{ vendor?: unknown; surface?: unknown; enabled?: unknown }>) {
@@ -334,22 +410,18 @@ export function classifyGrokInspection(document: Readonly<Record<string, unknown
     const items = document[section];
     if (!Array.isArray(items)) continue;
     for (const value of items as InspectItem[]) {
-      if (value.disabled === true || value.enabled === false || value.compatibilityStatus === "disabled") continue;
-      const source = value.source;
-      const sourceType = source?.type;
-      const path = typeof source?.path === "string"
-        ? source.path
-        : typeof value.path === "string" ? value.path : "";
+      if (!isInspectItemActive(value)) continue;
+      const sourceType = value.source?.type;
+      const path = inspectItemPath(value);
       const identity = `${section}:${typeof value.name === "string" ? value.name : path}`;
       if (sourceType === "builtin" || sourceType === "bundled") continue;
       if (path === packageRoot || path.startsWith(`${packageRoot}/`)) akActive.add(identity);
+      else if (section === "projectInstructions" && headMatched.has(path)) continue;
       else privateActive.add(identity);
     }
   }
   return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
 }
-
-const execFileAsync = promisify(execFile);
 
 /** Copy only Grok's authentication authority into an otherwise isolated home. */
 export async function prepareControlledGrokHome(sourceHome: string, controlledHome: string): Promise<void> {
@@ -373,7 +445,15 @@ export async function inspectControlledGrok(options: {
   if (typeof document !== "object" || document === null || Array.isArray(document)) {
     throw new Error("Grok structured inspection did not return an object");
   }
-  return classifyGrokInspection(document as Readonly<Record<string, unknown>>, options.packageRoot);
+  const record = document as Readonly<Record<string, unknown>>;
+  const headMatchedProjectInstructionPaths = new Set<string>();
+  for (const path of listActiveProjectInstructionPaths(record)) {
+    if (path === options.packageRoot || path.startsWith(`${options.packageRoot}/`)) continue;
+    if (await isHeadMatchedProjectInstruction(options.cwd, path)) {
+      headMatchedProjectInstructionPaths.add(path);
+    }
+  }
+  return classifyGrokInspection(record, options.packageRoot, { headMatchedProjectInstructionPaths });
 }
 
 /** Exact child environment shared by inspect and ACP agent processes. */
