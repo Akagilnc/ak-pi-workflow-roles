@@ -25,7 +25,10 @@ import {
 import { createScriptedDiaristCollector } from "../../src/diarist-llm-collector.ts";
 import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import type { DiaristSourceBlock } from "../../src/diarist-mechanical.ts";
-import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
+import {
+  CountersignInvocationBindingError,
+  createCountersignRoleRuntime,
+} from "../../src/role-runtime.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -520,8 +523,9 @@ test("countersign runtime: corrupt invocation.json fails honestly before notary 
             },
           ),
         (error: unknown) =>
-          error instanceof Error &&
-          error.message.includes("invocation.json unparseable"),
+          error instanceof CountersignInvocationBindingError &&
+          error.code === "countersign-invocation-binding" &&
+          error.reason === "unparseable",
       );
       assert.equal(gateCalls.length, 0, "notary gate must not run after corrupt invocation");
     } finally {
