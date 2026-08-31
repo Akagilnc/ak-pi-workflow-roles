@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
+import { appendFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -155,7 +156,15 @@ export async function prepareGrokRoleEnvelope(options: {
       getSessionFile: () => sessionFile,
       getHeader: () => ({ type: "session", id: runId }),
       setSessionFile(path) { sessionFile = path; },
-      appendCustomEntry(customType, data) { customEntries.push({ customType, data }); },
+      appendCustomEntry(customType, data) {
+        customEntries.push({ customType, data });
+        // Same external face as Pi session custom entries (type/customType/data JSONL).
+        appendFileSync(
+          sessionFile,
+          `${JSON.stringify({ type: "custom", customType, data })}\n`,
+          "utf8",
+        );
+      },
     },
     abort() {},
   };
@@ -402,8 +411,6 @@ export async function prepareGrokRoleEnvelope(options: {
     }],
     systemPrompt,
     prompt,
-    // Snapshot after activation + before_agent_start (envelope session writes included).
-    sessionEntries: Object.freeze(customEntries.map((e) => Object.freeze({ ...e }))),
     closeRound,
     dispose,
   };

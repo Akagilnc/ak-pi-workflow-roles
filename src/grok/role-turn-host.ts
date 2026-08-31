@@ -28,11 +28,6 @@ export type GrokPreparedTurn = Readonly<{
   systemPrompt: string;
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
-  /**
-   * Session custom entries retained during prepare (activation + agent-start).
-   * External ledger face for envelope-owned typed writes (e.g. notary-session-bound).
-   */
-  readonly sessionEntries: readonly Readonly<{ customType: string; data: unknown }>[];
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
   closeRound(): Promise<
     | { readonly accepted: true }
