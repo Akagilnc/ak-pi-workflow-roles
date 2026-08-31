@@ -82,8 +82,11 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorEngine = process.env.AK_ROLE_ENGINE;
   process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
+  // Tool-list contract is engine-free; ambient factory AK_ROLE_ENGINE must not leak detour.
+  delete process.env.AK_ROLE_ENGINE;
   try {
     const socketPath = join(root, "mcp.sock");
     const request = {
@@ -111,6 +114,7 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -239,12 +243,23 @@ test("Grok MCP projection executes a terminal submission through the single ledg
     const socketPath = join(root, "mcp.sock");
     // Production run face is `<runId>@<role>`; settlement reads bare admitted.runId.
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ac";
+    const runDirectory = join(root, "runs", `${runId}@notary`);
     const request = {
       principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
       continuation: { kind: "initial", prompt: "attest" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@notary`),
+      agentDir: join(root, "agent"), runDirectory,
     } as RoleTurnRequest;
+
+    // Hold navigator settle inside tool.execute so mid-execute sealedNotify would
+    // be observable before callThroughMcp returns (pre-9cb55699 regression shape).
+    const sealedFlag = { value: false };
+    const sealedDuringSettle = { value: undefined as boolean | undefined };
+    let releaseSettle!: () => void;
+    const settleHold = new Promise<void>((resolve) => { releaseSettle = resolve; });
+    let markSettleEntered!: () => void;
+    const settleEntered = new Promise<void>((resolve) => { markSettleEntered = resolve; });
+
     const prepared = await prepareGrokRoleEnvelope({
       request,
       socketPath,
@@ -254,13 +269,59 @@ test("Grok MCP projection executes a terminal submission through the single ledg
         loadJudgeSoul: async () => "judge",
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: join(root, "work"),
+          subject: "envelope seal regression",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: () => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => {
+            // Flush microtasks so a mid-execute sealedNotify would flip the flag first.
+            await Promise.resolve();
+            sealedDuringSettle.value = sealedFlag.value;
+            markSettleEntered();
+            await settleHold;
+          },
+          dispose() {},
+        }),
       },
     });
     try {
+      // Durable principal layout is seeded at prepare (settlement history / attempt append).
+      const sessionPath = join(runDirectory, "session", "session.jsonl");
+      const sessionHeader = JSON.parse((await readFile(sessionPath, "utf8")).trim().split("\n")[0]!) as {
+        type?: string;
+        id?: string;
+      };
+      assert.equal(sessionHeader.type, "session");
+      assert.equal(sessionHeader.id, `${runId}@notary`);
+
+      prepared.whenSealed().then(() => { sealedFlag.value = true; });
+
       const server = prepared.mcpServers[0] as McpServer;
-      const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      const replyPromise = callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      await settleEntered;
+      assert.equal(
+        sealedDuringSettle.value,
+        false,
+        "whenSealed must not fire mid-execute while navigator settle is still running",
+      );
+      assert.equal(sealedFlag.value, false);
+      releaseSettle();
+
+      const reply = await replyPromise;
       assert.equal(reply.error, undefined);
       assert.equal((reply.result as { isError?: boolean })?.isError, undefined);
+
+      // After tool execute returns, seal notification must resolve for early-accept race.
+      await prepared.whenSealed();
+      assert.equal(sealedFlag.value, true);
+
       const closure = await prepared.closeRound();
       assert.deepEqual(closure, { accepted: true });
       // Settlement seam: bare runId must resolve the sealed projection written under
@@ -270,6 +331,7 @@ test("Grok MCP projection executes a terminal submission through the single ledg
       assert.equal(sealed?.role, "notary");
       assert.equal(sealed?.status, "pass");
     } finally {
+      releaseSettle?.();
       await prepared.dispose?.();
     }
   } finally {
