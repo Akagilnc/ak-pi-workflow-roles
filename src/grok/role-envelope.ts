@@ -316,11 +316,27 @@ export async function prepareGrokRoleEnvelope(options: {
   await listen(server, options.socketPath);
   const relay = fileURLToPath(new URL("./mcp-relay.mjs", import.meta.url));
   let disposed = false;
+  // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
+  // AK_ROLE_RUN_DIR injection onto the parent so ledger runIdentity correlates
+  // with settlement's bare admitted.runId via runIdFromRunDirectory. Inject only
+  // after prepare succeeds (below); dispose must restore including unset.
+  let priorAkRoleRunDir: string | undefined;
+  let runDirInjected = false;
+  const restoreAkRoleRunDir = (): void => {
+    if (!runDirInjected) return;
+    runDirInjected = false;
+    if (priorAkRoleRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = priorAkRoleRunDir;
+  };
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
-    await emit("session_shutdown", {});
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    try {
+      await emit("session_shutdown", {});
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    } finally {
+      restoreAkRoleRunDir();
+    }
   };
 
   const closeRound: GrokPreparedTurn["closeRound"] = async () => {
@@ -363,6 +379,10 @@ export async function prepareGrokRoleEnvelope(options: {
   const systemPrompt = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
     typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
     ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+
+  priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+  runDirInjected = true;
 
   return {
     mcpServers: [{
