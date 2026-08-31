@@ -151,53 +151,52 @@ test("runDiarist watermark: empty-selection advances; partial/second-court only 
       seenIds.push(input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
       pass += 1;
       if (pass === 1) {
-        // Select only first; unselected still watermarked.
+        // Partial select: unselected still watermarked with selected.
         return {
           selections: [{ candidateIndex: 0, quotes: [] as string[] }],
           rawStdout: "{}",
           engineArgv: ["scripted"],
         };
       }
-      if (pass === 2) {
-        return {
-          selections: [],
-          rawStdout: '{"selections":[]}',
-          engineArgv: ["scripted"],
-        };
-      }
+      // Empty selection must still advance the offered watermark.
       return {
-        selections: input.candidates.map((_, i) => ({
-          candidateIndex: i,
-          quotes: [] as string[],
-        })),
-        rawStdout: "{}",
+        selections: [],
+        rawStdout: '{"selections":[]}',
         engineArgv: ["scripted"],
       };
     });
 
-    await runDiarist({ ticketNumber: 7, cwd: project, blocks: [a, b], collector });
-    assert.deepEqual(seenIds[0]!.sort(), ["u-a", "u-b"].sort());
-
-    // No new blocks → skipped-no-fresh (partial already watermarked both).
-    const second = await runDiarist({
+    const first = await runDiarist({
       ticketNumber: 7,
       cwd: project,
       blocks: [a, b],
       collector,
     });
-    assert.equal(second.freshCount, 0);
-    assert.equal(second.collectorStatus, "skipped-no-fresh");
-    assert.equal(seenIds.length, 1);
+    assert.deepEqual(seenIds[0]!.sort(), ["u-a", "u-b"].sort());
+    assert.equal(first.collectorStatus, "ok");
 
-    // New block only.
-    const third = await runDiarist({
+    // New block only offered; empty selection advances its watermark.
+    const second = await runDiarist({
       ticketNumber: 7,
       cwd: project,
       blocks: [a, b, later],
       collector,
     });
     assert.deepEqual(seenIds[1], ["u-later"]);
-    assert.equal(third.freshCount, 1);
+    assert.equal(second.freshCount, 1);
+    assert.equal(second.collectorStatus, "empty-selection");
+    assert.equal(second.appended, 0);
+
+    // Same set after empty-selection: no re-offer (watermark advanced).
+    const third = await runDiarist({
+      ticketNumber: 7,
+      cwd: project,
+      blocks: [a, b, later],
+      collector,
+    });
+    assert.equal(third.freshCount, 0);
+    assert.equal(third.collectorStatus, "skipped-no-fresh");
+    assert.equal(seenIds.length, 2, "collector must not be called after empty-selection watermark");
   });
 });
 
