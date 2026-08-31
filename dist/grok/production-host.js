@@ -11303,21 +11303,32 @@ function createGrokSessionIdentityAuthority(authority) {
 function resolveGrokBinary(operatorHome) {
   return join19(operatorHome, ".grok", "bin", "grok");
 }
+async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, concurrentMessage) {
+  try {
+    await rm3(controlledHome, { recursive: true, force: true });
+  } catch (cleanupFailure) {
+    if (primaryFailure !== void 0) {
+      throw new AggregateError([primaryFailure, cleanupFailure], concurrentMessage, {
+        cause: primaryFailure
+      });
+    }
+    throw cleanupFailure;
+  }
+  if (primaryFailure !== void 0) {
+    throw primaryFailure;
+  }
+}
 async function openProductionGrokHome(operatorHome) {
   const controlledHome = await mkdtemp3(join19(tmpdir3(), "ak-grok-home-"));
   try {
     await prepareControlledGrokHome(operatorHome, controlledHome);
     return controlledHome;
   } catch (error) {
-    try {
-      await rm3(controlledHome, { recursive: true, force: true });
-    } catch (cleanupFailure) {
-      throw new AggregateError(
-        [error, cleanupFailure],
-        "production grok home open failed and its cleanup also failed",
-        { cause: error }
-      );
-    }
+    await settleProductionGrokHomeCleanup(
+      controlledHome,
+      error,
+      "production grok home open failed and its cleanup also failed"
+    );
     throw error;
   }
 }
@@ -11339,28 +11350,27 @@ async function bindProductionGrokIsolation(operatorHome, packageRoot) {
 async function withProductionGrokIsolation(operatorHome, packageRoot, run) {
   let binding;
   let primaryFailure;
+  let value;
+  let succeeded = false;
   try {
     binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
-    return await run(binding);
+    value = await run(binding);
+    succeeded = true;
   } catch (error) {
     primaryFailure = error;
-    throw error;
-  } finally {
-    if (binding !== void 0) {
-      try {
-        await rm3(binding.controlledHome, { recursive: true, force: true });
-      } catch (cleanupFailure) {
-        if (primaryFailure !== void 0) {
-          throw new AggregateError(
-            [primaryFailure, cleanupFailure],
-            "production grok isolation turn and cleanup failed",
-            { cause: primaryFailure }
-          );
-        }
-        throw cleanupFailure;
-      }
-    }
   }
+  if (binding !== void 0) {
+    await settleProductionGrokHomeCleanup(
+      binding.controlledHome,
+      primaryFailure,
+      "production grok isolation turn and cleanup failed"
+    );
+  }
+  if (primaryFailure !== void 0) throw primaryFailure;
+  if (!succeeded) {
+    throw new Error("production grok isolation ended without result");
+  }
+  return value;
 }
 function createGrokRoleRuntimeDependencies(packageRoot) {
   return {
@@ -11465,5 +11475,6 @@ export {
   createGrokRoleRuntimeDependencies,
   createProductionGrokRoleTurnHost,
   openProductionGrokHome,
+  settleProductionGrokHomeCleanup,
   withProductionGrokIsolation
 };
