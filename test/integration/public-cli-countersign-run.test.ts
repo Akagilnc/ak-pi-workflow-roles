@@ -655,7 +655,7 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
     );
 
     await installHermesFixture(join(home, "bin"), {
-      defaultResponse: {
+      collectorResponse: {
         selections: [
           {
             candidateIndex: 0,
@@ -841,7 +841,7 @@ test("public countersign path: explicit --ticket binds without re-resolution", a
 test("public countersign path: unbound resolve+verify binds ticket and runs diary", async () => {
   await withCountersignProject(async ({ home, project }) => {
     await installHermesFixture(join(home, "bin"), {
-      defaultResponse: { kind: "ticket", assertion: "ticket", ticketNumber: 582 },
+      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
     });
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
@@ -865,15 +865,17 @@ test("public countersign path: unbound resolve+verify binds ticket and runs diar
       await readFile(join(result.admitted!.runDirectory, "invocation.json"), "utf8"),
     ) as { ticketNumber?: number };
     assert.equal(inv.ticketNumber, 582);
+    // Diary station ran for the bound ticket (volume established on disk).
     const volume = await readTicketProvenance(582, project);
     assert.ok(volume.recordFile);
+    await readFile(volume.recordFile, "utf8");
   });
 });
 
 test("public countersign path: asserted N fails verify → controlled failure, no wash", async () => {
   await withCountersignProject(async ({ home, project }) => {
     await installHermesFixture(join(home, "bin"), {
-      defaultResponse: { kind: "ticket", assertion: "ticket", ticketNumber: 999999 },
+      resolverResponse: { assertion: "ticket", ticketNumber: 999999 },
     });
     const runId = "01a0sign00-0000-7000-8000-000000000p03";
     const result = await runPublicCountersign(
@@ -910,7 +912,7 @@ test("public countersign path: asserted N fails verify → controlled failure, n
 test("public countersign path: true-unbound skips diary; run page stays unbound", async () => {
   await withCountersignProject(async ({ home, project }) => {
     await installHermesFixture(join(home, "bin"), {
-      defaultResponse: { assertion: "true-unbound" },
+      resolverResponse: { assertion: "true-unbound" },
     });
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
@@ -942,7 +944,7 @@ test("public countersign path: true-unbound skips diary; run page stays unbound"
 test("public countersign path: asserted N absent from instruction → controlled failure", async () => {
   await withCountersignProject(async ({ home, project }) => {
     await installHermesFixture(join(home, "bin"), {
-      defaultResponse: { kind: "ticket", assertion: "ticket", ticketNumber: 582 },
+      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
     });
     const runId = "01a0sign00-0000-7000-8000-000000000p05";
     const result = await runPublicCountersign(
@@ -965,7 +967,7 @@ test("public countersign path: asserted N absent from instruction → controlled
 test("public countersign path: substring of longer ticket number is not N → controlled failure", async () => {
   await withCountersignProject(async ({ home, project }) => {
     await installHermesFixture(join(home, "bin"), {
-      defaultResponse: { kind: "ticket", assertion: "ticket", ticketNumber: 82 },
+      resolverResponse: { assertion: "ticket", ticketNumber: 82 },
     });
     const runId = "01a0sign00-0000-7000-8000-000000000p06";
     const result = await runPublicCountersign(
