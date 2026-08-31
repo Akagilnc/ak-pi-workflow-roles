@@ -250,7 +250,7 @@ export type CliEnv = {
    * Production leaves these unset so hermes + gh own the station.
    */
   diaristCollector?: import("../diarist-llm-collector.ts").DiaristLlmCollector | null;
-  diaristTicketResolver?: import("../diarist-ticket-resolution.ts").DiaristTicketResolver | null;
+  diaristTicketResolver?: import("../diarist-ticket-resolution.ts").DiaristTicketResolver;
   ticketExistenceChecker?: import("../diarist-ticket-resolution.ts").TicketExistenceChecker;
   diaristIssueFaceFetcher?: import("../diarist.ts").DiaristIssueFaceFetcher;
   createRunId?: () => string;

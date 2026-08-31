@@ -27251,15 +27251,11 @@ var init_diarist = __esm({
 import { existsSync as existsSync10, readFileSync as readFileSync5 } from "node:fs";
 import { join as join26 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
-function resolveDiaristResolveTicketMethodPath(packageRoot2 = fileURLToPath3(packageRootUrl3)) {
+function resolveDiaristResolveTicketMethodPath(packageRoot2 = fileURLToPath3(new URL("..", import.meta.url))) {
   return join26(packageRoot2, DIARIST_RESOLVE_TICKET_METHOD_RELATIVE);
 }
-function isRecord16(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 function instructionContainsTicketNumber(instruction, ticketNumber) {
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) return false;
-  return instruction.includes(String(ticketNumber));
+  return Number.isSafeInteger(ticketNumber) && ticketNumber >= 1 && instruction.includes(String(ticketNumber));
 }
 function parseDiaristTicketResolverStdout(stdout) {
   const trimmed = stdout.trim();
@@ -27279,43 +27275,30 @@ function parseDiaristTicketResolverStdout(stdout) {
       { cause: error }
     );
   }
-  if (!isRecord16(parsed)) {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new DiaristTicketResolutionError(
       "not-object",
       "diarist ticket resolver stdout must be one JSON object"
     );
   }
-  if (!Object.prototype.hasOwnProperty.call(parsed, "assertion")) {
+  const record4 = parsed;
+  if (!Object.prototype.hasOwnProperty.call(record4, "assertion")) {
     throw new DiaristTicketResolutionError(
       "assertion-missing",
       "diarist ticket resolver stdout missing assertion"
     );
   }
-  if (parsed.assertion === "true-unbound") {
-    return { kind: "true-unbound" };
-  }
-  if (parsed.assertion === "ticket") {
-    const raw = parsed.ticketNumber;
-    if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
-      return { kind: "ticket", ticketNumber: raw };
-    }
+  if (record4.assertion === "true-unbound") return { kind: "true-unbound" };
+  const n = record4.ticketNumber;
+  if (record4.assertion === "ticket" && typeof n === "number" && Number.isSafeInteger(n) && n >= 1) {
+    return { kind: "ticket", ticketNumber: n };
   }
   throw new DiaristTicketResolutionError(
     "assertion-uninterpretable",
     "diarist ticket resolver assertion is not ticket|true-unbound with safe ticketNumber"
   );
 }
-function buildDiaristTicketResolverEnginePayload(input) {
-  return {
-    method: input.method,
-    instruction: input.instruction
-  };
-}
-function serializeDiaristTicketResolverEnginePayload(payload) {
-  return JSON.stringify(payload);
-}
 function createHermesDiaristTicketResolver(options = {}) {
-  const executable = options.executable ?? "hermes";
   const methodPath = resolveDiaristResolveTicketMethodPath(options.packageRoot);
   if (!existsSync10(methodPath)) {
     throw new Error(`diarist resolve-ticket method material missing (${methodPath})`);
@@ -27325,15 +27308,10 @@ function createHermesDiaristTicketResolver(options = {}) {
     throw new Error(`diarist resolve-ticket method material is empty (${methodPath})`);
   }
   const runDetour = options.runDetour ?? runEngineDetourOnce;
+  const executable = options.executable ?? "hermes";
   return async (input) => {
-    const payload = buildDiaristTicketResolverEnginePayload({
-      method,
-      instruction: input.instruction
-    });
-    const prompt = serializeDiaristTicketResolverEnginePayload(payload);
     const argv = [
       executable,
-      ...options.extraArgv ?? [],
       "chat",
       "--query-file",
       ENGINE_DETOUR_STAGED_PROMPT_TOKEN,
@@ -27341,13 +27319,13 @@ function createHermesDiaristTicketResolver(options = {}) {
       "--no-restore-cwd",
       "--ignore-rules",
       "-t",
-      HERMES_DIARIST_RESOLVER_TOOLSET
+      HERMES_RESOLVER_TOOLSET
     ];
     let result2;
     try {
       result2 = await runDetour({
         argv,
-        stagedPrompt: prompt,
+        stagedPrompt: JSON.stringify({ method, instruction: input.instruction }),
         cwd: options.cwd ?? process.cwd(),
         ...options.env === void 0 ? {} : { env: options.env },
         ...input.signal === void 0 ? {} : { signal: input.signal }
@@ -27381,9 +27359,7 @@ function createGhTicketExistenceChecker(options) {
   };
 }
 async function verifyDiaristTicketAssertion(input) {
-  if (input.assertion.kind === "true-unbound") {
-    return input.assertion;
-  }
+  if (input.assertion.kind === "true-unbound") return input.assertion;
   const n = input.assertion.ticketNumber;
   if (!instructionContainsTicketNumber(input.instruction, n)) {
     throw new DiaristTicketResolutionError(
@@ -27394,7 +27370,7 @@ async function verifyDiaristTicketAssertion(input) {
   if (input.origin === void 0) {
     throw new DiaristTicketResolutionError(
       "origin-unresolved",
-      `diarist ticket assertion #${n} requires a resolvable github.com origin remote for live verification`
+      `diarist ticket assertion #${n} requires a resolvable github.com origin remote`
     );
   }
   let exists;
@@ -27433,14 +27409,13 @@ async function resolveDiaristTicketFromInstruction(input) {
     ...input.signal === void 0 ? {} : { signal: input.signal }
   });
 }
-var DIARIST_RESOLVE_TICKET_METHOD_RELATIVE, packageRootUrl3, DiaristTicketResolutionError, HERMES_DIARIST_RESOLVER_TOOLSET;
+var DIARIST_RESOLVE_TICKET_METHOD_RELATIVE, DiaristTicketResolutionError, HERMES_RESOLVER_TOOLSET;
 var init_diarist_ticket_resolution = __esm({
   "src/diarist-ticket-resolution.ts"() {
     "use strict";
     init_collector_github();
     init_engine_detour();
     DIARIST_RESOLVE_TICKET_METHOD_RELATIVE = "resources/diarist-resolve-ticket.md";
-    packageRootUrl3 = new URL("..", import.meta.url);
     DiaristTicketResolutionError = class extends Error {
       code = "diarist-ticket-resolution";
       reason;
@@ -27450,7 +27425,7 @@ var init_diarist_ticket_resolution = __esm({
         this.reason = reason;
       }
     };
-    HERMES_DIARIST_RESOLVER_TOOLSET = "context_engine";
+    HERMES_RESOLVER_TOOLSET = "context_engine";
   }
 });
 
@@ -27535,7 +27510,6 @@ async function runPublicCountersign(argv, env, io, parseCountersignArgv2) {
 }
 async function resolveCountersignTicketBinding(admitted, env) {
   if (admitted.ticketNumber !== void 0) return void 0;
-  if (env.diaristTicketResolver === null) return void 0;
   const resolver = env.diaristTicketResolver ?? createHermesDiaristTicketResolver({
     ...env.packageRoot === void 0 ? {} : { packageRoot: env.packageRoot },
     cwd: admitted.projectRoot
@@ -28981,7 +28955,7 @@ function isMissingPathError5(error) {
 function errorText3(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function isRecord17(value) {
+function isRecord16(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 async function readExistingRunLifecycleState(runDirectory) {
@@ -28989,7 +28963,7 @@ async function readExistingRunLifecycleState(runDirectory) {
     const raw = JSON.parse(
       await readFile16(join30(runDirectory, "run-state.json"), "utf8")
     );
-    if (!isRecord17(raw) || typeof raw.state !== "string") return void 0;
+    if (!isRecord16(raw) || typeof raw.state !== "string") return void 0;
     return raw.state;
   } catch {
     return void 0;
@@ -29025,7 +28999,7 @@ async function readInvocationScopeFields(runDirectory) {
     throw error;
   }
   const parsed = JSON.parse(raw);
-  if (!isRecord17(parsed)) return void 0;
+  if (!isRecord16(parsed)) return void 0;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return void 0;
   }
@@ -29053,7 +29027,7 @@ async function resolveSessionFile(runDirectory) {
   try {
     const raw = await readFile16(join30(runDirectory, "invocation.json"), "utf8");
     const parsed = JSON.parse(raw);
-    if (isRecord17(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
+    if (isRecord16(parsed) && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
       return parsed.sessionFile;
     }
   } catch (error) {
@@ -29294,7 +29268,7 @@ var init_analyst_ledger = __esm({
 });
 
 // src/analyst-metric-families/acceptance-success-rework.ts
-function isRecord18(value) {
+function isRecord17(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan(span) {
@@ -29303,21 +29277,21 @@ function wallMsFromSpan(span) {
 function findCollectorGroups(body) {
   if (Array.isArray(body.groups)) return body.groups;
   const receipt = body.receipt;
-  if (isRecord18(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
+  if (isRecord17(receipt) && Array.isArray(receipt.groups)) return receipt.groups;
   const outcome = body.outcome;
-  if (isRecord18(outcome)) {
+  if (isRecord17(outcome)) {
     const facts = outcome.decisiveFacts;
-    if (isRecord18(facts) && Array.isArray(facts.groups)) return facts.groups;
+    if (isRecord17(facts) && Array.isArray(facts.groups)) return facts.groups;
   }
   return void 0;
 }
 function extractStatus(body) {
   const outcome = body.outcome;
-  if (isRecord18(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
+  if (isRecord17(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
     return outcome.status;
   }
   const receipt = body.receipt;
-  if (isRecord18(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
+  if (isRecord17(receipt) && typeof receipt.status === "string" && receipt.status.trim() !== "") {
     return receipt.status;
   }
   if (typeof body.status === "string" && body.status.trim() !== "") {
@@ -29941,21 +29915,21 @@ var init_leg_wall_clock = __esm({
 });
 
 // src/analyst-metric-families/round-timeline.ts
-function isRecord19(value) {
+function isRecord18(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function wallMsFromSpan2(startedAt, endedAt) {
   return Date.parse(endedAt) - Date.parse(startedAt);
 }
 function readOutcomeStatus(body) {
-  if (!isRecord19(body.outcome)) return void 0;
+  if (!isRecord18(body.outcome)) return void 0;
   const status = body.outcome.status;
   if (typeof status !== "string" || status.trim() === "") return void 0;
   return status;
 }
 function readClassCount(body) {
-  if (!isRecord19(body.outcome)) return void 0;
-  if (!isRecord19(body.outcome.decisiveFacts)) return void 0;
+  if (!isRecord18(body.outcome)) return void 0;
+  if (!isRecord18(body.outcome.decisiveFacts)) return void 0;
   const classCount = body.outcome.decisiveFacts.classCount;
   if (typeof classCount !== "number" || !Number.isFinite(classCount)) {
     return void 0;
