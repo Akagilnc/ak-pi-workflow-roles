@@ -118,12 +118,24 @@ export function resolveTicketProvenanceVolume(
   };
 }
 
+/** Typed cause of an offered-identity watermark read failure. */
+export type TicketProvenanceWatermarkReason =
+  | "unreadable"
+  | "malformed-json"
+  | "bad-shape";
+
 /** Honest failure when the offered-identity watermark cannot be read as written. */
 export class TicketProvenanceWatermarkError extends Error {
   readonly code = "ticket-provenance-watermark" as const;
-  constructor(message: string, options?: ErrorOptions) {
+  readonly reason: TicketProvenanceWatermarkReason;
+  constructor(
+    reason: TicketProvenanceWatermarkReason,
+    message: string,
+    options?: ErrorOptions,
+  ) {
     super(message, options);
     this.name = "TicketProvenanceWatermarkError";
+    this.reason = reason;
   }
 }
 
@@ -144,7 +156,8 @@ export function readOfferedIdentities(
     text = readFileSync(offeredWatermarkFile, "utf8");
   } catch (error) {
     throw new TicketProvenanceWatermarkError(
-      `ticket-provenance offered watermark unreadable (${offeredWatermarkFile}): ${error instanceof Error ? error.message : String(error)}`,
+      "unreadable",
+      `ticket-provenance offered watermark unreadable (${offeredWatermarkFile})`,
       { cause: error },
     );
   }
@@ -158,7 +171,8 @@ export function readOfferedIdentities(
       parsed = JSON.parse(trimmed);
     } catch (error) {
       throw new TicketProvenanceWatermarkError(
-        `ticket-provenance offered watermark malformed JSON at line ${index + 1} (${offeredWatermarkFile}): ${error instanceof Error ? error.message : String(error)}`,
+        "malformed-json",
+        `ticket-provenance offered watermark malformed JSON at line ${index + 1} (${offeredWatermarkFile})`,
         { cause: error },
       );
     }
@@ -170,7 +184,8 @@ export function readOfferedIdentities(
       (parsed as { identity: string }).identity.length === 0
     ) {
       throw new TicketProvenanceWatermarkError(
-        `ticket-provenance offered watermark bad shape at line ${index + 1} (${offeredWatermarkFile}): expected {"identity": non-empty string}`,
+        "bad-shape",
+        `ticket-provenance offered watermark bad shape at line ${index + 1} (${offeredWatermarkFile})`,
       );
     }
     seen.add((parsed as { identity: string }).identity);
