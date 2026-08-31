@@ -245,13 +245,6 @@ export type CliEnv = {
   notaryExtraPiArgs?: readonly string[];
   /** Override Notary role-run timeout (tests). */
   notaryTimeoutMs?: number;
-  /**
-   * Countersign pre-court ticket-resolver test seam (forwarded only on countersign).
-   * Production leaves unset so hermes owns resolution. Only this seam is required
-   * on CliEnv: runAkRole unbound trunks inject a deterministic resolver; other
-   * diarist seams stay on CountersignRunEnv via runPublicCountersign directly.
-   */
-  diaristTicketResolver?: import("../diarist-ticket-resolution.ts").DiaristTicketResolver;
   createRunId?: () => string;
 };
 
@@ -411,10 +404,6 @@ function createRoleEnvironment(
     ...(options.config?.autoResumeLimit === undefined
       ? {}
       : { autoResumeLimit: options.config.autoResumeLimit }),
-    // Countersign pre-court ticket-resolver test seam only — other roles ignore.
-    ...(role === "countersign" && env.diaristTicketResolver !== undefined
-      ? { diaristTicketResolver: env.diaristTicketResolver }
-      : {}),
   };
 }
 

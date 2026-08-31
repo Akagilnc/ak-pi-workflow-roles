@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -980,61 +981,131 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
   async () => {
     assert.equal(PUBLIC_CALLABLE_ROLES.length, 9);
     await withTempHome(async (home) => {
-      const baseProject = join(home, "project");
-      await mkdir(baseProject, { recursive: true });
-      seedGitProject(baseProject);
-      {
-        const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-        const coords = issuePiDurablePrincipalCoordinates({
-          cwd: baseProject,
-          runId: sourceRunId,
-          role: "judge",
-          home,
-        });
-        await mkdir(coords.sessionDirectory, { recursive: true });
-        const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
-        await writeFile(coords.sessionFile, "{}\n", "utf8");
-        await writeFile(
-          admittedRequestPath,
-          `${JSON.stringify({ role: "judge", runId: sourceRunId })}\n`,
-          "utf8",
-        );
-        await writeRoleRunState(coords.runDirectory, {
-          runId: sourceRunId,
-          role: "judge",
-          state: "terminal",
-          bookKey: coords.bookKey,
-          projectRoot: baseProject,
-          sessionDirectory: coords.sessionDirectory,
-          sessionFile: coords.sessionFile,
-          admittedRequestPath,
-        });
-      }
-
-      const mergerProject = join(home, "merger-project");
-      await mkdir(mergerProject, { recursive: true });
-      await materializeConflictedRepo(mergerProject);
-
-      for (const role of PUBLIC_CALLABLE_ROLES) {
-        const project = role === "merger" ? mergerProject : baseProject;
-        const bookKey = resolveBookKeyFromGit(project);
-
-        // Seed model so set-engine is legal.
-        const seed = captureIo();
-        const setModel = await runAkRole(
-          ["config", "set", role, "openai-codex/gpt-5.6-sol:high"],
-          { packageRoot, home, io: seed.io },
-        );
-        assert.equal(setModel.exitCode, 0, `${role} model seed: ${seed.stderr.join("")}`);
-
-        // --- invocation --engine path ---
+      const binDir = join(home, "bin");
+      await installHermesFixture(binDir);
+      const priorPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+      try {
+        const baseProject = join(home, "project");
+        await mkdir(baseProject, { recursive: true });
+        seedGitProject(baseProject);
         {
-          let capturedEnv: NodeJS.ProcessEnv | undefined;
-          const runId = `engine-table-invoke-${role}`;
-          const { io, stderr } = captureIo();
-          const result = await runAkRole(
-            ["--engine", "table-engine", ...roleEngineProbeArgv(role, project)],
-            {
+          const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
+          const coords = issuePiDurablePrincipalCoordinates({
+            cwd: baseProject,
+            runId: sourceRunId,
+            role: "judge",
+            home,
+          });
+          await mkdir(coords.sessionDirectory, { recursive: true });
+          const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
+          await writeFile(coords.sessionFile, "{}\n", "utf8");
+          await writeFile(
+            admittedRequestPath,
+            `${JSON.stringify({ role: "judge", runId: sourceRunId })}\n`,
+            "utf8",
+          );
+          await writeRoleRunState(coords.runDirectory, {
+            runId: sourceRunId,
+            role: "judge",
+            state: "terminal",
+            bookKey: coords.bookKey,
+            projectRoot: baseProject,
+            sessionDirectory: coords.sessionDirectory,
+            sessionFile: coords.sessionFile,
+            admittedRequestPath,
+          });
+        }
+
+        const mergerProject = join(home, "merger-project");
+        await mkdir(mergerProject, { recursive: true });
+        await materializeConflictedRepo(mergerProject);
+
+        for (const role of PUBLIC_CALLABLE_ROLES) {
+          const project = role === "merger" ? mergerProject : baseProject;
+          const bookKey = resolveBookKeyFromGit(project);
+
+          // Seed model so set-engine is legal.
+          const seed = captureIo();
+          const setModel = await runAkRole(
+            ["config", "set", role, "openai-codex/gpt-5.6-sol:high"],
+            { packageRoot, home, io: seed.io },
+          );
+          assert.equal(setModel.exitCode, 0, `${role} model seed: ${seed.stderr.join("")}`);
+
+          // --- invocation --engine path ---
+          {
+            let capturedEnv: NodeJS.ProcessEnv | undefined;
+            const runId = `engine-table-invoke-${role}`;
+            const { io, stderr } = captureIo();
+            const result = await runAkRole(
+              ["--engine", "table-engine", ...roleEngineProbeArgv(role, project)],
+              {
+                packageRoot,
+                home,
+                cwd: project,
+                createRunId: () => runId,
+                credentials,
+                io,
+                roleTurnHost: roleTurnHostFromLegacyPiRunner({
+              packageRoot: packageRoot,
+              principalAuthority: piDurablePrincipalAuthority,
+              piRunner: async (_args, options) => {
+                  capturedEnv = options.env;
+                  return {
+                    code: 1,
+                    stderr: "stop after capture",
+                    timedOut: false,
+                    args: [..._args],
+                  };
+                },
+            }),
+              },
+            );
+            assert.notEqual(
+              result.exitCode,
+              2,
+              `${role} --engine structural reject: ${stderr.join("")}`,
+            );
+            assert.equal(
+              capturedEnv !== undefined,
+              true,
+              `${role} --engine piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+            );
+            assert.equal(
+              capturedEnv?.[AK_ROLE_ENGINE_ENV],
+              "table-engine",
+              `${role} --engine childEnv[AK_ROLE_ENGINE]`,
+            );
+            const invocation = readRoleInvocation(home, bookKey, runId, role);
+            assert.equal(
+              invocation.engine,
+              "table-engine",
+              `${role} --engine invocation.engine`,
+            );
+          }
+
+          // --- persistent set-engine path ---
+          {
+            const setIo = captureIo();
+            const setEngine = await runAkRole(
+              ["config", "set-engine", role, "persist-engine"],
+              { packageRoot, home, io: setIo.io },
+            );
+            assert.equal(
+              setEngine.exitCode,
+              0,
+              `${role} set-engine: ${setIo.stderr.join("")}`,
+            );
+            assert.equal(
+              (await loadPublicCliConfig(home)).seats[role]?.engine,
+              "persist-engine",
+            );
+
+            let capturedEnv: NodeJS.ProcessEnv | undefined;
+            const runId = `engine-table-persist-${role}`;
+            const { io, stderr } = captureIo();
+            const result = await runAkRole(roleEngineProbeArgv(role, project), {
               packageRoot,
               home,
               cwd: project,
@@ -1042,9 +1113,9 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
               credentials,
               io,
               roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (_args, options) => {
+              packageRoot: packageRoot,
+              principalAuthority: piDurablePrincipalAuthority,
+              piRunner: async (_args, options) => {
                 capturedEnv = options.env;
                 return {
                   code: 1,
@@ -1053,102 +1124,41 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                   args: [..._args],
                 };
               },
-          }),
-            },
-          );
-          assert.notEqual(
-            result.exitCode,
-            2,
-            `${role} --engine structural reject: ${stderr.join("")}`,
-          );
-          assert.equal(
-            capturedEnv !== undefined,
-            true,
-            `${role} --engine piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
-          );
-          assert.equal(
-            capturedEnv?.[AK_ROLE_ENGINE_ENV],
-            "table-engine",
-            `${role} --engine childEnv[AK_ROLE_ENGINE]`,
-          );
-          const invocation = readRoleInvocation(home, bookKey, runId, role);
-          assert.equal(
-            invocation.engine,
-            "table-engine",
-            `${role} --engine invocation.engine`,
-          );
+            }),
+            });
+            assert.notEqual(
+              result.exitCode,
+              2,
+              `${role} set-engine path structural reject: ${stderr.join("")}`,
+            );
+            assert.equal(
+              capturedEnv !== undefined,
+              true,
+              `${role} set-engine piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
+            );
+            assert.equal(
+              capturedEnv?.[AK_ROLE_ENGINE_ENV],
+              "persist-engine",
+              `${role} set-engine childEnv[AK_ROLE_ENGINE]`,
+            );
+            const invocation = readRoleInvocation(home, bookKey, runId, role);
+            assert.equal(
+              invocation.engine,
+              "persist-engine",
+              `${role} set-engine invocation.engine`,
+            );
+
+            // Clear so the next role's home config stays tidy.
+            await runAkRole(["config", "unset-engine", role], {
+              packageRoot,
+              home,
+              io: captureIo().io,
+            });
+          }
         }
-
-        // --- persistent set-engine path ---
-        {
-          const setIo = captureIo();
-          const setEngine = await runAkRole(
-            ["config", "set-engine", role, "persist-engine"],
-            { packageRoot, home, io: setIo.io },
-          );
-          assert.equal(
-            setEngine.exitCode,
-            0,
-            `${role} set-engine: ${setIo.stderr.join("")}`,
-          );
-          assert.equal(
-            (await loadPublicCliConfig(home)).seats[role]?.engine,
-            "persist-engine",
-          );
-
-          let capturedEnv: NodeJS.ProcessEnv | undefined;
-          const runId = `engine-table-persist-${role}`;
-          const { io, stderr } = captureIo();
-          const result = await runAkRole(roleEngineProbeArgv(role, project), {
-            packageRoot,
-            home,
-            cwd: project,
-            createRunId: () => runId,
-            credentials,
-            io,
-            roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (_args, options) => {
-              capturedEnv = options.env;
-              return {
-                code: 1,
-                stderr: "stop after capture",
-                timedOut: false,
-                args: [..._args],
-              };
-            },
-          }),
-          });
-          assert.notEqual(
-            result.exitCode,
-            2,
-            `${role} set-engine path structural reject: ${stderr.join("")}`,
-          );
-          assert.equal(
-            capturedEnv !== undefined,
-            true,
-            `${role} set-engine piRunner not reached; exit=${result.exitCode} stderr=${stderr.join("")}`,
-          );
-          assert.equal(
-            capturedEnv?.[AK_ROLE_ENGINE_ENV],
-            "persist-engine",
-            `${role} set-engine childEnv[AK_ROLE_ENGINE]`,
-          );
-          const invocation = readRoleInvocation(home, bookKey, runId, role);
-          assert.equal(
-            invocation.engine,
-            "persist-engine",
-            `${role} set-engine invocation.engine`,
-          );
-
-          // Clear so the next role's home config stays tidy.
-          await runAkRole(["config", "unset-engine", role], {
-            packageRoot,
-            home,
-            io: captureIo().io,
-          });
-        }
+      } finally {
+        if (priorPath === undefined) delete process.env.PATH;
+        else process.env.PATH = priorPath;
       }
     });
   },

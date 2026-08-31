@@ -141,7 +141,6 @@ export function createHermesDiaristTicketResolver(options: {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly packageRoot?: string;
-  readonly runDetour?: typeof runEngineDetourOnce;
 } = {}): DiaristTicketResolver {
   const methodPath = resolveDiaristResolveTicketMethodPath(options.packageRoot);
   if (!existsSync(methodPath)) {
@@ -151,7 +150,6 @@ export function createHermesDiaristTicketResolver(options: {
   if (method.trim().length === 0) {
     throw new Error(`diarist resolve-ticket method material is empty (${methodPath})`);
   }
-  const runDetour = options.runDetour ?? runEngineDetourOnce;
   const executable = options.executable ?? "hermes";
   return async (input) => {
     const argv = [
@@ -167,7 +165,7 @@ export function createHermesDiaristTicketResolver(options: {
     ];
     let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
     try {
-      result = await runDetour({
+      result = await runEngineDetourOnce({
         argv,
         stagedPrompt: JSON.stringify({ method, instruction: input.instruction }),
         cwd: options.cwd ?? process.cwd(),
@@ -189,18 +187,6 @@ export function createHermesDiaristTicketResolver(options: {
     }
     return parseDiaristTicketResolverStdout(result.stdout);
   };
-}
-
-/** Test seam: fixed or function-backed assertion (same pattern as collector). */
-export function createScriptedDiaristTicketResolver(
-  script:
-    | DiaristTicketAssertion
-    | ((input: {
-        readonly instruction: string;
-      }) => DiaristTicketAssertion | Promise<DiaristTicketAssertion>),
-): DiaristTicketResolver {
-  return async (input) =>
-    typeof script === "function" ? await script(input) : script;
 }
 
 /** Live ticket check over shared gh issue-body projection. */
