@@ -39,11 +39,6 @@ export type DiaristLlmCollectResult = {
   /** Raw engine stdout retained for diagnostics (not a gate). */
   readonly rawStdout: string;
   readonly engineArgv: readonly string[];
-  /**
-   * Absolute path of owner-domain method material bound for this collect.
-   * Matches the methodPath field on the structured -z engine payload.
-   */
-  readonly methodPath?: string;
 };
 
 export type DiaristLlmCollector = (input: {
@@ -233,17 +228,6 @@ export function serializeDiaristCollectorEnginePayload(
   return JSON.stringify(payload);
 }
 
-/** @deprecated Prefer buildDiaristCollectorEnginePayload + serialize. */
-export function buildDiaristCollectorPrompt(input: {
-  readonly ticketNumber: number;
-  readonly candidates: readonly DiaristSourceBlock[];
-  readonly methodPath: string;
-}): string {
-  return serializeDiaristCollectorEnginePayload(
-    buildDiaristCollectorEnginePayload(input),
-  );
-}
-
 export type HermesDiaristCollectorOptions = {
   /** Executable name or path. Default hermes. */
   readonly executable?: string;
@@ -307,9 +291,8 @@ export function createHermesDiaristCollector(
     return {
       selections,
       rawStdout: result.stdout,
-      // Payload bytes redacted from argv face — methodPath is typed on result + payload.
+      // Payload bytes redacted from argv face — delivery is the -z JSON payload itself.
       engineArgv: argv.map((part, i) => (i === argv.indexOf(prompt) ? "<prompt>" : part)),
-      methodPath: payload.methodPath,
     };
   };
 }
