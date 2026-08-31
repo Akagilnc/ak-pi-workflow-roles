@@ -314,11 +314,10 @@ export async function prepareGrokRoleEnvelope(options: {
                 details: result.details,
                 isError: false,
               });
-              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
               // Terminating tools return pending-round-closure; the shared ledger seals on
-              // turn_end. Emit that boundary here so whenSealed can unblock executeTurn while
-              // Grok may keep session/prompt open. Notify only after turn_end returns — that
-              // awaits navigator settle; mid-append notify races session/close against settle.
+              // turn_end. Close that boundary before the MCP success reply so a settle failure
+              // cannot leave the caller with a success they never earned (and so whenSealed
+              // only fires after settle, not mid-append before session/close).
               const disposition = typeof projected.details === "object" && projected.details !== null
                 && !Array.isArray(projected.details)
                 ? (projected.details as { submissionDisposition?: unknown }).submissionDisposition
@@ -331,6 +330,7 @@ export async function prepareGrokRoleEnvelope(options: {
                   sealedNotify?.();
                 }
               }
+              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
               // The shared envelope's tool_result handler is the sole classifier:
               // it projects either the structured submission non-pass (correctable

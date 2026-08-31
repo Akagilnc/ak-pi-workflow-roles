@@ -305,20 +305,34 @@ test("Grok MCP projection executes a terminal submission through the single ledg
 
       const server = prepared.mcpServers[0] as McpServer;
       const replyPromise = callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      let replySettled = false;
+      void replyPromise.then(
+        () => { replySettled = true; },
+        () => { replySettled = true; },
+      );
       await settleEntered;
+      // Flush microtasks: a pre-settle success reply would mark replySettled true here.
+      await Promise.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       assert.equal(
         sealedDuringSettle.value,
         false,
         "whenSealed must not fire mid-execute while navigator settle is still running",
       );
       assert.equal(sealedFlag.value, false);
+      assert.equal(
+        replySettled,
+        false,
+        "MCP caller must not receive success reply before turn_end/navigator settle completes",
+      );
       releaseSettle();
 
       const reply = await replyPromise;
+      assert.equal(replySettled, true);
       assert.equal(reply.error, undefined);
       assert.equal((reply.result as { isError?: boolean })?.isError, undefined);
 
-      // After tool execute returns, seal notification must resolve for early-accept race.
+      // After settle + reply, seal notification must resolve for early-accept race.
       await prepared.whenSealed();
       assert.equal(sealedFlag.value, true);
 

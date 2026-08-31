@@ -11341,7 +11341,6 @@ async function prepareGrokRoleEnvelope(options) {
                 details: result2.details,
                 isError: false
               });
-              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...projected.isError ? { isError: true } : {} });
               const disposition = typeof projected.details === "object" && projected.details !== null && !Array.isArray(projected.details) ? projected.details.submissionDisposition : void 0;
               if (disposition === "pending-round-closure" && calls.length > 0) {
                 const roundCalls = [...calls];
@@ -11351,6 +11350,7 @@ async function prepareGrokRoleEnvelope(options) {
                   sealedNotify?.();
                 }
               }
+              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...projected.isError ? { isError: true } : {} });
             } catch (error) {
               const projected = await projectToolResult(toolCallId, name, {
                 content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
