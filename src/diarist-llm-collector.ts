@@ -41,7 +41,7 @@ export type DiaristLlmCollectResult = {
   readonly engineArgv: readonly string[];
   /**
    * Absolute path of owner-domain method material bound for this collect.
-   * Typed delivery evidence — production hermes collector always sets it.
+   * Matches the methodPath field on the structured -z engine payload.
    */
   readonly methodPath?: string;
 };
@@ -189,33 +189,59 @@ export function parseDiaristLlmStdout(
   return out;
 }
 
+/** Structured engine payload for hermes -z (sole method-delivery seam). */
+export type DiaristCollectorEnginePayload = {
+  /** Absolute path to owner-domain diarist-collect method material. */
+  readonly methodPath: string;
+  readonly ticketNumber: number;
+  readonly candidates: readonly {
+    readonly candidateIndex: number;
+    readonly sourceKind: DiaristSourceBlock["sourceKind"];
+    readonly isUserTurn: boolean;
+    readonly timestamp: string;
+    readonly transcript: string;
+  }[];
+};
+
 /**
- * Machine kickoff text only (ADR 0073): start session, deliver material paths, describe output shape.
- * Semantic judgment lives in owner-domain method material — delivered by path, not restated here.
+ * Machine kickoff payload only (ADR 0073): method path + frozen candidate catalog.
+ * Semantic judgment lives in owner-domain method material at methodPath — not restated here.
+ * Serialized as one JSON argv entry for hermes -z (model-readable structured input).
  */
+export function buildDiaristCollectorEnginePayload(input: {
+  readonly ticketNumber: number;
+  readonly candidates: readonly DiaristSourceBlock[];
+  readonly methodPath: string;
+}): DiaristCollectorEnginePayload {
+  return {
+    methodPath: input.methodPath,
+    ticketNumber: input.ticketNumber,
+    candidates: input.candidates.map((block, index) => ({
+      candidateIndex: index,
+      sourceKind: block.sourceKind,
+      isUserTurn: block.isUserTurn,
+      timestamp: block.timestamp,
+      transcript: block.transcript,
+    })),
+  };
+}
+
+/** Serialize engine payload to the single hermes -z argv string. */
+export function serializeDiaristCollectorEnginePayload(
+  payload: DiaristCollectorEnginePayload,
+): string {
+  return JSON.stringify(payload);
+}
+
+/** @deprecated Prefer buildDiaristCollectorEnginePayload + serialize. */
 export function buildDiaristCollectorPrompt(input: {
   readonly ticketNumber: number;
   readonly candidates: readonly DiaristSourceBlock[];
-  /** Absolute path to owner-domain diarist-collect method material. */
   readonly methodPath: string;
 }): string {
-  const catalog = input.candidates.map((block, index) => ({
-    candidateIndex: index,
-    sourceKind: block.sourceKind,
-    isUserTurn: block.isUserTurn,
-    timestamp: block.timestamp,
-    transcript: block.transcript,
-  }));
-  return [
-    `起居郎收集器。票号 #${input.ticketNumber}。`,
-    "本次配置的方法材料：",
-    `- ${input.methodPath}`,
-    "材料：已冻结来源对话块目录（JSON）。",
-    "输出形状：单一 JSON 对象",
-    '{"selections":[{"candidateIndex":0,"quotes":["transcript 连续原文子串"],"triage":"relevant|context|irrelevant","note":"可选"}]}',
-    "来源块：",
-    JSON.stringify(catalog),
-  ].join("\n");
+  return serializeDiaristCollectorEnginePayload(
+    buildDiaristCollectorEnginePayload(input),
+  );
 }
 
 export type HermesDiaristCollectorOptions = {
@@ -233,8 +259,8 @@ export type HermesDiaristCollectorOptions = {
 
 /**
  * Default cheap-engine collector via hermes -z (ADR 0069 detour seam).
- * Owner-domain method material is delivered once: absolute path inside the -z
- * prompt (enters LLM view). No parallel env transport.
+ * Owner-domain method material is delivered once: methodPath field on the structured
+ * JSON payload that is the sole -z argv entry (model-readable input). No env dual transport.
  * Engine failure and uninterpretable stdout throw — caller records honest diagnostic.
  */
 export function createHermesDiaristCollector(
@@ -247,13 +273,14 @@ export function createHermesDiaristCollector(
   }
   const runDetour = options.runDetour ?? runEngineDetourOnce;
   return async (input) => {
-    const prompt = buildDiaristCollectorPrompt({
+    const payload = buildDiaristCollectorEnginePayload({
       ticketNumber: input.ticketNumber,
       candidates: input.candidates,
       methodPath,
     });
-    // hermes -z takes the prompt as one argv entry (no temp file).
-    // --ignore-rules keeps host identity out; method path is solely in the prompt.
+    const prompt = serializeDiaristCollectorEnginePayload(payload);
+    // hermes -z takes the structured payload as one argv entry (no temp file).
+    // --ignore-rules keeps host identity out.
     const argv = [
       executable,
       ...(options.extraArgv ?? []),
@@ -280,9 +307,9 @@ export function createHermesDiaristCollector(
     return {
       selections,
       rawStdout: result.stdout,
-      // Prompt bytes redacted — method path is the typed delivery evidence.
+      // Payload bytes redacted from argv face — methodPath is typed on result + payload.
       engineArgv: argv.map((part, i) => (i === argv.indexOf(prompt) ? "<prompt>" : part)),
-      methodPath,
+      methodPath: payload.methodPath,
     };
   };
 }
