@@ -1,0 +1,224 @@
+/**
+ * 起居录 volume helpers — ADR 0075 / #582.
+ * Write/read via sitian facade only; no parallel destination logic.
+ */
+import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import {
+  resolveSitianRecordPath,
+  sitianReport,
+  readSitianRecords,
+  type RecordPointer,
+  type SitianRecord,
+} from "./sitian-facade.ts";
+import {
+  TICKET_PROVENANCE_HUMAN_VIEW,
+  TICKET_PROVENANCE_KIND,
+  projectTicketProvenanceEntry,
+  type TicketProvenanceEntry,
+  type TicketProvenanceIdentityInput,
+} from "./ticket-provenance-contracts.ts";
+
+/** Subject string for ticket-keyed volumes — history follows the ticket. */
+export function ticketProvenanceSubject(ticketNumber: number): string {
+  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
+    throw new Error(`ticket-provenance subject requires a positive ticket number, got ${String(ticketNumber)}`);
+  }
+  return String(ticketNumber);
+}
+
+/**
+ * Deterministic entry identity for sitian entry-level idempotency.
+ * Same ticket + source pointer + transcript → same identity → no re-append.
+ */
+export function ticketProvenanceEntryIdentity(
+  input: TicketProvenanceIdentityInput,
+): string {
+  const ref = input.sourceRef;
+  const refKey = [
+    ref.sessionFile ?? "",
+    ref.entryId === undefined ? "" : String(ref.entryId),
+    ref.path ?? "",
+    ref.url ?? "",
+  ].join("\u0001");
+  const material = [
+    String(input.ticketNumber),
+    input.sourceKind,
+    refKey,
+    input.transcript,
+  ].join("\u0000");
+  return createHash("sha256").update(material, "utf8").digest("hex");
+}
+
+export type AppendTicketProvenanceInput = {
+  readonly ticketNumber: number;
+  readonly entry: TicketProvenanceEntry;
+  readonly cwd: string;
+  readonly host?: string;
+  readonly source?: string;
+};
+
+/** Append one transcribed block; returns existing pointer on identity hit. */
+export function appendTicketProvenanceEntry(
+  input: AppendTicketProvenanceInput,
+): RecordPointer {
+  const subject = ticketProvenanceSubject(input.ticketNumber);
+  const identity = ticketProvenanceEntryIdentity({
+    ticketNumber: input.ticketNumber,
+    sourceKind: input.entry.sourceKind,
+    sourceRef: input.entry.sourceRef,
+    transcript: input.entry.transcript,
+  });
+  return sitianReport({
+    level: "event",
+    kind: TICKET_PROVENANCE_KIND,
+    identity,
+    subject,
+    cwd: input.cwd,
+    host: input.host ?? "diarist",
+    source: input.source ?? "diarist",
+    payload: input.entry,
+    raw:
+      input.entry.sourceRef.sessionFile !== undefined &&
+      input.entry.sourceRef.entryId !== undefined
+        ? {
+            sessionFile: input.entry.sourceRef.sessionFile,
+            entryId: input.entry.sourceRef.entryId,
+          }
+        : undefined,
+  });
+}
+
+export type TicketProvenanceVolumePath = {
+  readonly recordFile: string;
+  readonly volumeDir: string;
+  readonly humanViewFile: string;
+};
+
+/** Resolve volume paths for a ticket without writing. */
+export function resolveTicketProvenanceVolume(
+  ticketNumber: number,
+  cwd: string,
+): TicketProvenanceVolumePath {
+  const path = resolveSitianRecordPath({
+    level: "event",
+    kind: TICKET_PROVENANCE_KIND,
+    subject: ticketProvenanceSubject(ticketNumber),
+    cwd,
+  });
+  return {
+    recordFile: path.recordFile,
+    volumeDir: path.sessionDir,
+    humanViewFile: join(path.sessionDir, TICKET_PROVENANCE_HUMAN_VIEW),
+  };
+}
+
+export type ReadTicketProvenanceResult = {
+  readonly entries: readonly TicketProvenanceEntry[];
+  readonly records: readonly SitianRecord[];
+  readonly recordFile: string;
+  /** Rows whose payload failed entry projection (kept for honesty, not washed). */
+  readonly skipped: number;
+};
+
+/** Read all projected diary entries for a ticket (empty when volume absent). */
+export async function readTicketProvenance(
+  ticketNumber: number,
+  cwd: string,
+): Promise<ReadTicketProvenanceResult> {
+  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+  const { records } = await readSitianRecords(recordFile);
+  const entries: TicketProvenanceEntry[] = [];
+  let skipped = 0;
+  for (const record of records) {
+    if (record.kind !== TICKET_PROVENANCE_KIND) {
+      skipped += 1;
+      continue;
+    }
+    const entry = projectTicketProvenanceEntry(record.payload);
+    if (entry === undefined) {
+      skipped += 1;
+      continue;
+    }
+    // quote-verify-failed is diagnostic residue — not a readable diary entry.
+    if (entry.basis.method === "quote-verify-failed") {
+      skipped += 1;
+      continue;
+    }
+    entries.push(entry);
+  }
+  return { entries, records, recordFile, skipped };
+}
+
+/**
+ * Render a local human-read markdown view from entries.
+ * Presentation only — machines bite JSONL. No wording lock for consumers.
+ */
+export function renderTicketProvenanceMarkdown(input: {
+  readonly ticketNumber: number;
+  readonly entries: readonly TicketProvenanceEntry[];
+}): string {
+  const lines: string[] = [
+    `# 起居录 · #${input.ticketNumber}`,
+    "",
+    `条目数：${input.entries.length}`,
+    "",
+  ];
+  let index = 0;
+  for (const entry of input.entries) {
+    index += 1;
+    lines.push(`## ${index}. ${entry.sourceKind} · ${entry.timestamp}`);
+    lines.push("");
+    lines.push(`- basis.method: \`${entry.basis.method}\``);
+    if (entry.basis.anchors !== undefined && entry.basis.anchors.length > 0) {
+      lines.push(`- anchors: ${entry.basis.anchors.map((a) => `\`${a}\``).join(", ")}`);
+    }
+    if (entry.basis.note !== undefined) {
+      lines.push(`- note: ${entry.basis.note}`);
+    }
+    const refParts: string[] = [];
+    if (entry.sourceRef.sessionFile !== undefined) {
+      refParts.push(`sessionFile=${entry.sourceRef.sessionFile}`);
+    }
+    if (entry.sourceRef.entryId !== undefined) {
+      refParts.push(`entryId=${String(entry.sourceRef.entryId)}`);
+    }
+    if (entry.sourceRef.path !== undefined) {
+      refParts.push(`path=${entry.sourceRef.path}`);
+    }
+    if (entry.sourceRef.url !== undefined) {
+      refParts.push(`url=${entry.sourceRef.url}`);
+    }
+    if (refParts.length > 0) {
+      lines.push(`- sourceRef: ${refParts.join(" · ")}`);
+    }
+    lines.push("");
+    lines.push("```");
+    lines.push(entry.transcript);
+    lines.push("```");
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/** Write the co-located human view next to the JSONL volume (derived, not dual-source). */
+export function writeTicketProvenanceHumanView(input: {
+  readonly ticketNumber: number;
+  readonly cwd: string;
+  readonly entries: readonly TicketProvenanceEntry[];
+}): string {
+  const { humanViewFile, volumeDir } = resolveTicketProvenanceVolume(
+    input.ticketNumber,
+    input.cwd,
+  );
+  // Volume dir is created by sitian append; ensure path exists for empty volumes.
+  const md = renderTicketProvenanceMarkdown({
+    ticketNumber: input.ticketNumber,
+    entries: input.entries,
+  });
+  writeFileSync(humanViewFile, md, "utf8");
+  void volumeDir;
+  return humanViewFile;
+}

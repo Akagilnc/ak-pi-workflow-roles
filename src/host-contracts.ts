@@ -231,7 +231,10 @@ type HostEventResultMap = {
 type HostEventHandler<K extends keyof HostEventMap> = (event: HostEventMap[K], ctx: HostContext) => HostEventResultMap[K] | void | Promise<HostEventResultMap[K] | void>;
 export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, handler: HostEventHandler<K>] }[keyof HostEventMap];
 
-type HostGatekeeperSubject = { readonly kind: "worker_completion" | "judge_draft"; readonly material: string };
+type HostGatekeeperSubject = {
+  readonly kind: "worker_completion" | "judge_draft" | "countersign_verdict";
+  readonly material: string;
+};
 /** Gatekeeper bounce/no_receipt plus other correct submission rejects share one projection map. */
 type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" } & Record<string, unknown>;
 export type HostSubmissionNonPass =
