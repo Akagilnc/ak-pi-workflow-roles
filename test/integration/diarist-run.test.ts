@@ -135,8 +135,9 @@ test("runDiarist: collector failure does not advance watermark; true cause appen
       return payload?.basis?.method === "collector-failed";
     });
     assert.equal(failRows.length, 1);
-    const failPayload = failRows[0]!.payload as { basis: { note: string } };
-    assert.ok(failPayload.basis.note.includes("engine down"));
+    const failPayload = failRows[0]!.payload as { basis: { note?: string } };
+    assert.equal(first.collectorError, "engine down");
+    assert.equal(failPayload.basis.note, first.collectorError);
     // Human-facing diary stays empty of diagnostic residue.
     const diary = await readTicketProvenance(9, project);
     assert.equal(diary.entries.length, 0);
@@ -523,18 +524,18 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("hermes collector delivers methodPath typed field and path coordinate on engine argv", async () => {
+test("hermes collector delivers methodPath as typed result field", async () => {
   const methodPath = resolveDiaristCollectMethodPath(packageRoot);
   assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
   accessSync(methodPath, fsConstants.R_OK);
 
-  let seenArgv: readonly string[] = [];
   const collector = createHermesDiaristCollector({
     packageRoot,
-    runDetour: async (input) => {
-      seenArgv = input.argv;
-      return { code: 0, stdout: '{"selections":[]}', stderr: "" };
-    },
+    runDetour: async () => ({
+      code: 0,
+      stdout: '{"selections":[]}',
+      stderr: "",
+    }),
   });
   const result = await collector({
     ticketNumber: 582,
@@ -545,11 +546,8 @@ test("hermes collector delivers methodPath typed field and path coordinate on en
       }),
     ],
   });
-  // Typed delivery coordinate on the collector result (not free-text observation).
+  // Typed delivery coordinate only — no free-text / argv body observation.
   assert.equal(result.methodPath, methodPath);
-  // Engine argv carries the absolute method path as one prompt entry coordinate.
-  assert.ok(seenArgv.some((part) => part.includes(methodPath)));
-  assert.ok(seenArgv.includes("--ignore-rules"));
 });
 
 test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {

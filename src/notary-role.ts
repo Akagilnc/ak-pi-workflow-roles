@@ -35,8 +35,8 @@ export type NotaryRoleHostActions = {
   ): never;
 };
 
-function readOptionalTicketNumber(flag: unknown): number | undefined {
-  // Optional flag: absent / blank = unbound (legal). Non-empty invalid = honest fail.
+/** Optional ticket flag: absent/blank = unbound; non-empty invalid = honest fail. */
+export function readNotaryTicketFlag(flag: unknown): number | undefined {
   if (flag === undefined) return undefined;
   if (typeof flag !== "string") {
     throw new Error(
@@ -52,6 +52,25 @@ function readOptionalTicketNumber(flag: unknown): number | undefined {
   }
   return n;
 }
+
+/** Typed session bound material (locator + optional ticket). Sole projection for LLM inject. */
+export function projectNotarySessionBound(input: {
+  readonly sourceRun: NotarySourceRunLocator;
+  readonly ticketNumber?: number;
+}): {
+  readonly sourceRun: NotarySourceRunLocator;
+  readonly ticketNumber?: number;
+} {
+  return {
+    sourceRun: input.sourceRun,
+    ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+  };
+}
+
+export type NotaryActivationBound = {
+  readonly sourceRun: NotarySourceRunLocator;
+  readonly ticketNumber?: number;
+};
 
 export function createNotaryRoleRuntime(
   pi: RoleHost,
@@ -73,7 +92,18 @@ export function createNotaryRoleRuntime(
   pi.registerFlag(NOTARY_TICKET_FLAG.name, NOTARY_TICKET_FLAG.definition);
 
   return {
-    async activate() {
+    /** Typed bound after activate — consumption seam for tests/hosts (not presentation). */
+    getBound(): NotaryActivationBound | undefined {
+      if (activation === undefined) return undefined;
+      return projectNotarySessionBound({
+        sourceRun: activation.sourceRun,
+        ...(activation.ticketNumber === undefined
+          ? {}
+          : { ticketNumber: activation.ticketNumber }),
+      });
+    },
+    /** Bind source-run (+ optional ticket) from host flags. */
+    async activate(): Promise<void> {
       const path = pi.getFlag(NOTARY_SOURCE_RUN_FLAG.name);
       if (typeof path !== "string" || path.trim() === "") {
         throw new Error("Notary requires --ak-notary-source-run");
@@ -81,7 +111,7 @@ export function createNotaryRoleRuntime(
       const soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Notary soul is empty");
       const sourceRun = await dependencies.loadSourceRunLocator(path);
-      const ticketNumber = readOptionalTicketNumber(
+      const ticketNumber = readNotaryTicketFlag(
         pi.getFlag(NOTARY_TICKET_FLAG.name),
       );
       activation = {
@@ -119,12 +149,12 @@ export function createNotaryRoleRuntime(
             throw new Error("符宝郎未激活");
           }
           // Locator + optional ticket — never preload diary/diff/draft body (self-fetch).
-          const bound = {
+          const bound = projectNotarySessionBound({
             sourceRun: activation.sourceRun,
             ...(activation.ticketNumber === undefined
               ? {}
               : { ticketNumber: activation.ticketNumber }),
-          };
+          });
           return {
             systemPrompt: `${event.systemPrompt}\n\n<notary_soul>\n${activation.soul}\n</notary_soul>\n\n<notary_source_run>\n${JSON.stringify(bound)}\n</notary_source_run>`,
           };
