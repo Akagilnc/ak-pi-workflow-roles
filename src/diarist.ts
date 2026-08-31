@@ -24,7 +24,6 @@ import {
 } from "./diarist-mechanical.ts";
 import {
   createHermesDiaristCollector,
-  type DiaristLlmCollector,
   type DiaristLlmCollectResult,
 } from "./diarist-llm-collector.ts";
 import { parseGitHubOriginRemote } from "./reviewer-pinned-git.ts";
@@ -95,12 +94,6 @@ export type DiaristRunInput = {
   readonly issueFace?: DiaristIssueFace;
   /** Extra cwd roots whose cc project folders are scanned. */
   readonly sessionCwds?: readonly string[];
-  /** Override Claude projects root (tests). */
-  readonly projectsRoot?: string;
-  /** Pre-loaded source blocks (tests / alternate sources). Skips enum. */
-  readonly blocks?: readonly DiaristSourceBlock[];
-  /** Injected collector; default = hermes. `null` = skip LLM (no mechanical-only fallback). */
-  readonly collector?: DiaristLlmCollector | null;
   readonly signal?: AbortSignal;
   /** Package root for hermes collector method material resolution. */
   readonly packageRoot?: string;
@@ -120,7 +113,6 @@ export type DiaristRunResult = {
   readonly volumeRecordFile: string;
   readonly collectorStatus:
     | "ok"
-    | "skipped-no-collector"
     | "skipped-no-fresh"
     | "failed"
     | "empty-selection";
@@ -263,14 +255,8 @@ function blockEntryIdentity(
  * Attachments are never merged in as fake issue-body-comment.
  */
 async function loadSourceBlocks(input: DiaristRunInput): Promise<DiaristSourceBlock[]> {
-  if (input.blocks !== undefined) return [...input.blocks];
   const cwds = input.sessionCwds ?? [input.cwd];
-  const blocks: DiaristSourceBlock[] = [
-    ...readCcSessionBlocks({
-      cwds,
-      ...(input.projectsRoot === undefined ? {} : { projectsRoot: input.projectsRoot }),
-    }),
-  ];
+  const blocks: DiaristSourceBlock[] = [...readCcSessionBlocks({ cwds })];
   if (input.issueFace !== undefined) {
     blocks.push(...readIssueFaceBlocks({ face: input.issueFace }));
     const faceText = [
@@ -323,47 +309,42 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block)),
   );
 
-  let collectorStatus: DiaristRunResult["collectorStatus"] = "skipped-no-collector";
+  let collectorStatus: DiaristRunResult["collectorStatus"];
   let collectorError: string | undefined;
   let llmRawStdout: string | undefined;
   let collect: DiaristLlmCollectResult | undefined;
 
-  const collector =
-    input.collector === null
-      ? undefined
-      : input.collector === undefined
-        ? createHermesDiaristCollector({
-            cwd: input.cwd,
-            ...(input.packageRoot === undefined ? {} : { packageRoot: input.packageRoot }),
-          })
-        : input.collector;
+  // Production composition always runs the hermes collector (ADR 0075).
+  // No injectable skip / alternate collector on this seam.
+  const collector = createHermesDiaristCollector({
+    cwd: input.cwd,
+    ...(input.packageRoot === undefined ? {} : { packageRoot: input.packageRoot }),
+  });
 
-  if (collector !== undefined) {
-    if (fresh.length === 0) {
-      collectorStatus = "skipped-no-fresh";
-    } else {
-      try {
-        collect = await collector({
-          ticketNumber: input.ticketNumber,
-          candidates: fresh,
-          ...(input.signal === undefined ? {} : { signal: input.signal }),
-        });
-        llmRawStdout = collect.rawStdout;
-        collectorStatus =
-          collect.selections.length === 0 ? "empty-selection" : "ok";
-        // Watermark advances only after durable volume writes below — never
-        // before selected entries / quote diagnostics are committed.
-      } catch (error) {
-        collectorStatus = "failed";
-        collectorError =
-          error instanceof Error ? error.message : String(error);
-        // Durable true-cause on the ticket volume (append-only history).
-        appendCollectorFailureDiagnostic({
-          ticketNumber: input.ticketNumber,
-          cwd: input.cwd,
-          collectorError,
-        });
-      }
+  if (fresh.length === 0) {
+    collectorStatus = "skipped-no-fresh";
+  } else {
+    try {
+      collect = await collector({
+        ticketNumber: input.ticketNumber,
+        candidates: fresh,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      });
+      llmRawStdout = collect.rawStdout;
+      collectorStatus =
+        collect.selections.length === 0 ? "empty-selection" : "ok";
+      // Watermark advances only after durable volume writes below — never
+      // before selected entries / quote diagnostics are committed.
+    } catch (error) {
+      collectorStatus = "failed";
+      collectorError =
+        error instanceof Error ? error.message : String(error);
+      // Durable true-cause on the ticket volume (append-only history).
+      appendCollectorFailureDiagnostic({
+        ticketNumber: input.ticketNumber,
+        cwd: input.cwd,
+        collectorError,
+      });
     }
   }
 
