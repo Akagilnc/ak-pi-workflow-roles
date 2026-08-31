@@ -7,7 +7,7 @@ import {
   blockToLlmEntry,
   blockToPrescreenEntry,
   buildDiaristAnchors,
-  mechanicalCandidatePipeline,
+  mechanicalSafeguardPipeline,
   readCcSessionBlocks,
   type DiaristAnchorSet,
   type DiaristSourceBlock,
@@ -83,7 +83,9 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     ...(input.ticketBody === undefined ? {} : { ticketBody: input.ticketBody }),
   });
   const rawBlocks = await loadSourceBlocks(input);
-  const candidates = mechanicalCandidatePipeline(rawBlocks, anchors);
+  // Safeguard only (notify filter + dedupe) — never prose-based exclusion.
+  // LLM sees the full frozen source set and alone decides relevance.
+  const candidates = mechanicalSafeguardPipeline(rawBlocks, anchors);
 
   const llmRequired = input.llmRequired !== false;
   let collectorStatus: DiaristRunResult["collectorStatus"] = "skipped-no-collector";

@@ -13,11 +13,9 @@ import {
 import {
   buildDiaristAnchors,
   dedupeSourceBlocks,
-  expandAdjacentUserTurns,
   extractCornerQuotes,
   filterNotifications,
-  mechanicalCandidatePipeline,
-  selectMechanicalCandidates,
+  mechanicalSafeguardPipeline,
   verifyQuotesVerbatim,
   type DiaristSourceBlock,
 } from "../../src/diarist-mechanical.ts";
@@ -65,7 +63,7 @@ test("verifyQuotesVerbatim accepts contiguous quotes and rejects splices", () =>
   if (!failed.ok) assert.deepEqual(failed.failedQuotes, [spliced]);
 });
 
-test("mechanical pipeline: notify filter + anchor hit + adjacency + dedupe", () => {
+test("mechanical safeguard: typed notify filter + dedupe; no prose exclusion", () => {
   const anchors = buildDiaristAnchors({
     ticketNumber: 582,
     extraQuotes: ["立文件。送司天台记录。"],
@@ -77,12 +75,13 @@ test("mechanical pipeline: notify filter + anchor hit + adjacency + dedupe", () 
       isNotification: true,
     }),
     block({
-      transcript: "assistant chatter about 起居录 design",
+      transcript: "assistant chatter about design",
       sourceRef: { sessionFile: "/s", entryId: "a1" },
       isUserTurn: false,
     }),
     block({
-      transcript: "自动跑就行", // anaphora — no anchor; adjacency must recover
+      // No ticket/keyword/quote — must still reach LLM (no mechanical prose gate).
+      transcript: "自动跑就行",
       sourceRef: { sessionFile: "/s", entryId: "u-ana" },
       isUserTurn: true,
     }),
@@ -103,31 +102,19 @@ test("mechanical pipeline: notify filter + anchor hit + adjacency + dedupe", () 
 
   const cleaned = filterNotifications(blocks);
   assert.equal(cleaned.some((b) => b.isNotification), false);
+  assert.equal(cleaned.length, 5);
 
-  const hits = selectMechanicalCandidates(cleaned, anchors);
-  assert.ok(hits.some((b) => b.sourceRef.entryId === "u1"));
-  assert.ok(hits.some((b) => b.sourceRef.entryId === "a1")); // keyword 起居录
-  assert.equal(
-    hits.some((b) => b.sourceRef.entryId === "u-ana"),
-    false,
-    "anaphora alone is not an anchor hit",
-  );
-
-  const expanded = expandAdjacentUserTurns(cleaned, hits);
-  assert.ok(
-    expanded.some((b) => b.sourceRef.entryId === "u-ana"),
-    "adjacency recovers the next user turn after assistant hit",
-  );
-
-  const deduped = dedupeSourceBlocks(expanded);
-  assert.equal(
-    deduped.filter((b) => b.sourceRef.entryId === "u1").length,
-    1,
-  );
-
-  const pipeline = mechanicalCandidatePipeline(blocks, anchors);
+  const pipeline = mechanicalSafeguardPipeline(blocks, anchors);
   assert.ok(pipeline.every((b) => !b.isNotification));
+  assert.equal(
+    pipeline.filter((b) => b.sourceRef.entryId === "u1").length,
+    1,
+    "dedupe collapses compression replay",
+  );
+  // Prose-free blocks are NOT excluded — semantic selection is LLM-only.
   assert.ok(pipeline.some((b) => b.sourceRef.entryId === "u-ana"));
+  assert.ok(pipeline.some((b) => b.sourceRef.entryId === "u2"));
+  assert.equal(dedupeSourceBlocks(cleaned).length, pipeline.length);
 });
 
 test("parseDiaristLlmStdout projects selections and drops OOB indexes", () => {
@@ -144,6 +131,49 @@ test("parseDiaristLlmStdout projects selections and drops OOB indexes", () => {
   assert.deepEqual(parsed[0]!.quotes, ["hello"]);
   assert.equal(parsed[1]!.candidateIndex, 1);
   assert.deepEqual(parsed[1]!.quotes, ["world"]);
+});
+
+test("runDiarist: LLM receives blocks without ticket/keyword (no mechanical prose gate)", async () => {
+  await withHermeticHome({ prefix: "ak-diarist-fullsrc-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+
+    const anaphora = "自动跑就行，先这样。";
+    const blocks: DiaristSourceBlock[] = [
+      block({
+        transcript: anaphora,
+        sourceRef: { sessionFile: "/s.jsonl", entryId: "u-ana" },
+      }),
+    ];
+
+    let seenCount = -1;
+    const collector = createScriptedDiaristCollector((input) => {
+      seenCount = input.candidates.length;
+      return {
+        selections: [
+          {
+            candidateIndex: 0,
+            quotes: ["自动跑就行"],
+            triage: "relevant" as const,
+          },
+        ],
+        rawStdout: "{}",
+        engineArgv: ["scripted"],
+      };
+    });
+
+    const result = await runDiarist({
+      ticketNumber: 582,
+      cwd: project,
+      blocks,
+      collector,
+    });
+    assert.equal(seenCount, 1, "anaphora-only block must reach LLM");
+    assert.equal(result.appended, 1);
+    const read = await readTicketProvenance(582, project);
+    assert.equal(read.entries[0]!.transcript, anaphora);
+  });
 });
 
 test("runDiarist: LLM selection reverse-verify + idempotent append + reject splice", async () => {
