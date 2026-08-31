@@ -287,12 +287,17 @@ test("Grok notary --ticket: activation → envelope agent-start → session boun
       },
     });
     try {
-      // One tracer: activation flags → shared envelope session_start/activate
-      // → before_agent_start → typed session custom entry (envelope-owned write).
-      const boundEntry = prepared.sessionEntries.find(
-        (e) => e.customType === NOTARY_SESSION_BOUND_ENTRY,
+      // One tracer: activation flags → envelope session_start/activate → agent-start
+      // → session JSONL custom entry (same external face as Pi session ledger).
+      const sessionFile = join(request.runDirectory, "grok-envelope.jsonl");
+      const lines = (await readFile(sessionFile, "utf8"))
+        .split("\n")
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as { type?: string; customType?: string; data?: unknown });
+      const boundEntry = lines.find(
+        (row) => row.type === "custom" && row.customType === NOTARY_SESSION_BOUND_ENTRY,
       );
-      assert.ok(boundEntry, "envelope must write notary-session-bound on agent-start");
+      assert.ok(boundEntry, "session must retain notary-session-bound custom entry");
       const bound = boundEntry.data as {
         sourceRunPath?: string;
         ticketNumber?: number;

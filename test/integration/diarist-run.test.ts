@@ -525,30 +525,45 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("hermes collector delivers method path on engine child env coordinate", async () => {
-  const methodPath = resolveDiaristCollectMethodPath(packageRoot);
-  assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
-  accessSync(methodPath, fsConstants.R_OK);
+test("hermes collector delivers method path on real engine child env", async () => {
+  await withHermeticHome({ prefix: "ak-diarist-method-env-" }, async ({ home }) => {
+    const methodPath = resolveDiaristCollectMethodPath(packageRoot);
+    assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
+    accessSync(methodPath, fsConstants.R_OK);
 
-  let seenEnv: NodeJS.ProcessEnv | undefined;
-  const collector = createHermesDiaristCollector({
-    packageRoot,
-    runDetour: async (input) => {
-      seenEnv = input.env;
-      return { code: 0, stdout: '{"selections":[]}', stderr: "" };
-    },
+    const capturePath = join(home, "method-env-capture");
+    const childScript = join(home, "engine-child.mjs");
+    // Real subprocess: prints selections JSON and captures the method env coordinate.
+    await writeFile(
+      childScript,
+      [
+        "import { writeFileSync } from 'node:fs';",
+        `writeFileSync(process.env.AK_CAPTURE_PATH, process.env.${DIARIST_COLLECT_METHOD_ENV} ?? "", "utf8");`,
+        "process.stdout.write(JSON.stringify({ selections: [] }));",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const collector = createHermesDiaristCollector({
+      packageRoot,
+      executable: process.execPath,
+      extraArgv: [childScript],
+      env: { ...process.env, AK_CAPTURE_PATH: capturePath },
+      // Real runEngineDetourOnce — no runDetour inject.
+    });
+    await collector({
+      ticketNumber: 582,
+      candidates: [
+        block({
+          transcript: "立文件",
+          sourceRef: { sessionFile: "/s", entryId: "1" },
+        }),
+      ],
+    });
+    const captured = await readFile(capturePath, "utf8");
+    assert.equal(captured, methodPath);
   });
-  await collector({
-    ticketNumber: 582,
-    candidates: [
-      block({
-        transcript: "立文件",
-        sourceRef: { sessionFile: "/s", entryId: "1" },
-      }),
-    ],
-  });
-  // Formal env coordinate received by the engine process (not a self-reported field).
-  assert.equal(seenEnv?.[DIARIST_COLLECT_METHOD_ENV], methodPath);
 });
 
 test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {
