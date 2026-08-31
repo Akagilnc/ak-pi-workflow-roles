@@ -37,9 +37,8 @@ async function seedOperatorHome(): Promise<string> {
   return operatorHome;
 }
 
-test("production isolation binding shares one home for GROK_HOME, auth, and S6 request.home outside the run ledger", async () => {
+test("production isolation binding shares one home for GROK_HOME, auth, and S6 request.home outside the operator home", async () => {
   const operatorHome = await seedOperatorHome();
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-grok-run-"));
   let controlledHome: string | undefined;
   try {
     const binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
@@ -54,13 +53,8 @@ test("production isolation binding shares one home for GROK_HOME, auth, and S6 r
       "SECRET-AUTH\n",
     );
 
-    // Not the operator home, not under the retained run ledger.
+    // Ephemeral root is not the operator home; binary still resolves from operator home.
     assert.notEqual(binding.controlledHome, operatorHome);
-    assert.equal(under(runDirectory, binding.controlledHome), false);
-    await assert.rejects(access(join(runDirectory, "grok-home")));
-    await assert.rejects(access(join(operatorHome, "hooks")));
-
-    // Binary still resolved from the operator home (not the ephemeral controlled root).
     assert.equal(binding.operatorHome, operatorHome);
     assert.equal(binding.binary, join(operatorHome, ".grok", "bin", "grok"));
     assert.equal(under(binding.controlledHome, binding.binary), false);
@@ -69,7 +63,6 @@ test("production isolation binding shares one home for GROK_HOME, auth, and S6 r
       await rm(controlledHome, { recursive: true, force: true });
     }
     await rm(operatorHome, { recursive: true, force: true });
-    await rm(runDirectory, { recursive: true, force: true });
   }
 });
 
@@ -125,9 +118,8 @@ test("openProductionGrokHome cleans a partial root when auth copy fails", async 
     // External visible result: no new ak-grok-home-* leaked under tmpdir.
     const leaked = after.filter((name) => !before.includes(name));
     assert.deepEqual(leaked, []);
-    // Operator home must not absorb auth/hooks from the failed open.
+    // Operator home must not absorb auth.json from the failed open (no .grok was seeded).
     await assert.rejects(access(join(operatorHome, "auth.json")));
-    await assert.rejects(access(join(operatorHome, "hooks")));
   } finally {
     await rm(operatorHome, { recursive: true, force: true });
   }

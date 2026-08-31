@@ -11305,14 +11305,62 @@ function resolveGrokBinary(operatorHome) {
 }
 async function openProductionGrokHome(operatorHome) {
   const controlledHome = await mkdtemp3(join19(tmpdir3(), "ak-grok-home-"));
-  await prepareControlledGrokHome(operatorHome, controlledHome);
-  return controlledHome;
+  try {
+    await prepareControlledGrokHome(operatorHome, controlledHome);
+    return controlledHome;
+  } catch (error) {
+    try {
+      await rm3(controlledHome, { recursive: true, force: true });
+    } catch (cleanupFailure) {
+      throw new AggregateError(
+        [error, cleanupFailure],
+        "production grok home open failed and its cleanup also failed",
+        { cause: error }
+      );
+    }
+    throw error;
+  }
 }
 function childEnv(controlledHome, packageRoot) {
   return {
     ...controlledGrokChildEnv(process.env, controlledHome),
     AK_PACKAGE_ROOT: packageRoot
   };
+}
+async function bindProductionGrokIsolation(operatorHome, packageRoot) {
+  const controlledHome = await openProductionGrokHome(operatorHome);
+  return {
+    operatorHome,
+    controlledHome,
+    binary: resolveGrokBinary(operatorHome),
+    env: childEnv(controlledHome, packageRoot)
+  };
+}
+async function withProductionGrokIsolation(operatorHome, packageRoot, run) {
+  let binding;
+  let primaryFailure;
+  try {
+    binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
+    return await run(binding);
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
+  } finally {
+    if (binding !== void 0) {
+      try {
+        await rm3(binding.controlledHome, { recursive: true, force: true });
+      } catch (cleanupFailure) {
+        if (primaryFailure !== void 0) {
+          throw new AggregateError(
+            [primaryFailure, cleanupFailure],
+            "production grok isolation turn and cleanup failed",
+            { cause: primaryFailure }
+          );
+        }
+        throw cleanupFailure;
+      }
+    }
+  }
 }
 function createGrokRoleRuntimeDependencies(packageRoot) {
   return {
@@ -11365,54 +11413,45 @@ function createProductionGrokRoleTurnHost(options) {
   const { packageRoot, principalAuthority } = options;
   let turn;
   let serial = Promise.resolve();
-  const getTurn = () => {
-    if (turn === void 0) {
-      throw new Error("production grok turn isolation is not active");
-    }
-    return turn;
-  };
-  const inner = options.createInnerHost?.({ getTurn }) ?? createComposedGrokRoleTurnHost({
+  const inner = createComposedGrokRoleTurnHost({
     sessionIdentity: createGrokSessionIdentityAuthority(principalAuthority),
     roleRuntimeDependencies: createGrokRoleRuntimeDependencies(packageRoot),
     recordCapabilities: recordGrokCapabilities,
     async inspect(request) {
-      const active = getTurn();
+      if (turn === void 0) {
+        throw new Error("production grok inspect requires an active isolated turn");
+      }
       return inspectControlledGrok({
-        binary: active.binary,
+        binary: turn.binary,
         cwd: request.cwd,
-        env: active.env,
+        env: turn.env,
         packageRoot
       });
     },
     async connect(request) {
-      const active = getTurn();
+      if (turn === void 0) {
+        throw new Error("production grok connect requires an active isolated turn");
+      }
       return connectGrokAcpStdio({
-        binary: active.binary,
+        binary: turn.binary,
         cwd: request.cwd,
-        env: active.env,
+        env: turn.env,
         ...request.model === void 0 ? {} : { model: request.model.model }
       });
     }
   });
   return {
     executeTurn(request) {
-      const execution = serial.then(async () => {
-        const operatorHome = request.home;
-        const controlledHome = await openProductionGrokHome(operatorHome);
-        turn = {
-          operatorHome,
-          controlledHome,
-          binary: resolveGrokBinary(operatorHome),
-          env: childEnv(controlledHome, packageRoot)
-        };
-        try {
-          return await inner.executeTurn({ ...request, home: controlledHome });
-        } finally {
-          turn = void 0;
-          await rm3(controlledHome, { recursive: true, force: true }).catch(() => {
-          });
-        }
-      });
+      const execution = serial.then(
+        () => withProductionGrokIsolation(request.home, packageRoot, async (binding) => {
+          turn = binding;
+          try {
+            return await inner.executeTurn({ ...request, home: binding.controlledHome });
+          } finally {
+            turn = void 0;
+          }
+        })
+      );
       serial = execution.then(
         () => void 0,
         () => void 0
@@ -11422,7 +11461,9 @@ function createProductionGrokRoleTurnHost(options) {
   };
 }
 export {
+  bindProductionGrokIsolation,
   createGrokRoleRuntimeDependencies,
   createProductionGrokRoleTurnHost,
-  openProductionGrokHome
+  openProductionGrokHome,
+  withProductionGrokIsolation
 };
