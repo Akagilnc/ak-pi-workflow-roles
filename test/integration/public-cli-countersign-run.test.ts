@@ -1023,3 +1023,29 @@ test("public countersign path: true-unbound skips diary; run page stays unbound"
     assert.equal(state?.runDirectory, result.admitted!.runDirectory);
   });
 });
+
+test("public countersign path: asserted N absent from instruction → controlled failure", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const runId = "01a0sign00-0000-7000-8000-000000000p05";
+    const result = await runPublicCountersign(
+      ["裁：本庭 instruction 不含该号。"],
+      countersignPathEnv({
+        home,
+        project,
+        runId,
+        blockTurn: true,
+        diaristTicketResolver: createScriptedDiaristTicketResolver({
+          kind: "ticket",
+          ticketNumber: 582,
+        }),
+        ticketExistenceChecker: async () => true,
+        diaristCollector: null,
+      }),
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.ok(result.exitCode !== 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.admitted?.ticketNumber, undefined);
+  });
+});
