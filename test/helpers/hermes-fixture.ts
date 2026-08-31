@@ -33,7 +33,8 @@ export type HermesFixtureOptions = {
    * Optional control JSON file path. Shape:
    * `{ exitCode?, stderr?, resolverResponse?, collectorResponse?, response? }`
    * `response` forces the same stdout for either face.
-   * Missing file → defaults. Present but unreadable/unparseable → non-zero fail.
+   * When configured (install option or AK_TEST_HERMES_CONTROL_FILE), the file
+   * must exist and parse — missing/unreadable/bad JSON → non-zero fail.
    */
   controlFile?: string;
 };
@@ -42,6 +43,41 @@ function embedJson(value: unknown): string {
   return JSON.stringify(
     typeof value === "string" ? value : JSON.stringify(value),
   );
+}
+
+/**
+ * Shared fail-loud control-file loader body (Hermes + gh).
+ * `label` names the fixture in stderr; `envKey` is the runtime override env.
+ * `installedPathJson` is JSON.stringify of the install-time path or null.
+ */
+function controlFileLoaderSource(input: {
+  readonly label: string;
+  readonly envKey: string;
+  readonly installedPathJson: string;
+}): string {
+  return `
+function fail(message, err) {
+  const detail = err && err.message ? (": " + err.message) : "";
+  process.stderr.write(${JSON.stringify(input.label + ": ")} + message + detail + "\\n");
+  process.exit(2);
+}
+
+function loadControlFile() {
+  const controlFile = process.env[${JSON.stringify(input.envKey)}] || ${input.installedPathJson};
+  if (!controlFile) return null;
+  let raw;
+  try {
+    raw = require("node:fs").readFileSync(controlFile, "utf8");
+  } catch (err) {
+    fail("control file missing or unreadable: " + controlFile, err);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    fail("control file is not JSON: " + controlFile, err);
+  }
+}
+`;
 }
 
 export async function installHermesFixture(
@@ -62,12 +98,11 @@ export async function installHermesFixture(
 
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
-
-function fail(message, err) {
-  const detail = err && err.message ? (": " + err.message) : "";
-  process.stderr.write("hermes-fixture: " + message + detail + "\\n");
-  process.exit(2);
-}
+${controlFileLoaderSource({
+  label: "hermes-fixture",
+  envKey: "AK_TEST_HERMES_CONTROL_FILE",
+  installedPathJson: JSON.stringify(options.controlFile ?? null),
+})}
 
 const args = process.argv.slice(2);
 const qIdx = args.indexOf("--query-file");
@@ -113,31 +148,23 @@ if (process.env.AK_TEST_HERMES_RESPONSE) {
   process.exit(0);
 }
 
-const controlFile = process.env.AK_TEST_HERMES_CONTROL_FILE || ${JSON.stringify(options.controlFile ?? null)};
-if (controlFile) {
-  if (fs.existsSync(controlFile)) {
-    let ctrl;
-    try {
-      ctrl = JSON.parse(fs.readFileSync(controlFile, "utf8"));
-    } catch (err) {
-      fail("control file is not JSON: " + controlFile, err);
-    }
-    if (ctrl.exitCode !== undefined) {
-      if (ctrl.stderr) process.stderr.write(String(ctrl.stderr));
-      process.exit(Number(ctrl.exitCode));
-    }
-    if (ctrl.response !== undefined) {
-      process.stdout.write(typeof ctrl.response === "string" ? ctrl.response : JSON.stringify(ctrl.response));
-      process.exit(0);
-    }
-    if (isCollector && ctrl.collectorResponse !== undefined) {
-      process.stdout.write(typeof ctrl.collectorResponse === "string" ? ctrl.collectorResponse : JSON.stringify(ctrl.collectorResponse));
-      process.exit(0);
-    }
-    if (!isCollector && ctrl.resolverResponse !== undefined) {
-      process.stdout.write(typeof ctrl.resolverResponse === "string" ? ctrl.resolverResponse : JSON.stringify(ctrl.resolverResponse));
-      process.exit(0);
-    }
+const ctrl = loadControlFile();
+if (ctrl !== null) {
+  if (ctrl.exitCode !== undefined) {
+    if (ctrl.stderr) process.stderr.write(String(ctrl.stderr));
+    process.exit(Number(ctrl.exitCode));
+  }
+  if (ctrl.response !== undefined) {
+    process.stdout.write(typeof ctrl.response === "string" ? ctrl.response : JSON.stringify(ctrl.response));
+    process.exit(0);
+  }
+  if (isCollector && ctrl.collectorResponse !== undefined) {
+    process.stdout.write(typeof ctrl.collectorResponse === "string" ? ctrl.collectorResponse : JSON.stringify(ctrl.collectorResponse));
+    process.exit(0);
+  }
+  if (!isCollector && ctrl.resolverResponse !== undefined) {
+    process.stdout.write(typeof ctrl.resolverResponse === "string" ? ctrl.resolverResponse : JSON.stringify(ctrl.resolverResponse));
+    process.exit(0);
   }
 }
 
@@ -198,12 +225,11 @@ export async function installGhFixture(
   const ghPath = join(binDir, "gh");
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
-
-function fail(message, err) {
-  const detail = err && err.message ? (": " + err.message) : "";
-  process.stderr.write("gh-fixture: " + message + detail + "\\n");
-  process.exit(2);
-}
+${controlFileLoaderSource({
+  label: "gh-fixture",
+  envKey: "AK_TEST_GH_CONTROL_FILE",
+  installedPathJson: JSON.stringify(options.controlFile ?? null),
+})}
 
 const args = process.argv.slice(2);
 const path =
@@ -236,28 +262,25 @@ function reply(status, statusText, body) {
   process.exit(0);
 }
 
+const ctrl = loadControlFile();
+if (ctrl !== null && typeof ctrl === "object") {
+  // Control file, when configured, is the live issues table (same shape as install options.issues).
+  // Missing/unreadable/bad JSON already failed in loadControlFile.
+}
+
 if (path.includes("user")) {
   ok({ login: "fixture-user" });
 }
 
-const issues = ${JSON.stringify(options.issues ?? {})};
-const controlFile =
-  process.env.AK_TEST_GH_CONTROL_FILE ||
-  ${JSON.stringify(options.controlFile ?? null)};
-let activeIssues = issues;
-if (controlFile && fs.existsSync(controlFile)) {
-  try {
-    activeIssues = JSON.parse(fs.readFileSync(controlFile, "utf8"));
-  } catch (err) {
-    fail("control file is not JSON: " + controlFile, err);
-  }
-}
+const issues = (ctrl !== null && typeof ctrl === "object" && !Array.isArray(ctrl))
+  ? ctrl
+  : ${JSON.stringify(options.issues ?? {})};
 
 const issueMatch = path.match(new RegExp("issues/(\\\\d+)(/comments)?"));
 if (issueMatch) {
   const num = Number(issueMatch[1]);
   const isComments = Boolean(issueMatch[2]);
-  const issue = activeIssues[num];
+  const issue = issues[num] || issues[String(num)];
   if (!issue) {
     reply(404, "Not Found", { message: "Not Found" });
   }
