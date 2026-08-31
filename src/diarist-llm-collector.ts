@@ -3,7 +3,7 @@
  * Cheap engine selects decision-related blocks from a frozen candidate set.
  * Every claimed quote must pass mechanical reverse-verify before entry.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -186,8 +186,12 @@ export function parseDiaristLlmStdout(
 
 /** Structured engine payload for hermes -z (sole method-delivery seam). */
 export type DiaristCollectorEnginePayload = {
-  /** Absolute path to owner-domain diarist-collect method material. */
-  readonly methodPath: string;
+  /**
+   * Owner-domain diarist-collect method material bytes.
+   * File at DIARIST_COLLECT_METHOD_RELATIVE is the sole source of truth; bytes are
+   * read at call time and delivered in the same -z structured input (no coordinate-only).
+   */
+  readonly method: string;
   readonly ticketNumber: number;
   readonly candidates: readonly {
     readonly candidateIndex: number;
@@ -199,17 +203,17 @@ export type DiaristCollectorEnginePayload = {
 };
 
 /**
- * Machine kickoff payload only (ADR 0073): method path + frozen candidate catalog.
- * Semantic judgment lives in owner-domain method material at methodPath — not restated here.
- * Serialized as one JSON argv entry for hermes -z (model-readable structured input).
+ * Machine kickoff payload (ADR 0073): method material bytes + frozen candidate catalog.
+ * Semantic judgment lives in owner-domain method material — delivered as `method` bytes,
+ * not a path coordinate. Serialized as one JSON argv entry for hermes -z.
  */
 export function buildDiaristCollectorEnginePayload(input: {
   readonly ticketNumber: number;
   readonly candidates: readonly DiaristSourceBlock[];
-  readonly methodPath: string;
+  readonly method: string;
 }): DiaristCollectorEnginePayload {
   return {
-    methodPath: input.methodPath,
+    method: input.method,
     ticketNumber: input.ticketNumber,
     candidates: input.candidates.map((block, index) => ({
       candidateIndex: index,
@@ -243,8 +247,9 @@ export type HermesDiaristCollectorOptions = {
 
 /**
  * Default cheap-engine collector via hermes -z (ADR 0069 detour seam).
- * Owner-domain method material is delivered once: methodPath field on the structured
- * JSON payload that is the sole -z argv entry (model-readable input). No env dual transport.
+ * Owner-domain method material is read from the packaged file (sole source of truth)
+ * and delivered as `method` bytes on the structured JSON -z argv entry. No path-only
+ * coordinate transport; no env dual transport.
  * Engine failure and uninterpretable stdout throw — caller records honest diagnostic.
  */
 export function createHermesDiaristCollector(
@@ -255,12 +260,17 @@ export function createHermesDiaristCollector(
   if (!existsSync(methodPath)) {
     throw new Error(`diarist collect method material missing (${methodPath})`);
   }
+  // Read once at factory time — file remains the sole editable source of truth.
+  const method = readFileSync(methodPath, "utf8");
+  if (method.trim().length === 0) {
+    throw new Error(`diarist collect method material is empty (${methodPath})`);
+  }
   const runDetour = options.runDetour ?? runEngineDetourOnce;
   return async (input) => {
     const payload = buildDiaristCollectorEnginePayload({
       ticketNumber: input.ticketNumber,
       candidates: input.candidates,
-      methodPath,
+      method,
     });
     const prompt = serializeDiaristCollectorEnginePayload(payload);
     // hermes -z takes the structured payload as one argv entry (no temp file).

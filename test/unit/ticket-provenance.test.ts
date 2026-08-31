@@ -62,7 +62,7 @@ test("projectTicketProvenanceEntry accepts lawful entries and rejects garbage", 
   );
 });
 
-test("diagnostic projection: recordClass payload; rejects forged sourceKind disguise", () => {
+test("diagnostic projection: recordClass payload only; forged disguise rejected", () => {
   const ok = projectTicketProvenanceDiagnostic({
     recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
     diagnosticKind: "collector-failed",
@@ -81,18 +81,18 @@ test("diagnostic projection: recordClass payload; rejects forged sourceKind disg
     }),
     undefined,
   );
-  // Legacy collector-failed entry shape still projects as diagnostic.
-  const legacy = projectTicketProvenanceDiagnostic({
-    basis: { method: "collector-failed", note: "old fail" },
-    sourceKind: "cc-session",
-    sourceRef: { path: "x" },
-    transcript: "old fail",
-    timestamp: "2026-08-31T00:00:00.000Z",
-  });
-  assert.ok(legacy);
-  assert.equal(legacy.diagnosticKind, "collector-failed");
-  assert.equal(legacy.cause, "old fail");
-  // collector-failed is no longer a lawful body entry method.
+  // Branch-intermediate disguised shape is not a product diagnostic contract.
+  assert.equal(
+    projectTicketProvenanceDiagnostic({
+      basis: { method: "collector-failed", note: "old fail" },
+      sourceKind: "cc-session",
+      sourceRef: { path: "x" },
+      transcript: "old fail",
+      timestamp: "2026-08-31T00:00:00.000Z",
+    }),
+    undefined,
+  );
+  // collector-failed is not a lawful body entry method.
   assert.equal(
     projectTicketProvenanceEntry({
       basis: { method: "collector-failed", note: "old fail" },

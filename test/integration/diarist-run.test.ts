@@ -544,27 +544,32 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("hermes collector: real child reads methodPath from structured -z engine payload", async () => {
+test("hermes collector: real child receives method material bytes on structured -z payload", async () => {
   await withHermeticHome({ prefix: "ak-diarist-method-z-" }, async ({ home }) => {
     const methodPath = resolveDiaristCollectMethodPath(packageRoot);
     assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
     accessSync(methodPath, fsConstants.R_OK);
+    // File is sole source of truth — expected delivery is its current bytes.
+    const methodBytes = await readFile(methodPath, "utf8");
+    assert.ok(methodBytes.trim().length > 0);
 
     const capturePath = join(home, "method-payload-capture.json");
     const childScript = join(home, "engine-child.mjs");
-    // Real subprocess on the detour seam: parse -z argv JSON payload.methodPath.
+    // Real subprocess on the detour seam: parse -z argv JSON payload.method (bytes).
     await writeFile(
       childScript,
       [
         "import { writeFileSync } from 'node:fs';",
         "const z = process.argv.indexOf('-z');",
         "const raw = z >= 0 ? process.argv[z + 1] : undefined;",
+        "let method = null;",
         "let methodPath = null;",
         "try {",
         "  const payload = JSON.parse(raw);",
+        "  method = typeof payload?.method === 'string' ? payload.method : null;",
         "  methodPath = typeof payload?.methodPath === 'string' ? payload.methodPath : null;",
         "} catch {}",
-        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ methodPath }), 'utf8');",
+        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ method, methodPath }), 'utf8');",
         "process.stdout.write(JSON.stringify({ selections: [] }));",
         "",
       ].join("\n"),
@@ -588,10 +593,13 @@ test("hermes collector: real child reads methodPath from structured -z engine pa
       ],
     });
     const captured = JSON.parse(await readFile(capturePath, "utf8")) as {
+      method: string | null;
       methodPath: string | null;
     };
-    // External visible: engine child received methodPath on structured -z payload.
-    assert.equal(captured.methodPath, methodPath);
+    // External visible: engine child received method material bytes on -z payload.
+    assert.equal(captured.method, methodBytes);
+    // Coordinate-only transport must not reappear as the delivery claim.
+    assert.equal(captured.methodPath, null);
   });
 });
 
