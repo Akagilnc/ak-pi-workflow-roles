@@ -483,25 +483,10 @@ export function readAdrDecisionKeyBlocks(input: {
   return blocks;
 }
 
-/** Reference anchors for one llm-semantic entry (ticket + mechanical + claimed). */
-export function projectLlmSemanticAnchors(input: {
-  readonly anchors: DiaristAnchorSet;
-  readonly quotes: readonly string[];
-}): string[] {
-  const out: string[] = [`#${input.anchors.ticketNumber}`];
-  const seen = new Set<string>(out);
-  for (const q of [...input.anchors.quotes, ...input.quotes]) {
-    if (seen.has(q)) continue;
-    seen.add(q);
-    out.push(q);
-    if (out.length >= 12) break;
-  }
-  return out;
-}
-
 /**
  * Build an llm-semantic entry after reverse-verify succeeds.
  * `quotes` are the LLM-claimed quotes that must be verbatim in transcript.
+ * basis.anchors record ticket # + mechanical/claimed quotes for audit only.
  * Failure returns failedQuotes only — caller records a single diagnostic (not a
  * disguised diary entry / dead basis.method).
  */
@@ -527,15 +512,21 @@ export function blockToLlmEntry(
       cause: `verbatim verify failed: ${verify.failedQuotes.join(" | ")}`,
     };
   }
+  // Ticket + mechanical face quotes + claimed quotes — reference/反验 only.
+  const anchorNotes: string[] = [`#${input.anchors.ticketNumber}`];
+  const seen = new Set<string>(anchorNotes);
+  for (const q of [...input.anchors.quotes, ...input.quotes]) {
+    if (seen.has(q)) continue;
+    seen.add(q);
+    anchorNotes.push(q);
+    if (anchorNotes.length >= 12) break;
+  }
   return {
     ok: true,
     entry: {
       basis: {
         method: "llm-semantic",
-        anchors: projectLlmSemanticAnchors({
-          anchors: input.anchors,
-          quotes: input.quotes,
-        }),
+        anchors: anchorNotes,
         ...(input.note === undefined ? {} : { note: input.note }),
       },
       sourceKind: block.sourceKind,
