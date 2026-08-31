@@ -408,7 +408,8 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
 
   // Successful collector pass (incl. empty selection): mark all offered
   // identities only after the volume writes above, so a crash mid-commit
-  // still retries the batch next court (append is identity-idempotent).
+  // still retries the batch next court. Entry identity and quote-verify
+  // diagnostic identity are stable — retry does not duplicate either.
   // Failure does not advance the watermark (retry honestly).
   if (
     collect !== undefined &&
