@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import test from "node:test";
 
 import {
@@ -10,8 +10,19 @@ import {
   fixerBashSeatbeltDenyReason,
 } from "../../src/fixer-bash-seatbelt.ts";
 import { installGrokPreToolUseDeny } from "../../src/grok/bash-seatbelt.ts";
-import { classifyGrokInspection, controlledGrokChildEnv, createGrokRoleTurnHost, type GrokAcpConnection, type GrokPreparedTurn } from "../../src/grok/role-turn-host.ts";
+import {
+  classifyGrokInspection,
+  controlledGrokChildEnv,
+  createGrokRoleTurnHost,
+  inspectControlledGrok,
+  type GrokAcpConnection,
+  type GrokPreparedTurn,
+} from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+
+function git(cwd: string, args: string[]): void {
+  execFileSync("git", args, { cwd, stdio: "ignore" });
+}
 
 const sessionIds = new WeakMap<object, string>();
 const sessionIdentity = {
@@ -407,6 +418,22 @@ test("structured inspect classifies builtin, AK, and private sources by provenan
   });
 });
 
+test("HEAD-matched calling-repo projectInstructions leave privateActive without becoming AK injection", () => {
+  assert.deepEqual(classifyGrokInspection({
+    projectInstructions: [
+      { path: "/work/CLAUDE.md", scope: "project" },
+      { path: "/work/AGENTS.md", scope: "project" },
+      { path: "/home/.claude/CLAUDE.md", scope: "global" },
+    ],
+    skills: [{ name: "ak-method", source: { type: "project", path: "/pkg/resources/method/SKILL.md" } }],
+  }, "/pkg", {
+    headMatchedProjectInstructionPaths: new Set(["/work/CLAUDE.md", "/work/AGENTS.md"]),
+  }), {
+    privateActive: ["projectInstructions:/home/.claude/CLAUDE.md"],
+    akActive: ["skills:ak-method"],
+  });
+});
+
 test("controlled child env disables every compat source with one parameterized rule", () => {
   const env = controlledGrokChildEnv({ PATH: "/bin" }, "/run/grok-home");
   for (const vendor of ["CLAUDE", "CURSOR", "CODEX"]) {
@@ -438,4 +465,111 @@ test("grok host rejects an uncontrolled personalized session before model work",
     },
   });
   assert.equal(connected, false);
+});
+
+test("inspect→provenance: HEAD-matched repo CLAUDE.md activates; dirty or untracked projectInstructions fail closed before connect", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-head-match-"));
+  try {
+    git(root, ["init"]);
+    git(root, ["config", "user.email", "fix@example.com"]);
+    git(root, ["config", "user.name", "fix"]);
+    const claudePath = join(root, "CLAUDE.md");
+    const agentsPath = join(root, "AGENTS.md");
+    const localPath = join(root, "CLAUDE.local.md");
+    const homePath = join(root, "home-claude.md");
+    await writeFile(claudePath, "# shared law\n", "utf8");
+    await writeFile(agentsPath, "# agents\n", "utf8");
+    git(root, ["add", "CLAUDE.md", "AGENTS.md"]);
+    git(root, ["commit", "-m", "seed"]);
+
+    const packageRoot = join(root, "pkg");
+    const faux = join(root, "grok-faux.mjs");
+    await writeFile(faux, `#!/usr/bin/env node
+const paths = JSON.parse(process.env.AK_FAUX_PROJECT_INSTRUCTIONS ?? "[]");
+process.stdout.write(JSON.stringify({
+  skills: [{ name: "ak-method", source: { type: "project", path: process.env.AK_PACKAGE_ROOT + "/resources/method/SKILL.md" } }],
+  projectInstructions: paths.map((path) => ({ path, scope: "project" })),
+}));
+`, "utf8");
+    await chmod(faux, 0o755);
+
+    const matchedInspect = await inspectControlledGrok({
+      binary: faux,
+      cwd: root,
+      env: {
+        ...process.env,
+        AK_PACKAGE_ROOT: packageRoot,
+        AK_FAUX_PROJECT_INSTRUCTIONS: JSON.stringify([claudePath, agentsPath]),
+      },
+      packageRoot,
+    });
+    assert.deepEqual(matchedInspect, {
+      privateActive: [],
+      akActive: [`skills:ak-method`],
+    });
+
+    let connected = false;
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => {
+        connected = true;
+        return {
+          async request(method) {
+            if (method === "initialize") {
+              return {
+                _meta: {
+                  modelState: { availableModels: [{ modelId: "grok-4.5" }] },
+                },
+              };
+            }
+            if (method === "session/new") return { sessionId: "s-head" };
+            if (method === "session/prompt") return { stopReason: "end_turn" };
+            if (method === "session/close") return {};
+            throw new Error(method);
+          },
+          notify() {},
+          async close() {},
+        };
+      },
+      inspect: async () => matchedInspect,
+      prepare: async () => prepared(async () => ({ accepted: true }), [{ name: "ak-role" }]),
+    });
+    assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
+    assert.equal(connected, true);
+
+    await writeFile(claudePath, "# dirty local rewrite\n", "utf8");
+    await writeFile(localPath, "# untracked local\n", "utf8");
+    await writeFile(homePath, "# global-shaped\n", "utf8");
+    const dirtyInspect = await inspectControlledGrok({
+      binary: faux,
+      cwd: root,
+      env: {
+        ...process.env,
+        AK_PACKAGE_ROOT: packageRoot,
+        AK_FAUX_PROJECT_INSTRUCTIONS: JSON.stringify([claudePath, localPath, homePath]),
+      },
+      packageRoot,
+    });
+    assert.deepEqual(dirtyInspect.privateActive, [
+      `projectInstructions:${claudePath}`,
+      `projectInstructions:${homePath}`,
+      `projectInstructions:${localPath}`,
+    ].sort());
+    assert.deepEqual(dirtyInspect.akActive, [`skills:ak-method`]);
+
+    connected = false;
+    const rejected = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => { connected = true; throw new Error("must not connect"); },
+      inspect: async () => dirtyInspect,
+      prepare: async () => prepared(async () => ({ accepted: true }), [{ name: "ak-role" }]),
+    });
+    const failure = await rejected.executeTurn(request);
+    assert.equal(failure.knownFailure?.identity?.code, "private-config-active");
+    assert.equal(connected, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
