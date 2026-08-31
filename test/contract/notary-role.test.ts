@@ -6,7 +6,11 @@ import {
   projectLawfulNotaryOutput,
   retainNotarySubmission,
 } from "../../src/notary-contracts.ts";
-import { createNotaryRoleRuntime } from "../../src/notary-role.ts";
+import {
+  createNotaryRoleRuntime,
+  projectNotarySessionBound,
+  readNotaryTicketFlag,
+} from "../../src/notary-role.ts";
 
 const LOCATOR = {
   runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -14,7 +18,7 @@ const LOCATOR = {
   role: "judge",
 } as const;
 
-/** Shared mock-Pi harness for the Notary runtime (reused by both contract tests). */
+/** Shared mock-Pi harness for the Notary runtime (reused by contract tests). */
 function notaryHarness() {
   const flags = new Map<string, string>();
   const tools = new Map<string, { name: string; execute: Function; parameters?: unknown }>();
@@ -41,7 +45,7 @@ test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is
   assert.deepEqual(retainNotarySubmission(raw), raw);
 });
 
-test("Notary runtime registers output tool and binds source-run locator without draft body", async () => {
+test("Notary runtime binds source-run; optional ticket flag reaches typed activate bound", async () => {
   const h = notaryHarness();
   const runtime = createNotaryRoleRuntime(
     h.pi as never,
@@ -52,12 +56,24 @@ test("Notary runtime registers output tool and binds source-run locator without 
   await runtime.activate();
   assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
   assert.ok(h.beforeStart());
+  assert.deepEqual(runtime.getBound(), projectNotarySessionBound({ sourceRun: LOCATOR }));
+  assert.equal(runtime.getBound()?.ticketNumber, undefined);
 
-  const prompted = h.beforeStart()!({ systemPrompt: "BASE" }) as {
-    systemPrompt: string;
-  };
-  // Locator-only contract: bound identity is present as structured JSON; no draft body preload key.
-  assert.equal(prompted.systemPrompt.includes(JSON.stringify({ sourceRun: LOCATOR })), true);
-  assert.equal(prompted.systemPrompt.includes("judge_draft"), false);
-  assert.equal(prompted.systemPrompt.includes('"material"'), false);
+  // Re-activate with ticket flag — typed getBound is the consumption seam (no prompt parse).
+  h.flags.set("ak-notary-ticket-number", "582");
+  await runtime.activate();
+  assert.equal(runtime.getBound()?.ticketNumber, 582);
+  assert.deepEqual(
+    runtime.getBound(),
+    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }),
+  );
+});
+
+test("readNotaryTicketFlag: blank absent; non-empty invalid fails; safe positive binds", () => {
+  assert.equal(readNotaryTicketFlag(undefined), undefined);
+  assert.equal(readNotaryTicketFlag(""), undefined);
+  assert.equal(readNotaryTicketFlag("582"), 582);
+  assert.throws(() => readNotaryTicketFlag("0"));
+  assert.throws(() => readNotaryTicketFlag("nope"));
+  assert.throws(() => readNotaryTicketFlag(true));
 });
