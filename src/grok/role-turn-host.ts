@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
+import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 import { installGrokPreToolUseDeny } from "./bash-seatbelt.ts";
 
 /** ACP v1 surface used by the Grok adapter. Protocol details stay in this module. */
@@ -25,7 +26,14 @@ export type GrokControlledInspection = Readonly<{
  * able to observe the host's real builtin tool surface once it arrives post-session. */
 export type GrokPreparedTurn = Readonly<{
   mcpServers: readonly Readonly<Record<string, unknown>>[];
-  systemPrompt: string;
+  /**
+   * Structured system-prompt authority. `body` is the provider-facing prompt
+   * bytes; `materials` are typed agent-start reading materials (e.g. Notary
+   * session bound) that the adapter folds into the override at the provider
+   * boundary. This structure is the authoritative production input of the
+   * send path — never a test-only parallel face.
+   */
+  systemPrompt: { readonly body: string; readonly materials: readonly unknown[] };
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
@@ -36,6 +44,14 @@ export type GrokPreparedTurn = Readonly<{
   >;
   dispose?(): Promise<void>;
 }>;
+
+/** Fold structured system-prompt authority into the provider-visible ACP override. */
+export function renderGrokSystemPromptOverride(authority: {
+  readonly body: string;
+  readonly materials: readonly unknown[];
+}): string {
+  return renderAgentStartMaterials(authority.body, authority.materials);
+}
 
 export type GrokCapabilityDeclaration = Readonly<{
   nativeToolNarrowing: false;
@@ -255,7 +271,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               ...(resumedSessionId === undefined ? {} : { sessionId: resumedSessionId }),
               cwd: request.cwd,
               mcpServers: prepared.mcpServers,
-              _meta: { systemPromptOverride: prepared.systemPrompt, yoloMode: false },
+              _meta: { systemPromptOverride: renderGrokSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
             },
           );
           sessionId = resumedSessionId ?? (typeof session.sessionId === "string" ? session.sessionId : undefined);

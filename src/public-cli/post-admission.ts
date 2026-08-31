@@ -246,8 +246,25 @@ export async function dispatchPostAdmissionTurn<
     }
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
+    // beforeDispatch (e.g. countersign diarist station) runs after running is
+    // marked — its failures must settle the run, not leave it permanently running.
     if (adapters.beforeDispatch !== undefined) {
-      await adapters.beforeDispatch(admitted);
+      try {
+        await adapters.beforeDispatch(admitted);
+      } catch (error) {
+        return (await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+        )) as { exitCode: number; admitted: A; terminal: T };
+      }
     }
 
     let result: RoleTurnResult;

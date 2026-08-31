@@ -6,7 +6,12 @@ import {
   projectLawfulNotaryOutput,
   retainNotarySubmission,
 } from "../../src/notary-contracts.ts";
-import { createNotaryRoleRuntime } from "../../src/notary-role.ts";
+import {
+  createNotaryRoleRuntime,
+  projectNotaryBoundFromFlags,
+  projectNotarySessionBound,
+  readNotaryTicketFlag,
+} from "../../src/notary-role.ts";
 
 const LOCATOR = {
   runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -14,7 +19,7 @@ const LOCATOR = {
   role: "judge",
 } as const;
 
-/** Shared mock-Pi harness for the Notary runtime (reused by both contract tests). */
+/** Shared mock-Pi harness for the Notary runtime. */
 function notaryHarness() {
   const flags = new Map<string, string>();
   const tools = new Map<string, { name: string; execute: Function; parameters?: unknown }>();
@@ -23,7 +28,9 @@ function notaryHarness() {
     registerFlag(name: string) { flags.set(name, ""); },
     getFlag(name: string) { return flags.get(name); },
     registerTool(tool: { name: string; execute: Function; parameters?: unknown }) { tools.set(tool.name, tool); },
-    on(event: string, handler: (event: { systemPrompt: string }) => unknown) { if (event === "before_agent_start") beforeStart = handler; },
+    on(event: string, handler: (event: { systemPrompt: string }) => unknown) {
+      if (event === "before_agent_start") beforeStart = handler;
+    },
     getAllTools() { return [{ name: NOTARY_OUTPUT_TOOL_NAME }, { name: "bash" }, { name: "read" }]; },
   };
   return { flags, tools, pi, beforeStart: () => beforeStart };
@@ -33,7 +40,6 @@ test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is
   assert.equal(projectLawfulNotaryOutput({ status: "pass", findings: [] })?.status, "pass");
   const bounce = projectLawfulNotaryOutput({ status: "bounce", findings: ["x"] });
   assert.equal(bounce?.status, "bounce");
-  // ADR 0055 / 第 0 条: no shape admission throw — non-release stays undefined projection.
   assert.equal(projectLawfulNotaryOutput({ status: "incomplete", reason: "missing draft" }), undefined);
   assert.equal(projectLawfulNotaryOutput({ status: "maybe" }), undefined);
   assert.equal(projectLawfulNotaryOutput(null), undefined);
@@ -41,7 +47,66 @@ test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is
   assert.deepEqual(retainNotarySubmission(raw), raw);
 });
 
-test("Notary runtime registers output tool and binds source-run locator without draft body", async () => {
+test("projectNotaryBoundFromFlags + ticket reader: blank unbound; valid binds; invalid throws", () => {
+  assert.equal(readNotaryTicketFlag(undefined), undefined);
+  assert.equal(readNotaryTicketFlag(""), undefined);
+  assert.equal(readNotaryTicketFlag("582"), 582);
+  assert.throws(() => readNotaryTicketFlag("nope"));
+
+  const flags = new Map<string, string>([
+    ["ak-notary-source-run", LOCATOR.runDirectory],
+    ["ak-notary-ticket-number", "582"],
+  ]);
+  const bound = projectNotaryBoundFromFlags((name) => flags.get(name));
+  assert.deepEqual(bound, {
+    sourceRunPath: LOCATOR.runDirectory,
+    ticketNumber: 582,
+  });
+  assert.deepEqual(
+    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }).ticketNumber,
+    582,
+  );
+});
+
+test("Notary activate registers source-run flag + tool; ticket flag is envelope-owned", async () => {
+  const h = notaryHarness();
+  const runtime = createNotaryRoleRuntime(
+    h.pi as never,
+    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
+    { failInfrastructure(error) { throw error; } },
+  );
+  // Role module owns source-run only (baseline); ticket lifecycle is envelope-owned.
+  assert.equal(h.flags.has("ak-notary-source-run"), true);
+  assert.equal(h.flags.has("ak-notary-ticket-number"), false);
+
+  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
+  await runtime.activate();
+  assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
+  assert.ok(h.beforeStart());
+});
+
+test("Notary agent-start projects envelope-admitted ticket into readingMaterial", async () => {
+  const h = notaryHarness();
+  const runtime = createNotaryRoleRuntime(
+    h.pi as never,
+    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
+    { failInfrastructure(error) { throw error; } },
+  );
+  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
+  // Ticket arrives as admitted value from envelope — role never getFlag's it.
+  await runtime.activate({ ticketNumber: 582 });
+  const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
+    systemPrompt?: string;
+    readingMaterial?: ReturnType<typeof projectNotarySessionBound>;
+  };
+  assert.equal(typeof result.systemPrompt, "string");
+  assert.deepEqual(
+    result.readingMaterial,
+    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }),
+  );
+});
+
+test("Notary agent-start omits ticket when envelope admits none", async () => {
   const h = notaryHarness();
   const runtime = createNotaryRoleRuntime(
     h.pi as never,
@@ -50,14 +115,12 @@ test("Notary runtime registers output tool and binds source-run locator without 
   );
   h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
   await runtime.activate();
-  assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
-  assert.ok(h.beforeStart());
-
-  const prompted = h.beforeStart()!({ systemPrompt: "BASE" }) as {
-    systemPrompt: string;
+  const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
+    readingMaterial?: ReturnType<typeof projectNotarySessionBound>;
   };
-  // Locator-only contract: bound identity is present as structured JSON; no draft body preload key.
-  assert.equal(prompted.systemPrompt.includes(JSON.stringify({ sourceRun: LOCATOR })), true);
-  assert.equal(prompted.systemPrompt.includes("judge_draft"), false);
-  assert.equal(prompted.systemPrompt.includes('"material"'), false);
+  assert.deepEqual(
+    result.readingMaterial,
+    projectNotarySessionBound({ sourceRun: LOCATOR }),
+  );
+  assert.equal(result.readingMaterial?.ticketNumber, undefined);
 });

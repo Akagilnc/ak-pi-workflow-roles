@@ -427,6 +427,39 @@ async function mergeInvocationIdentityPage(
   );
 }
 
+/**
+ * Bind a post-admission resolved ticketNumber onto the in-memory admitted
+ * object and both durable pages (invocation.json + admitted-request.json).
+ * Used by countersign diarist pre-court resolution when admission was unbound
+ * (#582 / diarist-resolves-ticket-llm-layer). Never clears an existing binding.
+ */
+export async function bindAdmittedTicketNumber(
+  admitted: AdmittedRoleInvocation,
+  ticketNumber: number,
+): Promise<void> {
+  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
+    throw new Error(`bindAdmittedTicketNumber requires a safe positive integer, got ${String(ticketNumber)}`);
+  }
+  if (admitted.ticketNumber !== undefined) {
+    if (admitted.ticketNumber === ticketNumber) return;
+    throw new Error(
+      `bindAdmittedTicketNumber refuses to replace existing ticket #${admitted.ticketNumber} with #${ticketNumber}`,
+    );
+  }
+  (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
+  await mergeInvocationIdentityPage(admitted.runDirectory, { ticketNumber });
+  const admittedPath = admitted.admittedRequestPath;
+  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(
+    admittedPath,
+    `${JSON.stringify({ ...current, ticketNumber }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 /** Add the identity returned by the production Pi launch seam to its existing ledger page. */
 export async function recordLaunchedPiIdentity(
   runDirectory: string,
@@ -492,11 +525,29 @@ export type ParseInstructionArgvResult = {
   instruction: string;
   attachmentPaths: string[];
   project?: string;
+  /** Explicit --ticket (countersign only). */
+  ticket?: number;
 };
 
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
 export type ParseJudgeArgvResult = ParseInstructionArgvResult;
 export type ParseCountersignArgvResult = ParseInstructionArgvResult;
+
+/** Positive ticket number shared by countersign/notary/analyst faces. */
+export function parsePositiveTicketNumber(
+  raw: string,
+  flag: string,
+): number {
+  const trimmed = raw.trim();
+  if (!ANALYST_TICKET_NUMBER_PATTERN.test(trimmed)) {
+    throw new CliUsageError(`${flag} must be a positive integer, got ${raw}`);
+  }
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new CliUsageError(`${flag} must be a positive integer, got ${raw}`);
+  }
+  return value;
+}
 
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
@@ -505,6 +556,7 @@ function parseInstructionArgv(
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
+  let ticket: number | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions(owner);
@@ -526,6 +578,16 @@ function parseInstructionArgv(
         project = requireOptionPath(taken.def.canonical, taken.value);
         continue;
       }
+      if (taken.def.id === "ticket") {
+        if (owner !== "countersign") {
+          throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+        }
+        if (taken.value === undefined || taken.value.trim() === "") {
+          throw new CliUsageError("countersign --ticket requires a positive integer");
+        }
+        ticket = parsePositiveTicketNumber(taken.value, "countersign --ticket");
+        continue;
+      }
       throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -540,6 +602,7 @@ function parseInstructionArgv(
     instruction: positional.join(" "),
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
+    ...(ticket === undefined ? {} : { ticket }),
   };
 }
 
@@ -1014,6 +1077,8 @@ export type AdmitCountersignInvocationOptions = {
   instruction: string;
   attachmentPaths: readonly string[];
   project?: string;
+  /** Explicit --ticket; wins over attachment frontmatter when both present. */
+  ticket?: number;
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
   principalAuthority: DurablePrincipalAuthority;
@@ -1053,11 +1118,15 @@ export async function admitCountersignInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
+  const { attachments, ticketNumber: frontmatterTicket } =
+    await freezeAttachmentsWithTicketNumber(
+      options.attachmentPaths,
+      attachmentsDirectory,
+    );
+  // Explicit --ticket wins over attachment frontmatter (ADR 0075).
+  const ticketFields = ticketAdmissionFields(
+    options.ticket ?? frontmatterTicket,
   );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -2068,6 +2137,8 @@ export function buildDoctorTransportPrompt(
 export type ParseNotaryArgvResult = {
   readonly sourceRun: string;
   readonly project?: string;
+  /** Optional --ticket for diary lookup (ADR 0075). */
+  readonly ticket?: number;
 };
 
 /**
@@ -2077,6 +2148,7 @@ export type ParseNotaryArgvResult = {
 export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult {
   let project: string | undefined;
   let sourceRun: string | undefined;
+  let ticket: number | undefined;
   const tokens = [...args];
   const definitions = roleOptions("notary");
   const options = createTypedOptionConsumer(definitions);
@@ -2104,6 +2176,13 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
         sourceRun = taken.value;
         continue;
       }
+      if (taken.def.id === "ticket") {
+        if (taken.value === undefined || taken.value.trim() === "") {
+          throw new CliUsageError("notary --ticket requires a positive integer");
+        }
+        ticket = parsePositiveTicketNumber(taken.value, "notary --ticket");
+        continue;
+      }
       throw new CliUsageError(`unknown notary option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -2122,6 +2201,7 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
   return {
     sourceRun,
     ...(project === undefined ? {} : { project }),
+    ...(ticket === undefined ? {} : { ticket }),
   };
 }
 
@@ -2131,6 +2211,7 @@ export async function admitNotaryInvocation(options: {
   readonly cwd: string;
   readonly sourceRun: string;
   readonly project?: string;
+  readonly ticket?: number;
   readonly runs?: string;
   readonly createRunId?: () => string;
   readonly model?: InvocationEffectiveModel;
@@ -2169,6 +2250,7 @@ export async function admitNotaryInvocation(options: {
     home: options.home,
   });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  const ticketFields = ticketAdmissionFields(options.ticket);
 
   const admitted = {
     role: "notary" as const,
@@ -2182,6 +2264,7 @@ export async function admitNotaryInvocation(options: {
     attachments: [] as const,
     sourceRunPath: sourceRun.runDirectory,
     sourceRun,
+    ...ticketFields,
     ...(options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId }),
@@ -2206,20 +2289,20 @@ export async function admitNotaryInvocation(options: {
     admittedRequestPath,
     sourceRunPath: sourceRun.runDirectory,
     sourceRun,
+    ...ticketFields,
     ...(options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId }),
   };
 }
 
-/** Package-owned fixed kickoff only — never caller instruction/attachments. */
+/** Package-owned fixed kickoff only — never caller instruction/attachments.
+ * Ticket rides admitted → activation → agent-start typed bound (not free-text kickoff). */
 export function buildNotaryTransportPrompt(
   _admitted: AdmittedNotaryInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join(
-    "\n",
-  );
+  return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
 }
 
 /**

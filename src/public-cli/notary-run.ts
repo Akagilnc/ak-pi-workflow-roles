@@ -41,7 +41,14 @@ export function buildNotaryTurnRequest(
   return projectRoleTurnRequest(
     admitted,
     {
-      activation: { role: "notary" as const, sourceRun: admitted.sourceRunPath },
+      activation: {
+        role: "notary" as const,
+        sourceRun: admitted.sourceRunPath,
+        // Admitted --ticket rides activation → flag → role read surface (ADR 0075).
+        ...(admitted.ticketNumber === undefined
+          ? {}
+          : { ticketNumber: admitted.ticketNumber }),
+      },
     },
     options,
   );
@@ -66,6 +73,7 @@ export async function runPublicNotary(
       cwd: env.cwd,
       sourceRun: parsed.sourceRun,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
+      ...(parsed.ticket === undefined ? {} : { ticket: parsed.ticket }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),

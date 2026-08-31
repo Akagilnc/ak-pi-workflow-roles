@@ -18,6 +18,15 @@ export const NOTARY_SOURCE_RUN_FLAG = {
   },
 } as const;
 
+/** Optional ticket binding for court-diary (起居录) lookup — ADR 0075. */
+export const NOTARY_TICKET_FLAG = {
+  name: "ak-notary-ticket-number",
+  definition: {
+    description: "Optional ticket number for Notary court-diary lookup",
+    type: "string" as const,
+  },
+} as const;
+
 /** Package-owned kickoff only — callers supply zero prompt bytes (ADR 0067 / #448). */
 export const NOTARY_FIXED_KICKOFF =
   "符宝郎案卷已受理；来源 run 定位见会话材料。";

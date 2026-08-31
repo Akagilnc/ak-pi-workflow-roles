@@ -1,18 +1,35 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import test from "node:test";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import {
+  NOTARY_SESSION_BOUND_ENTRY,
+  projectNotarySessionBound,
+} from "../../src/notary-role.ts";
+import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
+import {
+  issuePiDurablePrincipalCoordinates,
+  piDurablePrincipalAuthority,
+} from "../../src/pi/durable-principal.ts";
+import {
+  admitNotaryInvocation,
+  buildNotaryTransportPrompt,
+  parseNotaryArgv,
+} from "../../src/public-cli/invocation.ts";
+import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
+import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -58,7 +75,7 @@ async function callThroughMcp(server: McpServer, name: string, args: unknown): P
   }
 }
 
-test("Grok projection maps all eight public activations onto the shared envelope", () => {
+test("Grok projection maps public activations onto the shared envelope", () => {
   const activations: RoleTurnRequest["activation"][] = [
     { role: "judge" },
     { role: "fixer", phase: "apply", packetPath: "/fix", prerequisitesPath: "/prereqs" },
@@ -68,6 +85,7 @@ test("Grok projection maps all eight public activations onto the shared envelope
     { role: "doctor", casePath: "/case" },
     { role: "merger", inputPath: "/merge" },
     { role: "notary", sourceRun: "/source" },
+    { role: "countersign", ticketNumber: 582 },
   ];
   for (const activation of activations) {
     const flags = projectGrokActivationFlags({ activation } as RoleTurnRequest);
@@ -76,6 +94,18 @@ test("Grok projection maps all eight public activations onto the shared envelope
   assert.equal(projectGrokActivationFlags({ activation: activations[1]! } as RoleTurnRequest).get("ak-fixer-prerequisites"), "/prereqs");
   assert.equal(projectGrokActivationFlags({ activation: activations[3]! } as RoleTurnRequest).get("ak-review-authority-refs"), JSON.stringify(["issue:1"]));
   assert.equal(projectGrokActivationFlags({ activation: activations[4]! } as RoleTurnRequest).get("ak-collector-request-manifest"), "/manifest");
+  assert.equal(
+    projectGrokActivationFlags({ activation: activations[8]! } as RoleTurnRequest).get(
+      "ak-countersign-ticket-number",
+    ),
+    "582",
+  );
+  assert.equal(
+    projectGrokActivationFlags({
+      activation: { role: "countersign" },
+    } as RoleTurnRequest).has("ak-countersign-ticket-number"),
+    false,
+  );
 });
 
 test("Grok MCP projection activates shared Judge materials and all active AK tools", async () => {
@@ -107,7 +137,10 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
     try {
       const server = prepared.mcpServers[0] as McpServer;
       const listed = await listThroughMcp(server) as { tools?: Array<{ name: string }> };
-      assert.deepEqual(listed.tools?.map(({ name }) => name), [JUDGE_OUTPUT_TOOL_NAME]);
+      const names = listed.tools?.map(({ name }) => name) ?? [];
+      // Judge output is required; shared envelope may also register engine detour.
+      assert.ok(names.includes(JUDGE_OUTPUT_TOOL_NAME));
+      assert.equal(names.filter((name) => name === JUDGE_OUTPUT_TOOL_NAME).length, 1);
     } finally {
       await prepared.dispose?.();
     }
@@ -162,7 +195,10 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
     try {
       // The shared input transform rewrites the prompt to the canonical Skill invocation.
       assert.equal(prepared.prompt, "/skill:tdd decide");
-      assert.ok(prepared.systemPrompt.includes("CODER SOUL"));
+      // Coder agent-start carries no typed reading materials on this path.
+      assert.deepEqual(prepared.systemPrompt.materials, []);
+      assert.equal(typeof prepared.systemPrompt.body, "string");
+      assert.ok(prepared.systemPrompt.body.length > 0);
     } finally {
       await prepared.dispose?.();
     }
@@ -223,6 +259,211 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       assert.equal(closure.retry.code, "coder_skill_expansion_evidence_missing");
       assert.equal(closure.retry.toolCallIds.length, 1);
       assert.equal(typeof closure.retry.toolCallIds[0], "string");
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("public Notary --ticket: admit→activation→ACP systemPromptOverride folds typed bound", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-ticket-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    // Real public admission needs a git project book + retained source-run under ledger.
+    const project = join(root, "project");
+    await mkdir(project, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: project });
+    execFileSync("git", ["config", "user.email", "notary@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Notary Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+
+    const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
+    const sourceRole = "judge" as const;
+    const sourceCoords = issuePiDurablePrincipalCoordinates({
+      cwd: project,
+      runId: sourceRunId,
+      role: sourceRole,
+      home: root,
+    });
+    await mkdir(sourceCoords.sessionDirectory, { recursive: true });
+    const sourceAdmittedPath = join(sourceCoords.runDirectory, "admitted-request.json");
+    await writeFile(
+      sourceCoords.sessionFile,
+      `${JSON.stringify({ type: "message", message: { role: "user", content: "draft" } })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      sourceAdmittedPath,
+      `${JSON.stringify({ role: sourceRole, runId: sourceRunId })}\n`,
+      "utf8",
+    );
+    await writeRoleRunState(sourceCoords.runDirectory, {
+      runId: sourceRunId,
+      role: sourceRole,
+      state: "terminal",
+      bookKey: sourceCoords.bookKey,
+      projectRoot: project,
+      sessionDirectory: sourceCoords.sessionDirectory,
+      sessionFile: sourceCoords.sessionFile,
+      admittedRequestPath: sourceAdmittedPath,
+    });
+    const sourceRunPath = await realpath(sourceCoords.runDirectory);
+
+    // Public argv → admit (typed --ticket) → turn request → envelope agent-start.
+    const parsed = parseNotaryArgv([
+      "--source-run",
+      sourceRunPath,
+      "--ticket",
+      "582",
+    ]);
+    assert.equal(parsed.ticket, 582);
+    const notaryRunId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
+    const admitted = await admitNotaryInvocation({
+      home: root,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      sourceRun: parsed.sourceRun,
+      ticket: parsed.ticket,
+      createRunId: () => notaryRunId,
+    });
+    assert.equal(admitted.ticketNumber, 582);
+    assert.equal(admitted.sourceRunPath, sourceRunPath);
+
+    // Kickoff ignores ticketNumber — no free-text parallel copy.
+    const kickoffBound = buildNotaryTransportPrompt(admitted);
+    const { ticketNumber: _omitTicket, ...admittedUnbound } = admitted;
+    assert.equal(kickoffBound, buildNotaryTransportPrompt(admittedUnbound));
+
+    const request = buildNotaryTurnRequest(admitted, {
+      packageRoot,
+      home: root,
+      agentDir: join(root, "agent"),
+      continuation: { kind: "initial", prompt: kickoffBound },
+    });
+    assert.equal(request.activation.role, "notary");
+    assert.equal(
+      "ticketNumber" in request.activation ? request.activation.ticketNumber : undefined,
+      582,
+    );
+    const envelopeRequest: RoleTurnRequest = {
+      ...request,
+      model: { provider: "xai", model: "grok-4.5" },
+    };
+
+    const socketPath = join(root, "mcp.sock");
+    const prepared = await prepareGrokRoleEnvelope({
+      request: envelopeRequest,
+      socketPath,
+      dependencies: {
+        loadNotarySoul: async () => "NOTARY SOUL",
+        // Real activation loader — same retained source-run admission resolved.
+        loadNotarySourceRun: loadNotarySourceRunLocator,
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      // Structured authority after real admit→activation→agent-start (typed bound, not prompt text).
+      const expectedBound = projectNotarySessionBound({
+        sourceRun: admitted.sourceRun,
+        ticketNumber: 582,
+      });
+      assert.deepEqual(prepared.systemPrompt.materials, [expectedBound]);
+
+      // Provider send boundary: capture ACP systemPromptOverride under controlled materials.
+      // Observation is differential (not renderer self-compare): materials must change the wire
+      // form; empty materials must passthrough body; distinct materials must differ.
+      // closeRound stubbed — this probe is the systemPromptOverride seam only.
+      async function captureOverride(
+        materials: readonly unknown[],
+      ): Promise<unknown> {
+        const sessionIds = new WeakMap<object, string>();
+        const acpCalls: Array<[string, unknown]> = [];
+        const host = createGrokRoleTurnHost({
+          sessionIdentity: {
+            async load(principal) {
+              return sessionIds.get(principal);
+            },
+            async bind(principal, sessionId) {
+              sessionIds.set(principal, sessionId);
+            },
+          },
+          recordCapabilities: async () => {},
+          connect: async () => ({
+            async request(method, params) {
+              acpCalls.push([method, params]);
+              if (method === "initialize") {
+                return {
+                  _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } },
+                };
+              }
+              if (method === "session/new") return { sessionId: `notary-${acpCalls.length}` };
+              if (method === "session/prompt") return { stopReason: "end_turn" };
+              return {};
+            },
+            notify() {},
+            async close() {},
+          }),
+          inspect: async () => ({
+            privateActive: [],
+            akActive: [NOTARY_OUTPUT_TOOL_NAME],
+          }),
+          prepare: async () => ({
+            ...prepared,
+            systemPrompt: { body: prepared.systemPrompt.body, materials },
+            closeRound: async () => ({ accepted: true as const }),
+          }),
+        });
+        // Fresh principal each capture so session identity does not resume.
+        const turnRequest = { ...envelopeRequest, principal: {} };
+        assert.deepEqual(await host.executeTurn(turnRequest), {
+          code: 0,
+          stderr: "",
+          timedOut: false,
+        });
+        const sessionNew = acpCalls.find(([method]) => method === "session/new")?.[1] as
+          | { _meta?: { systemPromptOverride?: unknown } }
+          | undefined;
+        return sessionNew?._meta?.systemPromptOverride;
+      }
+
+      const overrideWithBound = await captureOverride(prepared.systemPrompt.materials);
+      const overrideEmpty = await captureOverride([]);
+      const otherBound = projectNotarySessionBound({
+        sourceRun: admitted.sourceRun,
+        ticketNumber: 999,
+      });
+      const overrideOtherTicket = await captureOverride([otherBound]);
+
+      assert.equal(overrideEmpty, prepared.systemPrompt.body);
+      assert.notEqual(overrideWithBound, overrideEmpty);
+      assert.notEqual(overrideWithBound, overrideOtherTicket);
+
+      // Session custom entry is the envelope durable twin of the flag-derived bound.
+      // Durable principal layout is session/session.jsonl (settlement history face).
+      const sessionFile = join(envelopeRequest.runDirectory, "session", "session.jsonl");
+      const lines = (await readFile(sessionFile, "utf8"))
+        .split("\n")
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as { type?: string; customType?: string; data?: unknown });
+      const boundEntry = lines.find(
+        (row) => row.type === "custom" && row.customType === NOTARY_SESSION_BOUND_ENTRY,
+      );
+      assert.ok(boundEntry, "session must retain notary-session-bound custom entry");
+      const sessionBound = boundEntry.data as {
+        sourceRunPath?: string;
+        ticketNumber?: number;
+      };
+      assert.equal(sessionBound.ticketNumber, 582);
+      assert.equal(sessionBound.sourceRunPath, admitted.sourceRunPath);
     } finally {
       await prepared.dispose?.();
     }

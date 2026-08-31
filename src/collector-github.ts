@@ -435,6 +435,34 @@ export function createGhApiRunner(
 }
 
 export type GhIssueSoftFetchResult = Readonly<{ body: string }>;
+
+/** Input for the shared single-issue body projection. */
+export type GhIssueBodyFetchInput = {
+  readonly owner: string;
+  readonly repo: string;
+  readonly ticketNumber: number;
+  readonly signal?: AbortSignal;
+};
+
+/**
+ * Shared projection of one GitHub issue body over the gh api runner.
+ * Sole authority for transport argv, HTTP handling, JSON/object/PR/body parse.
+ * Callers map disposition (soft undefined vs hard typed error) — they do not reimplement fetch.
+ */
+export type GhIssueBodyProjection =
+  | { readonly status: "available"; readonly body: string }
+  | {
+      readonly status: "unavailable";
+      readonly reason: "transport" | "http-non-2xx" | "pull-request";
+      readonly cause?: unknown;
+      readonly httpStatus?: number;
+    }
+  | {
+      readonly status: "invalid";
+      readonly reason: "not-json" | "not-object" | "body-invalid";
+      readonly cause?: unknown;
+    };
+
 /**
  * Soft single-issue fetch over the shared gh api runner.
  * undefined = confirmed tracker unreachable / issue not found / gh tool unavailable:
@@ -443,13 +471,9 @@ export type GhIssueSoftFetchResult = Readonly<{ body: string }>;
  *   - gh process could not start (ENOENT / spawn syscall failure).
  * After gh starts successfully: response JSON/shape/implementation errors propagate with true cause.
  */
-export type GhIssueSoftFetcher = (input: {
-  owner: string;
-  repo: string;
-  ticketNumber: number;
-  /** Optional cancellation signal forwarded to the shared GhApiRunner. */
-  signal?: AbortSignal;
-}) => Promise<GhIssueSoftFetchResult | undefined>;
+export type GhIssueSoftFetcher = (
+  input: GhIssueBodyFetchInput,
+) => Promise<GhIssueSoftFetchResult | undefined>;
 
 function isAmbiguousGhFailure(error: unknown): boolean {
   return (
@@ -469,62 +493,83 @@ function isGhProcessStartFailure(error: unknown): boolean {
 }
 
 /**
+ * Sole shared issue-body fetch + projection over createGhApiRunner.
+ * Soft and hard callers only map this result; they do not duplicate argv/parse.
+ */
+export async function projectGhIssueBody(
+  runner: GhApiRunner,
+  input: GhIssueBodyFetchInput,
+): Promise<GhIssueBodyProjection> {
+  const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
+  let response: GhApiResponse;
+  try {
+    response = await runner(
+      ["api", "--hostname", "github.com", "--include", "-X", "GET", path],
+      input.signal === undefined ? {} : { signal: input.signal },
+    );
+  } catch (error) {
+    // Transport ambiguity / gh never started → unavailable. Other failures keep true cause as throw.
+    if (isAmbiguousGhFailure(error) || isGhProcessStartFailure(error)) {
+      return { status: "unavailable", reason: "transport", cause: error };
+    }
+    throw error;
+  }
+  if (response.status < 200 || response.status >= 300) {
+    return {
+      status: "unavailable",
+      reason: "http-non-2xx",
+      httpStatus: response.status,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(response.bodyText);
+  } catch (error) {
+    return { status: "invalid", reason: "not-json", cause: error };
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return { status: "invalid", reason: "not-object" };
+  }
+  // Issues endpoint also returns PRs. Own-key presence of pull_request → not an issue face.
+  if (Object.hasOwn(parsed, "pull_request")) {
+    return { status: "unavailable", reason: "pull-request" };
+  }
+  // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
+  const bodyRaw = (parsed as { body?: unknown }).body;
+  if (bodyRaw !== undefined && bodyRaw !== null && typeof bodyRaw !== "string") {
+    return { status: "invalid", reason: "body-invalid" };
+  }
+  const body = typeof bodyRaw === "string" ? bodyRaw : "";
+  return { status: "available", body };
+}
+
+/**
  * Production issue-fetch capability owned by the shared gh execution seam.
- * Reuses createGhApiRunner lifecycle. Softens only ticket-authorized unavailable results
- * (tracker unreachable / issue not found / gh cannot start); does not catch-all wash
- * post-start parse or implementation failures into unavailable.
+ * Reuses projectGhIssueBody. Softens only ticket-authorized unavailable results
+ * (tracker unreachable / issue not found / gh cannot start / PR marker);
+ * invalid payload shapes propagate with true cause.
  */
 export function createGhIssueSoftFetcher(
   runner: GhApiRunner = createGhApiRunner(),
 ): GhIssueSoftFetcher {
   return async (input) => {
-    const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
-    let response: GhApiResponse;
-    try {
-      // Forward invocation AbortSignal into the shared GhApiRunner lifecycle (no local timeout).
-      response = await runner(
-        [
-          "api",
-          "--hostname",
-          "github.com",
-          "--include",
-          "-X",
-          "GET",
-          path,
-        ],
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
-    } catch (error) {
-      // Ticket-authorized soft unavailable: tagged transport ambiguity, or gh never started.
-      // Cancellation / other post-start failures keep true cause (not washed into degrade).
-      if (isAmbiguousGhFailure(error) || isGhProcessStartFailure(error)) return undefined;
-      throw error;
+    const projected = await projectGhIssueBody(runner, input);
+    if (projected.status === "available") {
+      return Object.freeze({ body: projected.body });
     }
-    // Ticket-authorized degrade: issue not found / tracker non-success via HTTP status.
-    if (response.status < 200 || response.status >= 300) return undefined;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(response.bodyText);
-    } catch (error) {
-      throw new Error("GitHub issue payload is not JSON", { cause: error });
-    }
-    if (typeof parsed !== "object" || parsed === null) {
-      throw new Error("GitHub issue payload must be a JSON object");
-    }
-    // Issues endpoint also returns PRs. Own-key presence of the standard pull_request marker
-    // means this is a PR payload — soft-unavailable so Spec does not adopt PR description as issue body.
-    // Key presence only; no marker-content parse, PR schema, or linked-issue chase.
-    if (Object.hasOwn(parsed, "pull_request")) {
+    if (projected.status === "unavailable") {
       return undefined;
     }
-    // Match former gh --jq `(.body // "")`: null/missing body projects to empty string.
-    // Title is not ticket-authorized audited material — do not parse or validate it.
-    const bodyRaw = (parsed as { body?: unknown }).body;
-    if (bodyRaw !== undefined && bodyRaw !== null && typeof bodyRaw !== "string") {
-      throw new Error("GitHub issue payload body must be string or null");
+    // invalid — keep true cause (historical soft-fetcher contract).
+    if (projected.reason === "not-json") {
+      throw new Error("GitHub issue payload is not JSON", {
+        cause: projected.cause,
+      });
     }
-    const body = typeof bodyRaw === "string" ? bodyRaw : "";
-    return Object.freeze({ body });
+    if (projected.reason === "not-object") {
+      throw new Error("GitHub issue payload must be a JSON object");
+    }
+    throw new Error("GitHub issue payload body must be string or null");
   };
 }
 
