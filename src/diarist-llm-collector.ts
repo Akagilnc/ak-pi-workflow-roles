@@ -251,8 +251,6 @@ export type HermesDiaristCollectorOptions = {
   readonly extraArgv?: readonly string[];
   /** Package root for resolving diarist-collect method material. */
   readonly packageRoot?: string;
-  /** Test seam: inject detour runner (default production runEngineDetourOnce). */
-  readonly runDetour?: typeof runEngineDetourOnce;
 };
 
 /**
@@ -276,7 +274,6 @@ export function createHermesDiaristCollector(
   if (method.trim().length === 0) {
     throw new Error(`diarist collect method material is empty (${methodPath})`);
   }
-  const runDetour = options.runDetour ?? runEngineDetourOnce;
   return async (input) => {
     const payload = buildDiaristCollectorEnginePayload({
       ticketNumber: input.ticketNumber,
@@ -301,7 +298,7 @@ export function createHermesDiaristCollector(
       "-t",
       HERMES_DIARIST_COLLECTOR_TOOLSET,
     ];
-    const result = await runDetour({
+    const result = await runEngineDetourOnce({
       argv,
       stagedPrompt: prompt,
       cwd: options.cwd ?? process.cwd(),
@@ -323,20 +320,5 @@ export function createHermesDiaristCollector(
       // Staged body redacted — argv face shows the path token only.
       engineArgv: argv,
     };
-  };
-}
-
-/** Test/scripted collector — pure function over fixed selections. */
-export function createScriptedDiaristCollector(
-  script: DiaristLlmCollectResult | ((input: {
-    readonly ticketNumber: number;
-    readonly candidates: readonly DiaristSourceBlock[];
-  }) => DiaristLlmCollectResult | Promise<DiaristLlmCollectResult>),
-): DiaristLlmCollector {
-  return async (input) => {
-    if (typeof script === "function") {
-      return await script(input);
-    }
-    return script;
   };
 }

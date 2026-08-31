@@ -26520,7 +26520,6 @@ function createHermesDiaristCollector(options = {}) {
   if (method.trim().length === 0) {
     throw new Error(`diarist collect method material is empty (${methodPath})`);
   }
-  const runDetour = options.runDetour ?? runEngineDetourOnce;
   return async (input) => {
     const payload = buildDiaristCollectorEnginePayload({
       ticketNumber: input.ticketNumber,
@@ -26540,7 +26539,7 @@ function createHermesDiaristCollector(options = {}) {
       "-t",
       HERMES_DIARIST_COLLECTOR_TOOLSET
     ];
-    const result2 = await runDetour({
+    const result2 = await runEngineDetourOnce({
       argv,
       stagedPrompt: prompt,
       cwd: options.cwd ?? process.cwd(),
@@ -27308,7 +27307,6 @@ function createHermesDiaristTicketResolver(options = {}) {
   if (method.trim().length === 0) {
     throw new Error(`diarist resolve-ticket method material is empty (${methodPath})`);
   }
-  const runDetour = options.runDetour ?? runEngineDetourOnce;
   const executable = options.executable ?? "hermes";
   return async (input) => {
     const argv = [
@@ -27324,7 +27322,7 @@ function createHermesDiaristTicketResolver(options = {}) {
     ];
     let result2;
     try {
-      result2 = await runDetour({
+      result2 = await runEngineDetourOnce({
         argv,
         stagedPrompt: JSON.stringify({ method, instruction: input.instruction }),
         cwd: options.cwd ?? process.cwd(),
@@ -27511,11 +27509,11 @@ async function runPublicCountersign(argv, env, io, parseCountersignArgv2) {
 }
 async function resolveCountersignTicketBinding(admitted, env) {
   if (admitted.ticketNumber !== void 0) return void 0;
-  const resolver = env.diaristTicketResolver ?? createHermesDiaristTicketResolver({
+  const resolver = createHermesDiaristTicketResolver({
     ...env.packageRoot === void 0 ? {} : { packageRoot: env.packageRoot },
     cwd: admitted.projectRoot
   });
-  const checkExistence = env.ticketExistenceChecker ?? createGhTicketExistenceChecker();
+  const checkExistence = createGhTicketExistenceChecker();
   const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
   const resolution = await resolveDiaristTicketFromInstruction({
     instruction: admitted.instruction,
@@ -27523,7 +27521,6 @@ async function resolveCountersignTicketBinding(admitted, env) {
     resolver,
     checkExistence
   });
-  env.onTicketResolution?.(resolution);
   if (resolution.kind === "ticket") {
     await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
   }
@@ -27531,17 +27528,14 @@ async function resolveCountersignTicketBinding(admitted, env) {
 }
 async function runCountersignDiaristStation(admitted, env) {
   if (admitted.ticketNumber === void 0) return void 0;
-  const issueFace = await loadBoundIssueFace(admitted, env);
+  const issueFace = await loadBoundIssueFace(admitted);
   const result2 = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
     issueFace,
     sessionCwds: [admitted.projectRoot, env.cwd],
-    ...env.projectsRoot === void 0 ? {} : { projectsRoot: env.projectsRoot },
-    ...env.packageRoot === void 0 ? {} : { packageRoot: env.packageRoot },
-    ...env.diaristCollector === void 0 ? {} : { collector: env.diaristCollector }
+    ...env.packageRoot === void 0 ? {} : { packageRoot: env.packageRoot }
   });
-  env.onDiaristResult?.(result2);
   return result2;
 }
 function persistIssueSourceFailure(admitted, ticketNumber, error) {
@@ -27553,7 +27547,7 @@ function persistIssueSourceFailure(admitted, ticketNumber, error) {
   });
   throw error;
 }
-async function loadBoundIssueFace(admitted, env) {
+async function loadBoundIssueFace(admitted) {
   const ticketNumber = admitted.ticketNumber;
   if (ticketNumber === void 0) {
     throw new Error("loadBoundIssueFace requires a bound ticketNumber");
@@ -27569,7 +27563,7 @@ async function loadBoundIssueFace(admitted, env) {
       )
     );
   }
-  const fetcher = env.diaristIssueFaceFetcher ?? createDiaristIssueFaceFetcher();
+  const fetcher = createDiaristIssueFaceFetcher();
   let face;
   try {
     face = await fetcher({
@@ -30726,9 +30720,7 @@ function createRoleEnvironment(env, options) {
     ...projectSeatEngine(options.seat),
     ...timeoutMs === void 0 ? {} : { timeoutMs },
     ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
-    ...options.config?.autoResumeLimit === void 0 ? {} : { autoResumeLimit: options.config.autoResumeLimit },
-    // Countersign pre-court ticket-resolver test seam only — other roles ignore.
-    ...role === "countersign" && env.diaristTicketResolver !== void 0 ? { diaristTicketResolver: env.diaristTicketResolver } : {}
+    ...options.config?.autoResumeLimit === void 0 ? {} : { autoResumeLimit: options.config.autoResumeLimit }
   };
 }
 function defaultIo() {

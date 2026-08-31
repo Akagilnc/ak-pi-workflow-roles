@@ -30,10 +30,11 @@ import {
 } from "../../src/diarist-mechanical.ts";
 import {
   createHermesDiaristCollector,
-  createScriptedDiaristCollector,
   DIARIST_COLLECT_METHOD_RELATIVE,
   resolveDiaristCollectMethodPath,
 } from "../../src/diarist-llm-collector.ts";
+import { createScriptedDiaristCollector } from "../helpers/diarist-test-helpers.ts";
+import { ENGINE_DETOUR_STAGED_PROMPT_TOKEN } from "../../src/engine-detour.ts";
 import { runDiarist } from "../../src/diarist.ts";
 import {
   appendTicketProvenanceEntry,
@@ -554,14 +555,22 @@ for (const failure of SOURCE_READ_FAILURES) {
 
 test("hermes collector argv: empty toolset boundary (never terminal/process tools)", async () => {
   await withHermeticHome({ prefix: "ak-diarist-toolset-" }, async ({ home }) => {
-    let capturedArgv: readonly string[] | undefined;
+    const capturePath = join(home, "captured-argv.json");
+    const childScript = join(home, "hermes-child.js");
+    await writeFile(
+      childScript,
+      [
+        "const { writeFileSync } = require('node:fs');",
+        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify(process.argv), 'utf8');",
+        "process.stdout.write(JSON.stringify({ selections: [] }));",
+      ].join("\n"),
+      "utf8",
+    );
     const collector = createHermesDiaristCollector({
       packageRoot,
-      executable: "hermes",
-      runDetour: async (input) => {
-        capturedArgv = input.argv;
-        return { code: 0, stdout: JSON.stringify({ selections: [] }), stderr: "" };
-      },
+      executable: process.execPath,
+      extraArgv: [childScript],
+      env: { ...process.env, AK_CAPTURE_PATH: capturePath },
       cwd: home,
     });
     const result = await collector({
@@ -573,20 +582,32 @@ test("hermes collector argv: empty toolset boundary (never terminal/process tool
         }),
       ],
     });
+    const capturedArgv = JSON.parse(await readFile(capturePath, "utf8")) as string[];
     assert.ok(capturedArgv);
     // Independent of production constant: hermes `context_engine` resolves to
     // zero tools; terminal/file/web must not appear as enabled toolsets.
-    const toolFlagAt = capturedArgv!.indexOf("-t");
+    const toolFlagAt = capturedArgv.indexOf("-t");
     assert.ok(toolFlagAt >= 0, "collector must pin an explicit toolset");
-    assert.equal(capturedArgv![toolFlagAt + 1], "context_engine");
+    assert.equal(capturedArgv[toolFlagAt + 1], "context_engine");
     for (const banned of ["terminal", "file", "web", "hermes-cli", "coding", "safe"] as const) {
       assert.equal(
-        capturedArgv!.includes(banned),
+        capturedArgv.includes(banned),
         false,
         `${banned} toolset must not be enabled on untrusted ticket text`,
       );
     }
-    assert.deepEqual(result.engineArgv, capturedArgv);
+    assert.deepEqual(result.engineArgv, [
+      process.execPath,
+      childScript,
+      "chat",
+      "--query-file",
+      ENGINE_DETOUR_STAGED_PROMPT_TOKEN,
+      "-Q",
+      "--no-restore-cwd",
+      "--ignore-rules",
+      "-t",
+      "context_engine",
+    ]);
   });
 });
 

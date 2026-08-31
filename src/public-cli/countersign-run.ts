@@ -13,7 +13,6 @@ import {
   resolveDiaristGithubOrigin,
   runDiarist,
   type DiaristIssueFace,
-  type DiaristIssueFaceFetcher,
   type DiaristRunResult,
 } from "../diarist.ts";
 import {
@@ -21,11 +20,8 @@ import {
   createHermesDiaristTicketResolver,
   resolveDiaristTicketFromInstruction,
   type DiaristTicketResolution,
-  type DiaristTicketResolver,
-  type TicketExistenceChecker,
 } from "../diarist-ticket-resolution.ts";
 import { appendIssueSourceFailureDiagnostic } from "../ticket-provenance.ts";
-import type { DiaristLlmCollector } from "../diarist-llm-collector.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -54,24 +50,6 @@ import {
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
-  /** Test seam: inject diarist collector (null = skip LLM). */
-  diaristCollector?: DiaristLlmCollector | null;
-  /** Test seam: observe diarist result without changing caller face. */
-  onDiaristResult?: (result: DiaristRunResult) => void;
-  /** Test seam: override Claude projects root for diarist source enum. */
-  projectsRoot?: string;
-  /**
-   * Test seam: inject issue-face fetch.
-   * undefined result or thrown DiaristIssueSourceError → typed durable failure
-   * (no soft empty-face continue when ticket is bound).
-   */
-  diaristIssueFaceFetcher?: DiaristIssueFaceFetcher;
-  /** Test seam: inject pre-court ticket resolver (undefined → production hermes). */
-  diaristTicketResolver?: DiaristTicketResolver;
-  /** Test seam: observe ticket-resolution outcome. */
-  onTicketResolution?: (result: DiaristTicketResolution) => void;
-  /** Test seam: inject live-ticket existence check. */
-  ticketExistenceChecker?: TicketExistenceChecker;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -185,25 +163,15 @@ export async function runPublicCountersign(
  */
 export async function resolveCountersignTicketBinding(
   admitted: AdmittedCountersignInvocation,
-  env: Pick<
-    CountersignRunEnv,
-    | "diaristTicketResolver"
-    | "onTicketResolution"
-    | "ticketExistenceChecker"
-    | "packageRoot"
-    | "cwd"
-  >,
+  env: Pick<CountersignRunEnv, "packageRoot" | "cwd">,
 ): Promise<DiaristTicketResolution | undefined> {
   if (admitted.ticketNumber !== undefined) return undefined;
 
-  const resolver =
-    env.diaristTicketResolver ??
-    createHermesDiaristTicketResolver({
-      ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
-      cwd: admitted.projectRoot,
-    });
-  const checkExistence =
-    env.ticketExistenceChecker ?? createGhTicketExistenceChecker();
+  const resolver = createHermesDiaristTicketResolver({
+    ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
+    cwd: admitted.projectRoot,
+  });
+  const checkExistence = createGhTicketExistenceChecker();
   const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
   const resolution = await resolveDiaristTicketFromInstruction({
     instruction: admitted.instruction,
@@ -211,7 +179,6 @@ export async function resolveCountersignTicketBinding(
     resolver,
     checkExistence,
   });
-  env.onTicketResolution?.(resolution);
   if (resolution.kind === "ticket") {
     await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
   }
@@ -232,29 +199,19 @@ export async function resolveCountersignTicketBinding(
  */
 export async function runCountersignDiaristStation(
   admitted: AdmittedCountersignInvocation,
-  env: Pick<CountersignRunEnv, "diaristCollector" | "onDiaristResult" | "cwd"> &
-    {
-      readonly projectsRoot?: string;
-      readonly packageRoot?: string;
-      readonly diaristIssueFaceFetcher?: DiaristIssueFaceFetcher;
-    },
+  env: Pick<CountersignRunEnv, "cwd" | "packageRoot">,
 ): Promise<DiaristRunResult | undefined> {
   if (admitted.ticketNumber === undefined) return undefined;
 
-  const issueFace = await loadBoundIssueFace(admitted, env);
+  const issueFace = await loadBoundIssueFace(admitted);
 
   const result = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
     issueFace,
     sessionCwds: [admitted.projectRoot, env.cwd],
-    ...(env.projectsRoot === undefined ? {} : { projectsRoot: env.projectsRoot }),
     ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
-    ...(env.diaristCollector === undefined
-      ? {}
-      : { collector: env.diaristCollector }),
   });
-  env.onDiaristResult?.(result);
   return result;
 }
 
@@ -278,7 +235,6 @@ function persistIssueSourceFailure(
 
 async function loadBoundIssueFace(
   admitted: AdmittedCountersignInvocation,
-  env: Pick<CountersignRunEnv, "diaristIssueFaceFetcher">,
 ): Promise<DiaristIssueFace> {
   const ticketNumber = admitted.ticketNumber;
   if (ticketNumber === undefined) {
@@ -297,7 +253,7 @@ async function loadBoundIssueFace(
     );
   }
 
-  const fetcher = env.diaristIssueFaceFetcher ?? createDiaristIssueFaceFetcher();
+  const fetcher = createDiaristIssueFaceFetcher();
   let face: DiaristIssueFace | undefined;
   try {
     face = await fetcher({
