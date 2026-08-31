@@ -1,3 +1,5 @@
+import { extractReferencedAdrPaths } from "./adr-path-refs.js";
+export { extractReferencedAdrPaths } from "./adr-path-refs.js";
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.js";
 import { branchNamesAtPinnedHead, immutableReviewerPin } from "./reviewer-pinned-git.js";
 export { branchNamesAtPinnedHead, createReviewerPinnedGitReader, immutableReviewerPin } from "./reviewer-pinned-git.js";
@@ -15,8 +17,6 @@ const BRANCH_SHELL_PREFIX = /^(?:feat|feature|fix|bugfix|hotfix|chore|docs|refac
 const BRANCH_ISSUE_TOKEN = /(?:^|\/)((?:fix|feat|docs|audit|test)\/issue-(\d+)-)/;
 /** First #N in a commit subject (positive integer). */
 const COMMIT_TICKET_TOKEN = /#([1-9]\d*)/;
-/** docs/adr paths referenced inside an issue body. */
-const ADR_PATH_IN_BODY = /docs\/adr\/[A-Za-z0-9][A-Za-z0-9._/-]*\.md/g;
 function normalizeFeatureToken(value) {
     return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -77,19 +77,6 @@ export function resolveReviewerTicketNumber(input) {
         return Object.freeze({ adopted: commit, abandoned: Object.freeze([]) });
     }
     return undefined;
-}
-/** Extract unique docs/adr/*.md paths referenced by issue body text (order of first appearance). */
-export function extractReferencedAdrPaths(issueBody) {
-    const seen = new Set();
-    const paths = [];
-    for (const match of issueBody.matchAll(ADR_PATH_IN_BODY)) {
-        const path = match[0];
-        if (seen.has(path))
-            continue;
-        seen.add(path);
-        paths.push(path);
-    }
-    return Object.freeze(paths);
 }
 /** Optional AbortSignal carried on the dispatch invocation bag (same shape runDispatch already reads). */
 function optionalInvocationSignal(invocation) {
