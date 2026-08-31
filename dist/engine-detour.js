@@ -2,12 +2,22 @@
  * Engine-generic one-shot subprocess detour (#357 T2 / ADR 0069).
  * Spawn once; no retry, hang surface, or per-engine branch.
  * Material body is LLM data — this module only executes argv the model assembled.
+ * Large prompt bodies stage through a seam-owned temp file (never argv) so
+ * collectors avoid spawn E2BIG / ENAMETOOLONG (engine-dispatch / #582).
  */
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /** Package-owned detour tool name (settlement whitelist + session principal). */
 export const ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
 /** Env presence/name signal injected by public role runs (registration gate only). */
 export const AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
+/**
+ * Argv placeholder replaced by a seam-owned temp prompt file path when
+ * `stagedPrompt` is set. Exactly one argv entry must equal this token.
+ */
+export const ENGINE_DETOUR_STAGED_PROMPT_TOKEN = "<<ak-engine-staged-prompt>>";
 /**
  * Sole AK_ROLE_ENGINE write seam for public role child env (#391 E2).
  * Delete ambient inheritance first; own-key undefined mask survives process.env re-merge.
@@ -34,12 +44,20 @@ function abortReasonError(signal) {
     error.name = "AbortError";
     return error;
 }
-/**
- * Run one engine subprocess. First argv element is the executable (PATH lookup).
- * stdio: ignore stdin, pipe stdout+stderr. No shell, no retry, no hang timer.
- * AbortSignal cancels the child immediately via an explicit listener (reason preserved).
- */
-export async function runEngineDetourOnce(input) {
+function resolveArgvWithStagedPrompt(argv, stagedPath) {
+    let replaced = 0;
+    const out = argv.map((part) => {
+        if (part !== ENGINE_DETOUR_STAGED_PROMPT_TOKEN)
+            return part;
+        replaced += 1;
+        return stagedPath;
+    });
+    if (replaced !== 1) {
+        throw new Error(`劳务引擎 stagedPrompt 需要 argv 中恰好一个 ${ENGINE_DETOUR_STAGED_PROMPT_TOKEN}（实际 ${replaced}）`);
+    }
+    return out;
+}
+async function spawnEngineDetourOnce(input) {
     if (input.argv.length === 0) {
         throw new Error("劳务引擎 argv 不得为空");
     }
@@ -104,6 +122,51 @@ export async function runEngineDetourOnce(input) {
             succeed({ code: code ?? 1, stdout, stderr });
         });
     });
+}
+/**
+ * Run one engine subprocess. First argv element is the executable (PATH lookup).
+ * stdio: ignore stdin, pipe stdout+stderr. No shell, no retry, no hang timer.
+ * AbortSignal cancels the child immediately via an explicit listener (reason preserved).
+ * Optional stagedPrompt: seam owns temp-file lifecycle for large bodies (ADR 0069).
+ */
+export async function runEngineDetourOnce(input) {
+    if (input.stagedPrompt === undefined) {
+        return spawnEngineDetourOnce(input);
+    }
+    const stagingDir = await mkdtemp(join(tmpdir(), "ak-engine-detour-"));
+    const stagedPath = join(stagingDir, "prompt.txt");
+    let result;
+    let runError;
+    try {
+        await writeFile(stagedPath, input.stagedPrompt, "utf8");
+        const argv = resolveArgvWithStagedPrompt(input.argv, stagedPath);
+        result = await spawnEngineDetourOnce({
+            argv,
+            cwd: input.cwd,
+            ...(input.env === undefined ? {} : { env: input.env }),
+            ...(input.signal === undefined ? {} : { signal: input.signal }),
+        });
+    }
+    catch (error) {
+        runError = error;
+    }
+    // Cleanup is seam-owned and fail-closed: never wash rm failure into success
+    // (失败诚实). force only covers already-absent nodes, not permission/IO faults.
+    try {
+        await rm(stagingDir, { recursive: true, force: true });
+    }
+    catch (cleanupError) {
+        if (runError !== undefined) {
+            throw new Error(`劳务引擎 stagedPrompt 清理失败（原运行错误保留为 cause）: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`, { cause: runError });
+        }
+        throw cleanupError instanceof Error
+            ? cleanupError
+            : new Error(String(cleanupError));
+    }
+    if (runError !== undefined) {
+        throw runError instanceof Error ? runError : new Error(String(runError));
+    }
+    return result;
 }
 /** Failure predicate: nonzero exit OR stdout trim-empty (including whitespace-only). */
 export function isEngineDetourFailure(result) {
