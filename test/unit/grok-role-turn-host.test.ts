@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,6 +14,7 @@ import {
   classifyGrokInspection,
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
+  isHeadMatchedProjectInstruction,
   type GrokAcpConnection,
   type GrokPreparedTurn,
 } from "../../src/grok/role-turn-host.ts";
@@ -459,5 +460,48 @@ test("grok host rejects an uncontrolled personalized session before model work",
       details: { privateActive: ["user-plugin"] },
     },
   });
+  assert.equal(connected, false);
+});
+
+test("HEAD provenance permission failure stays loud with its errno cause", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-prov-io-"));
+  try {
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "test"], { cwd: root, stdio: "ignore" });
+    const claudePath = join(root, "CLAUDE.md");
+    await writeFile(claudePath, "# shared\n", "utf8");
+    execFileSync("git", ["add", "CLAUDE.md"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "seed"], { cwd: root, stdio: "ignore" });
+    await chmod(claudePath, 0);
+    await assert.rejects(
+      () => isHeadMatchedProjectInstruction(root, claudePath),
+      (error: unknown) => {
+        // Must not wash into false; structured errno/git failure identity only.
+        if (typeof error !== "object" || error === null) return false;
+        const code = (error as { code?: unknown }).code;
+        return code === "EACCES" || code === 128 || code === 1;
+      },
+    );
+  } finally {
+    await chmod(join(root, "CLAUDE.md"), 0o644).catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("inspect→activation surfaces provenance infrastructure failure without private-config-active", async () => {
+  const boom = Object.assign(new Error("project instruction unreadable"), { code: "EACCES" });
+  let connected = false;
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => { connected = true; throw new Error("must not connect"); },
+    inspect: async () => { throw boom; },
+    prepare: async () => prepared(async () => ({ accepted: true })),
+  });
+  await assert.rejects(
+    () => host.executeTurn(request),
+    (error: unknown) => error === boom,
+  );
   assert.equal(connected, false);
 });
