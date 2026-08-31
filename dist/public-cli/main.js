@@ -27255,7 +27255,8 @@ function resolveDiaristResolveTicketMethodPath(packageRoot2 = fileURLToPath3(new
   return join26(packageRoot2, DIARIST_RESOLVE_TICKET_METHOD_RELATIVE);
 }
 function instructionContainsTicketNumber(instruction, ticketNumber) {
-  return Number.isSafeInteger(ticketNumber) && ticketNumber >= 1 && instruction.includes(String(ticketNumber));
+  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) return false;
+  return new RegExp(`(?<!\\d)${String(ticketNumber)}(?!\\d)`).test(instruction);
 }
 function parseDiaristTicketResolverStdout(stdout) {
   const trimmed = stdout.trim();
@@ -27364,7 +27365,7 @@ async function verifyDiaristTicketAssertion(input) {
   if (!instructionContainsTicketNumber(input.instruction, n)) {
     throw new DiaristTicketResolutionError(
       "number-not-in-instruction",
-      `diarist ticket assertion #${n} decimal digits do not appear in accepted instruction`
+      `diarist ticket assertion #${n} complete decimal number does not appear in accepted instruction`
     );
   }
   if (input.origin === void 0) {

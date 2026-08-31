@@ -1,7 +1,7 @@
 /**
  * 起居郎 pre-court ticket resolution (#582 / diarist-resolves-ticket-llm-layer).
  * Unbound countersign: LLM typed assertion over accepted instruction, then two
- * mechanical checks on N (decimal digits in instruction; live GitHub issue).
+ * mechanical checks on N (complete decimal number in instruction; live GitHub issue).
  * Verification failure is controlled failure — never washed to true-unbound.
  */
 import { existsSync, readFileSync } from "node:fs";
@@ -70,16 +70,17 @@ export function resolveDiaristResolveTicketMethodPath(
   return join(packageRoot, DIARIST_RESOLVE_TICKET_METHOD_RELATIVE);
 }
 
-/** Decision-key narrow identity check: decimal digits of N appear in instruction. */
+/**
+ * Decision-key exact identity: complete decimal number N appears in instruction.
+ * A longer number's digit substring (e.g. 82 inside #582) is not N.
+ */
 export function instructionContainsTicketNumber(
   instruction: string,
   ticketNumber: number,
 ): boolean {
-  return (
-    Number.isSafeInteger(ticketNumber) &&
-    ticketNumber >= 1 &&
-    instruction.includes(String(ticketNumber))
-  );
+  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) return false;
+  // Complete number token: not preceded or followed by another digit.
+  return new RegExp(`(?<!\\d)${String(ticketNumber)}(?!\\d)`).test(instruction);
 }
 
 /** Sole stdout shapes: {assertion:"ticket",ticketNumber:N} | {assertion:"true-unbound"}. */
@@ -231,7 +232,7 @@ export async function verifyDiaristTicketAssertion(input: {
   if (!instructionContainsTicketNumber(input.instruction, n)) {
     throw new DiaristTicketResolutionError(
       "number-not-in-instruction",
-      `diarist ticket assertion #${n} decimal digits do not appear in accepted instruction`,
+      `diarist ticket assertion #${n} complete decimal number does not appear in accepted instruction`,
     );
   }
   if (input.origin === undefined) {

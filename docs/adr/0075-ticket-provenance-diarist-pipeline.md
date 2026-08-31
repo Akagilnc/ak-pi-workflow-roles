@@ -25,6 +25,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 | `github-face-local-only` | 人读面只落本地＋票面指针，不自动回贴 | 「a就行了。」 |
 | `ticket-keyed-history` | 票键为主组织轴 | 「历史跟着票走比跟着runid走合适。runid有啥用？其实没啥用」 |
 | `sitian-scope-amendment` | 修正 ADR 0065 二期 scope，新增 ticket-provenance | 由 `ticket-provenance-file`+`transcribe-whole-blocks`+`cc-sessions-first` 三键原话直接授权 |
+| `diarist-resolves-ticket-llm-layer` | 无票调用合法；起居郎 LLM 层从指令认票；机械验完整号码+票存在；有录读录、真无票走 source-run；`--ticket` 降为可选显式通道 | 「无票调用照旧合法；起居郎（LLM 层）从受理指令自行认票——产 typed 断言「本庭对象=票N」，机械层验真（号码逐字在指令中出现、票真实存在——精确匹配确定性）后下游全走 typed 键；认得出→有录，符宝郎读录核旨；真无票对象（方案/派单/处置案）→无录，符宝郎按 source-run 核旨。内闸永远出席，无绕开通道。`--ticket` 降为可选显式通道。」 |
 
 本 ADR 正文中未被上表绑定的措辞属驱动方综合，不主张 owner authority。
 
@@ -35,8 +36,9 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 - **人读面**：同分区 md 渲染视图；只有 JSONL 权威。
 - **起居郎（`diarist`）**：流水线步，非公开席位。LLM 语义收集＋机械保全（来源枚举、逐字材料、去重滤通知、幂等落盘、LLM 引语逐字反验——失败留真因、该引语拒入录）。**相关性只由 LLM 裁决**；机械层不得以票号/引语/关键词散文命中排除来源（锚定宪法）。散文锚点仅作反验笔记，不构成遗漏闸。
 - **时序**：票庭流水线在给事中席位 turn **前**跑起居郎；先后≠调用；调用者无感；每次过庭都跑。**增量幂等**：水位＝卷宗 entry identity（含反验失败残条）∪ 本票 `offered-identities` 水印（凡成功送过 collector 的块，不论是否入选）；本庭只把未见块送 LLM；无新块则跳过 collector。collector 失败不推进水印（下庭可重试）。
-- **符宝郎内闸**：给事中交卷闸出席符宝郎（与大理寺闸 gatekeeper→notary 同构）；缺录/缺条打回给事中。
-- **调用面**：`--ticket` 只加给事中与符宝郎；其余席位零改动。
+- **符宝郎内闸**：给事中交卷闸出席符宝郎（与大理寺闸 gatekeeper→notary 同构）；内闸永远出席。认得出票→有录，符宝郎读录核旨；真无票对象→无录，符宝郎按 source-run 核旨（不得因缺录把 true-unbound 打回给事中）。
+- **认票（`diarist-resolves-ticket-llm-layer`）**：无票调用照旧合法。起居郎 LLM 层从受理指令产 typed 断言「本庭对象=票N」或 true-unbound；机械层验完整十进制号码出现（非子串）+ 票真实存在后下游全走 typed 键。显式 `--ticket` / 已绑定 ticket 优先，跳过再认。
+- **调用面**：`--ticket` 为给事中与符宝郎的可选显式通道；其余席位零改动。
 
 ## 与既有 ADR
 

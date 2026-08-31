@@ -5748,7 +5748,7 @@ import { writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join14 } from "node:path";
 
 // src/adr-path-refs.ts
-var ADR_PATH_IN_BODY = /docs\/adr\/[A-Za-z0-9][A-Za-z0-9._/-]*\.md/g;
+var ADR_PATH_IN_BODY = /docs\/adr\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md/g;
 function extractReferencedAdrPaths(text) {
   const seen = /* @__PURE__ */ new Set();
   const paths = [];
@@ -10151,6 +10151,33 @@ function readBoundTicketNumberForNotaryGate(roleHost) {
   }
   return void 0;
 }
+async function buildCountersignNotaryGateMaterial(input) {
+  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
+  if (ticketNumber !== void 0) {
+    return JSON.stringify({ verdict: input.parameters, ticketNumber });
+  }
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") {
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      "countersign Notary gate: true-unbound material requires AK_ROLE_RUN_DIR source-run locator"
+    );
+  }
+  let sourceRun;
+  try {
+    sourceRun = await loadNotarySourceRunLocator(runDir);
+  } catch (error) {
+    if (error instanceof NotarySourceRunError) {
+      throw new CountersignInvocationBindingError(
+        "unreadable",
+        `countersign Notary gate: source-run locator unusable (${error.message})`,
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+  return JSON.stringify({ verdict: input.parameters, sourceRun });
+}
 function createFiledOfficerRuntime(roleHost, spec, dependencies) {
   let soul;
   let registered = false;
@@ -10198,10 +10225,10 @@ ${soul}
 }
 function createCountersignRoleRuntime(roleHost, dependencies, hostActions) {
   const beforeAccept = hostActions !== void 0 && roleHost.requireGatekeeperPass !== void 0 ? async ({ toolCallId, parameters, signal, ctx }) => {
-    const ticketNumber = readBoundTicketNumberForNotaryGate(roleHost);
-    const material = JSON.stringify(
-      ticketNumber === void 0 ? { verdict: parameters } : { verdict: parameters, ticketNumber }
-    );
+    const material = await buildCountersignNotaryGateMaterial({
+      roleHost,
+      parameters
+    });
     await roleHost.requireGatekeeperPass({
       context: ctx,
       subject: { kind: "countersign_verdict", material },
