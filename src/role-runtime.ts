@@ -1,6 +1,9 @@
 import { readFileSync, writeSync } from "node:fs";
-import { basename, join as pathJoin } from "node:path";
-import type { NotarySourceRunLocator } from "./notary-contracts.ts";
+import { join as pathJoin } from "node:path";
+import {
+  loadNotarySourceRunLocator,
+  NotarySourceRunError,
+} from "./notary-source-run.ts";
 import {
   ExplicitInternalActivationError,
   type HostContext,
@@ -747,15 +750,19 @@ function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefi
   return undefined;
 }
 
-const COUNTERSIGN_RUN_DIR_NAME =
-  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@([A-Za-z][A-Za-z0-9_-]*)$/i;
-
 /**
- * True-unbound countersign Notary material: typed source-run locator for the
- * current countersign run (decision key diarist-resolves-ticket-llm-layer).
- * Built from AK_ROLE_RUN_DIR + retained run-state — never prose.
+ * Assemble Notary inner-gate material for countersign verdict.
+ * ticket-bound → ticketNumber; true-unbound → sourceRun via sole notary-source-run loader.
+ * Gate attendance itself never branches away.
  */
-function readCountersignSourceRunLocatorForNotaryGate(): NotarySourceRunLocator {
+async function buildCountersignNotaryGateMaterial(input: {
+  readonly roleHost: RoleHost;
+  readonly parameters: unknown;
+}): Promise<string> {
+  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
+  if (ticketNumber !== undefined) {
+    return JSON.stringify({ verdict: input.parameters, ticketNumber });
+  }
   const runDir = process.env.AK_ROLE_RUN_DIR;
   if (typeof runDir !== "string" || runDir.trim() === "") {
     throw new CountersignInvocationBindingError(
@@ -763,68 +770,20 @@ function readCountersignSourceRunLocatorForNotaryGate(): NotarySourceRunLocator 
       "countersign Notary gate: true-unbound material requires AK_ROLE_RUN_DIR source-run locator",
     );
   }
-  const statePath = pathJoin(runDir, "run-state.json");
-  let rawText: string;
+  let sourceRun;
   try {
-    rawText = readFileSync(statePath, "utf8");
+    // Sole authority for run-dir name + retained identity (DRY #14 / notary-source-run).
+    sourceRun = await loadNotarySourceRunLocator(runDir);
   } catch (error) {
-    throw new CountersignInvocationBindingError(
-      "unreadable",
-      `countersign Notary gate: run-state.json unreadable for source-run (${statePath})`,
-      { cause: error },
-    );
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(rawText);
-  } catch (error) {
-    throw new CountersignInvocationBindingError(
-      "unparseable",
-      `countersign Notary gate: run-state.json unparseable for source-run (${statePath})`,
-      { cause: error },
-    );
-  }
-  if (
-    typeof raw !== "object" ||
-    raw === null ||
-    typeof (raw as { runId?: unknown }).runId !== "string" ||
-    typeof (raw as { role?: unknown }).role !== "string" ||
-    typeof (raw as { runDirectory?: unknown }).runDirectory !== "string"
-  ) {
-    throw new CountersignInvocationBindingError(
-      "unparseable",
-      `countersign Notary gate: run-state.json lacks source-run identity (${statePath})`,
-    );
-  }
-  const runId = (raw as { runId: string }).runId;
-  const role = (raw as { role: string }).role;
-  const runDirectory = (raw as { runDirectory: string }).runDirectory;
-  const fromName = COUNTERSIGN_RUN_DIR_NAME.exec(basename(runDir));
-  if (fromName !== null) {
-    if (fromName[1] !== runId || fromName[2] !== role) {
+    if (error instanceof NotarySourceRunError) {
       throw new CountersignInvocationBindingError(
-        "unparseable",
-        "countersign Notary gate: run-state identity does not match source-run directory name",
+        "unreadable",
+        `countersign Notary gate: source-run locator unusable (${error.message})`,
+        { cause: error },
       );
     }
+    throw error;
   }
-  return { runDirectory, runId, role };
-}
-
-/**
- * Assemble Notary inner-gate material for countersign verdict.
- * ticket-bound → ticketNumber; true-unbound → sourceRun locator.
- * Gate attendance itself never branches away.
- */
-function buildCountersignNotaryGateMaterial(input: {
-  readonly roleHost: RoleHost;
-  readonly parameters: unknown;
-}): string {
-  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
-  if (ticketNumber !== undefined) {
-    return JSON.stringify({ verdict: input.parameters, ticketNumber });
-  }
-  const sourceRun = readCountersignSourceRunLocatorForNotaryGate();
   return JSON.stringify({ verdict: input.parameters, sourceRun });
 }
 
@@ -907,7 +866,7 @@ export function createCountersignRoleRuntime(
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
     hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
       ? async ({ toolCallId, parameters, signal, ctx }) => {
-          const material = buildCountersignNotaryGateMaterial({
+          const material = await buildCountersignNotaryGateMaterial({
             roleHost,
             parameters,
           });

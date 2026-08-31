@@ -6,7 +6,7 @@
  * invocation fails before gate).
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -107,9 +107,12 @@ test("notary gate material carries ticketNumber from real Grok activation flags"
 
 test("notary gate true-unbound material carries sourceRun locator", async () => {
   await withHermeticHome({ prefix: "ak-cs-unbound-src-" }, async ({ home }) => {
-    const runId = "01a0sign00-0000-7000-8000-000000000099";
+    // UUID hex form required by sole notary-source-run RUN_DIR_NAME contract.
+    const runId = "01a0c582-0000-7000-8000-000000000099";
     const runDir = join(home, "runs", `${runId}@countersign`);
     await mkdir(runDir, { recursive: true });
+    // runDirectory must survive realpath for loadNotarySourceRunLocator.
+    const realRunDir = await realpath(runDir);
     await writeFile(
       join(runDir, "run-state.json"),
       `${JSON.stringify({
@@ -118,10 +121,10 @@ test("notary gate true-unbound material carries sourceRun locator", async () => 
         state: "running",
         bookKey: "test",
         projectRoot: home,
-        sessionDirectory: join(runDir, "session"),
-        sessionFile: join(runDir, "session", "s.jsonl"),
-        runDirectory: runDir,
-        admittedRequestPath: join(runDir, "admitted-request.json"),
+        sessionDirectory: join(realRunDir, "session"),
+        sessionFile: join(realRunDir, "session", "s.jsonl"),
+        runDirectory: realRunDir,
+        admittedRequestPath: join(realRunDir, "admitted-request.json"),
       }, null, 2)}\n`,
       "utf8",
     );
@@ -131,7 +134,7 @@ test("notary gate true-unbound material carries sourceRun locator", async () => 
     } as RoleTurnRequest);
     assert.equal(flags.has("ak-countersign-ticket-number"), false);
 
-    const { gateCalls, error } = await submitThroughGate({ flags, runDir });
+    const { gateCalls, error } = await submitThroughGate({ flags, runDir: realRunDir });
     assert.equal(error, undefined);
     assert.equal(gateCalls.length, 1);
     const material = JSON.parse(gateCalls[0]!.material) as {
@@ -142,7 +145,7 @@ test("notary gate true-unbound material carries sourceRun locator", async () => 
     assert.equal(material.ticketNumber, undefined);
     assert.equal(material.sourceRun?.runId, runId);
     assert.equal(material.sourceRun?.role, "countersign");
-    assert.equal(material.sourceRun?.runDirectory, runDir);
+    assert.equal(material.sourceRun?.runDirectory, realRunDir);
     assert.equal(material.verdict?.countersignStatus, "converged");
   });
 });
