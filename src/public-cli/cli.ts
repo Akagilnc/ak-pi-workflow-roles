@@ -34,6 +34,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
+import { createProductionGrokRoleTurnHost } from "../grok/production-host.ts";
 import {
   createPiRoleTurnHost,
   appendPiSessionCustomEntry,
@@ -267,7 +268,25 @@ function resolveRoleTurnHost(
     recordLaunchedRolePackageIdentity,
     observeLaunchedRolePackageIdentity,
   });
-  const adapters = env.hostAdapters ?? [{ name: "pi", create: () => ({ ok: true as const, host: piHost }) }];
+  // Composition-root unique adapter table (#522 / #580): pi + S6 grok-build true adapter.
+  const adapters = env.hostAdapters ?? [
+    { name: "pi", create: () => ({ ok: true as const, host: piHost }) },
+    {
+      name: "grok-build",
+      create: ({ model }) => {
+        // Selection-time model×host rejection is owned by the selected adapter (S7 C2).
+        // S6 executeTurn also guards provider !== "xai"; create mirrors that before turn.
+        if (model !== undefined && model.provider !== "xai") return { ok: false as const };
+        return {
+          ok: true as const,
+          host: createProductionGrokRoleTurnHost({
+            packageRoot: env.packageRoot,
+            principalAuthority: options.principalAuthority,
+          }),
+        };
+      },
+    },
+  ];
   const hostName = options.seat.host;
   const adapter = adapters.find((candidate) => candidate.name === hostName);
   const model = options.seat.selection === undefined ? "unconfigured" : `${options.seat.selection.provider}/${options.seat.selection.model}`;
