@@ -27299,12 +27299,6 @@ function parseDiaristTicketResolverStdout(stdout) {
     if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
       return { kind: "ticket", ticketNumber: raw };
     }
-    if (typeof raw === "string" && /^[1-9]\d*$/.test(raw)) {
-      const n = Number(raw);
-      if (Number.isSafeInteger(n) && n >= 1) {
-        return { kind: "ticket", ticketNumber: n };
-      }
-    }
   }
   throw new DiaristTicketResolutionError(
     "assertion-uninterpretable",
