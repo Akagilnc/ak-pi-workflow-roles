@@ -224,9 +224,10 @@ type HostEventMap = {
 type HostInputResult = { action: "continue" } | { action: "transform"; text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> } | { action: "handled" };
 type HostEventResultMap = {
   /**
-   * systemPrompt — model-facing prompt bytes (presentation).
-   * readingMaterial — optional typed reading-material projection for the same
-   * agent-start turn (machine contract; hosts that need it may surface it).
+   * systemPrompt — model-facing prompt body (presentation bytes).
+   * readingMaterial — optional typed material for the same agent-start turn.
+   * Host adapters fold readingMaterial into the provider-visible system prompt
+   * at the send boundary; it is not a test-only parallel face.
    */
   before_agent_start: { systemPrompt?: string; readingMaterial?: unknown };
   input: HostInputResult;

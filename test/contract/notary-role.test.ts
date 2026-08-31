@@ -83,3 +83,24 @@ test("Notary activate registers tool; invalid ticket flag fails on activate path
   h.flags.set("ak-notary-ticket-number", "nope");
   await assert.rejects(() => runtime.activate());
 });
+
+test("Notary agent-start returns typed readingMaterial bound; ticket optional until flagged", async () => {
+  const h = notaryHarness();
+  const runtime = createNotaryRoleRuntime(
+    h.pi as never,
+    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
+    { failInfrastructure(error) { throw error; } },
+  );
+  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
+  h.flags.set("ak-notary-ticket-number", "582");
+  await runtime.activate();
+  const result = h.beforeStart()!({ systemPrompt: "BASE" }) as {
+    systemPrompt?: string;
+    readingMaterial?: ReturnType<typeof projectNotarySessionBound>;
+  };
+  assert.equal(typeof result.systemPrompt, "string");
+  assert.deepEqual(
+    result.readingMaterial,
+    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }),
+  );
+});
