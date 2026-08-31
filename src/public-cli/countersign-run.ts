@@ -7,12 +7,14 @@
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
   createDiaristIssueFaceFetcher,
+  DiaristIssueSourceError,
   resolveDiaristGithubOrigin,
   runDiarist,
   type DiaristIssueFace,
   type DiaristIssueFaceFetcher,
   type DiaristRunResult,
 } from "../diarist.ts";
+import { appendIssueSourceFailureDiagnostic } from "../ticket-provenance.ts";
 import type { DiaristLlmCollector } from "../diarist-llm-collector.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -47,7 +49,11 @@ export type CountersignRunEnv = PostAdmissionEnv & {
   onDiaristResult?: (result: DiaristRunResult) => void;
   /** Test seam: override Claude projects root for diarist source enum. */
   projectsRoot?: string;
-  /** Test seam: inject issue-face fetch (undefined result = soft unavailable). */
+  /**
+   * Test seam: inject issue-face fetch.
+   * undefined result or thrown DiaristIssueSourceError → typed durable failure
+   * (no soft empty-face continue when ticket is bound).
+   */
   diaristIssueFaceFetcher?: DiaristIssueFaceFetcher;
 };
 
@@ -147,12 +153,14 @@ export async function runPublicCountersign(
 
 /**
  * Court-pipeline prior station: refresh ticket-provenance before countersign turn.
- * Caller-invisible — collector failures append durable volume diagnostics; source-read
- * and watermark honesty failures propagate (失败诚实).
+ * Caller-invisible — collector failures append durable volume diagnostics and the
+ * station continues; issue-source / ADR source-read / watermark honesty failures
+ * leave typed durable diagnostics and propagate (失败诚实).
  * Missing ticketNumber skips the station (no subject key).
  *
  * Issue body/comments come from the shared GitHub seam only. Attachments stay
  * attachments — never merged and mislabeled as issue-body-comment.
+ * Bound ticket never silently degrades to “no issue face”.
  */
 export async function runCountersignDiaristStation(
   admitted: AdmittedCountersignInvocation,
@@ -170,7 +178,7 @@ export async function runCountersignDiaristStation(
   const result = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
-    ...(issueFace === undefined ? {} : { issueFace }),
+    issueFace,
     sessionCwds: [admitted.projectRoot, env.cwd],
     ...(env.projectsRoot === undefined ? {} : { projectsRoot: env.projectsRoot }),
     ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
@@ -182,17 +190,73 @@ export async function runCountersignDiaristStation(
   return result;
 }
 
+/**
+ * Acquire issue face for a bound ticket. Failures are typed + durable on the
+ * ticket-provenance volume, then propagated — never washed into empty face.
+ */
+function persistIssueSourceFailure(
+  admitted: AdmittedCountersignInvocation,
+  ticketNumber: number,
+  error: DiaristIssueSourceError,
+): never {
+  appendIssueSourceFailureDiagnostic({
+    ticketNumber,
+    cwd: admitted.projectRoot,
+    cause: error.message,
+    reason: error.reason,
+  });
+  throw error;
+}
+
 async function loadBoundIssueFace(
   admitted: AdmittedCountersignInvocation,
   env: Pick<CountersignRunEnv, "diaristIssueFaceFetcher">,
-): Promise<DiaristIssueFace | undefined> {
-  if (admitted.ticketNumber === undefined) return undefined;
+): Promise<DiaristIssueFace> {
+  const ticketNumber = admitted.ticketNumber;
+  if (ticketNumber === undefined) {
+    throw new Error("loadBoundIssueFace requires a bound ticketNumber");
+  }
+
   const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
-  if (origin === undefined) return undefined;
+  if (origin === undefined) {
+    persistIssueSourceFailure(
+      admitted,
+      ticketNumber,
+      new DiaristIssueSourceError(
+        "origin-unresolved",
+        `bound ticket #${ticketNumber} issue face requires a resolvable github.com origin remote`,
+      ),
+    );
+  }
+
   const fetcher = env.diaristIssueFaceFetcher ?? createDiaristIssueFaceFetcher();
-  return await fetcher({
-    owner: origin.owner,
-    repo: origin.repo,
-    ticketNumber: admitted.ticketNumber,
-  });
+  let face: DiaristIssueFace | undefined;
+  try {
+    face = await fetcher({
+      owner: origin.owner,
+      repo: origin.repo,
+      ticketNumber,
+    });
+  } catch (error) {
+    const typed =
+      error instanceof DiaristIssueSourceError
+        ? error
+        : new DiaristIssueSourceError(
+            "issue-unavailable",
+            `issue face fetch failed for ${origin.owner}/${origin.repo}#${ticketNumber}`,
+            { cause: error },
+          );
+    persistIssueSourceFailure(admitted, ticketNumber, typed);
+  }
+  if (face === undefined) {
+    persistIssueSourceFailure(
+      admitted,
+      ticketNumber,
+      new DiaristIssueSourceError(
+        "issue-unavailable",
+        `issue face unavailable for ${origin.owner}/${origin.repo}#${ticketNumber}`,
+      ),
+    );
+  }
+  return face;
 }

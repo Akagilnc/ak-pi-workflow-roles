@@ -3,7 +3,7 @@
  * Medium: local resources. Pure mechanical stays in test/unit/diarist.test.ts.
  */
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,7 +22,6 @@ import {
 import {
   createHermesDiaristCollector,
   createScriptedDiaristCollector,
-  DIARIST_COLLECT_METHOD_ENV,
   DIARIST_COLLECT_METHOD_RELATIVE,
   resolveDiaristCollectMethodPath,
 } from "../../src/diarist-llm-collector.ts";
@@ -34,7 +33,7 @@ import {
   TicketProvenanceWatermarkError,
   type TicketProvenanceWatermarkReason,
 } from "../../src/ticket-provenance.ts";
-import { readSitianRecords } from "../../src/sitian-facade.ts";
+import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 function block(
@@ -103,7 +102,7 @@ test("runDiarist always establishes volume + md (empty court)", async () => {
   });
 });
 
-test("runDiarist: collector failure does not advance watermark; true cause appends to volume", async () => {
+test("runDiarist: collector failure does not advance watermark; true cause appends as typed diagnostic", async () => {
   await withDiaristProject("ak-diarist-fail-diag-", async (project) => {
     const { a, b } = watermarkFixtureBlocks();
     const seenIds: string[][] = [];
@@ -128,20 +127,21 @@ test("runDiarist: collector failure does not advance watermark; true cause appen
       collector,
     });
     assert.equal(first.collectorStatus, "failed");
-    assert.ok((first.collectorError?.length ?? 0) > 0);
-    // Durable volume residue — not an overwritable sidecar.
-    const { records } = await readSitianRecords(first.volumeRecordFile);
-    const failRows = records.filter((r) => {
-      const payload = r.payload as { basis?: { method?: string; note?: string } } | undefined;
-      return payload?.basis?.method === "collector-failed";
-    });
-    assert.equal(failRows.length, 1);
-    const failPayload = failRows[0]!.payload as { basis: { note?: string } };
     assert.equal(first.collectorError, "engine down");
-    assert.equal(failPayload.basis.note, first.collectorError);
-    // Human-facing diary stays empty of diagnostic residue.
+    // Typed diagnostic on same partition — not a forged diary entry.
     const diary = await readTicketProvenance(9, project);
     assert.equal(diary.entries.length, 0);
+    assert.equal(diary.diagnostics.length, 1);
+    assert.equal(diary.diagnostics[0]!.recordClass, TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC);
+    assert.equal(diary.diagnostics[0]!.diagnosticKind, "collector-failed");
+    assert.equal(diary.diagnostics[0]!.cause, "engine down");
+    // Payload must not pretend to be a source entry.
+    const rawPayload = diary.records.find(
+      (r) =>
+        (r.payload as { recordClass?: string } | undefined)?.recordClass ===
+        TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+    )?.payload as Record<string, unknown>;
+    assert.equal(rawPayload.sourceKind, undefined);
     await access(first.humanViewFile);
 
     const second = await runDiarist({
@@ -155,12 +155,9 @@ test("runDiarist: collector failure does not advance watermark; true cause appen
     assert.equal(second.collectorStatus, "ok");
 
     // Second court success must not erase the prior failure row (history).
-    const afterOk = await readSitianRecords(first.volumeRecordFile);
-    const stillFailed = afterOk.records.filter((r) => {
-      const payload = r.payload as { basis?: { method?: string } } | undefined;
-      return payload?.basis?.method === "collector-failed";
-    });
-    assert.equal(stillFailed.length, 1);
+    const afterOk = await readTicketProvenance(9, project);
+    assert.equal(afterOk.diagnostics.length, 1);
+    assert.equal(afterOk.diagnostics[0]!.diagnosticKind, "collector-failed");
   });
 });
 
@@ -525,45 +522,37 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("hermes collector delivers method path on real engine child env", async () => {
-  await withHermeticHome({ prefix: "ak-diarist-method-env-" }, async ({ home }) => {
-    const methodPath = resolveDiaristCollectMethodPath(packageRoot);
-    assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
-    accessSync(methodPath, fsConstants.R_OK);
+test("hermes collector delivers method path solely in -z prompt (LLM-visible seam)", async () => {
+  const methodPath = resolveDiaristCollectMethodPath(packageRoot);
+  assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
+  accessSync(methodPath, fsConstants.R_OK);
 
-    const capturePath = join(home, "method-env-capture");
-    const childScript = join(home, "engine-child.mjs");
-    // Real subprocess: prints selections JSON and captures the method env coordinate.
-    await writeFile(
-      childScript,
-      [
-        "import { writeFileSync } from 'node:fs';",
-        `writeFileSync(process.env.AK_CAPTURE_PATH, process.env.${DIARIST_COLLECT_METHOD_ENV} ?? "", "utf8");`,
-        "process.stdout.write(JSON.stringify({ selections: [] }));",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    const collector = createHermesDiaristCollector({
-      packageRoot,
-      executable: process.execPath,
-      extraArgv: [childScript],
-      env: { ...process.env, AK_CAPTURE_PATH: capturePath },
-      // Real runEngineDetourOnce — no runDetour inject.
-    });
-    await collector({
-      ticketNumber: 582,
-      candidates: [
-        block({
-          transcript: "立文件",
-          sourceRef: { sessionFile: "/s", entryId: "1" },
-        }),
-      ],
-    });
-    const captured = await readFile(capturePath, "utf8");
-    assert.equal(captured, methodPath);
+  let capturedArgv: readonly string[] = [];
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const collector = createHermesDiaristCollector({
+    packageRoot,
+    runDetour: async (input) => {
+      capturedArgv = input.argv;
+      capturedEnv = input.env;
+      return { code: 0, stdout: '{"selections":[]}', stderr: "" };
+    },
   });
+  await collector({
+    ticketNumber: 582,
+    candidates: [
+      block({
+        transcript: "立文件",
+        sourceRef: { sessionFile: "/s", entryId: "1" },
+      }),
+    ],
+  });
+  // hermes -z <prompt>: prompt is the argv entry after -z and enters model view.
+  const zIndex = capturedArgv.indexOf("-z");
+  assert.ok(zIndex >= 0 && zIndex + 1 < capturedArgv.length);
+  const prompt = capturedArgv[zIndex + 1]!;
+  assert.equal(prompt.includes(methodPath), true);
+  // No parallel env transport for method path.
+  assert.equal(capturedEnv?.AK_DIARIST_COLLECT_METHOD, undefined);
 });
 
 test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {

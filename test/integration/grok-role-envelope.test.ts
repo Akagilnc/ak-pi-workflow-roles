@@ -9,11 +9,16 @@ import test from "node:test";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
-import { NOTARY_SESSION_BOUND_ENTRY } from "../../src/notary-role.ts";
+import {
+  NOTARY_SESSION_BOUND_ENTRY,
+  projectNotarySessionBound,
+} from "../../src/notary-role.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import { buildNotaryTransportPrompt } from "../../src/public-cli/invocation.ts";
+import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -246,7 +251,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
   }
 });
 
-test("Grok notary --ticket: activation → envelope agent-start → session bound entry", async () => {
+test("public Notary --ticket: admitted→activation→agent-start typed ticket in reading material", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-ticket-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
@@ -255,41 +260,76 @@ test("Grok notary --ticket: activation → envelope agent-start → session boun
   try {
     const socketPath = join(root, "mcp.sock");
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
-    const sourceRun = join(root, "source-run");
-    const request = {
-      principal: {},
-      activation: {
-        role: "notary" as const,
-        sourceRun,
-        ticketNumber: 582,
-      },
-      methods: [],
-      continuation: { kind: "initial" as const, prompt: "attest" },
-      model: { provider: "xai", model: "grok-4.5" },
-      cwd: process.cwd(),
+    const sourceRunPath = join(root, "source-run");
+    const sourceRun = {
+      runDirectory: sourceRunPath,
+      runId: "run-1",
+      role: "judge",
+    };
+    // Public Notary entry: admit shape → turn request (typed ticket on activation).
+    // cwd must be a git repo (activation book key); home/run stay under hermetic root.
+    const admitted = {
+      role: "notary" as const,
+      runId,
+      bookKey: "test-book",
+      projectRoot: process.cwd(),
+      instruction: "",
+      instructionEmpty: true as const,
+      attachments: [] as const,
+      runDirectory: join(root, "runs", `${runId}@notary`),
+      principal: {} as RoleTurnRequest["principal"],
+      admittedRequestPath: join(root, "admitted-request.json"),
+      sourceRunPath,
+      sourceRun,
+      ticketNumber: 582,
+    };
+    const kickoff = buildNotaryTransportPrompt(admitted);
+    // Fixed kickoff must not carry a free-text ticket parallel copy.
+    assert.equal(kickoff.includes("票号"), false);
+    assert.equal(kickoff.includes("#582"), false);
+
+    const request = buildNotaryTurnRequest(admitted, {
+      packageRoot,
       home: root,
       agentDir: join(root, "agent"),
-      runDirectory: join(root, "runs", `${runId}@notary`),
-    } as RoleTurnRequest;
+      continuation: { kind: "initial", prompt: kickoff },
+    });
+    assert.equal(request.activation.role, "notary");
+    assert.equal(
+      "ticketNumber" in request.activation ? request.activation.ticketNumber : undefined,
+      582,
+    );
+    const envelopeRequest: RoleTurnRequest = {
+      ...request,
+      model: { provider: "xai", model: "grok-4.5" },
+    };
+
     const prepared = await prepareGrokRoleEnvelope({
-      request,
+      request: envelopeRequest,
       socketPath,
       dependencies: {
         loadNotarySoul: async () => "NOTARY SOUL",
-        loadNotarySourceRun: async () => ({
-          runDirectory: sourceRun,
-          runId: "run-1",
-          role: "judge",
-        }),
+        loadNotarySourceRun: async () => sourceRun,
         loadJudgeSoul: async () => "judge",
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationTraceWriter: async () => {},
       },
     });
     try {
-      // One tracer: activation flags → envelope session_start/activate → agent-start
-      // → session JSONL custom entry (same external face as Pi session ledger).
-      const sessionFile = join(request.runDirectory, "grok-envelope.jsonl");
+      // Agent-start reading material (systemPrompt) carries typed bound ticket.
+      const expectedBound = projectNotarySessionBound({
+        sourceRun,
+        ticketNumber: 582,
+      });
+      assert.equal(prepared.systemPrompt.includes("<notary_source_run>"), true);
+      assert.equal(
+        prepared.systemPrompt.includes(JSON.stringify(expectedBound)),
+        true,
+        "agent-start material must embed typed session bound including ticketNumber",
+      );
+
+      // Durable session custom entry remains (envelope-owned lifecycle evidence).
+      const sessionFile = join(envelopeRequest.runDirectory, "grok-envelope.jsonl");
       const lines = (await readFile(sessionFile, "utf8"))
         .split("\n")
         .filter((l) => l.trim().length > 0)
@@ -303,7 +343,7 @@ test("Grok notary --ticket: activation → envelope agent-start → session boun
         ticketNumber?: number;
       };
       assert.equal(bound.ticketNumber, 582);
-      assert.equal(bound.sourceRunPath, sourceRun);
+      assert.equal(bound.sourceRunPath, sourceRunPath);
     } finally {
       await prepared.dispose?.();
     }

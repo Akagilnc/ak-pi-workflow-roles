@@ -2263,17 +2263,13 @@ export async function admitNotaryInvocation(options: {
   };
 }
 
-/** Package-owned fixed kickoff only — never caller instruction/attachments. */
+/** Package-owned fixed kickoff only — never caller instruction/attachments.
+ * Ticket rides admitted → activation → agent-start typed bound (not free-text kickoff). */
 export function buildNotaryTransportPrompt(
-  admitted: AdmittedNotaryInvocation,
+  _admitted: AdmittedNotaryInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = [NOTARY_FIXED_KICKOFF];
-  // Neutral delivery of admitted ticket coordinate (ADR 0073/0075) — no direction.
-  if (admitted.ticketNumber !== undefined) {
-    lines.push(`票号：#${admitted.ticketNumber}`);
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
 }
 
 /**

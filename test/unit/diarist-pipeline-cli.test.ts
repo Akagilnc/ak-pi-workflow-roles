@@ -2,6 +2,7 @@
  * #582 / ADR 0075 — countersign/notary --ticket face + diarist beforeDispatch station.
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -96,6 +97,11 @@ test("runCountersignDiaristStation refreshes provenance before turn when ticket 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
 
     const admitted = await admitCountersignInvocation({
       home,
@@ -172,6 +178,11 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
 
     const ticketPath = join(project, "ticket.md");
     await writeFile(
