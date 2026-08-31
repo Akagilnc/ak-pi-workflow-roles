@@ -34,11 +34,6 @@ export type GrokPreparedTurn = Readonly<{
     | { readonly accepted: false; readonly retry: { readonly code: string; readonly toolCallIds: readonly string[] } }
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
-  /**
-   * Resolves when closeRound seals the shared ledger (ak-role-submission-closure).
-   * Observation only — acceptance waits on the typed session/prompt boundary.
-   */
-  whenSealed(): Promise<void>;
   dispose?(): Promise<void>;
 }>;
 
