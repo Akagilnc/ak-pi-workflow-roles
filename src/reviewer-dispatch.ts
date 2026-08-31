@@ -1,3 +1,5 @@
+import { extractReferencedAdrPaths } from "./adr-path-refs.ts";
+export { extractReferencedAdrPaths } from "./adr-path-refs.ts";
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { branchNamesAtPinnedHead, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 export { branchNamesAtPinnedHead, createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
@@ -27,10 +29,9 @@ const GENERIC_FEATURE_TOKENS = new Set(["", "head", "main", "master", "trunk", "
 const BRANCH_SHELL_PREFIX = /^(?:feat|feature|fix|bugfix|hotfix|chore|docs|refactor)-/;
 /** Branch token ticket capture: (fix|feat|docs|audit|test)/issue-(\d+)- (#343). */
 const BRANCH_ISSUE_TOKEN = /(?:^|\/)((?:fix|feat|docs|audit|test)\/issue-(\d+)-)/;
+
 /** First #N in a commit subject (positive integer). */
 const COMMIT_TICKET_TOKEN = /#([1-9]\d*)/;
-/** docs/adr paths referenced inside an issue body. */
-const ADR_PATH_IN_BODY = /docs\/adr\/[A-Za-z0-9][A-Za-z0-9._/-]*\.md/g;
 
 function normalizeFeatureToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -101,19 +102,6 @@ export function resolveReviewerTicketNumber(input: {
     return Object.freeze({ adopted: commit, abandoned: Object.freeze([]) });
   }
   return undefined;
-}
-
-/** Extract unique docs/adr/*.md paths referenced by issue body text (order of first appearance). */
-export function extractReferencedAdrPaths(issueBody: string): readonly string[] {
-  const seen = new Set<string>();
-  const paths: string[] = [];
-  for (const match of issueBody.matchAll(ADR_PATH_IN_BODY)) {
-    const path = match[0]!;
-    if (seen.has(path)) continue;
-    seen.add(path);
-    paths.push(path);
-  }
-  return Object.freeze(paths);
 }
 
 export type ReviewerIssueFetchResult = Readonly<{ body: string }>;

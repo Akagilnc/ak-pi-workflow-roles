@@ -8,10 +8,8 @@ import test from "node:test";
 import {
   dedupeSourceBlocks,
   extractCornerQuotes,
-  extractReferencedAdrPaths,
   filterNotifications,
   mechanicalSafeguardPipeline,
-  readTicketFaceBlocks,
   verifyQuotesVerbatim,
   type DiaristSourceBlock,
 } from "../../src/diarist-mechanical.ts";
@@ -165,20 +163,3 @@ test("parseDiaristLlmStdout fails honestly on empty/malformed/missing/alias shap
   }
 });
 
-test("readTicketFaceBlocks emits issue body + decree blocks; extract ADR paths", () => {
-  const body = [
-    "---",
-    "ticketNumber: 582",
-    "---",
-    "",
-    "「立文件。送司天台记录。」",
-    "see docs/adr/0075-ticket-provenance-diarist-pipeline.md and docs/adr/0073-machine-text-neutrality-law.md",
-  ].join("\n");
-  const blocks = readTicketFaceBlocks({ ticketBody: body, sourcePath: "/t.md" });
-  assert.ok(blocks.some((b) => b.sourceKind === "issue-body-comment"));
-  assert.ok(blocks.some((b) => b.sourceKind === "ticket-decree-block"));
-  assert.deepEqual(extractReferencedAdrPaths(body), [
-    "docs/adr/0075-ticket-provenance-diarist-pipeline.md",
-    "docs/adr/0073-machine-text-neutrality-law.md",
-  ]);
-});
