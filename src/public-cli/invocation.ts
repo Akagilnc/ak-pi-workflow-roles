@@ -427,6 +427,39 @@ async function mergeInvocationIdentityPage(
   );
 }
 
+/**
+ * Bind a post-admission resolved ticketNumber onto the in-memory admitted
+ * object and both durable pages (invocation.json + admitted-request.json).
+ * Used by countersign diarist pre-court resolution when admission was unbound
+ * (#582 / diarist-resolves-ticket-llm-layer). Never clears an existing binding.
+ */
+export async function bindAdmittedTicketNumber(
+  admitted: AdmittedRoleInvocation,
+  ticketNumber: number,
+): Promise<void> {
+  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
+    throw new Error(`bindAdmittedTicketNumber requires a safe positive integer, got ${String(ticketNumber)}`);
+  }
+  if (admitted.ticketNumber !== undefined) {
+    if (admitted.ticketNumber === ticketNumber) return;
+    throw new Error(
+      `bindAdmittedTicketNumber refuses to replace existing ticket #${admitted.ticketNumber} with #${ticketNumber}`,
+    );
+  }
+  (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
+  await mergeInvocationIdentityPage(admitted.runDirectory, { ticketNumber });
+  const admittedPath = admitted.admittedRequestPath;
+  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(
+    admittedPath,
+    `${JSON.stringify({ ...current, ticketNumber }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 /** Add the identity returned by the production Pi launch seam to its existing ledger page. */
 export async function recordLaunchedPiIdentity(
   runDirectory: string,

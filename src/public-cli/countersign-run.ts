@@ -3,6 +3,8 @@
  * shared post-admission coordinator → settle Terminal result
  * (#572 / ADR 0074 / ADR 0075). One-shot: 署/封驳/上呈，无 resume.
  * Diarist is a prior station on the court pipeline, not a countersign call.
+ * Unbound admission may resolve a ticket via diarist pre-court LLM assertion
+ * (#582 / diarist-resolves-ticket-llm-layer) before the diary station runs.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
@@ -14,12 +16,21 @@ import {
   type DiaristIssueFaceFetcher,
   type DiaristRunResult,
 } from "../diarist.ts";
+import {
+  createGhTicketExistenceChecker,
+  createHermesDiaristTicketResolver,
+  resolveDiaristTicketFromInstruction,
+  type DiaristTicketResolution,
+  type DiaristTicketResolver,
+  type TicketExistenceChecker,
+} from "../diarist-ticket-resolution.ts";
 import { appendIssueSourceFailureDiagnostic } from "../ticket-provenance.ts";
 import type { DiaristLlmCollector } from "../diarist-llm-collector.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
+  bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
@@ -55,6 +66,15 @@ export type CountersignRunEnv = PostAdmissionEnv & {
    * (no soft empty-face continue when ticket is bound).
    */
   diaristIssueFaceFetcher?: DiaristIssueFaceFetcher;
+  /**
+   * Test seam: inject pre-court ticket resolver.
+   * undefined → production hermes resolver; null → skip resolution (leave unbound).
+   */
+  diaristTicketResolver?: DiaristTicketResolver | null;
+  /** Test seam: observe ticket-resolution outcome. */
+  onTicketResolution?: (result: DiaristTicketResolution) => void;
+  /** Test seam: inject live-ticket existence check. */
+  ticketExistenceChecker?: TicketExistenceChecker;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -112,7 +132,7 @@ export async function runPublicCountersign(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  const turnRequest = buildCountersignTurnRequest(admitted, {
+  const turnProjection: RoleTurnRequestProjectionOptions = {
     packageRoot: env.packageRoot,
     home: env.home,
     agentDir: env.agentDir,
@@ -132,7 +152,9 @@ export async function runPublicCountersign(
         }),
       ),
     },
-  });
+  };
+  // Mutable shell: pre-court ticket resolution may rebind activation before executeTurn.
+  const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
 
   return await runPostAdmissionOneShot({
     admitted,
@@ -144,6 +166,12 @@ export async function runPublicCountersign(
       // Accepted receipts and failure terminals both present via shared path.
       shouldPresentSettled: () => true,
       beforeDispatch: async (admitted) => {
+        await resolveCountersignTicketBinding(admitted, env);
+        // Re-project activation so Notary gate flag carries the post-admission binding.
+        Object.assign(
+          turnRequest,
+          buildCountersignTurnRequest(admitted, turnProjection),
+        );
         await runCountersignDiaristStation(admitted, env);
       },
     },
@@ -152,11 +180,55 @@ export async function runPublicCountersign(
 }
 
 /**
+ * Pre-court ticket binding for unbound countersign admissions
+ * (decision key `diarist-resolves-ticket-llm-layer`).
+ * Explicit admitted ticket ( --ticket / frontmatter) is never re-resolved.
+ * LLM true-unbound leaves the run unbound (no diary). Asserted N that fails
+ * mechanical verification throws — caller settles controlled failure.
+ */
+export async function resolveCountersignTicketBinding(
+  admitted: AdmittedCountersignInvocation,
+  env: Pick<
+    CountersignRunEnv,
+    | "diaristTicketResolver"
+    | "onTicketResolution"
+    | "ticketExistenceChecker"
+    | "packageRoot"
+    | "cwd"
+  >,
+): Promise<DiaristTicketResolution | undefined> {
+  if (admitted.ticketNumber !== undefined) return undefined;
+  if (env.diaristTicketResolver === null) return undefined;
+
+  const resolver =
+    env.diaristTicketResolver ??
+    createHermesDiaristTicketResolver({
+      ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
+      cwd: admitted.projectRoot,
+    });
+  const checkExistence =
+    env.ticketExistenceChecker ?? createGhTicketExistenceChecker();
+  const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
+  const resolution = await resolveDiaristTicketFromInstruction({
+    instruction: admitted.instruction,
+    origin,
+    resolver,
+    checkExistence,
+  });
+  env.onTicketResolution?.(resolution);
+  if (resolution.kind === "ticket") {
+    await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
+  }
+  return resolution;
+}
+
+/**
  * Court-pipeline prior station: refresh ticket-provenance before countersign turn.
  * Caller-invisible — collector failures append durable volume diagnostics and the
  * station continues; issue-source / ADR source-read / watermark honesty failures
  * leave typed durable diagnostics and propagate (失败诚实).
- * Missing ticketNumber skips the station (no subject key).
+ * Missing ticketNumber (true-unbound after pre-court resolution) skips the station
+ * — no diary is minted for a true-unbound run.
  *
  * Issue body/comments come from the shared GitHub seam only. Attachments stay
  * attachments — never merged and mislabeled as issue-body-comment.

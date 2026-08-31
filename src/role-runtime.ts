@@ -1,5 +1,6 @@
 import { readFileSync, writeSync } from "node:fs";
-import { join as pathJoin } from "node:path";
+import { basename, join as pathJoin } from "node:path";
+import type { NotarySourceRunLocator } from "./notary-contracts.ts";
 import {
   ExplicitInternalActivationError,
   type HostContext,
@@ -746,6 +747,87 @@ function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefi
   return undefined;
 }
 
+const COUNTERSIGN_RUN_DIR_NAME =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@([A-Za-z][A-Za-z0-9_-]*)$/i;
+
+/**
+ * True-unbound countersign Notary material: typed source-run locator for the
+ * current countersign run (decision key diarist-resolves-ticket-llm-layer).
+ * Built from AK_ROLE_RUN_DIR + retained run-state — never prose.
+ */
+function readCountersignSourceRunLocatorForNotaryGate(): NotarySourceRunLocator {
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") {
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      "countersign Notary gate: true-unbound material requires AK_ROLE_RUN_DIR source-run locator",
+    );
+  }
+  const statePath = pathJoin(runDir, "run-state.json");
+  let rawText: string;
+  try {
+    rawText = readFileSync(statePath, "utf8");
+  } catch (error) {
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      `countersign Notary gate: run-state.json unreadable for source-run (${statePath})`,
+      { cause: error },
+    );
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(rawText);
+  } catch (error) {
+    throw new CountersignInvocationBindingError(
+      "unparseable",
+      `countersign Notary gate: run-state.json unparseable for source-run (${statePath})`,
+      { cause: error },
+    );
+  }
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof (raw as { runId?: unknown }).runId !== "string" ||
+    typeof (raw as { role?: unknown }).role !== "string" ||
+    typeof (raw as { runDirectory?: unknown }).runDirectory !== "string"
+  ) {
+    throw new CountersignInvocationBindingError(
+      "unparseable",
+      `countersign Notary gate: run-state.json lacks source-run identity (${statePath})`,
+    );
+  }
+  const runId = (raw as { runId: string }).runId;
+  const role = (raw as { role: string }).role;
+  const runDirectory = (raw as { runDirectory: string }).runDirectory;
+  const fromName = COUNTERSIGN_RUN_DIR_NAME.exec(basename(runDir));
+  if (fromName !== null) {
+    if (fromName[1] !== runId || fromName[2] !== role) {
+      throw new CountersignInvocationBindingError(
+        "unparseable",
+        "countersign Notary gate: run-state identity does not match source-run directory name",
+      );
+    }
+  }
+  return { runDirectory, runId, role };
+}
+
+/**
+ * Assemble Notary inner-gate material for countersign verdict.
+ * ticket-bound → ticketNumber; true-unbound → sourceRun locator.
+ * Gate attendance itself never branches away.
+ */
+function buildCountersignNotaryGateMaterial(input: {
+  readonly roleHost: RoleHost;
+  readonly parameters: unknown;
+}): string {
+  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
+  if (ticketNumber !== undefined) {
+    return JSON.stringify({ verdict: input.parameters, ticketNumber });
+  }
+  const sourceRun = readCountersignSourceRunLocatorForNotaryGate();
+  return JSON.stringify({ verdict: input.parameters, sourceRun });
+}
+
 /** Optional pre-accept hook on the shared filed-officer envelope (ADR 0075). */
 type FiledOfficerBeforeAccept = (input: {
   readonly toolCallId: string;
@@ -820,15 +902,15 @@ export function createCountersignRoleRuntime(
   hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
   // Notary inner gate difference only — lifecycle stays on the shared envelope.
+  // Always-present: ticket-bound material carries ticketNumber; true-unbound
+  // carries the current countersign source-run locator (never bare verdict).
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
     hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
       ? async ({ toolCallId, parameters, signal, ctx }) => {
-          const ticketNumber = readBoundTicketNumberForNotaryGate(roleHost);
-          const material = JSON.stringify(
-            ticketNumber === undefined
-              ? { verdict: parameters }
-              : { verdict: parameters, ticketNumber },
-          );
+          const material = buildCountersignNotaryGateMaterial({
+            roleHost,
+            parameters,
+          });
           await roleHost.requireGatekeeperPass!({
             context: ctx,
             subject: { kind: "countersign_verdict", material },

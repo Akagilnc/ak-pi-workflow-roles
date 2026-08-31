@@ -30,6 +30,7 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { createScriptedDiaristCollector } from "../../src/diarist-llm-collector.ts";
+import { createScriptedDiaristTicketResolver } from "../../src/diarist-ticket-resolution.ts";
 import {
   DiaristIssueSourceError,
   type DiaristIssueFace,
@@ -37,6 +38,7 @@ import {
 import { DiaristSourceReadError } from "../../src/diarist-mechanical.ts";
 import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
+import { readFile } from "node:fs/promises";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
@@ -281,6 +283,9 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
           cwd: project,
           io,
           createRunId: () => runId,
+          // Unbound instruction: skip LLM resolver so this terminal-settlement
+          // trunk stays hermetic (true-unbound path covered by path4).
+          diaristTicketResolver: null,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
@@ -567,6 +572,7 @@ test("countersign runs are one-shot — resume is refused", async () => {
         cwd: project,
         io: captureIo().io,
         createRunId: () => runId,
+        diaristTicketResolver: null,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -765,5 +771,313 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
     assert.ok((volumeAtTurn ?? 0) >= 1);
     const final = await readTicketProvenance(582, project);
     assert.ok(final.entries.length >= 1);
+  });
+});
+
+/**
+ * #582 four-path ticket binding from real public countersign entry
+ * (diarist-resolves-ticket-llm-layer). Assert typed binding / terminal /
+ * durable pages only — never LLM or Markdown wording.
+ */
+
+function observingCountersignHost(input: {
+  readonly packageRoot: string;
+  readonly onTurn?: (request: RoleTurnRequest) => void;
+}) {
+  const base = roleTurnHostFromLegacyPiRunner({
+    packageRoot: input.packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    piRunner: scriptedCountersignSession({
+      countersignStatus: "converged",
+      note: "署",
+    }),
+  });
+  return {
+    async executeTurn(request: RoleTurnRequest) {
+      input.onTurn?.(request);
+      return base.executeTurn(request);
+    },
+  };
+}
+
+test("public countersign path1: explicit --ticket binds without re-resolution", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
+
+    let resolverCalled = false;
+    let turnTicket: number | undefined;
+    const result = await runPublicCountersign(
+      ["--ticket", "582", "裁：本票是否足以开工。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: observingCountersignHost({
+          packageRoot,
+          onTurn: (request) => {
+            turnTicket =
+              request.activation.role === "countersign"
+                ? request.activation.ticketNumber
+                : undefined;
+          },
+        }),
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000p01",
+        diaristTicketResolver: async () => {
+          resolverCalled = true;
+          return { kind: "true-unbound" };
+        },
+        diaristCollector: createScriptedDiaristCollector({
+          selections: [],
+          rawStdout: '{"selections":[]}',
+          engineArgv: ["scripted"],
+        }),
+        diaristIssueFaceFetcher: async () => ({
+          body: "body",
+          bodyUrl: "https://github.com/o/r/issues/582",
+          comments: [],
+        }),
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(resolverCalled, false, "explicit --ticket must not re-resolve");
+    assert.equal(result.admitted?.ticketNumber, 582);
+    assert.equal(turnTicket, 582);
+    const inv = JSON.parse(
+      await readFile(join(result.admitted!.runDirectory, "invocation.json"), "utf8"),
+    ) as { ticketNumber?: number };
+    assert.equal(inv.ticketNumber, 582);
+  });
+});
+
+test("public countersign path2: unbound LLM ticket + mechanical verify binds and runs diary", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
+
+    let resolutionKind: string | undefined;
+    let diaristTicket: number | undefined;
+    let turnTicket: number | undefined;
+
+    const result = await runPublicCountersign(
+      ["裁：继续审票 #582 是否足以开工。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: observingCountersignHost({
+          packageRoot,
+          onTurn: (request) => {
+            turnTicket =
+              request.activation.role === "countersign"
+                ? request.activation.ticketNumber
+                : undefined;
+          },
+        }),
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000p02",
+        diaristTicketResolver: createScriptedDiaristTicketResolver({
+          kind: "ticket",
+          ticketNumber: 582,
+        }),
+        ticketExistenceChecker: async () => true,
+        onTicketResolution: (r) => {
+          resolutionKind = r.kind;
+        },
+        diaristCollector: createScriptedDiaristCollector({
+          selections: [],
+          rawStdout: '{"selections":[]}',
+          engineArgv: ["scripted"],
+        }),
+        diaristIssueFaceFetcher: async () => ({
+          body: "face",
+          bodyUrl: "https://github.com/o/r/issues/582",
+          comments: [],
+        }),
+        onDiaristResult: (r) => {
+          diaristTicket = r.ticketNumber;
+        },
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(resolutionKind, "ticket");
+    assert.equal(result.admitted?.ticketNumber, 582);
+    assert.equal(turnTicket, 582);
+    assert.equal(diaristTicket, 582);
+    const inv = JSON.parse(
+      await readFile(join(result.admitted!.runDirectory, "invocation.json"), "utf8"),
+    ) as { ticketNumber?: number };
+    assert.equal(inv.ticketNumber, 582);
+    const admittedPage = JSON.parse(
+      await readFile(result.admitted!.admittedRequestPath, "utf8"),
+    ) as { ticketNumber?: number };
+    assert.equal(admittedPage.ticketNumber, 582);
+  });
+});
+
+test("public countersign path3: asserted N fails mechanical verify → controlled failure (not unbound)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
+
+    let turnStarted = false;
+    let resolutionSeen = false;
+    const runId = "01a0sign00-0000-7000-8000-000000000p03";
+    const result = await runPublicCountersign(
+      ["裁：票 #999999 并不存在。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: {
+          async executeTurn() {
+            turnStarted = true;
+            throw new Error("turn must not start after ticket verification failure");
+          },
+        },
+        createRunId: () => runId,
+        diaristTicketResolver: createScriptedDiaristTicketResolver({
+          kind: "ticket",
+          ticketNumber: 999999,
+        }),
+        ticketExistenceChecker: async () => false,
+        onTicketResolution: () => {
+          resolutionSeen = true;
+        },
+        diaristCollector: null,
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(turnStarted, false);
+    assert.equal(resolutionSeen, false, "failed verification must not report success resolution");
+    assert.ok(result.exitCode !== 0);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    assert.equal(
+      result.admitted?.ticketNumber,
+      undefined,
+      "failed verification must not wash ticket onto admitted",
+    );
+    const coords = issuePiDurablePrincipalCoordinates({
+      cwd: project,
+      runId,
+      role: "countersign",
+      home,
+    });
+    const state = await readRoleRunState(coords.runDirectory, piDurablePrincipalAuthority);
+    assert.equal(state?.state, "terminal");
+    const inv = JSON.parse(
+      await readFile(join(coords.runDirectory, "invocation.json"), "utf8"),
+    ) as { ticketNumber?: number };
+    assert.equal(inv.ticketNumber, undefined);
+  });
+});
+
+test("public countersign path4: true-unbound skips diary; durable pages stay unbound", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
+
+    let diaristCalled = false;
+    let resolutionKind: string | undefined;
+    let turnTicket: number | undefined;
+
+    const result = await runPublicCountersign(
+      ["一般性程序问询，本庭无具体票号。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: observingCountersignHost({
+          packageRoot,
+          onTurn: (request) => {
+            turnTicket =
+              request.activation.role === "countersign"
+                ? request.activation.ticketNumber
+                : undefined;
+          },
+        }),
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000p04",
+        diaristTicketResolver: createScriptedDiaristTicketResolver({
+          kind: "true-unbound",
+        }),
+        onTicketResolution: (r) => {
+          resolutionKind = r.kind;
+        },
+        diaristCollector: createScriptedDiaristCollector({
+          selections: [],
+          rawStdout: "{}",
+          engineArgv: ["scripted"],
+        }),
+        onDiaristResult: () => {
+          diaristCalled = true;
+        },
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(resolutionKind, "true-unbound");
+    assert.equal(diaristCalled, false, "true-unbound must not mint diary");
+    assert.equal(result.admitted?.ticketNumber, undefined);
+    assert.equal(turnTicket, undefined);
+    const inv = JSON.parse(
+      await readFile(join(result.admitted!.runDirectory, "invocation.json"), "utf8"),
+    ) as { ticketNumber?: number };
+    assert.equal(inv.ticketNumber, undefined);
+    // Source-run locator identity is the current countersign run (Notary gate
+    // material assembly is proven in countersign-notary-gate; here we prove the
+    // durable run page the gate reads is retained and unbound).
+    const state = await readRoleRunState(
+      result.admitted!.runDirectory,
+      piDurablePrincipalAuthority,
+    );
+    assert.ok(state);
+    assert.equal(state!.role, "countersign");
+    assert.equal(state!.runDirectory, result.admitted!.runDirectory);
   });
 });
