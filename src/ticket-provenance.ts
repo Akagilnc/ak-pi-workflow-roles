@@ -266,6 +266,21 @@ export async function readTicketProvenance(
 }
 
 /**
+ * Fence long enough that any backtick run inside `text` cannot close the block.
+ * Presentation helper only — not a machine contract.
+ */
+export function markdownFenceFor(text: string): string {
+  let longest = 0;
+  const runs = text.match(/`+/g);
+  if (runs !== null) {
+    for (const run of runs) {
+      if (run.length > longest) longest = run.length;
+    }
+  }
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+/**
  * Render a local human-read markdown view from entries.
  * Presentation only — machines bite JSONL. No wording lock for consumers.
  */
@@ -308,9 +323,10 @@ export function renderTicketProvenanceMarkdown(input: {
       lines.push(`- sourceRef: ${refParts.join(" · ")}`);
     }
     lines.push("");
-    lines.push("```");
+    const fence = markdownFenceFor(entry.transcript);
+    lines.push(fence);
     lines.push(entry.transcript);
-    lines.push("```");
+    lines.push(fence);
     lines.push("");
   }
   return lines.join("\n");

@@ -23,12 +23,14 @@ import {
   createHermesDiaristCollector,
   createScriptedDiaristCollector,
   DIARIST_COLLECT_METHOD_RELATIVE,
+  HERMES_DIARIST_COLLECTOR_TOOLSET,
   resolveDiaristCollectMethodPath,
 } from "../../src/diarist-llm-collector.ts";
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants } from "node:fs";
 import { runDiarist } from "../../src/diarist.ts";
 import {
   appendTicketProvenanceEntry,
+  readOfferedIdentities,
   readTicketProvenance,
   resolveTicketProvenanceVolume,
   TicketProvenanceWatermarkError,
@@ -543,6 +545,90 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
+test("hermes collector argv: empty toolset boundary (never terminal/process tools)", async () => {
+  await withHermeticHome({ prefix: "ak-diarist-toolset-" }, async ({ home }) => {
+    let capturedArgv: readonly string[] | undefined;
+    const collector = createHermesDiaristCollector({
+      packageRoot,
+      executable: "hermes",
+      runDetour: async (input) => {
+        capturedArgv = input.argv;
+        return { code: 0, stdout: JSON.stringify({ selections: [] }), stderr: "" };
+      },
+      cwd: home,
+    });
+    const result = await collector({
+      ticketNumber: 582,
+      candidates: [
+        block({
+          transcript: "untrusted ticket text",
+          sourceRef: { sessionFile: "/s", entryId: "1" },
+        }),
+      ],
+    });
+    assert.ok(capturedArgv);
+    const toolFlagAt = capturedArgv!.indexOf("-t");
+    assert.ok(toolFlagAt >= 0, "collector must pin an explicit toolset");
+    assert.equal(capturedArgv![toolFlagAt + 1], HERMES_DIARIST_COLLECTOR_TOOLSET);
+    assert.equal(
+      capturedArgv!.includes("terminal"),
+      false,
+      "terminal/process toolset must not be enabled on untrusted ticket text",
+    );
+    assert.deepEqual(result.engineArgv, capturedArgv);
+  });
+});
+
+test("runDiarist: volume write failure before watermark keeps blocks fresh for retry", async () => {
+  await withDiaristProject("ak-diarist-wm-order-", async (project) => {
+    const { a } = watermarkFixtureBlocks();
+    // Establish volume, then freeze the partition so the selected append fails.
+    const volume = resolveTicketProvenanceVolume(11, project);
+    mkdirSync(volume.volumeDir, { recursive: true });
+    chmodSync(volume.volumeDir, 0o555);
+    try {
+      await assert.rejects(
+        () =>
+          runDiarist({
+            ticketNumber: 11,
+            cwd: project,
+            blocks: [a],
+            collector: createScriptedDiaristCollector({
+              selections: [{ candidateIndex: 0, quotes: [] as string[] }],
+              rawStdout: "{}",
+              engineArgv: ["scripted"],
+            }),
+          }),
+      );
+    } finally {
+      chmodSync(volume.volumeDir, 0o755);
+    }
+    // Offered watermark must not advance when commit failed — next court retries.
+    assert.equal(readOfferedIdentities(11, project).size, 0);
+    const retrySeen: string[] = [];
+    const second = await runDiarist({
+      ticketNumber: 11,
+      cwd: project,
+      blocks: [a],
+      collector: createScriptedDiaristCollector((input) => {
+        retrySeen.push(...input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
+        return {
+          selections: input.candidates.map((_, i) => ({
+            candidateIndex: i,
+            quotes: [] as string[],
+          })),
+          rawStdout: "{}",
+          engineArgv: ["scripted"],
+        };
+      }),
+    });
+    assert.deepEqual(retrySeen, ["u-a"]);
+    assert.equal(second.collectorStatus, "ok");
+    assert.equal(second.appended, 1);
+    assert.equal(readOfferedIdentities(11, project).size, 1);
+  });
+});
+
 test("hermes collector: real child receives method bytes via seam-staged --query-file (1MiB safe)", async () => {
   await withHermeticHome({ prefix: "ak-diarist-method-qf-" }, async ({ home }) => {
     const methodPath = resolveDiaristCollectMethodPath(packageRoot);
@@ -655,9 +741,23 @@ test("referenced ADR path escape fails typed at real IO seam (not silent read)",
         error instanceof DiaristSourceReadError && error.reason === "adr-escape",
     );
 
-    // Physical escape: cwd-internal symlink whose realpath leaves the circle.
-    // Lexical pathContainedIn passes; physicallyContainedIn must refuse before read.
+    // In-repo but outside docs/adr: cwd-bounded is not enough (ADR root confinement).
+    writeFileSync(join(root, "README.md"), "# not an ADR\n", "utf8");
     mkdirSync(join(root, "docs", "adr"), { recursive: true });
+    assert.throws(
+      () =>
+        readAdrDecisionKeyBlocks({
+          cwd: root,
+          adrPaths: ["docs/adr/x/../../README.md"],
+        }),
+      (error: unknown) =>
+        error instanceof DiaristSourceReadError &&
+        error.reason === "adr-escape" &&
+        error.code === "diarist-source-read",
+    );
+
+    // Physical escape: cwd-internal symlink whose realpath leaves the ADR root.
+    // Lexical pathContainedIn passes; physicallyContainedIn must refuse before read.
     const outside = join(home, "outside-secret.md");
     writeFileSync(outside, "TOP SECRET\n", "utf8");
     const linkRel = "docs/adr/0075-via-symlink.md";

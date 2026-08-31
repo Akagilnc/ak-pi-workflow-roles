@@ -596,6 +596,65 @@ function encodeCcProjectPath(cwd: string): string {
   return abs.replace(/\//g, "-");
 }
 
+test("runPublicCountersign: diarist beforeDispatch failure settles terminal (not stuck running)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    // No origin → diarist station throws origin-unresolved after markRunRunning.
+
+    let turnStarted = false;
+    const { io, stderr } = captureIo();
+    const runId = "01a0sign00-0000-7000-8000-000000000d10";
+    const result = await runPublicCountersign(
+      ["--ticket", "582", "裁：本票是否足以开工。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: {
+          async executeTurn() {
+            turnStarted = true;
+            throw new Error("role turn must not start after diarist failure");
+          },
+        },
+        createRunId: () => runId,
+        projectsRoot: join(home, "empty-cc"),
+        diaristCollector: createScriptedDiaristCollector({
+          selections: [],
+          rawStdout: '{"selections":[]}',
+          engineArgv: ["scripted"],
+        }),
+      },
+      io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(turnStarted, false);
+    assert.ok(result.exitCode !== 0);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    const coords = issuePiDurablePrincipalCoordinates({
+      cwd: project,
+      runId,
+      role: "countersign",
+      home,
+    });
+    const state = await readRoleRunState(
+      coords.runDirectory,
+      piDurablePrincipalAuthority,
+    );
+    assert.equal(state?.state, "terminal");
+    assert.ok(
+      stderr.some((line) => line.includes("origin-unresolved") || line.length > 0),
+      "controlled failure must present a diagnostic",
+    );
+  });
+});
+
 test("runPublicCountersign: diarist station fills ticket volume before role turn", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");

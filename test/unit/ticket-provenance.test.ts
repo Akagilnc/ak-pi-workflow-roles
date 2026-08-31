@@ -12,6 +12,8 @@ import {
   projectTicketProvenanceEntry,
 } from "../../src/ticket-provenance-contracts.ts";
 import {
+  markdownFenceFor,
+  renderTicketProvenanceMarkdown,
   ticketProvenanceEntryIdentity,
   ticketProvenanceSubject,
 } from "../../src/ticket-provenance.ts";
@@ -20,6 +22,31 @@ test("ticket-provenance subject is the ticket number string", () => {
   assert.equal(ticketProvenanceSubject(582), "582");
   assert.throws(() => ticketProvenanceSubject(0));
   assert.throws(() => ticketProvenanceSubject(-1));
+});
+
+test("markdown fence outruns any backtick run inside the transcript", () => {
+  assert.equal(markdownFenceFor("plain"), "```");
+  assert.equal(markdownFenceFor("has ``` inside"), "````");
+  assert.equal(markdownFenceFor("nest ```` four"), "`````");
+  const transcript = ["before", "```js", "code()", "```", "after"].join("\n");
+  const md = renderTicketProvenanceMarkdown({
+    ticketNumber: 582,
+    entries: [
+      {
+        basis: { method: "llm-semantic", anchors: ["#582"] },
+        sourceKind: "cc-session",
+        sourceRef: { sessionFile: "/s", entryId: "1" },
+        transcript,
+        timestamp: "2026-08-31T00:00:00.000Z",
+      },
+    ],
+  });
+  // Opening/closing fence must be longer than any run in the body so the
+  // transcript cannot break the human-view block structure.
+  const fence = markdownFenceFor(transcript);
+  assert.ok(md.includes(`\n${fence}\n${transcript}\n${fence}\n`));
+  assert.equal(fence.startsWith("```"), true);
+  assert.ok(fence.length > 3);
 });
 
 test("entry identity is stable for same source+transcript and differs otherwise", () => {

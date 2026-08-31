@@ -235,6 +235,12 @@ export function serializeDiaristCollectorEnginePayload(
   return JSON.stringify(payload);
 }
 
+/**
+ * Hermes built-in toolset that resolves to zero tools.
+ * Collector labor is pure JSON selection — never a tools-capable agent surface.
+ */
+export const HERMES_DIARIST_COLLECTOR_TOOLSET = "context_engine" as const;
+
 export type HermesDiaristCollectorOptions = {
   /** Executable name or path. Default hermes. */
   readonly executable?: string;
@@ -278,8 +284,10 @@ export function createHermesDiaristCollector(
     });
     const prompt = serializeDiaristCollectorEnginePayload(payload);
     // File-path delivery via shared seam token (never paste body into argv).
-    // chat --query-file + -Q keeps final-response-only stdout; -t terminal avoids
-    // host toolset warning noise on stdout. --ignore-rules keeps host identity out.
+    // chat --query-file + -Q keeps final-response-only stdout. Tool surface is
+    // the empty built-in `context_engine` toolset — collector is pure JSON
+    // selection over untrusted ticket text; never terminal/file/web tools.
+    // --ignore-rules keeps host identity out.
     const argv = [
       executable,
       ...(options.extraArgv ?? []),
@@ -290,7 +298,7 @@ export function createHermesDiaristCollector(
       "--no-restore-cwd",
       "--ignore-rules",
       "-t",
-      "terminal",
+      HERMES_DIARIST_COLLECTOR_TOOLSET,
     ];
     const result = await runDetour({
       argv,
