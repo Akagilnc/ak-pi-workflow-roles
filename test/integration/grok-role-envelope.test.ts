@@ -13,6 +13,7 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
@@ -236,11 +237,13 @@ test("Grok MCP projection executes a terminal submission through the single ledg
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
+    // Production run face is `<runId>@<role>`; settlement reads bare admitted.runId.
+    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ac";
     const request = {
       principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
       continuation: { kind: "initial", prompt: "attest" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "notary-run"),
+      agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@notary`),
     } as RoleTurnRequest;
     const prepared = await prepareGrokRoleEnvelope({
       request,
@@ -260,6 +263,12 @@ test("Grok MCP projection executes a terminal submission through the single ledg
       assert.equal((reply.result as { isError?: boolean })?.isError, undefined);
       const closure = await prepared.closeRound();
       assert.deepEqual(closure, { accepted: true });
+      // Settlement seam: bare runId must resolve the sealed projection written under
+      // AK_ROLE_RUN_DIR → runIdFromRunDirectory identity (not session header `<uuid>@role`).
+      const sealed = await readSealedSubmission(process.cwd(), runId, root);
+      assert.equal(sealed?.kind, "accepted");
+      assert.equal(sealed?.role, "notary");
+      assert.equal(sealed?.status, "pass");
     } finally {
       await prepared.dispose?.();
     }
