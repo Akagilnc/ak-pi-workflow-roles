@@ -263,15 +263,13 @@ function reply(status, statusText, body) {
 }
 
 const ctrl = loadControlFile();
-if (ctrl !== null && typeof ctrl === "object") {
-  // Control file, when configured, is the live issues table (same shape as install options.issues).
-  // Missing/unreadable/bad JSON already failed in loadControlFile.
-}
 
 if (path.includes("user")) {
   ok({ login: "fixture-user" });
 }
 
+// When control is configured it is the live issues table (install shape).
+// Missing/unreadable/bad JSON already failed inside loadControlFile.
 const issues = (ctrl !== null && typeof ctrl === "object" && !Array.isArray(ctrl))
   ? ctrl
   : ${JSON.stringify(options.issues ?? {})};
