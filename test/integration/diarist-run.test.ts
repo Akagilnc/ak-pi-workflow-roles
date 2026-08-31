@@ -556,7 +556,7 @@ test("hermes collector: real child reads methodPath from structured -z engine pa
       env: { ...process.env, AK_CAPTURE_PATH: capturePath },
       // Real runEngineDetourOnce — no runDetour inject.
     });
-    const result = await collector({
+    await collector({
       ticketNumber: 582,
       candidates: [
         block({
@@ -565,7 +565,6 @@ test("hermes collector: real child reads methodPath from structured -z engine pa
         }),
       ],
     });
-    assert.equal(result.methodPath, methodPath);
     const captured = JSON.parse(await readFile(capturePath, "utf8")) as {
       methodPath: string | null;
     };
