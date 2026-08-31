@@ -10837,11 +10837,17 @@ function createGrokRoleTurnHost(config) {
             if (result2.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
+            const sealedEarly = "sealedEarly" in result2 && result2.sealedEarly === true;
             const closure = await prepared.closeRound();
             if (closure.accepted) {
               try {
                 await connection.request("session/close", { sessionId });
-              } catch {
+              } catch (error) {
+                if (!sealedEarly) throw error;
+                const code = typeof error === "object" && error !== null && "code" in error ? error.code : void 0;
+                if (code !== "acp-closed" && code !== "acp-connection-closed" && code !== "acp-write-failed") {
+                  throw error;
+                }
               }
               accepted = true;
               return { code: 0, stderr: "", timedOut: false };

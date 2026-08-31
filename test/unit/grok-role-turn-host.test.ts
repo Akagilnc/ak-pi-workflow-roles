@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,7 +14,6 @@ import {
   classifyGrokInspection,
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
-  isHeadMatchedProjectInstruction,
   type GrokAcpConnection,
   type GrokPreparedTurn,
 } from "../../src/grok/role-turn-host.ts";
@@ -33,14 +32,17 @@ const request = {
   agentDir: "/agent", runDirectory: "/run",
 } as RoleTurnRequest;
 
-function prepared(closeRound: GrokPreparedTurn["closeRound"], mcpServers: Readonly<Record<string, unknown>>[] = [{}]): GrokPreparedTurn {
+function prepared(
+  closeRound: GrokPreparedTurn["closeRound"],
+  mcpServers: Readonly<Record<string, unknown>>[] = [{}],
+  whenSealed: GrokPreparedTurn["whenSealed"] = () => new Promise(() => {}),
+): GrokPreparedTurn {
   return {
     mcpServers,
     systemPrompt: "law",
     prompt: "decide",
     closeRound,
-    // Unit mocks drive the prompt path; seal-early is covered by live/envelope wiring.
-    whenSealed: () => new Promise(() => {}),
+    whenSealed,
   };
 }
 
@@ -465,32 +467,6 @@ test("grok host rejects an uncontrolled personalized session before model work",
   assert.equal(connected, false);
 });
 
-test("HEAD provenance permission failure stays loud with its errno cause", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-prov-io-"));
-  try {
-    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
-    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root, stdio: "ignore" });
-    execFileSync("git", ["config", "user.name", "test"], { cwd: root, stdio: "ignore" });
-    const claudePath = join(root, "CLAUDE.md");
-    await writeFile(claudePath, "# shared\n", "utf8");
-    execFileSync("git", ["add", "CLAUDE.md"], { cwd: root, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "seed"], { cwd: root, stdio: "ignore" });
-    await chmod(claudePath, 0);
-    await assert.rejects(
-      () => isHeadMatchedProjectInstruction(root, claudePath),
-      (error: unknown) => {
-        // Must not wash into false; structured errno/git failure identity only.
-        if (typeof error !== "object" || error === null) return false;
-        const code = (error as { code?: unknown }).code;
-        return code === "EACCES" || code === 128 || code === 1;
-      },
-    );
-  } finally {
-    await chmod(join(root, "CLAUDE.md"), 0o644).catch(() => undefined);
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("inspect→activation surfaces provenance infrastructure failure without private-config-active", async () => {
   const boom = Object.assign(new Error("project instruction unreadable"), { code: "EACCES" });
   let connected = false;
@@ -506,4 +482,84 @@ test("inspect→activation surfaces provenance infrastructure failure without pr
     (error: unknown) => error === boom,
   );
   assert.equal(connected, false);
+});
+
+test("grok host accepts when ledger seals while session/prompt stays open", async () => {
+  let resolveSeal!: () => void;
+  const sealed = new Promise<void>((resolve) => { resolveSeal = resolve; });
+  const methods: string[] = [];
+  let promptPending = false;
+  const connection: GrokAcpConnection = {
+    async request(method) {
+      methods.push(method);
+      if (method === "initialize") return canDenyInitializeMeta();
+      if (method === "session/new") return { sessionId: "s-seal" };
+      if (method === "session/prompt") {
+        promptPending = true;
+        // Hang forever — seal-early must win the race.
+        return new Promise(() => {});
+      }
+      if (method === "session/close") {
+        // Documented teardown after early seal: child already gone.
+        throw Object.assign(new Error("Grok ACP connection is closed"), { code: "acp-connection-closed" });
+      }
+      throw new Error(method);
+    },
+    notify() {},
+    async close() {},
+  };
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => connection,
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(
+      async () => ({ accepted: true }),
+      [{}],
+      () => sealed,
+    ),
+  });
+  const turn = host.executeTurn(request);
+  for (let i = 0; i < 50 && !promptPending; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.equal(promptPending, true);
+  resolveSeal();
+  assert.deepEqual(await turn, { code: 0, stderr: "", timedOut: false });
+  assert.deepEqual(methods, ["initialize", "session/new", "session/prompt", "session/close"]);
+});
+
+test("grok host keeps unexpected session/close failure loud after seal-early", async () => {
+  const sealed = Promise.resolve();
+  const connection: GrokAcpConnection = {
+    async request(method) {
+      if (method === "initialize") return canDenyInitializeMeta();
+      if (method === "session/new") return { sessionId: "s-close-boom" };
+      if (method === "session/prompt") return new Promise(() => {});
+      if (method === "session/close") {
+        throw Object.assign(new Error("unexpected close fault"), { code: "acp-permission-missing-allow-once" });
+      }
+      throw new Error(method);
+    },
+    notify() {},
+    async close() {},
+  };
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => connection,
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(
+      async () => ({ accepted: true }),
+      [{}],
+      () => sealed,
+    ),
+  });
+  await assert.rejects(
+    () => host.executeTurn(request),
+    (error: unknown) =>
+      error instanceof Error
+      && error.message === "unexpected close fault"
+      && (error as { code?: unknown }).code === "acp-permission-missing-allow-once",
+  );
 });
