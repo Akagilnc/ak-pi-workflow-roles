@@ -644,8 +644,11 @@ export async function projectClosedSubmissionLifecycle(
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
 
-/** Typed cause when the Notary-gate fallback cannot read admitted invocation binding. */
-export type CountersignInvocationBindingReason = "unreadable" | "unparseable";
+/** Typed cause when admitted countersign ticket binding cannot be resolved. */
+export type CountersignInvocationBindingReason =
+  | "flag-invalid"
+  | "unreadable"
+  | "unparseable";
 
 export class CountersignInvocationBindingError extends Error {
   readonly code = "countersign-invocation-binding" as const;
@@ -664,13 +667,21 @@ export class CountersignInvocationBindingError extends Error {
 /**
  * Resolve admitted ticketNumber for the Notary inner gate (ADR 0075).
  * Prefer the activation transport flag (admitted typed binding along the seam).
- * Fallback: invocation.json — present-but-unreadable fails honestly (not washed
- * into "unbound"). Absent file or absent field remains legal unbound.
+ * Flag absent → fall back to invocation.json.
+ * Flag present-but-invalid → typed failure (never wash into unbound / invocation fallback).
+ * Invocation present-but-unreadable/unparseable → typed failure.
+ * Invocation absent or field absent → legal unbound.
  */
 function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefined {
   const fromFlag = roleHost.getFlag("ak-countersign-ticket-number");
-  if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
-    return Number(fromFlag);
+  if (fromFlag !== undefined) {
+    if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
+      return Number(fromFlag);
+    }
+    throw new CountersignInvocationBindingError(
+      "flag-invalid",
+      "countersign Notary gate: ak-countersign-ticket-number is present but not a positive integer string",
+    );
   }
 
   const runDir = process.env.AK_ROLE_RUN_DIR;
