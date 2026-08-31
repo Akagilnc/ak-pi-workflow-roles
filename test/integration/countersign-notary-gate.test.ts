@@ -119,19 +119,62 @@ test("notary gate omits ticketNumber when activation flag map has none", async (
   assert.equal(material.ticketNumber, undefined);
 });
 
-test("corrupt invocation.json fails before gate with typed binding reason", async () => {
-  await withHermeticHome({ prefix: "ak-cs-inv-bad-" }, async ({ home }) => {
-    const runDir = join(home, "run");
-    await mkdir(runDir, { recursive: true });
-    await writeFile(join(runDir, "invocation.json"), "{not-json\n", "utf8");
+const BINDING_FAILURES: readonly {
+  readonly name: string;
+  readonly reason: CountersignInvocationBindingError["reason"];
+  readonly flags: ReadonlyMap<string, string | boolean>;
+  readonly runDir?: "corrupt-invocation";
+}[] = [
+  {
+    name: "flag empty string",
+    reason: "flag-invalid",
+    flags: new Map([["ak-countersign-ticket-number", ""]]),
+  },
+  {
+    name: "flag zero",
+    reason: "flag-invalid",
+    flags: new Map([["ak-countersign-ticket-number", "0"]]),
+  },
+  {
+    name: "flag negative",
+    reason: "flag-invalid",
+    flags: new Map([["ak-countersign-ticket-number", "-1"]]),
+  },
+  {
+    name: "flag non-numeric",
+    reason: "flag-invalid",
+    flags: new Map([["ak-countersign-ticket-number", "nope"]]),
+  },
+  {
+    name: "flag boolean true",
+    reason: "flag-invalid",
+    flags: new Map([["ak-countersign-ticket-number", true]]),
+  },
+  {
+    name: "corrupt invocation.json",
+    reason: "unparseable",
+    flags: new Map(),
+    runDir: "corrupt-invocation",
+  },
+];
 
-    const { gateCalls, error } = await submitThroughGate({
-      flags: new Map(),
-      runDir,
+for (const failure of BINDING_FAILURES) {
+  test(`notary gate binding failure: ${failure.name}`, async () => {
+    await withHermeticHome({ prefix: "ak-cs-bind-fail-" }, async ({ home }) => {
+      let runDir: string | undefined;
+      if (failure.runDir === "corrupt-invocation") {
+        runDir = join(home, "run");
+        await mkdir(runDir, { recursive: true });
+        await writeFile(join(runDir, "invocation.json"), "{not-json\n", "utf8");
+      }
+      const { gateCalls, error } = await submitThroughGate({
+        flags: failure.flags,
+        ...(runDir === undefined ? {} : { runDir }),
+      });
+      assert.ok(error instanceof CountersignInvocationBindingError);
+      assert.equal(error.code, "countersign-invocation-binding");
+      assert.equal(error.reason, failure.reason);
+      assert.equal(gateCalls.length, 0);
     });
-    assert.ok(error instanceof CountersignInvocationBindingError);
-    assert.equal(error.code, "countersign-invocation-binding");
-    assert.equal(error.reason, "unparseable");
-    assert.equal(gateCalls.length, 0);
   });
-});
+}

@@ -358,4 +358,3 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
     assert.ok(final.entries.length >= 1);
   });
 });
-
