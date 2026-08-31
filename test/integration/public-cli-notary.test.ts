@@ -40,6 +40,7 @@ import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { createNotaryRoleRuntime } from "../../src/notary-role.ts";
 
 import {
   readRoleRunState,
@@ -667,7 +668,7 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
   });
 });
 
-test("notary --ticket rides admitted → turn activation → pi/grok flags + transport prompt", async () => {
+test("notary --ticket rides public admit → flags → role bound material (ticketNumber)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -688,26 +689,94 @@ test("notary --ticket rides admitted → turn activation → pi/grok flags + tra
     });
     assert.equal(admitted.ticketNumber, 582);
 
-    const prompt = buildNotaryTransportPrompt(admitted);
-    assert.ok(prompt.includes("#582"));
-
     const turn = buildNotaryTurnRequest(admitted, {
       packageRoot,
       home,
       agentDir: join(home, ".pi"),
-      continuation: { kind: "initial", prompt },
+      continuation: {
+        kind: "initial",
+        prompt: buildNotaryTransportPrompt(admitted),
+      },
     });
     assert.equal(turn.activation.role, "notary");
     assert.ok(turn.activation.role === "notary");
     assert.equal(turn.activation.ticketNumber, 582);
 
+    // Public adapters project the admitted ticket onto host flags.
     const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
     const flagAt = piArgv.indexOf("--ak-notary-ticket-number");
-    assert.ok(flagAt >= 0, "pi argv must carry notary ticket flag");
+    assert.ok(flagAt >= 0);
     assert.equal(piArgv[flagAt + 1], "582");
-
     const grokFlags = projectGrokActivationFlags(turn as RoleTurnRequest);
     assert.equal(grokFlags.get("ak-notary-ticket-number"), "582");
+
+    // Role consumption: feed the same flag the public adapters emit into the
+    // real Notary runtime; bound material must carry ticketNumber as JSON field.
+    const flags = new Map<string, string>();
+    const tools = new Map<string, { name: string }>();
+    let beforeStart:
+      | ((event: { systemPrompt: string }) => unknown)
+      | undefined;
+    const pi = {
+      registerFlag(name: string) {
+        if (!flags.has(name)) flags.set(name, "");
+      },
+      getFlag(name: string) {
+        return flags.get(name);
+      },
+      registerTool(tool: { name: string }) {
+        tools.set(tool.name, tool);
+      },
+      on(
+        event: string,
+        handler: (event: { systemPrompt: string }) => unknown,
+      ) {
+        if (event === "before_agent_start") beforeStart = handler;
+      },
+      getAllTools() {
+        return [
+          { name: NOTARY_OUTPUT_TOOL_NAME },
+          { name: "bash" },
+          { name: "read" },
+        ];
+      },
+    };
+    const sourceRunPath = String(turn.activation.role === "notary" ? turn.activation.sourceRun : "");
+    flags.set("ak-notary-source-run", sourceRunPath);
+    flags.set("ak-notary-ticket-number", "582");
+    const runtime = createNotaryRoleRuntime(
+      pi as never,
+      {
+        loadSoul: async () => "NOTARY LAW",
+        loadSourceRunLocator: async (path) => ({
+          runDirectory: path,
+          runId: CANONICAL_SOURCE_RUN_ID,
+          role: CANONICAL_SOURCE_ROLE,
+        }),
+      },
+      {
+        failInfrastructure(error) {
+          throw error;
+        },
+      },
+    );
+    await runtime.activate();
+    assert.ok(beforeStart);
+    const prompted = beforeStart!({ systemPrompt: "BASE" }) as {
+      systemPrompt: string;
+    };
+    const marker = "<notary_source_run>";
+    const start = prompted.systemPrompt.indexOf(marker);
+    assert.ok(start >= 0);
+    const jsonStart = start + marker.length;
+    const end = prompted.systemPrompt.indexOf("</notary_source_run>", jsonStart);
+    assert.ok(end > jsonStart);
+    const bound = JSON.parse(prompted.systemPrompt.slice(jsonStart, end).trim()) as {
+      ticketNumber?: number;
+      sourceRun?: { runDirectory?: string };
+    };
+    assert.equal(bound.ticketNumber, 582);
+    assert.equal(bound.sourceRun?.runDirectory, sourceRunPath);
   });
 });
 
