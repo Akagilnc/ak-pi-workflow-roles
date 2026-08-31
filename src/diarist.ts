@@ -3,10 +3,10 @@
  * Not a public seat: no soul, no locator, no gate attendance.
  * Runs as the court-pipeline station before countersign turn.
  */
+import { extractReferencedAdrPaths } from "./adr-path-refs.ts";
 import {
   blockToLlmEntry,
   buildDiaristAnchors,
-  extractReferencedAdrPaths,
   mechanicalSafeguardPipeline,
   readAdrDecisionKeyBlocks,
   readCcSessionBlocks,

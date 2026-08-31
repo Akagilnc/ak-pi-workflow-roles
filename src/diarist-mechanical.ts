@@ -366,21 +366,6 @@ export function readTicketFaceBlocks(input: {
   return blocks;
 }
 
-/** docs/adr/*.md paths referenced in free text (order of first appearance). */
-const ADR_PATH_IN_BODY = /docs\/adr\/[0-9]{4}[A-Za-z0-9._/-]*\.md/g;
-
-export function extractReferencedAdrPaths(text: string): readonly string[] {
-  const seen = new Set<string>();
-  const paths: string[] = [];
-  for (const match of text.matchAll(ADR_PATH_IN_BODY)) {
-    const path = match[0]!;
-    if (seen.has(path)) continue;
-    seen.add(path);
-    paths.push(path);
-  }
-  return paths;
-}
-
 /**
  * Read applicable ADR files as decision-key source blocks.
  * Missing path → skip (not declared present). Present but unreadable → throw.
