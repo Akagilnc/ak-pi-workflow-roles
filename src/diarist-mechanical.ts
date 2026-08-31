@@ -400,9 +400,12 @@ export function readIssueFaceBlocks(input: {
   return blocks;
 }
 
+/** Relative root every ADR decision-key read must stay under (ADR 0038). */
+export const DIARIST_ADR_ROOT_REL = "docs/adr" as const;
+
 /**
  * Read applicable ADR files as decision-key source blocks.
- * Real IO seam owns lexical + physical containment under cwd (ADR 0038).
+ * Real IO seam owns lexical + physical containment under cwd/docs/adr (ADR 0038).
  * Missing / unreadable / escape → typed DiaristSourceReadError (失败诚实).
  */
 export function readAdrDecisionKeyBlocks(input: {
@@ -413,25 +416,44 @@ export function readAdrDecisionKeyBlocks(input: {
   const timestamp = input.timestamp ?? new Date(0).toISOString();
   const blocks: DiaristSourceBlock[] = [];
   const cwdAbs = resolve(input.cwd);
-  let cwdReal: string;
+  const adrRootAbs = resolve(cwdAbs, DIARIST_ADR_ROOT_REL);
+  let adrRootReal: string;
   try {
-    cwdReal = realpathSync(cwdAbs);
+    // Prefer the real ADR root when it exists; otherwise fall back to cwd real
+    // so physical checks still have a stable anchor before the first ADR file.
+    adrRootReal = existsSync(adrRootAbs)
+      ? realpathSync(adrRootAbs)
+      : resolve(realpathSync(cwdAbs), DIARIST_ADR_ROOT_REL);
   } catch (error) {
     throw new DiaristSourceReadError(
       "adr-unreadable",
       cwdAbs,
-      `diarist ADR cwd is not resolvable (${cwdAbs})`,
+      `diarist ADR root is not resolvable (${adrRootAbs})`,
       { cause: error },
     );
   }
   for (const rel of input.adrPaths) {
+    const segments = rel.split(/[/\\]/);
+    // Claimed path must sit under docs/adr/ with no traversal segments.
+    if (
+      segments[0] !== "docs" ||
+      segments[1] !== "adr" ||
+      segments.length < 3 ||
+      segments.some((part) => part === "" || part === "." || part === "..")
+    ) {
+      throw new DiaristSourceReadError(
+        "adr-escape",
+        resolve(cwdAbs, rel),
+        `diarist referenced ADR escapes docs/adr (${rel})`,
+      );
+    }
     const abs = resolve(cwdAbs, rel);
-    // Lexical containment before any read (ADR 0038 — real IO seam only).
-    if (abs !== cwdAbs && !pathContainedIn(cwdAbs, abs)) {
+    // Lexical containment under docs/adr before any read (ADR 0038).
+    if (abs !== adrRootAbs && !pathContainedIn(adrRootAbs, abs)) {
       throw new DiaristSourceReadError(
         "adr-escape",
         abs,
-        `diarist referenced ADR escapes cwd (${rel})`,
+        `diarist referenced ADR escapes docs/adr (${rel})`,
       );
     }
     if (!existsSync(abs)) {
@@ -452,11 +474,11 @@ export function readAdrDecisionKeyBlocks(input: {
         { cause: error },
       );
     }
-    if (realAbs !== cwdReal && !physicallyContainedIn(cwdReal, realAbs)) {
+    if (realAbs !== adrRootReal && !physicallyContainedIn(adrRootReal, realAbs)) {
       throw new DiaristSourceReadError(
         "adr-escape",
         abs,
-        `diarist referenced ADR escapes cwd physically (${rel})`,
+        `diarist referenced ADR escapes docs/adr physically (${rel})`,
       );
     }
     let text: string;

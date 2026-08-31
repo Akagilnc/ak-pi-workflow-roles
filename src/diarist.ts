@@ -351,16 +351,8 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
         llmRawStdout = collect.rawStdout;
         collectorStatus =
           collect.selections.length === 0 ? "empty-selection" : "ok";
-        // Successful collector pass (incl. empty selection): mark all offered
-        // identities so unselected blocks are not re-sent next court. Failure
-        // does not advance the watermark (retry honestly).
-        recordOfferedIdentities({
-          ticketNumber: input.ticketNumber,
-          cwd: input.cwd,
-          identities: fresh.map((block) =>
-            blockEntryIdentity(input.ticketNumber, block),
-          ),
-        });
+        // Watermark advances only after durable volume writes below — never
+        // before selected entries / quote diagnostics are committed.
       } catch (error) {
         collectorStatus = "failed";
         collectorError =
@@ -412,6 +404,23 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
       pointers.push(ptr);
       accepted.push(projected.entry);
     }
+  }
+
+  // Successful collector pass (incl. empty selection): mark all offered
+  // identities only after the volume writes above, so a crash mid-commit
+  // still retries the batch next court (append is identity-idempotent).
+  // Failure does not advance the watermark (retry honestly).
+  if (
+    collect !== undefined &&
+    (collectorStatus === "ok" || collectorStatus === "empty-selection")
+  ) {
+    recordOfferedIdentities({
+      ticketNumber: input.ticketNumber,
+      cwd: input.cwd,
+      identities: fresh.map((block) =>
+        blockEntryIdentity(input.ticketNumber, block),
+      ),
+    });
   }
 
   // Refresh human view from the full volume (includes prior court runs).

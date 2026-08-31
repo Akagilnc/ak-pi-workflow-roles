@@ -13,6 +13,7 @@ import {
   verifyQuotesVerbatim,
   type DiaristSourceBlock,
 } from "../../src/diarist-mechanical.ts";
+import { extractReferencedAdrPaths } from "../../src/adr-path-refs.ts";
 import {
   DiaristLlmStdoutError,
   parseDiaristLlmStdout,
@@ -98,6 +99,25 @@ test("mechanical safeguard: typed notify filter + dedupe; no prose exclusion", (
   assert.ok(pipeline.some((b) => b.sourceRef.entryId === "u-ana"));
   assert.ok(pipeline.some((b) => b.sourceRef.entryId === "u2"));
   assert.equal(dedupeSourceBlocks(cleaned).length, pipeline.length);
+});
+
+test("extractReferencedAdrPaths keeps docs/adr shapes; drops traversal claims", () => {
+  assert.deepEqual(
+    extractReferencedAdrPaths(
+      "see docs/adr/0075-ticket-provenance-diarist-pipeline.md and docs/adr/sub/a.md",
+    ),
+    [
+      "docs/adr/0075-ticket-provenance-diarist-pipeline.md",
+      "docs/adr/sub/a.md",
+    ],
+  );
+  // Traversal / non-ADR claims are not path references (shape, not IO confinement).
+  assert.deepEqual(
+    extractReferencedAdrPaths(
+      "docs/adr/x/../../README.md docs/adr/../secrets.md docs/other/x.md",
+    ),
+    [],
+  );
 });
 
 test("parseDiaristLlmStdout consumes sole selections object; ignores unknown fields", () => {
