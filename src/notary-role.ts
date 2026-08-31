@@ -100,13 +100,14 @@ export function projectNotaryBoundFromFlags(
   };
 }
 
-/** Assemble systemPrompt patch from soul + typed bound (prompt bytes only). */
+/** Assemble systemPrompt body from base + soul only (NO embedded bound JSON).
+ * The typed session bound travels separately as `readingMaterial`; adapters fold
+ * it into the provider-visible prompt at the send boundary. */
 export function assembleNotaryAgentStartPrompt(input: {
   readonly baseSystemPrompt: string;
   readonly soul: string;
-  readonly bound: NotarySessionBound;
 }): string {
-  return `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>\n\n<notary_source_run>\n${JSON.stringify(input.bound)}\n</notary_source_run>`;
+  return `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>`;
 }
 
 export function createNotaryRoleRuntime(
@@ -170,8 +171,9 @@ export function createNotaryRoleRuntime(
             };
           },
         });
-        // Evidence assembly only (ADR 0018): soul + bound into prompt. Session write is envelope-owned.
-        // readingMaterial is the same typed bound that feeds the prompt (machine face; not free text).
+        // Evidence assembly only (ADR 0018): soul into prompt body. The typed bound
+        // travels as readingMaterial (machine face; not free text) and is folded into
+        // the provider-visible prompt by the adapter. Session write is envelope-owned.
         pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
@@ -186,7 +188,6 @@ export function createNotaryRoleRuntime(
             systemPrompt: assembleNotaryAgentStartPrompt({
               baseSystemPrompt: event.systemPrompt,
               soul: activation.soul,
-              bound,
             }),
             readingMaterial: bound,
           };

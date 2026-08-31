@@ -18,6 +18,7 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import { renderGrokSystemPromptOverride } from "../../src/grok/role-turn-host.ts";
 import {
   issuePiDurablePrincipalCoordinates,
   piDurablePrincipalAuthority,
@@ -190,7 +191,7 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
     try {
       // The shared input transform rewrites the prompt to the canonical Skill invocation.
       assert.equal(prepared.prompt, "/skill:tdd decide");
-      assert.ok(prepared.systemPrompt.includes("CODER SOUL"));
+      assert.ok(prepared.systemPrompt.body.includes("CODER SOUL"));
     } finally {
       await prepared.dispose?.();
     }
@@ -363,15 +364,22 @@ test("public Notary --ticket: admit→activation→agent-start reading material 
       },
     });
     try {
-      // Agent-start consumption seam: typed readingMaterial from before_agent_start (not prompt text).
+      // Agent-start consumption seam: typed readingMaterial from before_agent_start lands
+      // in the structured systemPrompt authority (machine face; not prompt text).
       const expectedBound = projectNotarySessionBound({
         sourceRun: admitted.sourceRun,
         ticketNumber: 582,
       });
-      assert.deepEqual(prepared.agentStartReadingMaterials, [expectedBound]);
+      assert.deepEqual(prepared.systemPrompt.materials, [expectedBound]);
       assert.equal(
-        (prepared.agentStartReadingMaterials[0] as { ticketNumber?: number }).ticketNumber,
+        (prepared.systemPrompt.materials[0] as { ticketNumber?: number }).ticketNumber,
         582,
+      );
+      // Prove the send path: the provider-visible override folds exactly the typed bound.
+      // No free-text / substring / sentinel lock — only the authoritative renderer equality.
+      assert.equal(
+        renderGrokSystemPromptOverride(prepared.systemPrompt),
+        renderGrokSystemPromptOverride({ body: prepared.systemPrompt.body, materials: [expectedBound] }),
       );
 
       // Session custom entry is the envelope durable twin of the flag-derived bound.
