@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  packageRoot,
   seedGitRepository,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
@@ -17,13 +18,19 @@ import {
   parseNotaryArgv,
   parsePositiveTicketNumber,
 } from "../../src/public-cli/invocation.ts";
-import { runCountersignDiaristStation } from "../../src/public-cli/countersign-run.ts";
+import {
+  runCountersignDiaristStation,
+  runPublicCountersign,
+} from "../../src/public-cli/countersign-run.ts";
 import { createScriptedDiaristCollector } from "../../src/diarist-llm-collector.ts";
 import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import type { DiaristSourceBlock } from "../../src/diarist-mechanical.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 test("parsePositiveTicketNumber rejects non-positive and leading junk", () => {
   assert.equal(parsePositiveTicketNumber("582", "--ticket"), 582);
@@ -179,6 +186,179 @@ function encodePath(cwd: string): string {
   const abs = cwd.startsWith("/") ? cwd : `/${cwd}`;
   return abs.replace(/\//g, "-");
 }
+
+test("runPublicCountersign: diarist station fills ticket volume before role turn", async () => {
+  await withHermeticHome({ prefix: "ak-cs-real-entry-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+
+    const ticketPath = join(project, "ticket.md");
+    await writeFile(
+      ticketPath,
+      "---\nticketNumber: 582\n---\n\n「立文件。送司天台记录。」\n",
+      "utf8",
+    );
+
+    const projectsRoot = join(home, "cc-projects");
+    const sessionDir = join(projectsRoot, encodePath(project));
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, "s.jsonl"),
+      `${JSON.stringify({
+        type: "user",
+        uuid: "u-real",
+        timestamp: "2026-08-31T10:00:00.000Z",
+        message: {
+          role: "user",
+          content: "立文件。送司天台记录。所以每个票都应该有的一份文档。#582 起居录",
+        },
+      })}\n`,
+      "utf8",
+    );
+
+    let diaristObserved = false;
+    let volumeAtTurn: number | undefined;
+    let turnStarted = false;
+
+    const baseHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (extraArgs) => {
+        const sessionFile = (() => {
+          const i = extraArgs.indexOf("--session");
+          return i >= 0 ? extraArgs[i + 1] : undefined;
+        })();
+        if (sessionFile) {
+          await mkdir(join(sessionFile, ".."), { recursive: true });
+          const toolCallId = "call_cs_diarist_1";
+          const toolArgs = { countersignStatus: "converged", note: "署" };
+          await writeFile(
+            sessionFile,
+            [
+              {
+                type: "message",
+                id: "user-1",
+                parentId: null,
+                timestamp: "2026-08-31T00:00:00.000Z",
+                message: { role: "user", content: "kickoff", timestamp: 1 },
+              },
+              {
+                type: "message",
+                id: "assistant-1",
+                parentId: "user-1",
+                timestamp: "2026-08-31T00:00:01.000Z",
+                message: {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "toolCall",
+                      id: toolCallId,
+                      name: COUNTERSIGN_OUTPUT_TOOL_NAME,
+                      arguments: toolArgs,
+                    },
+                  ],
+                  timestamp: 2,
+                },
+              },
+              {
+                type: "message",
+                id: "result-1",
+                parentId: "assistant-1",
+                timestamp: "2026-08-31T00:00:02.000Z",
+                message: {
+                  role: "toolResult",
+                  toolCallId,
+                  toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+                  content: [{ type: "text", text: "ok" }],
+                  details: toolArgs,
+                  isError: false,
+                  timestamp: 3,
+                },
+              },
+            ]
+              .map((row) => JSON.stringify(row))
+              .join("\n") + "\n",
+            "utf8",
+          );
+        }
+        return {
+          code: 0,
+          timedOut: false,
+          stderr: "",
+          sealedAcceptance: {
+            role: "countersign" as const,
+            details: { countersignStatus: "converged", note: "署" },
+          },
+        };
+      },
+    });
+
+    const observingHost = {
+      async executeTurn(request: RoleTurnRequest) {
+        turnStarted = true;
+        // beforeDispatch must have already refreshed the ticket volume.
+        const read = await readTicketProvenance(582, project);
+        volumeAtTurn = read.entries.length;
+        assert.ok(
+          diaristObserved,
+          "onDiaristResult must fire before executeTurn",
+        );
+        assert.ok(
+          (volumeAtTurn ?? 0) >= 1,
+          "ticket-provenance volume must be visible before role turn",
+        );
+        return baseHost.executeTurn(request);
+      },
+    };
+
+    const io = {
+      stdout: () => {},
+      stderr: () => {},
+    };
+
+    const result = await runPublicCountersign(
+      ["--ticket", "582", "--attach", ticketPath, "裁：本票是否足以开工。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: observingHost,
+        createRunId: () => "01a00000-0000-7000-8000-000000000584",
+        projectsRoot,
+        diaristCollector: createScriptedDiaristCollector((input) => ({
+          selections:
+            input.candidates.length > 0
+              ? [
+                  {
+                    candidateIndex: 0,
+                    quotes: ["立文件。送司天台记录。"],
+                    triage: "relevant" as const,
+                  },
+                ]
+              : [],
+          rawStdout: "{}",
+          engineArgv: ["scripted"],
+        })),
+        onDiaristResult: () => {
+          diaristObserved = true;
+        },
+      },
+      io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(turnStarted, true);
+    assert.equal(diaristObserved, true);
+    assert.ok((volumeAtTurn ?? 0) >= 1);
+    const final = await readTicketProvenance(582, project);
+    assert.ok(final.entries.length >= 1);
+  });
+});
 
 test("countersign runtime with hostActions runs notary inner gate on submit", async () => {
   const tools = new Map<string, { name: string; execute: Function }>();

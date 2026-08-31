@@ -20,10 +20,12 @@ import {
 import {
   appendTicketProvenanceEntry,
   readTicketProvenance,
+  resolveTicketProvenanceVolume,
+  ticketProvenanceEntryIdentity,
   writeTicketProvenanceHumanView,
 } from "./ticket-provenance.ts";
 import type { TicketProvenanceEntry } from "./ticket-provenance-contracts.ts";
-import type { RecordPointer } from "./sitian-contracts.ts";
+import { readSitianRecords, type RecordPointer } from "./sitian-facade.ts";
 
 export type DiaristRunInput = {
   readonly ticketNumber: number;
@@ -49,7 +51,10 @@ export type DiaristRunInput = {
 
 export type DiaristRunResult = {
   readonly ticketNumber: number;
+  /** Safeguard-cleaned source count before incremental filter. */
   readonly candidateCount: number;
+  /** Blocks not yet on the volume — sole set sent to the collector this court. */
+  readonly freshCount: number;
   readonly appended: number;
   readonly rejectedQuotes: number;
   readonly pointers: readonly RecordPointer[];
@@ -58,11 +63,40 @@ export type DiaristRunResult = {
   readonly collectorStatus:
     | "ok"
     | "skipped-no-collector"
+    | "skipped-no-fresh"
     | "failed"
     | "empty-selection";
   readonly collectorError?: string;
   readonly llmRawStdout?: string;
 };
+
+/** Identities already committed on the ticket volume (incl. verify-fail residue). */
+async function loadSeenEntryIdentities(
+  ticketNumber: number,
+  cwd: string,
+): Promise<ReadonlySet<string>> {
+  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+  const { records } = await readSitianRecords(recordFile);
+  const seen = new Set<string>();
+  for (const record of records) {
+    if (typeof record.identity === "string" && record.identity.length > 0) {
+      seen.add(record.identity);
+    }
+  }
+  return seen;
+}
+
+function blockEntryIdentity(
+  ticketNumber: number,
+  block: DiaristSourceBlock,
+): string {
+  return ticketProvenanceEntryIdentity({
+    ticketNumber,
+    sourceKind: block.sourceKind,
+    sourceRef: block.sourceRef,
+    transcript: block.transcript,
+  });
+}
 
 async function loadSourceBlocks(input: DiaristRunInput): Promise<DiaristSourceBlock[]> {
   if (input.blocks !== undefined) return [...input.blocks];
@@ -84,8 +118,13 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
   });
   const rawBlocks = await loadSourceBlocks(input);
   // Safeguard only (notify filter + dedupe) — never prose-based exclusion.
-  // LLM sees the full frozen source set and alone decides relevance.
-  const candidates = mechanicalSafeguardPipeline(rawBlocks);
+  const safeguarded = mechanicalSafeguardPipeline(rawBlocks);
+  // Incremental: only blocks whose entry identity is not yet on the volume
+  // are offered to the collector (ADR 0075 refresh-every-court = 增量幂等).
+  const seen = await loadSeenEntryIdentities(input.ticketNumber, input.cwd);
+  const fresh = safeguarded.filter(
+    (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block)),
+  );
 
   const llmRequired = input.llmRequired !== false;
   let collectorStatus: DiaristRunResult["collectorStatus"] = "skipped-no-collector";
@@ -101,19 +140,23 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
         : input.collector;
 
   if (collector !== undefined) {
-    try {
-      collect = await collector({
-        ticketNumber: input.ticketNumber,
-        candidates,
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-      });
-      llmRawStdout = collect.rawStdout;
-      collectorStatus =
-        collect.selections.length === 0 ? "empty-selection" : "ok";
-    } catch (error) {
-      collectorStatus = "failed";
-      collectorError =
-        error instanceof Error ? error.message : String(error);
+    if (fresh.length === 0) {
+      collectorStatus = "skipped-no-fresh";
+    } else {
+      try {
+        collect = await collector({
+          ticketNumber: input.ticketNumber,
+          candidates: fresh,
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+        });
+        llmRawStdout = collect.rawStdout;
+        collectorStatus =
+          collect.selections.length === 0 ? "empty-selection" : "ok";
+      } catch (error) {
+        collectorStatus = "failed";
+        collectorError =
+          error instanceof Error ? error.message : String(error);
+      }
     }
   }
 
@@ -123,10 +166,9 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
 
   if (collect !== undefined && collectorStatus === "ok") {
     for (const selection of collect.selections) {
-      // Human-face irrelevant labels are not machine gates; still, skip them
-      // so the volume stays decision-focused (collector asked to omit them).
-      if (selection.triage === "irrelevant") continue;
-      const block = candidates[selection.candidateIndex];
+      // triage is human-face only — never a machine gate (collector contract).
+      // Inclusion is solely: selection present + quote reverse-verify pass.
+      const block = fresh[selection.candidateIndex];
       if (block === undefined) continue;
       const projected = blockToLlmEntry(block, {
         anchors,
@@ -156,7 +198,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     }
   } else if (!llmRequired && collector === undefined) {
     // Explicit mechanical-only mode (tests / offline). Not production default.
-    for (const block of candidates) {
+    for (const block of fresh) {
       if (!block.isUserTurn) continue;
       const entry = blockToPrescreenEntry(block, anchors);
       const ptr = appendTicketProvenanceEntry({
@@ -183,7 +225,8 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
 
   return {
     ticketNumber: input.ticketNumber,
-    candidateCount: candidates.length,
+    candidateCount: safeguarded.length,
+    freshCount: fresh.length,
     appended: accepted.length,
     rejectedQuotes,
     pointers,
