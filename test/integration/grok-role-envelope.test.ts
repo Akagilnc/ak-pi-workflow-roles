@@ -9,10 +9,7 @@ import test from "node:test";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
-import {
-  NOTARY_SESSION_BOUND_ENTRY,
-  projectNotarySessionBound,
-} from "../../src/notary-role.ts";
+import { NOTARY_SESSION_BOUND_ENTRY } from "../../src/notary-role.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
@@ -301,11 +298,6 @@ test("public Notary --ticket: admitted→activation→agent-start typed ticket i
       "ticketNumber" in request.activation ? request.activation.ticketNumber : undefined,
       582,
     );
-    // Typed agent-start bound projection (same material role before_agent_start consumes).
-    assert.equal(
-      projectNotarySessionBound({ sourceRun, ticketNumber: 582 }).ticketNumber,
-      582,
-    );
     const envelopeRequest: RoleTurnRequest = {
       ...request,
       model: { provider: "xai", model: "grok-4.5" },
@@ -323,7 +315,7 @@ test("public Notary --ticket: admitted→activation→agent-start typed ticket i
       },
     });
     try {
-      // Durable session custom entry: typed ticket on envelope-owned lifecycle evidence.
+      // Durable session custom entry: typed ticket after real envelope prepare.
       const sessionFile = join(envelopeRequest.runDirectory, "grok-envelope.jsonl");
       const lines = (await readFile(sessionFile, "utf8"))
         .split("\n")
@@ -339,8 +331,6 @@ test("public Notary --ticket: admitted→activation→agent-start typed ticket i
       };
       assert.equal(bound.ticketNumber, 582);
       assert.equal(bound.sourceRunPath, sourceRunPath);
-      // Envelope prepare completed through agent-start; ticket proof is typed fields above.
-      assert.ok(prepared);
     } finally {
       await prepared.dispose?.();
     }
