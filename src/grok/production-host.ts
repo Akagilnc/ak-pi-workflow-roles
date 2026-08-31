@@ -31,9 +31,24 @@ import {
 } from "./role-turn-host.ts";
 import { createGrokSessionIdentityAuthority } from "./session-identity.ts";
 
+/** Active turn isolation visible to inspect/connect and to the test inner-host seam. */
+export type ProductionGrokTurnIsolation = Readonly<{
+  operatorHome: string;
+  controlledHome: string;
+  binary: string;
+  env: NodeJS.ProcessEnv;
+}>;
+
 export type ProductionGrokHostOptions = Readonly<{
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
+  /**
+   * Test seam: substitute the S6 composed adapter. Production omits this.
+   * `getTurn` is defined only during executeTurn after isolation is bound.
+   */
+  createInnerHost?: (api: {
+    getTurn: () => ProductionGrokTurnIsolation;
+  }) => RoleTurnHost;
 }>;
 
 function resolveGrokBinary(operatorHome: string): string {
@@ -116,43 +131,53 @@ async function recordGrokCapabilities(
 export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOptions): RoleTurnHost {
   const { packageRoot, principalAuthority } = options;
   // Single-slot turn isolation; outer serial keeps operator/controlled pairing intact.
-  let turn: { operatorHome: string; controlledHome: string } | undefined;
+  let turn: ProductionGrokTurnIsolation | undefined;
   let serial = Promise.resolve();
+  const getTurn = (): ProductionGrokTurnIsolation => {
+    if (turn === undefined) {
+      throw new Error("production grok turn isolation is not active");
+    }
+    return turn;
+  };
 
-  const inner = createComposedGrokRoleTurnHost({
-    sessionIdentity: createGrokSessionIdentityAuthority(principalAuthority),
-    roleRuntimeDependencies: createGrokRoleRuntimeDependencies(packageRoot),
-    recordCapabilities: recordGrokCapabilities,
-    async inspect(request) {
-      if (turn === undefined) {
-        throw new Error("production grok inspect requires an active isolated turn");
-      }
-      return inspectControlledGrok({
-        binary: resolveGrokBinary(turn.operatorHome),
-        cwd: request.cwd,
-        env: childEnv(turn.controlledHome, packageRoot),
-        packageRoot,
-      });
-    },
-    async connect(request) {
-      if (turn === undefined) {
-        throw new Error("production grok connect requires an active isolated turn");
-      }
-      return connectGrokAcpStdio({
-        binary: resolveGrokBinary(turn.operatorHome),
-        cwd: request.cwd,
-        env: childEnv(turn.controlledHome, packageRoot),
-        ...(request.model === undefined ? {} : { model: request.model.model }),
-      });
-    },
-  });
+  const inner =
+    options.createInnerHost?.({ getTurn }) ??
+    createComposedGrokRoleTurnHost({
+      sessionIdentity: createGrokSessionIdentityAuthority(principalAuthority),
+      roleRuntimeDependencies: createGrokRoleRuntimeDependencies(packageRoot),
+      recordCapabilities: recordGrokCapabilities,
+      async inspect(request) {
+        const active = getTurn();
+        return inspectControlledGrok({
+          binary: active.binary,
+          cwd: request.cwd,
+          env: active.env,
+          packageRoot,
+        });
+      },
+      async connect(request) {
+        const active = getTurn();
+        return connectGrokAcpStdio({
+          binary: active.binary,
+          cwd: request.cwd,
+          env: active.env,
+          ...(request.model === undefined ? {} : { model: request.model.model }),
+        });
+      },
+    });
 
   return {
     executeTurn(request) {
       const execution = serial.then(async () => {
         const operatorHome = request.home;
         const controlledHome = await openProductionGrokHome(operatorHome);
-        turn = { operatorHome, controlledHome };
+        // One controlledHome feeds child env, auth root, and S6 request.home.
+        turn = {
+          operatorHome,
+          controlledHome,
+          binary: resolveGrokBinary(operatorHome),
+          env: childEnv(controlledHome, packageRoot),
+        };
         try {
           // S6 seatbelt hangs on request.home — pass the same isolated root as GROK_HOME.
           return await inner.executeTurn({ ...request, home: controlledHome });
