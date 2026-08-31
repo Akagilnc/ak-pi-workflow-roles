@@ -9,6 +9,7 @@ import test from "node:test";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { NOTARY_SESSION_BOUND_ENTRY } from "../../src/notary-role.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
@@ -235,6 +236,69 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       assert.equal(closure.retry.code, "coder_skill_expansion_evidence_missing");
       assert.equal(closure.retry.toolCallIds.length, 1);
       assert.equal(typeof closure.retry.toolCallIds[0], "string");
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok notary --ticket: activation → envelope agent-start → session bound entry", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-ticket-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const socketPath = join(root, "mcp.sock");
+    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
+    const sourceRun = join(root, "source-run");
+    const request = {
+      principal: {},
+      activation: {
+        role: "notary" as const,
+        sourceRun,
+        ticketNumber: 582,
+      },
+      methods: [],
+      continuation: { kind: "initial" as const, prompt: "attest" },
+      model: { provider: "xai", model: "grok-4.5" },
+      cwd: process.cwd(),
+      home: root,
+      agentDir: join(root, "agent"),
+      runDirectory: join(root, "runs", `${runId}@notary`),
+    } as RoleTurnRequest;
+    const prepared = await prepareGrokRoleEnvelope({
+      request,
+      socketPath,
+      dependencies: {
+        loadNotarySoul: async () => "NOTARY SOUL",
+        loadNotarySourceRun: async () => ({
+          runDirectory: sourceRun,
+          runId: "run-1",
+          role: "judge",
+        }),
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      // One tracer: activation flags → shared envelope session_start/activate
+      // → before_agent_start → typed session custom entry (envelope-owned write).
+      const boundEntry = prepared.sessionEntries.find(
+        (e) => e.customType === NOTARY_SESSION_BOUND_ENTRY,
+      );
+      assert.ok(boundEntry, "envelope must write notary-session-bound on agent-start");
+      const bound = boundEntry.data as {
+        sourceRunPath?: string;
+        ticketNumber?: number;
+      };
+      assert.equal(bound.ticketNumber, 582);
+      assert.equal(bound.sourceRunPath, sourceRun);
     } finally {
       await prepared.dispose?.();
     }

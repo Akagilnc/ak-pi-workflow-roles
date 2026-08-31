@@ -46,7 +46,11 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
-import { createNotaryRoleRuntime } from "./notary-role.ts";
+import {
+  createNotaryRoleRuntime,
+  NOTARY_SESSION_BOUND_ENTRY,
+  projectNotaryBoundFromFlags,
+} from "./notary-role.ts";
 import {
   COUNTERSIGN_TOOL_SPEC,
   type CountersignRuntimeDependencies,
@@ -942,6 +946,14 @@ export function createRoleRuntimeExtension(
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
+      }
+      // Notary session bound: envelope-owned lifecycle write (ADR 0018 / #582).
+      // Role module only projects bound into prompt; typed ledger entry lives here.
+      if (role === "notary") {
+        const bound = projectNotaryBoundFromFlags((name) => roleHost.getFlag(name));
+        if (bound !== undefined) {
+          ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
+        }
       }
       if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorWorkContext.contextError === undefined) {
         // Flagged roles already have a concrete packet/task/case/review input.
