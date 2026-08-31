@@ -4475,7 +4475,7 @@ import { randomUUID as randomUUID2 } from "node:crypto";
 import { mkdir as mkdir3, readFile as readFile10 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { appendFileSync as appendFileSync2 } from "node:fs";
-import { basename as basename6, dirname as dirname13, join as join18 } from "node:path";
+import { basename as basename7, dirname as dirname13, join as join18 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/gatekeeper-role.ts
@@ -5720,7 +5720,7 @@ async function requireGatekeeperPass(options) {
 
 // src/role-runtime.ts
 import { readFileSync as readFileSync4, writeSync as writeSync4 } from "node:fs";
-import { join as pathJoin } from "node:path";
+import { basename as basename6, join as pathJoin } from "node:path";
 
 // src/host-contracts.ts
 import { Type as Type12 } from "typebox";
@@ -5748,7 +5748,7 @@ import { writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join14 } from "node:path";
 
 // src/adr-path-refs.ts
-var ADR_PATH_IN_BODY = /docs\/adr\/[A-Za-z0-9][A-Za-z0-9._/-]*\.md/g;
+var ADR_PATH_IN_BODY = /docs\/adr\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md/g;
 function extractReferencedAdrPaths(text) {
   const seen = /* @__PURE__ */ new Set();
   const paths = [];
@@ -10151,6 +10151,64 @@ function readBoundTicketNumberForNotaryGate(roleHost) {
   }
   return void 0;
 }
+var COUNTERSIGN_RUN_DIR_NAME = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@([A-Za-z][A-Za-z0-9_-]*)$/i;
+function readCountersignSourceRunLocatorForNotaryGate() {
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") {
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      "countersign Notary gate: true-unbound material requires AK_ROLE_RUN_DIR source-run locator"
+    );
+  }
+  const statePath = pathJoin(runDir, "run-state.json");
+  let rawText;
+  try {
+    rawText = readFileSync4(statePath, "utf8");
+  } catch (error) {
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      `countersign Notary gate: run-state.json unreadable for source-run (${statePath})`,
+      { cause: error }
+    );
+  }
+  let raw;
+  try {
+    raw = JSON.parse(rawText);
+  } catch (error) {
+    throw new CountersignInvocationBindingError(
+      "unparseable",
+      `countersign Notary gate: run-state.json unparseable for source-run (${statePath})`,
+      { cause: error }
+    );
+  }
+  if (typeof raw !== "object" || raw === null || typeof raw.runId !== "string" || typeof raw.role !== "string" || typeof raw.runDirectory !== "string") {
+    throw new CountersignInvocationBindingError(
+      "unparseable",
+      `countersign Notary gate: run-state.json lacks source-run identity (${statePath})`
+    );
+  }
+  const runId = raw.runId;
+  const role = raw.role;
+  const runDirectory = raw.runDirectory;
+  const fromName = COUNTERSIGN_RUN_DIR_NAME.exec(basename6(runDir));
+  if (fromName !== null) {
+    if (fromName[1] !== runId || fromName[2] !== role) {
+      throw new CountersignInvocationBindingError(
+        "unparseable",
+        "countersign Notary gate: run-state identity does not match source-run directory name"
+      );
+    }
+  }
+  return { runDirectory, runId, role };
+}
+function buildCountersignNotaryGateMaterial(input) {
+  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
+  if (ticketNumber !== void 0) {
+    return JSON.stringify({ verdict: input.parameters, ticketNumber });
+  }
+  const sourceRun = readCountersignSourceRunLocatorForNotaryGate();
+  return JSON.stringify({ verdict: input.parameters, sourceRun });
+}
 function createFiledOfficerRuntime(roleHost, spec, dependencies) {
   let soul;
   let registered = false;
@@ -10198,10 +10256,10 @@ ${soul}
 }
 function createCountersignRoleRuntime(roleHost, dependencies, hostActions) {
   const beforeAccept = hostActions !== void 0 && roleHost.requireGatekeeperPass !== void 0 ? async ({ toolCallId, parameters, signal, ctx }) => {
-    const ticketNumber = readBoundTicketNumberForNotaryGate(roleHost);
-    const material = JSON.stringify(
-      ticketNumber === void 0 ? { verdict: parameters } : { verdict: parameters, ticketNumber }
-    );
+    const material = buildCountersignNotaryGateMaterial({
+      roleHost,
+      parameters
+    });
     await roleHost.requireGatekeeperPass({
       context: ctx,
       subject: { kind: "countersign_verdict", material },
@@ -11277,7 +11335,7 @@ async function prepareGrokRoleEnvelope(options) {
   await mkdir3(request.runDirectory, { recursive: true });
   for (const method of request.methods) {
     if (method.kind !== "skill") continue;
-    const name = basename6(dirname13(method.path));
+    const name = basename7(dirname13(method.path));
     const raw = await readFile10(method.path, "utf8");
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }

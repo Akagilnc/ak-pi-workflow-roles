@@ -105,18 +105,56 @@ test("notary gate material carries ticketNumber from real Grok activation flags"
   assert.equal(material.verdict?.countersignStatus, "converged");
 });
 
-test("notary gate omits ticketNumber when activation flag map has none", async () => {
+test("notary gate true-unbound material carries sourceRun locator", async () => {
+  await withHermeticHome({ prefix: "ak-cs-unbound-src-" }, async ({ home }) => {
+    const runId = "01a0sign00-0000-7000-8000-000000000099";
+    const runDir = join(home, "runs", `${runId}@countersign`);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "run-state.json"),
+      `${JSON.stringify({
+        runId,
+        role: "countersign",
+        state: "running",
+        bookKey: "test",
+        projectRoot: home,
+        sessionDirectory: join(runDir, "session"),
+        sessionFile: join(runDir, "session", "s.jsonl"),
+        runDirectory: runDir,
+        admittedRequestPath: join(runDir, "admitted-request.json"),
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const flags = projectGrokActivationFlags({
+      activation: { role: "countersign" },
+    } as RoleTurnRequest);
+    assert.equal(flags.has("ak-countersign-ticket-number"), false);
+
+    const { gateCalls, error } = await submitThroughGate({ flags, runDir });
+    assert.equal(error, undefined);
+    assert.equal(gateCalls.length, 1);
+    const material = JSON.parse(gateCalls[0]!.material) as {
+      ticketNumber?: number;
+      sourceRun?: { runDirectory?: string; runId?: string; role?: string };
+      verdict?: { countersignStatus?: string };
+    };
+    assert.equal(material.ticketNumber, undefined);
+    assert.equal(material.sourceRun?.runId, runId);
+    assert.equal(material.sourceRun?.role, "countersign");
+    assert.equal(material.sourceRun?.runDirectory, runDir);
+    assert.equal(material.verdict?.countersignStatus, "converged");
+  });
+});
+
+test("notary gate true-unbound without source-run locator fails typed", async () => {
   const flags = projectGrokActivationFlags({
     activation: { role: "countersign" },
   } as RoleTurnRequest);
-  assert.equal(flags.has("ak-countersign-ticket-number"), false);
-
   const { gateCalls, error } = await submitThroughGate({ flags });
-  assert.equal(error, undefined);
-  const material = JSON.parse(gateCalls[0]!.material) as {
-    ticketNumber?: number;
-  };
-  assert.equal(material.ticketNumber, undefined);
+  assert.ok(error instanceof CountersignInvocationBindingError);
+  assert.equal(error.reason, "unreadable");
+  assert.equal(gateCalls.length, 0);
 });
 
 const BINDING_FAILURES: readonly {
