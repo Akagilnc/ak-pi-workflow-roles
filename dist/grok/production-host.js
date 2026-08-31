@@ -4420,7 +4420,7 @@ function loadGatekeeperSessionMaterials(role) {
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { mkdir as mkdir3, readFile as readFile10, writeFile as writeFile5 } from "node:fs/promises";
 import { createServer } from "node:net";
-import { basename as basename8, dirname as dirname14, join as join17 } from "node:path";
+import { basename as basename7, dirname as dirname14, join as join17 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/gatekeeper-role.ts
@@ -4436,13 +4436,12 @@ import "@earendil-works/pi-ai";
 import { Type as Type9 } from "typebox";
 
 // src/auditor-dossier-tool.ts
-import { basename as basename4, dirname as dirname8, join as join8, resolve as resolve6 } from "node:path";
+import { dirname as dirname8, join as join8, resolve as resolve6 } from "node:path";
 import { Type as Type8 } from "typebox";
 function auditorRunDirectory(context) {
   const sessionFile = context.sessionManager?.getSessionFile?.();
   if (sessionFile === void 0) return void 0;
-  const parent = resolve6(dirname8(sessionFile));
-  return basename4(parent) === "session" ? resolve6(dirname8(parent)) : parent;
+  return resolve6(dirname8(dirname8(sessionFile)));
 }
 
 // src/sitian-appender.ts
@@ -4450,7 +4449,7 @@ init_activation_ledger_git();
 init_activation_ledger_topology();
 import { createHash as createHash5, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync as existsSync2, readFileSync } from "node:fs";
-import { basename as basename5, dirname as dirname9, join as join9, resolve as resolve7 } from "node:path";
+import { basename as basename4, dirname as dirname9, join as join9, resolve as resolve7 } from "node:path";
 
 // src/sitian-contracts.ts
 function attachDirectErrnoCode(error, cause) {
@@ -4488,7 +4487,7 @@ function safeBookKey(cwd) {
   try {
     return resolveBookKeyFromGit(cwd);
   } catch {
-    return basename5(resolve7(cwd)) || "default";
+    return basename4(resolve7(cwd)) || "default";
   }
 }
 function resolveSitianRecordPathInLedger(input, ledgerHome) {
@@ -6001,9 +6000,9 @@ import { Value as Value5 } from "typebox/value";
 init_activation_ledger_topology();
 
 // src/run-terminal-artifacts.ts
-import { basename as basename6, dirname as dirname11, join as join14 } from "node:path";
+import { basename as basename5, dirname as dirname11, join as join14 } from "node:path";
 function runIdFromRunDirectory(runDirectory) {
-  const name = basename6(runDirectory);
+  const name = basename5(runDirectory);
   const at = name.lastIndexOf("@");
   if (at <= 0 || at === name.length - 1) return void 0;
   return name.slice(0, at);
@@ -10586,8 +10585,8 @@ function createRoleRuntimeExtension(dependencies) {
 
 // src/grok/role-turn-host.ts
 import { execFile as execFile3, spawn as spawn3 } from "node:child_process";
-import { copyFile, mkdir as mkdir2, realpath as realpath6 } from "node:fs/promises";
-import { basename as basename7, dirname as dirname13, isAbsolute as isAbsolute6, join as join16, relative as pathRelative } from "node:path";
+import { copyFile, mkdir as mkdir2, open as open2, realpath as realpath6 } from "node:fs/promises";
+import { basename as basename6, dirname as dirname13, isAbsolute as isAbsolute6, join as join16, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify as promisify3 } from "node:util";
 
@@ -10779,7 +10778,7 @@ function createGrokRoleTurnHost(config) {
         let sessionId;
         let accepted = false;
         try {
-          if (inspected.akActive.length === 0 || prepared.mcpServers.length === 0) {
+          if (prepared.mcpServers.length === 0) {
             return failure("activation", "UncontrolledGrokSession", "ak-config-missing");
           }
           connection = await config.connect(request);
@@ -10826,36 +10825,22 @@ function createGrokRoleTurnHost(config) {
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
           let prompt = prepared.prompt;
           for (let attempt = 0; attempt < 8; attempt += 1) {
-            const promptResult = connection.request("session/prompt", {
+            const result2 = await connection.request("session/prompt", {
               sessionId,
               prompt: [{ type: "text", text: prompt }]
             });
-            const result2 = await Promise.race([
-              promptResult,
-              prepared.whenSealed().then(() => ({ stopReason: "end_turn", sealedEarly: true }))
-            ]);
             if (result2.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
-            const sealedEarly = "sealedEarly" in result2 && result2.sealedEarly === true;
             const closure = await prepared.closeRound();
             if (closure.accepted) {
-              try {
-                await connection.request("session/close", { sessionId });
-              } catch (error) {
-                if (!sealedEarly) throw error;
-                const code = typeof error === "object" && error !== null && "code" in error ? error.code : void 0;
-                if (code !== "acp-closed" && code !== "acp-connection-closed" && code !== "acp-write-failed") {
-                  throw error;
-                }
-              }
+              await connection.request("session/close", { sessionId });
               accepted = true;
               return { code: 0, stderr: "", timedOut: false };
             }
             if ("failure" in closure) {
               return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
             }
-            await promptResult.catch(() => void 0);
             prompt = `The prior terminal submission was rejected (${closure.retry.code}). Resubmit it as the sole terminal tool call. Rejected call ids: ${closure.retry.toolCallIds.join(", ") || "none"}.`;
           }
           return failure("output", "GrokAcpRoundLimit", "round-retry-limit", { sessionId });
@@ -10892,23 +10877,21 @@ function errnoCode2(error) {
   const code = error.code;
   return typeof code === "string" ? code : void 0;
 }
-function isGitBinaryMissing(error) {
-  return errnoCode2(error) === "ENOENT";
-}
-function isGitAbsentPathError(error) {
-  if (isGitBinaryMissing(error)) return false;
-  if (typeof error !== "object" || error === null) return false;
-  const code = error.code;
-  if (code !== 128 && code !== 1) return false;
-  const stderr = String(error.stderr ?? "");
-  if (/permission denied|eacces|eperm/i.test(stderr)) return false;
-  return /could not open|no such file|does not exist|not a valid object name|bad revision|pathspec|needed a single revision/i.test(stderr);
-}
 async function realpathIfPresent(path) {
   try {
     return await realpath6(path);
   } catch (error) {
     if (errnoCode2(error) === "ENOENT") return void 0;
+    throw error;
+  }
+}
+async function worktreeFilePresence(path) {
+  try {
+    const handle = await open2(path, "r");
+    await handle.close();
+    return "present";
+  } catch (error) {
+    if (errnoCode2(error) === "ENOENT") return "absent";
     throw error;
   }
 }
@@ -10921,24 +10904,25 @@ async function resolveHeadTreePath(topLevel, relativePath) {
   const exactHits = exactOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
   if (exactHits.includes(relativePath)) return relativePath;
   const parent = dirname13(relativePath);
-  const leaf = basename7(relativePath);
-  let listing;
-  try {
-    const { stdout } = parent === "." ? await execFileAsync3("git", ["ls-tree", "--name-only", "HEAD"], {
-      cwd: topLevel,
-      encoding: "utf8"
-    }) : await execFileAsync3("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
-      cwd: topLevel,
-      encoding: "utf8"
-    });
-    listing = stdout;
-  } catch (error) {
-    if (isGitBinaryMissing(error)) throw error;
-    if (isGitAbsentPathError(error)) return void 0;
-    throw error;
+  const leaf = basename6(relativePath);
+  if (parent !== ".") {
+    const { stdout: parentOut } = await execFileAsync3(
+      "git",
+      ["ls-tree", "--name-only", "HEAD", "--", parent],
+      { cwd: topLevel, encoding: "utf8" }
+    );
+    const parentHits = parentOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
+    if (!parentHits.includes(parent)) return void 0;
   }
+  const { stdout: listing } = parent === "." ? await execFileAsync3("git", ["ls-tree", "--name-only", "HEAD"], {
+    cwd: topLevel,
+    encoding: "utf8"
+  }) : await execFileAsync3("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
+    cwd: topLevel,
+    encoding: "utf8"
+  });
   const needle = leaf.toLowerCase();
-  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename7(name).toLowerCase() === needle).map((name) => parent === "." ? basename7(name) : join16(parent, basename7(name)));
+  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename6(name).toLowerCase() === needle).map((name) => parent === "." ? basename6(name) : join16(parent, basename6(name)));
   return hits.length === 1 ? hits[0] : void 0;
 }
 async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
@@ -10954,7 +10938,7 @@ async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
   const topLevel = await realpath6(topLevelOut.trim());
   const parent = await realpathIfPresent(dirname13(absolutePath));
   if (parent === void 0) return false;
-  const leaf = basename7(absolutePath);
+  const leaf = basename6(absolutePath);
   if (leaf === "" || leaf === "." || leaf === "..") return false;
   const candidate = join16(parent, leaf);
   const relative3 = pathRelative(topLevel, candidate);
@@ -10970,28 +10954,19 @@ async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
     { cwd: topLevel, encoding: "utf8" }
   );
   const headBlob = headBlobOut.trim();
-  let workBlob;
-  try {
-    const { stdout } = await execFileAsync3("git", ["hash-object", "--", candidate], {
-      cwd: topLevel,
-      encoding: "utf8"
-    });
-    workBlob = stdout.trim();
-  } catch (error) {
-    if (!isGitAbsentPathError(error) && errnoCode2(error) !== "ENOENT") throw error;
+  let hashTarget = candidate;
+  const candidatePresence = await worktreeFilePresence(candidate);
+  if (candidatePresence === "absent") {
     if (candidate === headFile) return false;
-    try {
-      const { stdout } = await execFileAsync3("git", ["hash-object", "--", headFile], {
-        cwd: topLevel,
-        encoding: "utf8"
-      });
-      workBlob = stdout.trim();
-    } catch (headReadError) {
-      if (isGitAbsentPathError(headReadError) || errnoCode2(headReadError) === "ENOENT") return false;
-      throw headReadError;
-    }
+    const headPresence = await worktreeFilePresence(headFile);
+    if (headPresence === "absent") return false;
+    hashTarget = headFile;
   }
-  return headBlob === workBlob;
+  const { stdout } = await execFileAsync3("git", ["hash-object", "--", hashTarget], {
+    cwd: topLevel,
+    encoding: "utf8"
+  });
+  return headBlob === stdout.trim();
 }
 function inspectItemPath(value) {
   if (typeof value.source?.path === "string") return value.source.path;
@@ -11154,24 +11129,28 @@ async function prepareGrokRoleEnvelope(options) {
   await mkdir3(request.runDirectory, { recursive: true });
   for (const method of request.methods) {
     if (method.kind !== "skill") continue;
-    const name = basename8(dirname14(method.path));
+    const name = basename7(dirname14(method.path));
     const raw = await readFile10(method.path, "utf8");
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
   let sessionFile = join17(request.runDirectory, "session", "session.jsonl");
   await mkdir3(dirname14(sessionFile), { recursive: true });
-  await writeFile5(
-    sessionFile,
-    `${JSON.stringify({
-      type: "session",
-      version: 3,
-      id: runId,
-      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      cwd: request.cwd
-    })}
+  try {
+    await writeFile5(
+      sessionFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: runId,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        cwd: request.cwd
+      })}
 `,
-    "utf8"
-  );
+      { encoding: "utf8", flag: "wx" }
+    );
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
   const context = {
     cwd: request.cwd,
     mode: "print",
@@ -11341,15 +11320,6 @@ async function prepareGrokRoleEnvelope(options) {
                 details: result2.details,
                 isError: false
               });
-              const disposition = typeof projected.details === "object" && projected.details !== null && !Array.isArray(projected.details) ? projected.details.submissionDisposition : void 0;
-              if (disposition === "pending-round-closure" && calls.length > 0) {
-                const roundCalls = [...calls];
-                calls.length = 0;
-                await emit("turn_end", { turnIndex: 0, calls: roundCalls });
-                if (customEntries.some((entry) => entry.customType === "ak-role-submission-closure")) {
-                  sealedNotify?.();
-                }
-              }
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...projected.isError ? { isError: true } : {} });
             } catch (error) {
               const projected = await projectToolResult(toolCallId, name, {

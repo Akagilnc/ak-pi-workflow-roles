@@ -139,20 +139,24 @@ export async function prepareGrokRoleEnvelope(options: {
   }
 
   // Durable principal layout matches public-cli settlement (session/session.jsonl).
-  // Without this file, accepted turns die on appendRunAttemptHistory ENOENT after seal.
+  // Create the header only when absent; resume must keep every prior byte and append.
   let sessionFile = join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
-  await writeFile(
-    sessionFile,
-    `${JSON.stringify({
-      type: "session",
-      version: 3,
-      id: runId,
-      timestamp: new Date().toISOString(),
-      cwd: request.cwd,
-    })}\n`,
-    "utf8",
-  );
+  try {
+    await writeFile(
+      sessionFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: runId,
+        timestamp: new Date().toISOString(),
+        cwd: request.cwd,
+      })}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== "EEXIST") throw error;
+  }
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
@@ -314,22 +318,9 @@ export async function prepareGrokRoleEnvelope(options: {
                 details: result.details,
                 isError: false,
               });
-              // Terminating tools return pending-round-closure; the shared ledger seals on
-              // turn_end. Close that boundary before the MCP success reply so a settle failure
-              // cannot leave the caller with a success they never earned (and so whenSealed
-              // only fires after settle, not mid-append before session/close).
-              const disposition = typeof projected.details === "object" && projected.details !== null
-                && !Array.isArray(projected.details)
-                ? (projected.details as { submissionDisposition?: unknown }).submissionDisposition
-                : undefined;
-              if (disposition === "pending-round-closure" && calls.length > 0) {
-                const roundCalls = [...calls];
-                calls.length = 0;
-                await emit("turn_end", { turnIndex: 0, calls: roundCalls });
-                if (customEntries.some((entry) => entry.customType === "ak-role-submission-closure")) {
-                  sealedNotify?.();
-                }
-              }
+              // Candidate only: do not emit turn_end here. Seal waits for the typed ACP
+              // round boundary (closeRound after session/prompt), so delayed siblings stay
+              // in the same round instead of becoming silent post-seal anomalies.
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
               // The shared envelope's tool_result handler is the sole classifier:
@@ -374,8 +365,7 @@ export async function prepareGrokRoleEnvelope(options: {
   };
 
   const closeRound: GrokPreparedTurn["closeRound"] = async () => {
-    // Tool path may already have sealed a pending-round-closure turn; only emit when
-    // calls remain (prompt ended with tools not yet closed, or non-pending path).
+    // Typed round boundary: hand the complete call list to the shared ledger once.
     if (calls.length > 0) {
       const roundCalls = [...calls];
       calls.length = 0;

@@ -233,7 +233,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
   }
 });
 
-test("Grok MCP projection executes a terminal submission through the single ledger gate to typed closure", async () => {
+test("Grok MCP projection seals only after closeRound typed boundary; terminal candidate alone does not accept", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
@@ -251,14 +251,8 @@ test("Grok MCP projection executes a terminal submission through the single ledg
       agentDir: join(root, "agent"), runDirectory,
     } as RoleTurnRequest;
 
-    // Hold navigator settle inside tool.execute so mid-execute sealedNotify would
-    // be observable before callThroughMcp returns (pre-9cb55699 regression shape).
     const sealedFlag = { value: false };
-    const sealedDuringSettle = { value: undefined as boolean | undefined };
-    let releaseSettle!: () => void;
-    const settleHold = new Promise<void>((resolve) => { releaseSettle = resolve; });
-    let markSettleEntered!: () => void;
-    const settleEntered = new Promise<void>((resolve) => { markSettleEntered = resolve; });
+    let settleCount = 0;
 
     const prepared = await prepareGrokRoleEnvelope({
       request,
@@ -280,13 +274,7 @@ test("Grok MCP projection executes a terminal submission through the single ledg
           setWorkContext() {},
           warmHelp() {},
           isPreparing: () => false,
-          settle: async () => {
-            // Flush microtasks so a mid-execute sealedNotify would flip the flag first.
-            await Promise.resolve();
-            sealedDuringSettle.value = sealedFlag.value;
-            markSettleEntered();
-            await settleHold;
-          },
+          settle: async () => { settleCount += 1; },
           dispose() {},
         }),
       },
@@ -304,40 +292,25 @@ test("Grok MCP projection executes a terminal submission through the single ledg
       prepared.whenSealed().then(() => { sealedFlag.value = true; });
 
       const server = prepared.mcpServers[0] as McpServer;
-      const replyPromise = callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
-      let replySettled = false;
-      void replyPromise.then(
-        () => { replySettled = true; },
-        () => { replySettled = true; },
-      );
-      await settleEntered;
-      // Flush microtasks: a pre-settle success reply would mark replySettled true here.
-      await Promise.resolve();
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(
-        sealedDuringSettle.value,
-        false,
-        "whenSealed must not fire mid-execute while navigator settle is still running",
-      );
-      assert.equal(sealedFlag.value, false);
-      assert.equal(
-        replySettled,
-        false,
-        "MCP caller must not receive success reply before turn_end/navigator settle completes",
-      );
-      releaseSettle();
-
-      const reply = await replyPromise;
-      assert.equal(replySettled, true);
+      const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(reply.error, undefined);
       assert.equal((reply.result as { isError?: boolean })?.isError, undefined);
+      const disposition = (reply.result as { structuredContent?: { submissionDisposition?: unknown } })?.structuredContent?.submissionDisposition;
+      assert.equal(disposition, "pending-round-closure");
 
-      // After settle + reply, seal notification must resolve for early-accept race.
-      await prepared.whenSealed();
-      assert.equal(sealedFlag.value, true);
+      // Candidate after tool path must not seal: no settle, no whenSealed, no ledger accept.
+      await Promise.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(sealedFlag.value, false);
+      assert.equal(settleCount, 0);
+      assert.equal(await readSealedSubmission(process.cwd(), runId, root), undefined);
 
       const closure = await prepared.closeRound();
       assert.deepEqual(closure, { accepted: true });
+      await prepared.whenSealed();
+      assert.equal(sealedFlag.value, true);
+      assert.equal(settleCount, 1);
+
       // Settlement seam: bare runId must resolve the sealed projection written under
       // AK_ROLE_RUN_DIR → runIdFromRunDirectory identity (not session header `<uuid>@role`).
       const sealed = await readSealedSubmission(process.cwd(), runId, root);
@@ -345,7 +318,98 @@ test("Grok MCP projection executes a terminal submission through the single ledg
       assert.equal(sealed?.role, "notary");
       assert.equal(sealed?.status, "pass");
     } finally {
-      releaseSettle?.();
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok prepare keeps existing session history on resume; delayed sibling after terminal is not early-accepted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-sibling-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
+    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const sessionDir = join(runDirectory, "session");
+    await mkdir(sessionDir, { recursive: true });
+    const sessionPath = join(sessionDir, "session.jsonl");
+    const priorHeader = JSON.stringify({
+      type: "session",
+      version: 3,
+      id: `${runId}@notary`,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      cwd: process.cwd(),
+    });
+    const priorHistory = JSON.stringify({
+      type: "message",
+      message: { role: "assistant", content: [{ type: "text", text: "prior turn" }] },
+    });
+    await writeFile(sessionPath, `${priorHeader}\n${priorHistory}\n`, "utf8");
+
+    const request = {
+      principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
+      continuation: { kind: "resume", prompt: "continue" },
+      model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+      agentDir: join(root, "agent"), runDirectory,
+    } as RoleTurnRequest;
+
+    const prepared = await prepareGrokRoleEnvelope({
+      request,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadNotarySoul: async () => "NOTARY SOUL",
+        loadNotarySourceRun: async () => ({ runDirectory: root, runId: "run-1", role: "notary" }),
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: join(root, "work"),
+          subject: "resume sibling",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: () => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => {},
+          dispose() {},
+        }),
+      },
+    });
+    try {
+      const afterPrepare = await readFile(sessionPath, "utf8");
+      assert.equal(afterPrepare.includes(priorHistory), true, "prepare must not truncate prior session history");
+      assert.equal(afterPrepare.startsWith(`${priorHeader}\n`), true);
+
+      const server = prepared.mcpServers[0] as McpServer;
+      const terminal = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      assert.equal(terminal.error, undefined);
+      assert.equal(
+        (terminal.result as { structuredContent?: { submissionDisposition?: unknown } })?.structuredContent?.submissionDisposition,
+        "pending-round-closure",
+      );
+
+      // Delayed sibling after terminal candidate, still before typed closeRound.
+      const sibling = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      assert.equal(sibling.error, undefined);
+
+      const closure = await prepared.closeRound();
+      assert.equal(closure.accepted, false, "sibling in the same round must not early-accept");
+      assert.ok("retry" in closure || "failure" in closure);
+      if ("retry" in closure) {
+        assert.equal(closure.retry.code, "non-sole-round");
+        assert.equal(closure.retry.toolCallIds.length, 2);
+      }
+      assert.equal(await readSealedSubmission(process.cwd(), runId, root), undefined);
+    } finally {
       await prepared.dispose?.();
     }
   } finally {

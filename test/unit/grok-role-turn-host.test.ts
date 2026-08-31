@@ -484,58 +484,60 @@ test("inspect→activation surfaces provenance infrastructure failure without pr
   assert.equal(connected, false);
 });
 
-test("grok host accepts when ledger seals while session/prompt stays open", async () => {
-  let resolveSeal!: () => void;
-  const sealed = new Promise<void>((resolve) => { resolveSeal = resolve; });
+test("grok host enters session/new when inspect akActive is empty but prepared MCP is present", async () => {
+  // External packageRoot is injected at prepare, not via Grok-native inspect paths.
   const methods: string[] = [];
-  let promptPending = false;
-  const connection: GrokAcpConnection = {
-    async request(method) {
-      methods.push(method);
-      if (method === "initialize") return canDenyInitializeMeta();
-      if (method === "session/new") return { sessionId: "s-seal" };
-      if (method === "session/prompt") {
-        promptPending = true;
-        // Hang forever — seal-early must win the race.
-        return new Promise(() => {});
-      }
-      if (method === "session/close") {
-        // Documented teardown after early seal: child already gone.
-        throw Object.assign(new Error("Grok ACP connection is closed"), { code: "acp-connection-closed" });
-      }
-      throw new Error(method);
-    },
-    notify() {},
-    async close() {},
-  };
   const host = createGrokRoleTurnHost({
     sessionIdentity,
     recordCapabilities: async () => {},
-    connect: async () => connection,
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    connect: async () => ({
+      async request(method) {
+        methods.push(method);
+        if (method === "initialize") return canDenyInitializeMeta();
+        if (method === "session/new") return { sessionId: "s-external" };
+        if (method === "session/prompt") return { stopReason: "end_turn" };
+        if (method === "session/close") return {};
+        throw new Error(method);
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: [] }),
     prepare: async () => prepared(
       async () => ({ accepted: true }),
-      [{}],
-      () => sealed,
+      [{ name: "ak-judge", command: "node", args: ["relay.js"] }],
     ),
   });
-  const turn = host.executeTurn(request);
-  for (let i = 0; i < 50 && !promptPending; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  assert.equal(promptPending, true);
-  resolveSeal();
-  assert.deepEqual(await turn, { code: 0, stderr: "", timedOut: false });
-  assert.deepEqual(methods, ["initialize", "session/new", "session/prompt", "session/close"]);
+  assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
+  assert.equal(methods.includes("session/new"), true);
+  assert.equal(methods.includes("session/prompt"), true);
 });
 
-test("grok host keeps unexpected session/close failure loud after seal-early", async () => {
-  const sealed = Promise.resolve();
+test("grok host rejects ak-config-missing only when prepared MCP servers are absent", async () => {
+  let connected = false;
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => { connected = true; throw new Error("must not connect"); },
+    inspect: async () => ({ privateActive: [], akActive: ["stale-inspect-only"] }),
+    prepare: async () => prepared(async () => ({ accepted: true }), []),
+  });
+  assert.deepEqual(await host.executeTurn(request), {
+    code: null, stderr: "", timedOut: false,
+    knownFailure: {
+      cause: "activation",
+      identity: { name: "UncontrolledGrokSession", code: "ak-config-missing" },
+    },
+  });
+  assert.equal(connected, false);
+});
+
+test("grok host keeps session/close failure loud after typed round acceptance", async () => {
   const connection: GrokAcpConnection = {
     async request(method) {
       if (method === "initialize") return canDenyInitializeMeta();
       if (method === "session/new") return { sessionId: "s-close-boom" };
-      if (method === "session/prompt") return new Promise(() => {});
+      if (method === "session/prompt") return { stopReason: "end_turn" };
       if (method === "session/close") {
         throw Object.assign(new Error("unexpected close fault"), { code: "acp-permission-missing-allow-once" });
       }
@@ -548,12 +550,8 @@ test("grok host keeps unexpected session/close failure loud after seal-early", a
     sessionIdentity,
     recordCapabilities: async () => {},
     connect: async () => connection,
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(
-      async () => ({ accepted: true }),
-      [{}],
-      () => sealed,
-    ),
+    inspect: async () => ({ privateActive: [], akActive: [] }),
+    prepare: async () => prepared(async () => ({ accepted: true }), [{}]),
   });
   await assert.rejects(
     () => host.executeTurn(request),
