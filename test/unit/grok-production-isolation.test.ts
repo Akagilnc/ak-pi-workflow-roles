@@ -1,9 +1,9 @@
 /**
  * Production grok isolation binding (#580): bindProductionGrokIsolation is the
  * authority createProductionGrokRoleTurnHost consumes for GROK_HOME/HOME, auth
- * root, binary resolve, and the S6 request.home rewrite target. S6 seatbelt
- * hang-on-request.home behavior is covered by grok-role-turn-host tests — this
- * file does not claim end-to-end seatbelt installation.
+ * root, and binary resolve. S6 seatbelt hang-on-request.home is covered by
+ * grok-role-turn-host tests — this file proves the binding and cleanup settlement,
+ * not executeTurn home rewrite or end-to-end seatbelt installation.
  */
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -14,11 +14,16 @@ import test from "node:test";
 import {
   bindProductionGrokIsolation,
   openProductionGrokHome,
+  settleProductionGrokHomeCleanup,
   withProductionGrokIsolation,
 } from "../../src/grok/production-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const CONTROLLED_HOME_PREFIX = "ak-grok-home-";
+/** Path whose recursive rm fails with EPERM on macOS/Linux — cleanup-failure oracle. */
+const UNREMOVABLE_HOME = "/dev/null";
+const TURN_CLEANUP_MESSAGE = "production grok isolation turn and cleanup failed";
+const OPEN_CLEANUP_MESSAGE = "production grok home open failed and its cleanup also failed";
 
 function under(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
@@ -37,14 +42,14 @@ async function seedOperatorHome(): Promise<string> {
   return operatorHome;
 }
 
-test("production isolation binding shares one home for GROK_HOME, auth, and S6 request.home outside the operator home", async () => {
+test("production isolation binding shares one home for GROK_HOME, auth, and binary outside the operator home", async () => {
   const operatorHome = await seedOperatorHome();
   let controlledHome: string | undefined;
   try {
     const binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
     controlledHome = binding.controlledHome;
 
-    // Single root: auth copy === child GROK_HOME/HOME (S6 request.home target is this same controlledHome).
+    // Single root: auth copy === child GROK_HOME/HOME.
     assert.equal(binding.env.GROK_HOME, binding.controlledHome);
     assert.equal(binding.env.HOME, binding.controlledHome);
     assert.equal(binding.env.AK_PACKAGE_ROOT, packageRoot);
@@ -123,4 +128,40 @@ test("openProductionGrokHome cleans a partial root when auth copy fails", async 
   } finally {
     await rm(operatorHome, { recursive: true, force: true });
   }
+});
+
+test("settleProductionGrokHomeCleanup surfaces cleanup failure alone", async () => {
+  // Sole rm settlement authority for with/open — wrapping rm in .catch(()=>{}) goes red here.
+  await assert.rejects(
+    () => settleProductionGrokHomeCleanup(UNREMOVABLE_HOME, undefined, TURN_CLEANUP_MESSAGE),
+    (error: unknown) =>
+      error instanceof Error
+      && (error as NodeJS.ErrnoException).code === "EPERM"
+      && !(error instanceof AggregateError),
+  );
+});
+
+test("settleProductionGrokHomeCleanup aggregates primary failure with cleanup failure", async () => {
+  const primary = new Error("turn-primary-failure");
+  await assert.rejects(
+    () => settleProductionGrokHomeCleanup(UNREMOVABLE_HOME, primary, TURN_CLEANUP_MESSAGE),
+    (error: unknown) =>
+      error instanceof AggregateError
+      && error.message === TURN_CLEANUP_MESSAGE
+      && error.errors[0] === primary
+      && error.errors.length === 2
+      && error.cause === primary,
+  );
+});
+
+test("settleProductionGrokHomeCleanup aggregates open primary failure with cleanup failure", async () => {
+  const primary = new Error("auth-copy-failed");
+  await assert.rejects(
+    () => settleProductionGrokHomeCleanup(UNREMOVABLE_HOME, primary, OPEN_CLEANUP_MESSAGE),
+    (error: unknown) =>
+      error instanceof AggregateError
+      && error.message === OPEN_CLEANUP_MESSAGE
+      && error.errors[0] === primary
+      && error.errors.length === 2,
+  );
 });

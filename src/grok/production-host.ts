@@ -52,6 +52,31 @@ function resolveGrokBinary(operatorHome: string): string {
 }
 
 /**
+ * Sole cleanup settlement for production controlled homes (auth-bearing temp roots).
+ * Cleanup failure is never silenced. When a primary failure is present and cleanup
+ * also fails, both surface as AggregateError; cleanup success rethrows primary.
+ */
+export async function settleProductionGrokHomeCleanup(
+  controlledHome: string,
+  primaryFailure: unknown,
+  concurrentMessage: string,
+): Promise<void> {
+  try {
+    await rm(controlledHome, { recursive: true, force: true });
+  } catch (cleanupFailure) {
+    if (primaryFailure !== undefined) {
+      throw new AggregateError([primaryFailure, cleanupFailure], concurrentMessage, {
+        cause: primaryFailure,
+      });
+    }
+    throw cleanupFailure;
+  }
+  if (primaryFailure !== undefined) {
+    throw primaryFailure;
+  }
+}
+
+/**
  * Open the production isolation root: auth copy only, never under runDirectory.
  * If auth copy fails after the temp root is created, the root is removed; open
  * failure and cleanup failure both surface (AggregateError when concurrent).
@@ -62,15 +87,12 @@ export async function openProductionGrokHome(operatorHome: string): Promise<stri
     await prepareControlledGrokHome(operatorHome, controlledHome);
     return controlledHome;
   } catch (error) {
-    try {
-      await rm(controlledHome, { recursive: true, force: true });
-    } catch (cleanupFailure) {
-      throw new AggregateError(
-        [error, cleanupFailure],
-        "production grok home open failed and its cleanup also failed",
-        { cause: error },
-      );
-    }
+    await settleProductionGrokHomeCleanup(
+      controlledHome,
+      error,
+      "production grok home open failed and its cleanup also failed",
+    );
+    // settle always throws when primaryFailure is set.
     throw error;
   }
 }
@@ -84,8 +106,8 @@ function childEnv(controlledHome: string, packageRoot: string): NodeJS.ProcessEn
 
 /**
  * Single production isolation binding: auth root, GROK_HOME/HOME, and binary
- * resolution. S6 must receive `controlledHome` as request.home so the Fixer
- * seatbelt hangs on the same root (proven by S6 seatbelt tests separately).
+ * resolution. Production executeTurn passes controlledHome as S6 request.home
+ * (seatbelt hang root proven separately by S6 seatbelt tests).
  */
 export async function bindProductionGrokIsolation(
   operatorHome: string,
@@ -101,9 +123,9 @@ export async function bindProductionGrokIsolation(
 }
 
 /**
- * Bind isolation, run the turn body, always attempt controlledHome cleanup.
- * Success, typed-result, and throw paths all clean up. Cleanup failure is never
- * silenced; primary + cleanup failures surface together as AggregateError.
+ * Bind isolation, run the turn body, always attempt controlledHome cleanup via
+ * settleProductionGrokHomeCleanup (no silent catch). Success, typed-result, and
+ * throw paths all clean up; cleanup failure and primary+cleanup both surface.
  */
 export async function withProductionGrokIsolation<T>(
   operatorHome: string,
@@ -112,28 +134,30 @@ export async function withProductionGrokIsolation<T>(
 ): Promise<T> {
   let binding: ProductionGrokIsolationBinding | undefined;
   let primaryFailure: unknown;
+  let value!: T;
+  let succeeded = false;
   try {
     binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
-    return await run(binding);
+    value = await run(binding);
+    succeeded = true;
   } catch (error) {
     primaryFailure = error;
-    throw error;
-  } finally {
-    if (binding !== undefined) {
-      try {
-        await rm(binding.controlledHome, { recursive: true, force: true });
-      } catch (cleanupFailure) {
-        if (primaryFailure !== undefined) {
-          throw new AggregateError(
-            [primaryFailure, cleanupFailure],
-            "production grok isolation turn and cleanup failed",
-            { cause: primaryFailure },
-          );
-        }
-        throw cleanupFailure;
-      }
-    }
   }
+
+  if (binding !== undefined) {
+    // No catch: settle throws cleanup failure or AggregateError with primary.
+    await settleProductionGrokHomeCleanup(
+      binding.controlledHome,
+      primaryFailure,
+      "production grok isolation turn and cleanup failed",
+    );
+  }
+
+  if (primaryFailure !== undefined) throw primaryFailure;
+  if (!succeeded) {
+    throw new Error("production grok isolation ended without result");
+  }
+  return value;
 }
 
 /** Host-neutral packaged role runtime deps for the Grok parent-process envelope. */
