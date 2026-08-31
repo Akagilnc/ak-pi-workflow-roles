@@ -362,19 +362,27 @@ export function appendTicketProvenanceDiagnostic(input: {
   readonly source?: string;
 }): RecordPointer {
   const subject = ticketProvenanceSubject(input.ticketNumber);
-  // recordedAt + kind + cause → distinct identity per court failure (history).
+  // quote-verify: content-stable identity so mid-batch retry does not duplicate.
+  // collector/issue-source: recordedAt keeps per-court failure history.
+  const identityParts =
+    input.diagnostic.diagnosticKind === "quote-verify-failed"
+      ? [
+          subject,
+          input.diagnostic.recordClass,
+          input.diagnostic.diagnosticKind,
+          input.diagnostic.cause,
+          input.diagnostic.reason ?? "",
+        ]
+      : [
+          subject,
+          input.diagnostic.recordClass,
+          input.diagnostic.diagnosticKind,
+          input.diagnostic.recordedAt,
+          input.diagnostic.cause,
+          input.diagnostic.reason ?? "",
+        ];
   const identity = createHash("sha256")
-    .update(
-      [
-        subject,
-        input.diagnostic.recordClass,
-        input.diagnostic.diagnosticKind,
-        input.diagnostic.recordedAt,
-        input.diagnostic.cause,
-        input.diagnostic.reason ?? "",
-      ].join("\u0000"),
-      "utf8",
-    )
+    .update(identityParts.join("\u0000"), "utf8")
     .digest("hex");
   return sitianReport({
     level: "event",

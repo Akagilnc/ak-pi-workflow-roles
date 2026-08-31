@@ -4,7 +4,16 @@
  */
 import assert from "node:assert/strict";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync, rmSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -25,7 +34,6 @@ import {
   DIARIST_COLLECT_METHOD_RELATIVE,
   resolveDiaristCollectMethodPath,
 } from "../../src/diarist-llm-collector.ts";
-import { accessSync, chmodSync, constants as fsConstants } from "node:fs";
 import { runDiarist } from "../../src/diarist.ts";
 import {
   appendTicketProvenanceEntry,
@@ -582,53 +590,107 @@ test("hermes collector argv: empty toolset boundary (never terminal/process tool
   });
 });
 
-test("runDiarist: volume write failure before watermark keeps blocks fresh for retry", async () => {
+test("runDiarist: mid-batch volume failure keeps partial commits; retry is idempotent", async () => {
   await withDiaristProject("ak-diarist-wm-order-", async (project) => {
-    const { a } = watermarkFixtureBlocks();
-    // Establish volume, then freeze the partition so the selected append fails.
+    const a = block({
+      transcript: "块 A 可入录。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-a" },
+    });
+    const b = block({
+      transcript: "块 B 无此引文。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-b" },
+    });
+    const c = block({
+      transcript: "块 C 可入录。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-c" },
+    });
+    // Seed the mid-batch prefix via the same production path: A entry + B quote
+    // diagnostic committed (court over [a,b] only).
+    await runDiarist({
+      ticketNumber: 11,
+      cwd: project,
+      blocks: [a, b],
+      collector: createScriptedDiaristCollector({
+        selections: [
+          { candidateIndex: 0, quotes: [] as string[] },
+          { candidateIndex: 1, quotes: ["绝不会出现的引文"] },
+        ],
+        rawStdout: "{}",
+        engineArgv: ["scripted"],
+      }),
+    });
     const volume = resolveTicketProvenanceVolume(11, project);
-    mkdirSync(volume.volumeDir, { recursive: true });
-    chmodSync(volume.volumeDir, 0o555);
+    // Drop offered watermark so uncommitted blocks are re-offered (simulates
+    // crash after partial volume commits, before watermark).
+    if (existsSync(volume.offeredWatermarkFile)) {
+      rmSync(volume.offeredWatermarkFile);
+    }
+    // Freeze the volume row file so the next new append (entry C) fails at the
+    // real sitian IO seam; identity hits for A entry / B diagnostic still read.
+    chmodSync(volume.recordFile, 0o444);
     try {
-      await assert.rejects(
-        () =>
-          runDiarist({
-            ticketNumber: 11,
-            cwd: project,
-            blocks: [a],
-            collector: createScriptedDiaristCollector({
-              selections: [{ candidateIndex: 0, quotes: [] as string[] }],
-              rawStdout: "{}",
-              engineArgv: ["scripted"],
-            }),
-          }),
+      await assert.rejects(() =>
+        runDiarist({
+          ticketNumber: 11,
+          cwd: project,
+          blocks: [a, b, c],
+          collector: createScriptedDiaristCollector((input) => ({
+            // A already on volume → filtered from fresh; expect B then C.
+            selections: input.candidates.map((cand, i) =>
+              cand.sourceRef.entryId === "u-b"
+                ? { candidateIndex: i, quotes: ["绝不会出现的引文"] }
+                : { candidateIndex: i, quotes: [] as string[] },
+            ),
+            rawStdout: "{}",
+            engineArgv: ["scripted"],
+          })),
+        }),
       );
     } finally {
-      chmodSync(volume.volumeDir, 0o755);
+      chmodSync(volume.recordFile, 0o644);
     }
-    // Offered watermark must not advance when commit failed — next court retries.
+
+    const partial = await readTicketProvenance(11, project);
+    assert.equal(partial.entries.length, 1);
+    assert.equal(partial.entries[0]!.sourceRef.entryId, "u-a");
+    assert.equal(partial.diagnostics.length, 1);
+    assert.equal(partial.diagnostics[0]!.diagnosticKind, "quote-verify-failed");
     assert.equal(readOfferedIdentities(11, project).size, 0);
+
     const retrySeen: string[] = [];
     const second = await runDiarist({
       ticketNumber: 11,
       cwd: project,
-      blocks: [a],
+      blocks: [a, b, c],
       collector: createScriptedDiaristCollector((input) => {
-        retrySeen.push(...input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
+        retrySeen.push(
+          ...input.candidates.map((cand) => String(cand.sourceRef.entryId ?? "")),
+        );
         return {
-          selections: input.candidates.map((_, i) => ({
-            candidateIndex: i,
-            quotes: [] as string[],
-          })),
+          selections: input.candidates.map((cand, i) =>
+            cand.sourceRef.entryId === "u-b"
+              ? { candidateIndex: i, quotes: ["绝不会出现的引文"] }
+              : { candidateIndex: i, quotes: [] as string[] },
+          ),
           rawStdout: "{}",
           engineArgv: ["scripted"],
         };
       }),
     });
-    assert.deepEqual(retrySeen, ["u-a"]);
+    // A stays filtered by volume entry identity; B (quote residue) + C re-offered.
+    assert.deepEqual(retrySeen.sort(), ["u-b", "u-c"].sort());
     assert.equal(second.collectorStatus, "ok");
-    assert.equal(second.appended, 1);
-    assert.equal(readOfferedIdentities(11, project).size, 1);
+    const final = await readTicketProvenance(11, project);
+    // A not duplicated; C added; B quote diagnostic not duplicated.
+    assert.equal(final.entries.length, 2);
+    assert.deepEqual(
+      final.entries.map((e) => e.sourceRef.entryId).sort(),
+      ["u-a", "u-c"].sort(),
+    );
+    assert.equal(final.diagnostics.length, 1);
+    assert.equal(final.diagnostics[0]!.diagnosticKind, "quote-verify-failed");
+    // Watermark covers the blocks offered on the successful court (B+C).
+    assert.equal(readOfferedIdentities(11, project).size, 2);
   });
 });
 
