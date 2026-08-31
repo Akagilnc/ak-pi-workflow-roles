@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import test from "node:test";
 
 import {
@@ -10,7 +10,13 @@ import {
   fixerBashSeatbeltDenyReason,
 } from "../../src/fixer-bash-seatbelt.ts";
 import { installGrokPreToolUseDeny } from "../../src/grok/bash-seatbelt.ts";
-import { classifyGrokInspection, controlledGrokChildEnv, createGrokRoleTurnHost, type GrokAcpConnection, type GrokPreparedTurn } from "../../src/grok/role-turn-host.ts";
+import {
+  classifyGrokInspection,
+  controlledGrokChildEnv,
+  createGrokRoleTurnHost,
+  type GrokAcpConnection,
+  type GrokPreparedTurn,
+} from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 const sessionIds = new WeakMap<object, string>();
@@ -26,7 +32,11 @@ const request = {
   agentDir: "/agent", runDirectory: "/run",
 } as RoleTurnRequest;
 
-function prepared(closeRound: GrokPreparedTurn["closeRound"], mcpServers: Readonly<Record<string, unknown>>[] = [{}], materials: readonly unknown[] = []): GrokPreparedTurn {
+function prepared(
+  closeRound: GrokPreparedTurn["closeRound"],
+  mcpServers: Readonly<Record<string, unknown>>[] = [{}],
+  materials: readonly unknown[] = [],
+): GrokPreparedTurn {
   return {
     mcpServers,
     systemPrompt: { body: "law", materials },
@@ -407,6 +417,22 @@ test("structured inspect classifies builtin, AK, and private sources by provenan
   });
 });
 
+test("HEAD-matched calling-repo projectInstructions leave privateActive without becoming AK injection", () => {
+  assert.deepEqual(classifyGrokInspection({
+    projectInstructions: [
+      { path: "/work/CLAUDE.md", scope: "project" },
+      { path: "/work/AGENTS.md", scope: "project" },
+      { path: "/home/.claude/CLAUDE.md", scope: "global" },
+    ],
+    skills: [{ name: "ak-method", source: { type: "project", path: "/pkg/resources/method/SKILL.md" } }],
+  }, "/pkg", {
+    headMatchedProjectInstructionPaths: new Set(["/work/CLAUDE.md", "/work/AGENTS.md"]),
+  }), {
+    privateActive: ["projectInstructions:/home/.claude/CLAUDE.md"],
+    akActive: ["skills:ak-method"],
+  });
+});
+
 test("controlled child env disables every compat source with one parameterized rule", () => {
   const env = controlledGrokChildEnv({ PATH: "/bin" }, "/run/grok-home");
   for (const vendor of ["CLAUDE", "CURSOR", "CODEX"]) {
@@ -438,4 +464,99 @@ test("grok host rejects an uncontrolled personalized session before model work",
     },
   });
   assert.equal(connected, false);
+});
+
+test("inspect→activation surfaces provenance infrastructure failure without private-config-active", async () => {
+  const boom = Object.assign(new Error("project instruction unreadable"), { code: "EACCES" });
+  let connected = false;
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => { connected = true; throw new Error("must not connect"); },
+    inspect: async () => { throw boom; },
+    prepare: async () => prepared(async () => ({ accepted: true })),
+  });
+  await assert.rejects(
+    () => host.executeTurn(request),
+    (error: unknown) => error === boom,
+  );
+  assert.equal(connected, false);
+});
+
+test("grok host enters session/new when inspect akActive is empty but prepared MCP is present", async () => {
+  // External packageRoot is injected at prepare, not via Grok-native inspect paths.
+  const methods: string[] = [];
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method) {
+        methods.push(method);
+        if (method === "initialize") return canDenyInitializeMeta();
+        if (method === "session/new") return { sessionId: "s-external" };
+        if (method === "session/prompt") return { stopReason: "end_turn" };
+        if (method === "session/close") return {};
+        throw new Error(method);
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: [] }),
+    prepare: async () => prepared(
+      async () => ({ accepted: true }),
+      [{ name: "ak-judge", command: "node", args: ["relay.js"] }],
+    ),
+  });
+  assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
+  assert.equal(methods.includes("session/new"), true);
+  assert.equal(methods.includes("session/prompt"), true);
+});
+
+test("grok host rejects ak-config-missing only when prepared MCP servers are absent", async () => {
+  let connected = false;
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => { connected = true; throw new Error("must not connect"); },
+    inspect: async () => ({ privateActive: [], akActive: ["stale-inspect-only"] }),
+    prepare: async () => prepared(async () => ({ accepted: true }), []),
+  });
+  assert.deepEqual(await host.executeTurn(request), {
+    code: null, stderr: "", timedOut: false,
+    knownFailure: {
+      cause: "activation",
+      identity: { name: "UncontrolledGrokSession", code: "ak-config-missing" },
+    },
+  });
+  assert.equal(connected, false);
+});
+
+test("grok host keeps session/close failure loud after typed round acceptance", async () => {
+  const connection: GrokAcpConnection = {
+    async request(method) {
+      if (method === "initialize") return canDenyInitializeMeta();
+      if (method === "session/new") return { sessionId: "s-close-boom" };
+      if (method === "session/prompt") return { stopReason: "end_turn" };
+      if (method === "session/close") {
+        throw Object.assign(new Error("unexpected close fault"), { code: "acp-permission-missing-allow-once" });
+      }
+      throw new Error(method);
+    },
+    notify() {},
+    async close() {},
+  };
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => connection,
+    inspect: async () => ({ privateActive: [], akActive: [] }),
+    prepare: async () => prepared(async () => ({ accepted: true }), [{}]),
+  });
+  await assert.rejects(
+    () => host.executeTurn(request),
+    (error: unknown) =>
+      error instanceof Error
+      && error.message === "unexpected close fault"
+      && (error as { code?: unknown }).code === "acp-permission-missing-allow-once",
+  );
 });

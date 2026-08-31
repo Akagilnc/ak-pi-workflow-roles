@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { appendFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -143,7 +143,25 @@ export async function prepareGrokRoleEnvelope(options: {
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
 
-  let sessionFile = join(request.runDirectory, "grok-envelope.jsonl");
+  // Durable principal layout matches public-cli settlement (session/session.jsonl).
+  // Create the header only when absent; resume must keep every prior byte and append.
+  let sessionFile = join(request.runDirectory, "session", "session.jsonl");
+  await mkdir(dirname(sessionFile), { recursive: true });
+  try {
+    await writeFile(
+      sessionFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: runId,
+        timestamp: new Date().toISOString(),
+        cwd: request.cwd,
+      })}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== "EEXIST") throw error;
+  }
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
@@ -311,6 +329,9 @@ export async function prepareGrokRoleEnvelope(options: {
                 details: result.details,
                 isError: false,
               });
+              // Candidate only: do not emit turn_end here. Seal waits for the typed ACP
+              // round boundary (closeRound after session/prompt), so delayed siblings stay
+              // in the same round instead of becoming silent post-seal anomalies.
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
               // The shared envelope's tool_result handler is the sole classifier:
@@ -355,13 +376,19 @@ export async function prepareGrokRoleEnvelope(options: {
   };
 
   const closeRound: GrokPreparedTurn["closeRound"] = async () => {
-    await emit("turn_end", { turnIndex: 0, calls: [...calls] });
+    // Typed round boundary: hand the complete call list to the shared ledger once.
+    if (calls.length > 0) {
+      const roundCalls = [...calls];
+      calls.length = 0;
+      await emit("turn_end", { turnIndex: 0, calls: roundCalls });
+    }
     let closure: { customType: string; data: unknown } | undefined;
     for (let index = customEntries.length - 1; index >= 0; index -= 1) {
       if (customEntries[index]?.customType === "ak-role-submission-closure") { closure = customEntries[index]; break; }
     }
-    calls.length = 0;
-    if (closure !== undefined) return { accepted: true as const };
+    if (closure !== undefined) {
+      return { accepted: true as const };
+    }
     if (rejection !== undefined) {
       const retry = { code: rejection.code, toolCallIds: rejection.toolCallIds };
       rejection = undefined;
