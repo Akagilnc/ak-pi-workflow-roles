@@ -55,7 +55,7 @@ export function readNotaryTicketFlag(flag: unknown): number | undefined {
 
 /**
  * Typed session bound (locator + optional ticket).
- * Sole production projection fed into before_agent_start material assembly.
+ * Sole production projection for agent-start material + session custom entry.
  */
 export function projectNotarySessionBound(input: {
   readonly sourceRun: NotarySourceRunLocator;
@@ -72,20 +72,16 @@ export function projectNotarySessionBound(input: {
 
 export type NotarySessionBound = ReturnType<typeof projectNotarySessionBound>;
 
-/**
- * Assemble systemPrompt patch from soul + typed bound.
- * Returns bound alongside prompt so callers observe the same object the prompt encodes
- * (production host only consumes systemPrompt; bound is the typed half of this seam).
- */
-export function assembleNotaryAgentStart(input: {
+/** Session custom-entry type for the typed notary bound (ledger-visible). */
+export const NOTARY_SESSION_BOUND_ENTRY = "notary-session-bound" as const;
+
+/** Assemble systemPrompt patch from soul + typed bound (prompt bytes only). */
+export function assembleNotaryAgentStartPrompt(input: {
   readonly baseSystemPrompt: string;
   readonly soul: string;
   readonly bound: NotarySessionBound;
-}): { readonly systemPrompt: string; readonly bound: NotarySessionBound } {
-  return {
-    bound: input.bound,
-    systemPrompt: `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>\n\n<notary_source_run>\n${JSON.stringify(input.bound)}\n</notary_source_run>`,
-  };
+}): string {
+  return `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>\n\n<notary_source_run>\n${JSON.stringify(input.bound)}\n</notary_source_run>`;
 }
 
 export function createNotaryRoleRuntime(
@@ -149,7 +145,7 @@ export function createNotaryRoleRuntime(
             };
           },
         });
-        pi.on("before_agent_start", (event) => {
+        pi.on("before_agent_start", (event, ctx) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
           }
@@ -160,13 +156,15 @@ export function createNotaryRoleRuntime(
               ? {}
               : { ticketNumber: activation.ticketNumber }),
           });
-          const assembled = assembleNotaryAgentStart({
-            baseSystemPrompt: event.systemPrompt,
-            soul: activation.soul,
-            bound,
-          });
-          // Host event result only carries systemPrompt; bound is assembled with it.
-          return { systemPrompt: assembled.systemPrompt };
+          // Typed bound on the session ledger when the host exposes appendCustomEntry.
+          ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
+          return {
+            systemPrompt: assembleNotaryAgentStartPrompt({
+              baseSystemPrompt: event.systemPrompt,
+              soul: activation.soul,
+              bound,
+            }),
+          };
         });
       }
 
