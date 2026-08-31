@@ -27083,14 +27083,8 @@ function blockEntryIdentity(ticketNumber, block) {
   });
 }
 async function loadSourceBlocks(input) {
-  if (input.blocks !== void 0) return [...input.blocks];
   const cwds = input.sessionCwds ?? [input.cwd];
-  const blocks = [
-    ...readCcSessionBlocks({
-      cwds,
-      ...input.projectsRoot === void 0 ? {} : { projectsRoot: input.projectsRoot }
-    })
-  ];
+  const blocks = [...readCcSessionBlocks({ cwds })];
   if (input.issueFace !== void 0) {
     blocks.push(...readIssueFaceBlocks({ face: input.issueFace }));
     const faceText = [
@@ -27130,35 +27124,33 @@ async function runDiarist(input) {
   const fresh = safeguarded.filter(
     (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block))
   );
-  let collectorStatus = "skipped-no-collector";
+  let collectorStatus;
   let collectorError;
   let llmRawStdout;
   let collect;
-  const collector = input.collector === null ? void 0 : input.collector === void 0 ? createHermesDiaristCollector({
+  const collector = createHermesDiaristCollector({
     cwd: input.cwd,
     ...input.packageRoot === void 0 ? {} : { packageRoot: input.packageRoot }
-  }) : input.collector;
-  if (collector !== void 0) {
-    if (fresh.length === 0) {
-      collectorStatus = "skipped-no-fresh";
-    } else {
-      try {
-        collect = await collector({
-          ticketNumber: input.ticketNumber,
-          candidates: fresh,
-          ...input.signal === void 0 ? {} : { signal: input.signal }
-        });
-        llmRawStdout = collect.rawStdout;
-        collectorStatus = collect.selections.length === 0 ? "empty-selection" : "ok";
-      } catch (error) {
-        collectorStatus = "failed";
-        collectorError = error instanceof Error ? error.message : String(error);
-        appendCollectorFailureDiagnostic({
-          ticketNumber: input.ticketNumber,
-          cwd: input.cwd,
-          collectorError
-        });
-      }
+  });
+  if (fresh.length === 0) {
+    collectorStatus = "skipped-no-fresh";
+  } else {
+    try {
+      collect = await collector({
+        ticketNumber: input.ticketNumber,
+        candidates: fresh,
+        ...input.signal === void 0 ? {} : { signal: input.signal }
+      });
+      llmRawStdout = collect.rawStdout;
+      collectorStatus = collect.selections.length === 0 ? "empty-selection" : "ok";
+    } catch (error) {
+      collectorStatus = "failed";
+      collectorError = error instanceof Error ? error.message : String(error);
+      appendCollectorFailureDiagnostic({
+        ticketNumber: input.ticketNumber,
+        cwd: input.cwd,
+        collectorError
+      });
     }
   }
   const pointers = [];
