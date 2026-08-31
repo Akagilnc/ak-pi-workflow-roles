@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,7 +138,21 @@ export async function prepareGrokRoleEnvelope(options: {
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
 
-  let sessionFile = join(request.runDirectory, "grok-envelope.jsonl");
+  // Durable principal layout matches public-cli settlement (session/session.jsonl).
+  // Without this file, accepted turns die on appendRunAttemptHistory ENOENT after seal.
+  let sessionFile = join(request.runDirectory, "session", "session.jsonl");
+  await mkdir(dirname(sessionFile), { recursive: true });
+  await writeFile(
+    sessionFile,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: runId,
+      timestamp: new Date().toISOString(),
+      cwd: request.cwd,
+    })}\n`,
+    "utf8",
+  );
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",

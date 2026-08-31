@@ -1161,7 +1161,7 @@ var init_in_process_session = __esm({
 });
 
 // src/grok/production-host.ts
-import { mkdtemp as mkdtemp3, readFile as readFile12, rm as rm3, writeFile as writeFile6 } from "node:fs/promises";
+import { mkdtemp as mkdtemp3, readFile as readFile12, rm as rm3, writeFile as writeFile7 } from "node:fs/promises";
 import { tmpdir as tmpdir3 } from "node:os";
 import { join as join19 } from "node:path";
 
@@ -4418,7 +4418,7 @@ function loadGatekeeperSessionMaterials(role) {
 
 // src/grok/role-envelope.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { mkdir as mkdir3, readFile as readFile10 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile10, writeFile as writeFile5 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename as basename8, dirname as dirname14, join as join17 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -11152,7 +11152,20 @@ async function prepareGrokRoleEnvelope(options) {
     const raw = await readFile10(method.path, "utf8");
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
-  let sessionFile = join17(request.runDirectory, "grok-envelope.jsonl");
+  let sessionFile = join17(request.runDirectory, "session", "session.jsonl");
+  await mkdir3(dirname14(sessionFile), { recursive: true });
+  await writeFile5(
+    sessionFile,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: runId,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      cwd: request.cwd
+    })}
+`,
+    "utf8"
+  );
   const context = {
     cwd: request.cwd,
     mode: "print",
@@ -11420,7 +11433,7 @@ async function prepareGrokRoleEnvelope(options) {
 }
 
 // src/grok/session-identity.ts
-import { mkdir as mkdir4, readFile as readFile11, rename, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir4, readFile as readFile11, rename, writeFile as writeFile6 } from "node:fs/promises";
 import { dirname as dirname15, join as join18 } from "node:path";
 function createGrokSessionIdentityAuthority(authority) {
   const bindingPath = (principal) => join18(authority.decode(principal).sessionDirectory, "grok-acp-session.json");
@@ -11441,7 +11454,7 @@ function createGrokSessionIdentityAuthority(authority) {
       const target = bindingPath(principal);
       await mkdir4(dirname15(target), { recursive: true });
       const temporary = `${target}.${process.pid}.tmp`;
-      await writeFile5(temporary, `${JSON.stringify({ sessionId })}
+      await writeFile6(temporary, `${JSON.stringify({ sessionId })}
 `, { encoding: "utf8", mode: 384 });
       await rename(temporary, target);
     }
@@ -11559,7 +11572,7 @@ function createGrokRoleRuntimeDependencies(packageRoot) {
   };
 }
 async function recordGrokCapabilities(request, declaration) {
-  await writeFile6(
+  await writeFile7(
     join19(request.runDirectory, "grok-capabilities.json"),
     `${JSON.stringify(declaration)}
 `,
