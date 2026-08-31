@@ -3,7 +3,7 @@
  * Medium: local resources. Pure mechanical stays in test/unit/diarist.test.ts.
  */
 import assert from "node:assert/strict";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -522,35 +522,56 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("hermes collector binds methodPath as typed delivery evidence (sole seam)", async () => {
-  const methodPath = resolveDiaristCollectMethodPath(packageRoot);
-  assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
-  accessSync(methodPath, fsConstants.R_OK);
+test("hermes collector: real child reads methodPath from structured -z engine payload", async () => {
+  await withHermeticHome({ prefix: "ak-diarist-method-z-" }, async ({ home }) => {
+    const methodPath = resolveDiaristCollectMethodPath(packageRoot);
+    assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
+    accessSync(methodPath, fsConstants.R_OK);
 
-  let capturedEnv: NodeJS.ProcessEnv | undefined;
-  const collector = createHermesDiaristCollector({
-    packageRoot,
-    runDetour: async (input) => {
-      capturedEnv = input.env;
-      return { code: 0, stdout: '{"selections":[]}', stderr: "" };
-    },
+    const capturePath = join(home, "method-payload-capture.json");
+    const childScript = join(home, "engine-child.mjs");
+    // Real subprocess on the detour seam: parse -z argv JSON payload.methodPath.
+    await writeFile(
+      childScript,
+      [
+        "import { writeFileSync } from 'node:fs';",
+        "const z = process.argv.indexOf('-z');",
+        "const raw = z >= 0 ? process.argv[z + 1] : undefined;",
+        "let methodPath = null;",
+        "try {",
+        "  const payload = JSON.parse(raw);",
+        "  methodPath = typeof payload?.methodPath === 'string' ? payload.methodPath : null;",
+        "} catch {}",
+        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ methodPath }), 'utf8');",
+        "process.stdout.write(JSON.stringify({ selections: [] }));",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const collector = createHermesDiaristCollector({
+      packageRoot,
+      executable: process.execPath,
+      extraArgv: [childScript],
+      env: { ...process.env, AK_CAPTURE_PATH: capturePath },
+      // Real runEngineDetourOnce — no runDetour inject.
+    });
+    const result = await collector({
+      ticketNumber: 582,
+      candidates: [
+        block({
+          transcript: "立文件",
+          sourceRef: { sessionFile: "/s", entryId: "1" },
+        }),
+      ],
+    });
+    assert.equal(result.methodPath, methodPath);
+    const captured = JSON.parse(await readFile(capturePath, "utf8")) as {
+      methodPath: string | null;
+    };
+    // External visible: engine child received methodPath on structured -z payload.
+    assert.equal(captured.methodPath, methodPath);
   });
-  const result = await collector({
-    ticketNumber: 582,
-    candidates: [
-      block({
-        transcript: "立文件",
-        sourceRef: { sessionFile: "/s", entryId: "1" },
-      }),
-    ],
-  });
-  // Typed delivery evidence on the collect result — not prompt-byte observation.
-  assert.equal(result.methodPath, methodPath);
-  // No parallel env transport for method path.
-  assert.equal(
-    capturedEnv === undefined || capturedEnv.AK_DIARIST_COLLECT_METHOD === undefined,
-    true,
-  );
 });
 
 test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {
