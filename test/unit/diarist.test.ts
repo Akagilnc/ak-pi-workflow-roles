@@ -128,6 +128,86 @@ test("parseDiaristLlmStdout projects selections and drops OOB indexes", () => {
   assert.deepEqual(parsed[1]!.quotes, ["world"]);
 });
 
+test("runDiarist: unselected block is watermarked and not re-offered next court", async () => {
+  await withHermeticHome({ prefix: "ak-diarist-unsel-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+
+    const selected = block({
+      transcript: "立文件。送司天台记录。入选。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-sel" },
+    });
+    const unselected = block({
+      transcript: "这段 LLM 本庭不选，但不应每庭重送。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-skip" },
+    });
+    const later = block({
+      transcript: "第二庭才出现的新块。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-new" },
+    });
+
+    const seenIds: string[][] = [];
+    let pass = 0;
+    const collector = createScriptedDiaristCollector((input) => {
+      seenIds.push(
+        input.candidates.map((c) => String(c.sourceRef.entryId ?? "")),
+      );
+      pass += 1;
+      if (pass === 1) {
+        // Select only the first block — leave u-skip unselected.
+        return {
+          selections: [
+            {
+              candidateIndex: 0,
+              quotes: [] as string[],
+              triage: "relevant" as const,
+            },
+          ],
+          rawStdout: "{}",
+          engineArgv: ["scripted"],
+        };
+      }
+      return {
+        selections: input.candidates.map((_, i) => ({
+          candidateIndex: i,
+          quotes: [] as string[],
+          triage: "relevant" as const,
+        })),
+        rawStdout: "{}",
+        engineArgv: ["scripted"],
+      };
+    });
+
+    const first = await runDiarist({
+      ticketNumber: 7,
+      cwd: project,
+      blocks: [selected, unselected],
+      collector,
+    });
+    assert.equal(first.appended, 1);
+    assert.deepEqual(seenIds[0]!.sort(), ["u-sel", "u-skip"].sort());
+
+    const second = await runDiarist({
+      ticketNumber: 7,
+      cwd: project,
+      blocks: [selected, unselected, later],
+      collector,
+    });
+    assert.equal(second.freshCount, 1);
+    assert.deepEqual(
+      seenIds[1],
+      ["u-new"],
+      "unselected u-skip must not re-enter collector; only later new block",
+    );
+    assert.equal(second.appended, 1);
+
+    const read = await readTicketProvenance(7, project);
+    assert.equal(read.entries.length, 2);
+    assert.ok(read.entries.every((e) => e.sourceRef.entryId !== "u-skip"));
+  });
+});
+
 test("runDiarist second court: collector only receives blocks not yet on the volume", async () => {
   await withHermeticHome({ prefix: "ak-diarist-incr-" }, async ({ home }) => {
     const project = join(home, "proj");

@@ -3,7 +3,7 @@
  * Write/read via sitian facade only; no parallel destination logic.
  */
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -16,6 +16,7 @@ import {
 import {
   TICKET_PROVENANCE_HUMAN_VIEW,
   TICKET_PROVENANCE_KIND,
+  TICKET_PROVENANCE_OFFERED_WATERMARK,
   projectTicketProvenanceEntry,
   type TicketProvenanceEntry,
   type TicketProvenanceIdentityInput,
@@ -95,6 +96,7 @@ export type TicketProvenanceVolumePath = {
   readonly recordFile: string;
   readonly volumeDir: string;
   readonly humanViewFile: string;
+  readonly offeredWatermarkFile: string;
 };
 
 /** Resolve volume paths for a ticket without writing. */
@@ -112,7 +114,67 @@ export function resolveTicketProvenanceVolume(
     recordFile: path.recordFile,
     volumeDir: path.sessionDir,
     humanViewFile: join(path.sessionDir, TICKET_PROVENANCE_HUMAN_VIEW),
+    offeredWatermarkFile: join(path.sessionDir, TICKET_PROVENANCE_OFFERED_WATERMARK),
   };
+}
+
+/**
+ * Read identities already offered to the collector (append-only watermark).
+ * Empty when absent. Malformed lines are skipped without washing the file.
+ */
+export function readOfferedIdentities(
+  ticketNumber: number,
+  cwd: string,
+): ReadonlySet<string> {
+  const { offeredWatermarkFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+  if (!existsSync(offeredWatermarkFile)) return new Set();
+  const text = readFileSync(offeredWatermarkFile, "utf8");
+  const seen = new Set<string>();
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        typeof (parsed as { identity?: unknown }).identity === "string" &&
+        (parsed as { identity: string }).identity.length > 0
+      ) {
+        seen.add((parsed as { identity: string }).identity);
+      }
+    } catch {
+      // keep scanning — do not wash
+    }
+  }
+  return seen;
+}
+
+/**
+ * Append offered identities after a successful collector pass (selected or not).
+ * Idempotent per identity within the file (skip already-present). Creates volume
+ * dir only when writing the first watermark row.
+ */
+export function recordOfferedIdentities(input: {
+  readonly ticketNumber: number;
+  readonly cwd: string;
+  readonly identities: readonly string[];
+}): void {
+  if (input.identities.length === 0) return;
+  const { volumeDir, offeredWatermarkFile } = resolveTicketProvenanceVolume(
+    input.ticketNumber,
+    input.cwd,
+  );
+  const already = new Set(readOfferedIdentities(input.ticketNumber, input.cwd));
+  const rows: string[] = [];
+  for (const identity of input.identities) {
+    if (identity.length === 0 || already.has(identity)) continue;
+    rows.push(`${JSON.stringify({ identity })}\n`);
+    already.add(identity);
+  }
+  if (rows.length === 0) return;
+  mkdirSync(volumeDir, { recursive: true });
+  appendFileSync(offeredWatermarkFile, rows.join(""), "utf8");
 }
 
 export type ReadTicketProvenanceResult = {
