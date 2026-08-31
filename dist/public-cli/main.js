@@ -30726,11 +30726,8 @@ function createRoleEnvironment(env, options) {
     ...timeoutMs === void 0 ? {} : { timeoutMs },
     ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
     ...options.config?.autoResumeLimit === void 0 ? {} : { autoResumeLimit: options.config.autoResumeLimit },
-    // Countersign pre-court / diarist test seams only — other roles ignore.
-    ...role === "countersign" && env.diaristCollector !== void 0 ? { diaristCollector: env.diaristCollector } : {},
-    ...role === "countersign" && env.diaristTicketResolver !== void 0 ? { diaristTicketResolver: env.diaristTicketResolver } : {},
-    ...role === "countersign" && env.ticketExistenceChecker !== void 0 ? { ticketExistenceChecker: env.ticketExistenceChecker } : {},
-    ...role === "countersign" && env.diaristIssueFaceFetcher !== void 0 ? { diaristIssueFaceFetcher: env.diaristIssueFaceFetcher } : {}
+    // Countersign pre-court ticket-resolver test seam only — other roles ignore.
+    ...role === "countersign" && env.diaristTicketResolver !== void 0 ? { diaristTicketResolver: env.diaristTicketResolver } : {}
   };
 }
 function defaultIo() {

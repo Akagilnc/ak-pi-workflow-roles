@@ -246,13 +246,12 @@ export type CliEnv = {
   /** Override Notary role-run timeout (tests). */
   notaryTimeoutMs?: number;
   /**
-   * Countersign diarist test seams (forwarded only on countersign dispatch).
-   * Production leaves these unset so hermes + gh own the station.
+   * Countersign pre-court ticket-resolver test seam (forwarded only on countersign).
+   * Production leaves unset so hermes owns resolution. Only this seam is required
+   * on CliEnv: runAkRole unbound trunks inject a deterministic resolver; other
+   * diarist seams stay on CountersignRunEnv via runPublicCountersign directly.
    */
-  diaristCollector?: import("../diarist-llm-collector.ts").DiaristLlmCollector | null;
   diaristTicketResolver?: import("../diarist-ticket-resolution.ts").DiaristTicketResolver;
-  ticketExistenceChecker?: import("../diarist-ticket-resolution.ts").TicketExistenceChecker;
-  diaristIssueFaceFetcher?: import("../diarist.ts").DiaristIssueFaceFetcher;
   createRunId?: () => string;
 };
 
@@ -412,18 +411,9 @@ function createRoleEnvironment(
     ...(options.config?.autoResumeLimit === undefined
       ? {}
       : { autoResumeLimit: options.config.autoResumeLimit }),
-    // Countersign pre-court / diarist test seams only — other roles ignore.
-    ...(role === "countersign" && env.diaristCollector !== undefined
-      ? { diaristCollector: env.diaristCollector }
-      : {}),
+    // Countersign pre-court ticket-resolver test seam only — other roles ignore.
     ...(role === "countersign" && env.diaristTicketResolver !== undefined
       ? { diaristTicketResolver: env.diaristTicketResolver }
-      : {}),
-    ...(role === "countersign" && env.ticketExistenceChecker !== undefined
-      ? { ticketExistenceChecker: env.ticketExistenceChecker }
-      : {}),
-    ...(role === "countersign" && env.diaristIssueFaceFetcher !== undefined
-      ? { diaristIssueFaceFetcher: env.diaristIssueFaceFetcher }
       : {}),
   };
 }
