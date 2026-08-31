@@ -52,7 +52,13 @@ export function buildCountersignTurnRequest(
   return projectRoleTurnRequest(
     admitted,
     {
-      activation: { role: "countersign" as const },
+      activation: {
+        role: "countersign" as const,
+        // Admitted typed binding rides the turn activation seam to the Notary gate.
+        ...(admitted.ticketNumber === undefined
+          ? {}
+          : { ticketNumber: admitted.ticketNumber }),
+      },
     },
     options,
   );
@@ -134,7 +140,8 @@ export async function runPublicCountersign(
 
 /**
  * Court-pipeline prior station: refresh ticket-provenance before countersign turn.
- * Caller-invisible — failures are recorded on the result, not rethrown as usage errors.
+ * Caller-invisible — collector failures persist on the volume diagnostic; source-read
+ * and watermark honesty failures propagate (失败诚实).
  * Missing ticketNumber skips the station (no subject key).
  */
 export async function runCountersignDiaristStation(
@@ -147,20 +154,31 @@ export async function runCountersignDiaristStation(
   if (admitted.ticketNumber === undefined) return undefined;
 
   let ticketBody: string | undefined;
+  let ticketBodyPath: string | undefined;
   for (const attachment of admitted.attachments) {
+    let text: string;
     try {
-      const text = await readFile(attachment.frozenPath, "utf8");
-      ticketBody =
-        ticketBody === undefined ? text : `${ticketBody}\n${text}`;
-    } catch {
-      // Attachment unreadable — continue with whatever body we have.
+      text = await readFile(attachment.frozenPath, "utf8");
+    } catch (error) {
+      // Bound frozen ticket material unreadable — do not wash into "no face".
+      throw new Error(
+        `countersign diarist station: frozen attachment unreadable (${attachment.frozenPath})`,
+        { cause: error },
+      );
     }
+    ticketBody =
+      ticketBody === undefined ? text : `${ticketBody}\n${text}`;
+    ticketBodyPath =
+      ticketBodyPath === undefined
+        ? attachment.frozenPath
+        : `${ticketBodyPath}+${attachment.frozenPath}`;
   }
 
   const result = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
     ...(ticketBody === undefined ? {} : { ticketBody }),
+    ...(ticketBodyPath === undefined ? {} : { ticketBodyPath }),
     sessionCwds: [admitted.projectRoot, env.cwd],
     ...(env.projectsRoot === undefined ? {} : { projectsRoot: env.projectsRoot }),
     ...(env.diaristCollector === undefined

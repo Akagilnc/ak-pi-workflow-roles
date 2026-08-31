@@ -5,7 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import type {
@@ -26,24 +26,38 @@ export type DiaristSourceBlock = {
   readonly isNotification: boolean;
 };
 
-/** Anchor set used only for candidate prefilter and reverse-verify notes. */
+/** Anchor set used only for reverse-verify notes (never a relevance gate). */
 export type DiaristAnchorSet = {
   readonly ticketNumber: number;
-  /** Ticket face 「」 quotes ≥ min length, and free-form owner quotes. */
+  /** Ticket face 「」 quotes ≥ min length. */
   readonly quotes: readonly string[];
-  /** Title / domain keywords (起居录, diarist, …). */
-  readonly keywords: readonly string[];
 };
 
-export const DEFAULT_DIARIST_KEYWORDS = Object.freeze([
-  "起居录",
-  "起居郎",
-  "司天台",
-  "ticket-provenance",
-  "diarist",
-] as const);
+export const DEFAULT_QUOTE_MIN = 6;
 
-const DEFAULT_QUOTE_MIN = 6;
+/** Typed cause when an enumerated source path cannot be read or interpreted. */
+export type DiaristSourceReadReason =
+  | "readdir-failed"
+  | "file-unreadable"
+  | "jsonl-line-unparseable"
+  | "adr-unreadable";
+
+export class DiaristSourceReadError extends Error {
+  readonly code = "diarist-source-read" as const;
+  readonly reason: DiaristSourceReadReason;
+  readonly sourcePath: string;
+  constructor(
+    reason: DiaristSourceReadReason,
+    sourcePath: string,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "DiaristSourceReadError";
+    this.reason = reason;
+    this.sourcePath = sourcePath;
+  }
+}
 
 /**
  * Extract 「」 quotes from ticket face text for mechanical anchors.
@@ -68,15 +82,10 @@ export function buildDiaristAnchors(input: {
   readonly ticketNumber: number;
   readonly ticketBody?: string;
   readonly extraQuotes?: readonly string[];
-  readonly keywords?: readonly string[];
 }): DiaristAnchorSet {
   const fromBody =
     input.ticketBody === undefined ? [] : extractCornerQuotes(input.ticketBody);
-  const quotes = [
-    ...fromBody,
-    ...(input.extraQuotes ?? []),
-  ];
-  // Dedupe while preserving order.
+  const quotes = [...fromBody, ...(input.extraQuotes ?? [])];
   const seen = new Set<string>();
   const uniqueQuotes: string[] = [];
   for (const q of quotes) {
@@ -87,7 +96,6 @@ export function buildDiaristAnchors(input: {
   return {
     ticketNumber: input.ticketNumber,
     quotes: uniqueQuotes,
-    keywords: [...(input.keywords ?? DEFAULT_DIARIST_KEYWORDS)],
   };
 }
 
@@ -211,6 +219,8 @@ function isNotificationRow(type: string, text: string): boolean {
 /**
  * Enumerate cc session user/assistant turns under Claude projects roots.
  * cc-sessions-first source family (ADR 0075).
+ * Directory/file/non-empty JSONL line failures throw DiaristSourceReadError
+ * (失败诚实：不得把未读懂洗成没有来源块).
  */
 export function readCcSessionBlocks(
   options: ReadCcSessionOptions,
@@ -231,20 +241,44 @@ export function readCcSessionBlocks(
   }
 
   for (const dir of dirs) {
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) continue;
+    if (!existsSync(dir)) continue;
+    let dirStat;
+    try {
+      dirStat = statSync(dir);
+    } catch (error) {
+      throw new DiaristSourceReadError(
+        "readdir-failed",
+        dir,
+        `diarist cc session dir unstatable (${dir})`,
+        { cause: error },
+      );
+    }
+    if (!dirStat.isDirectory()) continue;
+
     let files: string[];
     try {
       files = readdirSync(dir).filter((name) => name.endsWith(".jsonl"));
-    } catch {
-      continue;
+    } catch (error) {
+      throw new DiaristSourceReadError(
+        "readdir-failed",
+        dir,
+        `diarist cc session dir unreadable (${dir})`,
+        { cause: error },
+      );
     }
+
     for (const name of files) {
       const sessionFile = join(dir, name);
       let text: string;
       try {
         text = readFileSync(sessionFile, "utf8");
-      } catch {
-        continue;
+      } catch (error) {
+        throw new DiaristSourceReadError(
+          "file-unreadable",
+          sessionFile,
+          `diarist cc session file unreadable (${sessionFile})`,
+          { cause: error },
+        );
       }
       const lines = text.split("\n");
       for (let lineNo = 0; lineNo < lines.length; lineNo += 1) {
@@ -253,9 +287,15 @@ export function readCcSessionBlocks(
         let parsed: unknown;
         try {
           parsed = JSON.parse(line);
-        } catch {
-          continue;
+        } catch (error) {
+          throw new DiaristSourceReadError(
+            "jsonl-line-unparseable",
+            sessionFile,
+            `diarist cc session JSONL line ${lineNo + 1} unparseable (${sessionFile})`,
+            { cause: error },
+          );
         }
+        // Unknown row shape (not user/assistant) is ignored — not a read failure.
         if (!isRecord(parsed)) continue;
         const type = typeof parsed.type === "string" ? parsed.type : "";
         if (type !== "user" && type !== "assistant") continue;
@@ -286,25 +326,97 @@ export function readCcSessionBlocks(
   return blocks;
 }
 
-/** Map a mechanical candidate block into a diary entry (prescreen method). */
-export function blockToPrescreenEntry(
-  block: DiaristSourceBlock,
-  anchors: DiaristAnchorSet,
-): TicketProvenanceEntry {
-  return {
-    basis: {
-      method: "mechanical-prescreen",
-      anchors: [
-        `#${anchors.ticketNumber}`,
-        ...anchors.quotes.slice(0, 8),
-        ...anchors.keywords,
-      ],
+/**
+ * Ticket face as frozen issue body / decree material.
+ * Whole body is one issue-body-comment block; 「」 spans also surface as
+ * ticket-decree-block candidates (same typed stream — no prose exclusion).
+ */
+export function readTicketFaceBlocks(input: {
+  readonly ticketBody: string;
+  readonly sourcePath?: string;
+  readonly timestamp?: string;
+}): DiaristSourceBlock[] {
+  const body = input.ticketBody;
+  if (body.trim() === "") return [];
+  const timestamp = input.timestamp ?? new Date(0).toISOString();
+  const path = input.sourcePath ?? "ticket-face";
+  const blocks: DiaristSourceBlock[] = [
+    {
+      sourceKind: "issue-body-comment",
+      sourceRef: { path, entryId: "body" },
+      transcript: body,
+      timestamp,
+      isUserTurn: true,
+      isNotification: false,
     },
-    sourceKind: block.sourceKind,
-    sourceRef: block.sourceRef,
-    transcript: block.transcript,
-    timestamp: block.timestamp,
-  };
+  ];
+  // Each long 「」 quote is also a decree-block candidate (owner verbatim anchors).
+  const quotes = extractCornerQuotes(body);
+  for (let i = 0; i < quotes.length; i += 1) {
+    const q = quotes[i]!;
+    blocks.push({
+      sourceKind: "ticket-decree-block",
+      sourceRef: { path, entryId: `decree-${i + 1}` },
+      transcript: q,
+      timestamp,
+      isUserTurn: true,
+      isNotification: false,
+    });
+  }
+  return blocks;
+}
+
+/** docs/adr/*.md paths referenced in free text (order of first appearance). */
+const ADR_PATH_IN_BODY = /docs\/adr\/[0-9]{4}[A-Za-z0-9._/-]*\.md/g;
+
+export function extractReferencedAdrPaths(text: string): readonly string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (const match of text.matchAll(ADR_PATH_IN_BODY)) {
+    const path = match[0]!;
+    if (seen.has(path)) continue;
+    seen.add(path);
+    paths.push(path);
+  }
+  return paths;
+}
+
+/**
+ * Read applicable ADR files as decision-key source blocks.
+ * Missing path → skip (not declared present). Present but unreadable → throw.
+ */
+export function readAdrDecisionKeyBlocks(input: {
+  readonly cwd: string;
+  readonly adrPaths: readonly string[];
+  readonly timestamp?: string;
+}): DiaristSourceBlock[] {
+  const timestamp = input.timestamp ?? new Date(0).toISOString();
+  const blocks: DiaristSourceBlock[] = [];
+  for (const rel of input.adrPaths) {
+    const abs = resolve(input.cwd, rel);
+    if (!existsSync(abs)) continue;
+    let text: string;
+    try {
+      text = readFileSync(abs, "utf8");
+    } catch (error) {
+      throw new DiaristSourceReadError(
+        "adr-unreadable",
+        abs,
+        `diarist ADR file unreadable (${abs})`,
+        { cause: error },
+      );
+    }
+    if (text.trim() === "") continue;
+    blocks.push({
+      sourceKind: "adr-decision-key",
+      sourceRef: { path: rel },
+      transcript: text,
+      timestamp,
+      isUserTurn: true,
+      isNotification: false,
+    });
+  }
+  return blocks;
 }
 
 /**

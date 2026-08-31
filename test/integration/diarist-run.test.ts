@@ -3,7 +3,7 @@
  * Medium: local resources. Pure mechanical stays in test/unit/diarist.test.ts.
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
   resolveTicketProvenanceVolume,
   TicketProvenanceWatermarkError,
   type TicketProvenanceWatermarkReason,
+  TICKET_PROVENANCE_STATION_DIAGNOSTIC,
 } from "../../src/ticket-provenance.ts";
 
 function block(
@@ -67,76 +68,34 @@ async function withDiaristProject<T>(
 const emptyCollector = () =>
   createScriptedDiaristCollector({
     selections: [],
-    rawStdout: "{}",
+    rawStdout: '{"selections":[]}',
     engineArgv: ["scripted"],
   });
 
-test("runDiarist watermark: partial select advances unselected", async () => {
-  await withDiaristProject("ak-diarist-wm-partial-", async (project) => {
-    const { a, b, later } = watermarkFixtureBlocks();
-    const seenIds: string[][] = [];
-    let pass = 0;
-    const collector = createScriptedDiaristCollector((input) => {
-      seenIds.push(input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
-      pass += 1;
-      if (pass === 1) {
-        return {
-          selections: [{ candidateIndex: 0, quotes: [] as string[] }],
-          rawStdout: "{}",
-          engineArgv: ["scripted"],
-        };
-      }
-      return {
-        selections: input.candidates.map((_, i) => ({
-          candidateIndex: i,
-          quotes: [] as string[],
-        })),
-        rawStdout: "{}",
-        engineArgv: ["scripted"],
-      };
-    });
-    await runDiarist({ ticketNumber: 7, cwd: project, blocks: [a, b], collector });
-    assert.deepEqual(seenIds[0]!.sort(), ["u-a", "u-b"].sort());
-    const second = await runDiarist({
-      ticketNumber: 7,
+test("runDiarist always establishes volume + md + station diagnostic (empty court)", async () => {
+  await withDiaristProject("ak-diarist-empty-vol-", async (project) => {
+    const result = await runDiarist({
+      ticketNumber: 1,
       cwd: project,
-      blocks: [a, b, later],
-      collector,
+      blocks: [],
+      collector: emptyCollector(),
     });
-    assert.deepEqual(seenIds[1], ["u-later"]);
-    assert.equal(second.freshCount, 1);
+    assert.equal(result.collectorStatus, "skipped-no-fresh");
+    assert.equal(result.appended, 0);
+    await access(result.volumeRecordFile);
+    await access(result.humanViewFile);
+    await access(result.stationDiagnosticFile);
+    const diag = JSON.parse(await readFile(result.stationDiagnosticFile, "utf8")) as {
+      collectorStatus: string;
+    };
+    assert.equal(diag.collectorStatus, "skipped-no-fresh");
+    const read = await readTicketProvenance(1, project);
+    assert.equal(read.entries.length, 0);
   });
 });
 
-test("runDiarist watermark: empty-selection advances", async () => {
-  await withDiaristProject("ak-diarist-wm-empty-", async (project) => {
-    const { a, b, later } = watermarkFixtureBlocks();
-    const seenIds: string[][] = [];
-    const collector = createScriptedDiaristCollector((input) => {
-      seenIds.push(input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
-      return { selections: [], rawStdout: "{}", engineArgv: ["scripted"] };
-    });
-    const first = await runDiarist({
-      ticketNumber: 8,
-      cwd: project,
-      blocks: [a, b],
-      collector,
-    });
-    assert.equal(first.collectorStatus, "empty-selection");
-    assert.equal(first.appended, 0);
-    const second = await runDiarist({
-      ticketNumber: 8,
-      cwd: project,
-      blocks: [a, b, later],
-      collector,
-    });
-    assert.equal(second.freshCount, 1);
-    assert.deepEqual(seenIds[1], ["u-later"]);
-  });
-});
-
-test("runDiarist watermark: collector failure does not advance", async () => {
-  await withDiaristProject("ak-diarist-wm-fail-", async (project) => {
+test("runDiarist: collector failure does not advance watermark; diagnostic persists", async () => {
+  await withDiaristProject("ak-diarist-fail-diag-", async (project) => {
     const { a, b } = watermarkFixtureBlocks();
     const seenIds: string[][] = [];
     let pass = 0;
@@ -149,7 +108,7 @@ test("runDiarist watermark: collector failure does not advance", async () => {
           candidateIndex: i,
           quotes: [] as string[],
         })),
-        rawStdout: "{}",
+        rawStdout: '{"selections":[]}',
         engineArgv: ["scripted"],
       };
     });
@@ -160,8 +119,17 @@ test("runDiarist watermark: collector failure does not advance", async () => {
       collector,
     });
     assert.equal(first.collectorStatus, "failed");
-    assert.equal(typeof first.collectorError, "string");
     assert.ok((first.collectorError?.length ?? 0) > 0);
+    const diag = JSON.parse(await readFile(first.stationDiagnosticFile, "utf8")) as {
+      collectorStatus: string;
+      collectorError?: string;
+    };
+    assert.equal(diag.collectorStatus, "failed");
+    assert.ok((diag.collectorError?.length ?? 0) > 0);
+    // Volume still exists on failure.
+    await access(first.volumeRecordFile);
+    await access(first.humanViewFile);
+
     const second = await runDiarist({
       ticketNumber: 9,
       cwd: project,
@@ -171,6 +139,65 @@ test("runDiarist watermark: collector failure does not advance", async () => {
     assert.equal(second.freshCount, 2);
     assert.deepEqual(seenIds[1]!.sort(), ["u-a", "u-b"].sort());
     assert.equal(second.collectorStatus, "ok");
+  });
+});
+
+test("runDiarist watermark: empty-selection advances; partial/second-court only sees fresh", async () => {
+  await withDiaristProject("ak-diarist-wm-", async (project) => {
+    const { a, b, later } = watermarkFixtureBlocks();
+    const seenIds: string[][] = [];
+    let pass = 0;
+    const collector = createScriptedDiaristCollector((input) => {
+      seenIds.push(input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
+      pass += 1;
+      if (pass === 1) {
+        // Select only first; unselected still watermarked.
+        return {
+          selections: [{ candidateIndex: 0, quotes: [] as string[] }],
+          rawStdout: "{}",
+          engineArgv: ["scripted"],
+        };
+      }
+      if (pass === 2) {
+        return {
+          selections: [],
+          rawStdout: '{"selections":[]}',
+          engineArgv: ["scripted"],
+        };
+      }
+      return {
+        selections: input.candidates.map((_, i) => ({
+          candidateIndex: i,
+          quotes: [] as string[],
+        })),
+        rawStdout: "{}",
+        engineArgv: ["scripted"],
+      };
+    });
+
+    await runDiarist({ ticketNumber: 7, cwd: project, blocks: [a, b], collector });
+    assert.deepEqual(seenIds[0]!.sort(), ["u-a", "u-b"].sort());
+
+    // No new blocks → skipped-no-fresh (partial already watermarked both).
+    const second = await runDiarist({
+      ticketNumber: 7,
+      cwd: project,
+      blocks: [a, b],
+      collector,
+    });
+    assert.equal(second.freshCount, 0);
+    assert.equal(second.collectorStatus, "skipped-no-fresh");
+    assert.equal(seenIds.length, 1);
+
+    // New block only.
+    const third = await runDiarist({
+      ticketNumber: 7,
+      cwd: project,
+      blocks: [a, b, later],
+      collector,
+    });
+    assert.deepEqual(seenIds[1], ["u-later"]);
+    assert.equal(third.freshCount, 1);
   });
 });
 
@@ -227,70 +254,6 @@ for (const corruption of WATERMARK_CORRUPTIONS) {
     });
   });
 }
-
-test("runDiarist second court: collector only receives blocks not yet on the volume", async () => {
-  await withDiaristProject("ak-diarist-incr-", async (project) => {
-    const blockA = block({
-      transcript: "立文件。送司天台记录。第一庭。",
-      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-a" },
-    });
-    const blockB = block({
-      transcript: "起居郎只管如实记录。第二庭新增。",
-      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-b" },
-    });
-
-    const seenSizes: number[] = [];
-    const seenIds: string[][] = [];
-    const collector = createScriptedDiaristCollector((input) => {
-      seenSizes.push(input.candidates.length);
-      seenIds.push(
-        input.candidates.map((c) => String(c.sourceRef.entryId ?? "")),
-      );
-      return {
-        selections: input.candidates.map((_, i) => ({
-          candidateIndex: i,
-          quotes: [] as string[],
-        })),
-        rawStdout: "{}",
-        engineArgv: ["scripted"],
-      };
-    });
-
-    const first = await runDiarist({
-      ticketNumber: 582,
-      cwd: project,
-      blocks: [blockA],
-      collector,
-    });
-    assert.equal(first.freshCount, 1);
-    assert.equal(first.appended, 1);
-    assert.deepEqual(seenIds[0], ["u-a"]);
-
-    const second = await runDiarist({
-      ticketNumber: 582,
-      cwd: project,
-      blocks: [blockA, blockB],
-      collector,
-    });
-    assert.equal(second.freshCount, 1);
-    assert.equal(second.appended, 1);
-    assert.deepEqual(seenIds[1], ["u-b"]);
-    assert.equal(seenSizes[1], 1);
-
-    const third = await runDiarist({
-      ticketNumber: 582,
-      cwd: project,
-      blocks: [blockA, blockB],
-      collector,
-    });
-    assert.equal(third.freshCount, 0);
-    assert.equal(third.collectorStatus, "skipped-no-fresh");
-    assert.equal(seenSizes.length, 2);
-
-    const read = await readTicketProvenance(582, project);
-    assert.equal(read.entries.length, 2);
-  });
-});
 
 test("runDiarist: LLM receives blocks without ticket/keyword (no mechanical prose gate)", async () => {
   await withDiaristProject("ak-diarist-fullsrc-", async (project) => {
@@ -371,7 +334,7 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
     assert.equal(first.collectorStatus, "ok");
     assert.equal(first.appended, 1);
     assert.equal(first.rejectedQuotes, 1);
-    assert.ok(first.humanViewFile);
+    await access(first.humanViewFile);
 
     const read1 = await readTicketProvenance(582, project);
     assert.equal(read1.entries.length, 1);
@@ -392,7 +355,66 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
   });
 });
 
-test("runDiarist without collector leaves volume empty when llmRequired (default)", async () => {
+test("runDiarist enumerates ticket face + ADR paths into candidate stream with cc", async () => {
+  await withDiaristProject("ak-diarist-sources-", async (project) => {
+    const adrRel = "docs/adr/0075-ticket-provenance-diarist-pipeline.md";
+    await mkdir(join(project, "docs", "adr"), { recursive: true });
+    await writeFile(
+      join(project, adrRel),
+      "# 0075\n\n| `ticket-provenance-file` | 每票一份 |\n",
+      "utf8",
+    );
+    const ticketBody = [
+      "「立文件。送司天台记录。」",
+      `see ${adrRel}`,
+    ].join("\n");
+
+    const projectsRoot = join(project, "cc-root");
+    const sessionDir = join(projectsRoot, "-work");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, "sess.jsonl"),
+      `${JSON.stringify({
+        type: "user",
+        uuid: "u-cc",
+        timestamp: "2026-08-31T10:00:00.000Z",
+        message: { role: "user", content: "cc turn about 起居录" },
+      })}\n`,
+      "utf8",
+    );
+
+    const kindsSeen = new Set<string>();
+    const collector = createScriptedDiaristCollector((input) => {
+      for (const c of input.candidates) kindsSeen.add(c.sourceKind);
+      return {
+        selections: input.candidates.map((_, i) => ({
+          candidateIndex: i,
+          quotes: [] as string[],
+        })),
+        rawStdout: "{}",
+        engineArgv: ["scripted"],
+      };
+    });
+
+    const result = await runDiarist({
+      ticketNumber: 99,
+      cwd: project,
+      ticketBody,
+      ticketBodyPath: "/frozen/ticket.md",
+      sessionCwds: ["/work"],
+      projectsRoot,
+      collector,
+    });
+    assert.ok(result.candidateCount >= 3);
+    assert.ok(kindsSeen.has("cc-session"));
+    assert.ok(kindsSeen.has("issue-body-comment"));
+    assert.ok(kindsSeen.has("ticket-decree-block"));
+    assert.ok(kindsSeen.has("adr-decision-key"));
+    assert.equal(result.collectorStatus, "ok");
+  });
+});
+
+test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {
   await withDiaristProject("ak-diarist-nocoll-", async (project) => {
     const result = await runDiarist({
       ticketNumber: 1,
@@ -407,66 +429,11 @@ test("runDiarist without collector leaves volume empty when llmRequired (default
     });
     assert.equal(result.collectorStatus, "skipped-no-collector");
     assert.equal(result.appended, 0);
+    await access(result.volumeRecordFile);
+    await access(result.humanViewFile);
+    const vol = resolveTicketProvenanceVolume(1, project);
+    await access(join(vol.volumeDir, TICKET_PROVENANCE_STATION_DIAGNOSTIC));
     const read = await readTicketProvenance(1, project);
     assert.equal(read.entries.length, 0);
-  });
-});
-
-test("runDiarist reads cc session jsonl from projects root", async () => {
-  await withHermeticHome({ prefix: "ak-diarist-cc-" }, async ({ home }) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitRepository(project);
-
-    const projectsRoot = join(home, "claude-projects");
-    const sessionDir = join(projectsRoot, "-work");
-    await mkdir(sessionDir, { recursive: true });
-    const sessionFile = join(sessionDir, "sess.jsonl");
-    const rows = [
-      {
-        type: "user",
-        uuid: "u1",
-        timestamp: "2026-08-31T10:00:00.000Z",
-        message: { role: "user", content: "立文件。送司天台记录。#99 起居录" },
-      },
-      {
-        type: "assistant",
-        uuid: "a1",
-        timestamp: "2026-08-31T10:00:01.000Z",
-        message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
-      },
-    ];
-    await writeFile(
-      sessionFile,
-      rows.map((r) => JSON.stringify(r)).join("\n") + "\n",
-      "utf8",
-    );
-
-    const collector = createScriptedDiaristCollector((input) => ({
-      selections:
-        input.candidates.length > 0
-          ? [
-              {
-                candidateIndex: 0,
-                quotes: ["立文件。送司天台记录。"],
-              },
-            ]
-          : [],
-      rawStdout: "{}",
-      engineArgv: ["scripted"],
-    }));
-
-    const result = await runDiarist({
-      ticketNumber: 99,
-      cwd: project,
-      sessionCwds: ["/work"],
-      projectsRoot,
-      collector,
-    });
-    assert.ok(result.candidateCount >= 1);
-    assert.equal(result.appended, 1);
-    const read = await readTicketProvenance(99, project);
-    assert.equal(read.entries.length, 1);
-    assert.ok(read.entries[0]!.transcript.includes("立文件"));
   });
 });

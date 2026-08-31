@@ -5,10 +5,12 @@
  */
 import {
   blockToLlmEntry,
-  blockToPrescreenEntry,
   buildDiaristAnchors,
+  extractReferencedAdrPaths,
   mechanicalSafeguardPipeline,
+  readAdrDecisionKeyBlocks,
   readCcSessionBlocks,
+  readTicketFaceBlocks,
   type DiaristAnchorSet,
   type DiaristSourceBlock,
 } from "./diarist-mechanical.ts";
@@ -19,11 +21,13 @@ import {
 } from "./diarist-llm-collector.ts";
 import {
   appendTicketProvenanceEntry,
+  ensureTicketProvenanceVolume,
   readOfferedIdentities,
   readTicketProvenance,
   recordOfferedIdentities,
   resolveTicketProvenanceVolume,
   ticketProvenanceEntryIdentity,
+  writeDiaristStationDiagnostic,
   writeTicketProvenanceHumanView,
 } from "./ticket-provenance.ts";
 import type { TicketProvenanceEntry } from "./ticket-provenance-contracts.ts";
@@ -32,23 +36,19 @@ import { readSitianRecords, type RecordPointer } from "./sitian-facade.ts";
 export type DiaristRunInput = {
   readonly ticketNumber: number;
   readonly cwd: string;
-  /** Ticket face body for anchor extraction (「」 quotes). */
+  /** Ticket face body for face/decree/ADR source blocks + anchor extraction. */
   readonly ticketBody?: string;
+  /** Provenance path for the ticket face (frozen attachment path). */
+  readonly ticketBodyPath?: string;
   /** Extra cwd roots whose cc project folders are scanned. */
   readonly sessionCwds?: readonly string[];
   /** Override Claude projects root (tests). */
   readonly projectsRoot?: string;
-  /** Pre-loaded source blocks (tests / alternate sources). */
+  /** Pre-loaded source blocks (tests / alternate sources). Skips enum. */
   readonly blocks?: readonly DiaristSourceBlock[];
-  /** Injected collector; default = hermes. `null` = mechanical-only. */
+  /** Injected collector; default = hermes. `null` = skip LLM (no mechanical-only fallback). */
   readonly collector?: DiaristLlmCollector | null;
   readonly signal?: AbortSignal;
-  /**
-   * When true (default), LLM-selected blocks are the only diary entries.
-   * Mechanical candidates alone never become production relevance.
-   * On collector failure/absence, volume is left unchanged (honest empty/stale).
-   */
-  readonly llmRequired?: boolean;
 };
 
 export type DiaristRunResult = {
@@ -61,7 +61,9 @@ export type DiaristRunResult = {
   readonly rejectedQuotes: number;
   readonly pointers: readonly RecordPointer[];
   readonly entries: readonly TicketProvenanceEntry[];
-  readonly humanViewFile?: string;
+  readonly humanViewFile: string;
+  readonly volumeRecordFile: string;
+  readonly stationDiagnosticFile: string;
   readonly collectorStatus:
     | "ok"
     | "skipped-no-collector"
@@ -107,20 +109,48 @@ function blockEntryIdentity(
   });
 }
 
+/**
+ * Single typed candidate stream: cc sessions + ticket face/decree + referenced ADRs.
+ * Mechanical layer does not prose-filter for relevance (锚定宪法).
+ */
 async function loadSourceBlocks(input: DiaristRunInput): Promise<DiaristSourceBlock[]> {
   if (input.blocks !== undefined) return [...input.blocks];
   const cwds = input.sessionCwds ?? [input.cwd];
-  return readCcSessionBlocks({
-    cwds,
-    ...(input.projectsRoot === undefined ? {} : { projectsRoot: input.projectsRoot }),
-  });
+  const blocks: DiaristSourceBlock[] = [
+    ...readCcSessionBlocks({
+      cwds,
+      ...(input.projectsRoot === undefined ? {} : { projectsRoot: input.projectsRoot }),
+    }),
+  ];
+  if (input.ticketBody !== undefined && input.ticketBody.trim() !== "") {
+    blocks.push(
+      ...readTicketFaceBlocks({
+        ticketBody: input.ticketBody,
+        ...(input.ticketBodyPath === undefined ? {} : { sourcePath: input.ticketBodyPath }),
+      }),
+    );
+    const adrPaths = extractReferencedAdrPaths(input.ticketBody);
+    if (adrPaths.length > 0) {
+      blocks.push(
+        ...readAdrDecisionKeyBlocks({
+          cwd: input.cwd,
+          adrPaths,
+        }),
+      );
+    }
+  }
+  return blocks;
 }
 
 /**
  * Run one diarist pass for a ticket: mechanical candidates → LLM collect →
  * reverse-verify → idempotent sitian append → human view refresh.
+ * Always establishes the per-ticket volume + md + station diagnostic.
  */
 export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResult> {
+  // Per-ticket volume exists for every bound court, including empty/fail paths.
+  const volumePaths = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
+
   const anchors: DiaristAnchorSet = buildDiaristAnchors({
     ticketNumber: input.ticketNumber,
     ...(input.ticketBody === undefined ? {} : { ticketBody: input.ticketBody }),
@@ -135,7 +165,6 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block)),
   );
 
-  const llmRequired = input.llmRequired !== false;
   let collectorStatus: DiaristRunResult["collectorStatus"] = "skipped-no-collector";
   let collectorError: string | undefined;
   let llmRawStdout: string | undefined;
@@ -183,6 +212,8 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
   const accepted: TicketProvenanceEntry[] = [];
   let rejectedQuotes = 0;
 
+  // Only a successful collect (ok / empty-selection already branched) with
+  // selections present can enter the volume. empty-selection has collect with [].
   if (collect !== undefined && collectorStatus === "ok") {
     for (const selection of collect.selections) {
       // triage is human-face only — never a machine gate (collector contract).
@@ -215,32 +246,31 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
       pointers.push(ptr);
       accepted.push(projected.entry);
     }
-  } else if (!llmRequired && collector === undefined) {
-    // Explicit mechanical-only mode (tests / offline). Not production default.
-    for (const block of fresh) {
-      if (!block.isUserTurn) continue;
-      const entry = blockToPrescreenEntry(block, anchors);
-      const ptr = appendTicketProvenanceEntry({
-        ticketNumber: input.ticketNumber,
-        cwd: input.cwd,
-        entry,
-        source: "diarist-mechanical-only",
-      });
-      pointers.push(ptr);
-      accepted.push(entry);
-    }
   }
 
   // Refresh human view from the full volume (includes prior court runs).
+  // Always write — empty courts still get the md face next to the JSONL.
   const volume = await readTicketProvenance(input.ticketNumber, input.cwd);
-  let humanViewFile: string | undefined;
-  if (volume.entries.length > 0 || accepted.length > 0) {
-    humanViewFile = writeTicketProvenanceHumanView({
+  const humanViewFile = writeTicketProvenanceHumanView({
+    ticketNumber: input.ticketNumber,
+    cwd: input.cwd,
+    entries: volume.entries,
+  });
+
+  const stationDiagnosticFile = writeDiaristStationDiagnostic({
+    ticketNumber: input.ticketNumber,
+    cwd: input.cwd,
+    diagnostic: {
       ticketNumber: input.ticketNumber,
-      cwd: input.cwd,
-      entries: volume.entries,
-    });
-  }
+      collectorStatus,
+      candidateCount: safeguarded.length,
+      freshCount: fresh.length,
+      appended: accepted.length,
+      rejectedQuotes,
+      ...(collectorError === undefined ? {} : { collectorError }),
+      recordedAt: new Date().toISOString(),
+    },
+  });
 
   return {
     ticketNumber: input.ticketNumber,
@@ -250,7 +280,9 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     rejectedQuotes,
     pointers,
     entries: volume.entries,
-    ...(humanViewFile === undefined ? {} : { humanViewFile }),
+    humanViewFile,
+    volumeRecordFile: volumePaths.recordFile,
+    stationDiagnosticFile,
     collectorStatus,
     ...(collectorError === undefined ? {} : { collectorError }),
     ...(llmRawStdout === undefined ? {} : { llmRawStdout }),

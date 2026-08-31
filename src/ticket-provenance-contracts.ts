@@ -25,7 +25,7 @@ export type TicketProvenanceSourceKind =
 /**
  * How a block entered the volume.
  * - llm-semantic: LLM collector selected the block (after mechanical reverse-verify)
- * - mechanical-prescreen: mechanical candidate retained without LLM acceptance
+ * - mechanical-prescreen: historical only (no production writer; kept for volume projection)
  * - quote-verify-failed: diagnostic only — quote failed verbatim check (not a diary entry)
  */
 export type TicketProvenanceBasisMethod =
