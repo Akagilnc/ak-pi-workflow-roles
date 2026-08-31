@@ -1,5 +1,5 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
@@ -42,6 +42,32 @@ export async function buildPublicAkRoleBin(
   await chmod(outfile, 0o755);
 }
 
+/**
+ * Deferred grok-build production host artifact. Loaded only when the composition
+ * root selects grok-build — keeps role-runtime / peer edges out of the public bin.
+ * packages:"external" so optional peers resolve from the install tree at selection.
+ */
+export async function buildGrokProductionHost(
+  outfile = "dist/grok/production-host.js",
+) {
+  await mkdir(dirname(outfile), { recursive: true });
+  await build({
+    entryPoints: ["src/grok/production-host.ts"],
+    outfile,
+    format: "esm",
+    platform: "node",
+    target: "node20",
+    bundle: true,
+    packages: "external",
+    logLevel: "silent",
+  });
+  // role-envelope resolves ./mcp-relay.mjs from import.meta.url — keep it beside the bundle.
+  await copyFile(
+    resolve("src/grok/mcp-relay.mjs"),
+    join(dirname(outfile), "mcp-relay.mjs"),
+  );
+}
+
 export async function buildPackageArtifacts() {
   await build({
     entryPoints: entries.map((name) => `src/${name}.ts`),
@@ -58,6 +84,7 @@ export async function buildPackageArtifacts() {
     await writeFile(path, source.replaceAll(/(from\s*["'][^"']+)\.ts(["'])/g, "$1.js$2"));
   }
   await buildPublicAkRoleBin();
+  await buildGrokProductionHost();
 }
 
 const isMain =
