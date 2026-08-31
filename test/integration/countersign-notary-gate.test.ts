@@ -151,6 +151,11 @@ const BINDING_FAILURES: readonly {
     flags: new Map([["ak-countersign-ticket-number", true]]),
   },
   {
+    name: "flag above MAX_SAFE_INTEGER",
+    reason: "flag-invalid",
+    flags: new Map([["ak-countersign-ticket-number", "9007199254740993"]]),
+  },
+  {
     name: "corrupt invocation.json",
     reason: "unparseable",
     flags: new Map(),

@@ -676,11 +676,12 @@ function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefi
   const fromFlag = roleHost.getFlag("ak-countersign-ticket-number");
   if (fromFlag !== undefined) {
     if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
-      return Number(fromFlag);
+      const n = Number(fromFlag);
+      if (Number.isSafeInteger(n) && n >= 1) return n;
     }
     throw new CountersignInvocationBindingError(
       "flag-invalid",
-      "countersign Notary gate: ak-countersign-ticket-number is present but not a positive integer string",
+      "countersign Notary gate: ak-countersign-ticket-number is present but not a safe positive integer string",
     );
   }
 
