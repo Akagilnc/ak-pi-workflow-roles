@@ -15626,18 +15626,35 @@ async function runEngineDetourOnce(input) {
   }
   const stagingDir = await mkdtemp(join6(tmpdir(), "ak-engine-detour-"));
   const stagedPath = join6(stagingDir, "prompt.txt");
+  let result2;
+  let runError;
   try {
     await writeFile2(stagedPath, input.stagedPrompt, "utf8");
     const argv = resolveArgvWithStagedPrompt(input.argv, stagedPath);
-    return await spawnEngineDetourOnce({
+    result2 = await spawnEngineDetourOnce({
       argv,
       cwd: input.cwd,
       ...input.env === void 0 ? {} : { env: input.env },
       ...input.signal === void 0 ? {} : { signal: input.signal }
     });
-  } finally {
-    await rm(stagingDir, { recursive: true, force: true }).catch(() => void 0);
+  } catch (error) {
+    runError = error;
   }
+  try {
+    await rm(stagingDir, { recursive: true, force: true });
+  } catch (cleanupError) {
+    if (runError !== void 0) {
+      throw new Error(
+        `\u52B3\u52A1\u5F15\u64CE stagedPrompt \u6E05\u7406\u5931\u8D25\uFF08\u539F\u8FD0\u884C\u9519\u8BEF\u4FDD\u7559\u4E3A cause\uFF09: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        { cause: runError }
+      );
+    }
+    throw cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
+  }
+  if (runError !== void 0) {
+    throw runError instanceof Error ? runError : new Error(String(runError));
+  }
+  return result2;
 }
 var ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV, ENGINE_DETOUR_STAGED_PROMPT_TOKEN;
 var init_engine_detour = __esm({
