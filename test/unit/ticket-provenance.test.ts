@@ -14,9 +14,13 @@ import {
 } from "../helpers/pi-test-harness.ts";
 import {
   TICKET_PROVENANCE_KIND,
+  TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+  projectTicketProvenanceDiagnostic,
   projectTicketProvenanceEntry,
 } from "../../src/ticket-provenance-contracts.ts";
 import {
+  appendCollectorFailureDiagnostic,
+  appendIssueSourceFailureDiagnostic,
   appendTicketProvenanceEntry,
   readTicketProvenance,
   resolveTicketProvenanceVolume,
@@ -145,7 +149,7 @@ test("append + read: ticket-keyed volume, idempotent identity, human view", asyn
   });
 });
 
-test("readTicketProvenance skips quote-verify-failed diagnostics and foreign kinds", async () => {
+test("readTicketProvenance skips quote-verify-failed and projects typed diagnostics separately", async () => {
   await withHermeticHome({ prefix: "ak-ticket-prov-skip-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -165,6 +169,19 @@ test("readTicketProvenance skips quote-verify-failed diagnostics and foreign kin
         timestamp: "2026-08-31T00:00:00.000Z",
       },
     });
+    appendCollectorFailureDiagnostic({
+      ticketNumber: 7,
+      cwd: project,
+      collectorError: "engine down",
+      recordedAt: "2026-08-31T00:00:30.000Z",
+    });
+    appendIssueSourceFailureDiagnostic({
+      ticketNumber: 7,
+      cwd: project,
+      cause: "origin missing",
+      reason: "origin-unresolved",
+      recordedAt: "2026-08-31T00:00:45.000Z",
+    });
     appendTicketProvenanceEntry({
       ticketNumber: 7,
       cwd: project,
@@ -180,6 +197,54 @@ test("readTicketProvenance skips quote-verify-failed diagnostics and foreign kin
     const read = await readTicketProvenance(7, project);
     assert.equal(read.entries.length, 1);
     assert.equal(read.entries[0]!.transcript, "owner decree block");
+    assert.equal(read.diagnostics.length, 2);
+    assert.equal(read.diagnostics[0]!.diagnosticKind, "collector-failed");
+    assert.equal(read.diagnostics[0]!.cause, "engine down");
+    assert.equal(read.diagnostics[1]!.diagnosticKind, "issue-source-failed");
+    assert.equal(read.diagnostics[1]!.reason, "origin-unresolved");
     assert.ok(read.skipped >= 1);
   });
+});
+
+test("diagnostic projection: recordClass payload; rejects forged sourceKind disguise", () => {
+  const ok = projectTicketProvenanceDiagnostic({
+    recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+    diagnosticKind: "collector-failed",
+    cause: "engine down",
+    recordedAt: "2026-08-31T00:00:00.000Z",
+  });
+  assert.ok(ok);
+  assert.equal(ok.diagnosticKind, "collector-failed");
+  // Entry projector must not accept diagnostic payload as body.
+  assert.equal(
+    projectTicketProvenanceEntry({
+      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+      diagnosticKind: "collector-failed",
+      cause: "engine down",
+      recordedAt: "2026-08-31T00:00:00.000Z",
+    }),
+    undefined,
+  );
+  // Legacy collector-failed entry shape still projects as diagnostic.
+  const legacy = projectTicketProvenanceDiagnostic({
+    basis: { method: "collector-failed", note: "old fail" },
+    sourceKind: "cc-session",
+    sourceRef: { path: "x" },
+    transcript: "old fail",
+    timestamp: "2026-08-31T00:00:00.000Z",
+  });
+  assert.ok(legacy);
+  assert.equal(legacy.diagnosticKind, "collector-failed");
+  assert.equal(legacy.cause, "old fail");
+  // collector-failed is no longer a lawful body entry method.
+  assert.equal(
+    projectTicketProvenanceEntry({
+      basis: { method: "collector-failed", note: "old fail" },
+      sourceKind: "cc-session",
+      sourceRef: { path: "x" },
+      transcript: "old fail",
+      timestamp: "2026-08-31T00:00:00.000Z",
+    }),
+    undefined,
+  );
 });

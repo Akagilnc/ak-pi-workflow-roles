@@ -27,8 +27,13 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { createScriptedDiaristCollector } from "../../src/diarist-llm-collector.ts";
-import type { DiaristIssueFace } from "../../src/diarist.ts";
+import {
+  DiaristIssueSourceError,
+  type DiaristIssueFace,
+} from "../../src/diarist.ts";
 import { DiaristSourceReadError } from "../../src/diarist-mechanical.ts";
+import { readTicketProvenance } from "../../src/ticket-provenance.ts";
+import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
@@ -445,6 +450,101 @@ test("public countersign diarist station: referenced ADR missing fails typed", a
       (error: unknown) =>
         error instanceof DiaristSourceReadError && error.reason === "adr-missing",
     );
+  });
+});
+
+test("public countersign diarist station: bound ticket issue-source failure is typed + durable", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    // No origin remote → origin-unresolved (not silent empty issue face).
+
+    const admitted = await admitCountersignInvocation({
+      home,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      instruction: "裁",
+      attachmentPaths: [],
+      ticket: 582,
+      createRunId: () => "01a0sign00-0000-7000-8000-000000000d03",
+    });
+    assert.equal(admitted.ticketNumber, 582);
+
+    await assert.rejects(
+      () =>
+        runCountersignDiaristStation(admitted, {
+          cwd: project,
+          packageRoot,
+          diaristCollector: createScriptedDiaristCollector({
+            selections: [],
+            rawStdout: '{"selections":[]}',
+            engineArgv: ["scripted"],
+          }),
+          projectsRoot: join(home, "empty-cc"),
+        }),
+      (error: unknown) =>
+        error instanceof DiaristIssueSourceError &&
+        error.reason === "origin-unresolved" &&
+        error.code === "diarist-issue-source",
+    );
+
+    const volume = await readTicketProvenance(582, project);
+    assert.equal(volume.entries.length, 0);
+    assert.equal(volume.diagnostics.length, 1);
+    assert.equal(
+      volume.diagnostics[0]!.recordClass,
+      TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+    );
+    assert.equal(volume.diagnostics[0]!.diagnosticKind, "issue-source-failed");
+    assert.equal(volume.diagnostics[0]!.reason, "origin-unresolved");
+  });
+});
+
+test("public countersign diarist station: issue-unavailable fetcher fails typed + durable", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
+
+    const admitted = await admitCountersignInvocation({
+      home,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      instruction: "裁",
+      attachmentPaths: [],
+      ticket: 582,
+      createRunId: () => "01a0sign00-0000-7000-8000-000000000d04",
+    });
+
+    await assert.rejects(
+      () =>
+        runCountersignDiaristStation(admitted, {
+          cwd: project,
+          packageRoot,
+          diaristCollector: createScriptedDiaristCollector({
+            selections: [],
+            rawStdout: '{"selections":[]}',
+            engineArgv: ["scripted"],
+          }),
+          // Simulate tracker/gh soft miss — station must not continue as empty face.
+          diaristIssueFaceFetcher: async () => undefined,
+          projectsRoot: join(home, "empty-cc"),
+        }),
+      (error: unknown) =>
+        error instanceof DiaristIssueSourceError &&
+        error.reason === "issue-unavailable",
+    );
+
+    const volume = await readTicketProvenance(582, project);
+    assert.equal(volume.diagnostics.length, 1);
+    assert.equal(volume.diagnostics[0]!.diagnosticKind, "issue-source-failed");
+    assert.equal(volume.diagnostics[0]!.reason, "issue-unavailable");
   });
 });
 

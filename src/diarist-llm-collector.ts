@@ -41,9 +41,6 @@ export type DiaristLlmCollectResult = {
   readonly engineArgv: readonly string[];
 };
 
-/** Child-env key carrying the absolute diarist-collect method path into the engine process. */
-export const DIARIST_COLLECT_METHOD_ENV = "AK_DIARIST_COLLECT_METHOD" as const;
-
 export type DiaristLlmCollector = (input: {
   readonly ticketNumber: number;
   readonly candidates: readonly DiaristSourceBlock[];
@@ -231,6 +228,8 @@ export type HermesDiaristCollectorOptions = {
 
 /**
  * Default cheap-engine collector via hermes -z (ADR 0069 detour seam).
+ * Owner-domain method material is delivered once: absolute path inside the -z
+ * prompt (enters LLM view). No parallel env transport.
  * Engine failure and uninterpretable stdout throw — caller records honest diagnostic.
  */
 export function createHermesDiaristCollector(
@@ -249,7 +248,7 @@ export function createHermesDiaristCollector(
       methodPath,
     });
     // hermes -z takes the prompt as one argv entry (no temp file).
-    // --ignore-rules keeps host identity out; method path is delivered in the prompt.
+    // --ignore-rules keeps host identity out; method path is solely in the prompt.
     const argv = [
       executable,
       ...(options.extraArgv ?? []),
@@ -258,16 +257,10 @@ export function createHermesDiaristCollector(
       "--no-restore-cwd",
       "--ignore-rules",
     ];
-    // Formal delivery coordinate: method path on child env (engine process sees it).
-    // Prompt still names the path neutrally for the model (ADR 0073 path delivery).
-    const childEnv: NodeJS.ProcessEnv = {
-      ...(options.env ?? process.env),
-      [DIARIST_COLLECT_METHOD_ENV]: methodPath,
-    };
     const result = await runDetour({
       argv,
       cwd: options.cwd ?? process.cwd(),
-      env: childEnv,
+      ...(options.env === undefined ? {} : { env: options.env }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     if (result.code !== 0) {

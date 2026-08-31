@@ -17,7 +17,10 @@ import {
   TICKET_PROVENANCE_HUMAN_VIEW,
   TICKET_PROVENANCE_KIND,
   TICKET_PROVENANCE_OFFERED_WATERMARK,
+  TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+  projectTicketProvenanceDiagnostic,
   projectTicketProvenanceEntry,
+  type TicketProvenanceDiagnostic,
   type TicketProvenanceEntry,
   type TicketProvenanceIdentityInput,
 } from "./ticket-provenance-contracts.ts";
@@ -221,14 +224,17 @@ export function recordOfferedIdentities(input: {
 }
 
 export type ReadTicketProvenanceResult = {
+  /** Readable diary body entries only. */
   readonly entries: readonly TicketProvenanceEntry[];
+  /** Typed diagnostics on the same partition (collector/issue-source failures). */
+  readonly diagnostics: readonly TicketProvenanceDiagnostic[];
   readonly records: readonly SitianRecord[];
   readonly recordFile: string;
-  /** Rows whose payload failed entry projection (kept for honesty, not washed). */
+  /** Rows that are neither body entry nor recognized diagnostic. */
   readonly skipped: number;
 };
 
-/** Read all projected diary entries for a ticket (empty when volume absent). */
+/** Read projected diary entries + diagnostics for a ticket (empty when volume absent). */
 export async function readTicketProvenance(
   ticketNumber: number,
   cwd: string,
@@ -236,10 +242,17 @@ export async function readTicketProvenance(
   const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
   const { records } = await readSitianRecords(recordFile);
   const entries: TicketProvenanceEntry[] = [];
+  const diagnostics: TicketProvenanceDiagnostic[] = [];
   let skipped = 0;
   for (const record of records) {
     if (record.kind !== TICKET_PROVENANCE_KIND) {
       skipped += 1;
+      continue;
+    }
+    // Diagnostics first — same partition, separate projection (never body).
+    const diagnostic = projectTicketProvenanceDiagnostic(record.payload);
+    if (diagnostic !== undefined) {
+      diagnostics.push(diagnostic);
       continue;
     }
     const entry = projectTicketProvenanceEntry(record.payload);
@@ -247,17 +260,14 @@ export async function readTicketProvenance(
       skipped += 1;
       continue;
     }
-    // Diagnostic residue — not a readable diary entry (body stays separate).
-    if (
-      entry.basis.method === "quote-verify-failed" ||
-      entry.basis.method === "collector-failed"
-    ) {
+    // quote-verify-failed keeps real source pointer but is not a diary body row.
+    if (entry.basis.method === "quote-verify-failed") {
       skipped += 1;
       continue;
     }
     entries.push(entry);
   }
-  return { entries, records, recordFile, skipped };
+  return { entries, diagnostics, records, recordFile, skipped };
 }
 
 /**
@@ -329,10 +339,45 @@ export function ensureTicketProvenanceVolume(
 }
 
 /**
- * Append collector-failure true cause onto the ticket-provenance volume (append-only).
- * Same sitian partition as diary entries; filtered from human-facing projection.
- * Never a last-state sidecar that the next court can overwrite.
+ * Append a typed diagnostic onto the ticket-provenance volume (append-only).
+ * Same sitian kind + subject partition as diary entries; payload uses recordClass
+ * discriminator — never forged as a source entry. No sidecar / parallel ledger.
  */
+export function appendTicketProvenanceDiagnostic(input: {
+  readonly ticketNumber: number;
+  readonly cwd: string;
+  readonly diagnostic: TicketProvenanceDiagnostic;
+  readonly host?: string;
+  readonly source?: string;
+}): RecordPointer {
+  const subject = ticketProvenanceSubject(input.ticketNumber);
+  // recordedAt + kind + cause → distinct identity per court failure (history).
+  const identity = createHash("sha256")
+    .update(
+      [
+        subject,
+        input.diagnostic.recordClass,
+        input.diagnostic.diagnosticKind,
+        input.diagnostic.recordedAt,
+        input.diagnostic.cause,
+        input.diagnostic.reason ?? "",
+      ].join("\u0000"),
+      "utf8",
+    )
+    .digest("hex");
+  return sitianReport({
+    level: "event",
+    kind: TICKET_PROVENANCE_KIND,
+    identity,
+    subject,
+    cwd: input.cwd,
+    host: input.host ?? "diarist",
+    source: input.source ?? "diarist-diagnostic",
+    payload: input.diagnostic,
+  });
+}
+
+/** Collector/engine failure true cause — typed diagnostic, not a diary entry. */
 export function appendCollectorFailureDiagnostic(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
@@ -340,23 +385,38 @@ export function appendCollectorFailureDiagnostic(input: {
   readonly recordedAt?: string;
 }): RecordPointer {
   const recordedAt = input.recordedAt ?? new Date().toISOString();
-  // Transcript includes timestamp so each court failure is a distinct identity (history).
-  const transcript = `${recordedAt}\n${input.collectorError}`;
-  return appendTicketProvenanceEntry({
+  return appendTicketProvenanceDiagnostic({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
     source: "diarist-collector-fail",
-    entry: {
-      basis: {
-        method: "collector-failed",
-        anchors: [`#${input.ticketNumber}`],
-        note: input.collectorError,
-      },
-      // Diagnostic residue uses a stable non-source pointer; kind is required by entry shape.
-      sourceKind: "cc-session",
-      sourceRef: { path: "diarist/collector-failure", entryId: recordedAt },
-      transcript,
-      timestamp: recordedAt,
+    diagnostic: {
+      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+      diagnosticKind: "collector-failed",
+      cause: input.collectorError,
+      recordedAt,
+    },
+  });
+}
+
+/** Issue-face source acquisition failure — typed diagnostic on the ticket volume. */
+export function appendIssueSourceFailureDiagnostic(input: {
+  readonly ticketNumber: number;
+  readonly cwd: string;
+  readonly cause: string;
+  readonly reason: string;
+  readonly recordedAt?: string;
+}): RecordPointer {
+  const recordedAt = input.recordedAt ?? new Date().toISOString();
+  return appendTicketProvenanceDiagnostic({
+    ticketNumber: input.ticketNumber,
+    cwd: input.cwd,
+    source: "diarist-issue-source",
+    diagnostic: {
+      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+      diagnosticKind: "issue-source-failed",
+      cause: input.cause,
+      recordedAt,
+      reason: input.reason,
     },
   });
 }
