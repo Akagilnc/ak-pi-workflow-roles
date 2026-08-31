@@ -402,6 +402,8 @@ export async function prepareGrokRoleEnvelope(options: {
     }],
     systemPrompt,
     prompt,
+    // Snapshot after activation + before_agent_start (envelope session writes included).
+    sessionEntries: Object.freeze(customEntries.map((e) => Object.freeze({ ...e }))),
     closeRound,
     dispose,
   };

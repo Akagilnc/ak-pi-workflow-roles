@@ -31,6 +31,7 @@ function prepared(closeRound: GrokPreparedTurn["closeRound"], mcpServers: Readon
     mcpServers,
     systemPrompt: "law",
     prompt: "decide",
+    sessionEntries: [],
     closeRound,
   };
 }

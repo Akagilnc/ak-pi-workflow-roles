@@ -72,8 +72,33 @@ export function projectNotarySessionBound(input: {
 
 export type NotarySessionBound = ReturnType<typeof projectNotarySessionBound>;
 
-/** Session custom-entry type for the typed notary bound (ledger-visible). */
+/**
+ * Session custom-entry type for typed notary bound (written by shared envelope).
+ * Role module only projects; lifecycle write is envelope-owned (ADR 0018).
+ */
 export const NOTARY_SESSION_BOUND_ENTRY = "notary-session-bound" as const;
+
+/** Flag-derived bound record for the shared envelope session write. */
+export type NotaryFlagBoundRecord = {
+  readonly sourceRunPath: string;
+  readonly ticketNumber?: number;
+};
+
+/**
+ * Project notary bound from host flags (envelope consumption seam).
+ * undefined when source-run flag absent/blank.
+ */
+export function projectNotaryBoundFromFlags(
+  getFlag: (name: string) => unknown,
+): NotaryFlagBoundRecord | undefined {
+  const path = getFlag(NOTARY_SOURCE_RUN_FLAG.name);
+  if (typeof path !== "string" || path.trim() === "") return undefined;
+  const ticketNumber = readNotaryTicketFlag(getFlag(NOTARY_TICKET_FLAG.name));
+  return {
+    sourceRunPath: path,
+    ...(ticketNumber === undefined ? {} : { ticketNumber }),
+  };
+}
 
 /** Assemble systemPrompt patch from soul + typed bound (prompt bytes only). */
 export function assembleNotaryAgentStartPrompt(input: {
@@ -145,19 +170,17 @@ export function createNotaryRoleRuntime(
             };
           },
         });
-        pi.on("before_agent_start", (event, ctx) => {
+        // Evidence assembly only (ADR 0018): soul + bound into prompt. Session write is envelope-owned.
+        pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
           }
-          // Locator + optional ticket — never preload diary/diff/draft body (self-fetch).
           const bound = projectNotarySessionBound({
             sourceRun: activation.sourceRun,
             ...(activation.ticketNumber === undefined
               ? {}
               : { ticketNumber: activation.ticketNumber }),
           });
-          // Typed bound on the session ledger when the host exposes appendCustomEntry.
-          ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
           return {
             systemPrompt: assembleNotaryAgentStartPrompt({
               baseSystemPrompt: event.systemPrompt,
