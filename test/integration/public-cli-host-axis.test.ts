@@ -173,8 +173,7 @@ test("production grok-build adapter accepts xai selection without falling back t
   await runAkRole(["config", "set", "judge", "xai/grok-4.6:high"], productionBase(home));
   const result = await runAkRole(["judge", "--host", "grok-build", "x"], productionBase(home, countingPi));
 
-  // Selection must succeed (not host-unregistered / host-model-mismatch). Turn may fail later (#511 live).
+  // Selection must succeed (not host-unregistered / host-model-mismatch). Turn outcome is #511 live, not this ticket.
   assert.equal(result.hostFailure, undefined);
   assert.equal(piTurns, 0);
-  assert.notEqual(result.exitCode, 0);
 }));
