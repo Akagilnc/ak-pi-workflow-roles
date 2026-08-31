@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative as pathRelative } from "node:path";
+import { copyFile, lstat, mkdir, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
@@ -331,9 +331,47 @@ export type GrokInspectionClassificationOptions = Readonly<{
 const execFileAsync = promisify(execFile);
 
 /**
- * True when `absolutePath` is a blob at the calling repo's current HEAD and the
- * on-disk bytes Grok would read match that blob. Untracked, dirty, outside the
- * work tree, or unreadable paths fail closed.
+ * Map a worktree-relative path to the unique HEAD tree path it names.
+ * Exact match first; otherwise a single case-insensitive hit in the same
+ * directory (Grok may report `Claude.md` while HEAD stores `CLAUDE.md`).
+ * Does not follow worktree symlinks — the path string is the identity.
+ */
+async function resolveHeadTreePath(topLevel: string, relativePath: string): Promise<string | undefined> {
+  try {
+    await execFileAsync("git", ["rev-parse", "--verify", `HEAD:${relativePath}`], {
+      cwd: topLevel,
+      encoding: "utf8",
+    });
+    return relativePath;
+  } catch {
+    // Fall through to case-insensitive directory lookup.
+  }
+  const parent = dirname(relativePath);
+  const leaf = basename(relativePath);
+  const { stdout } = parent === "."
+    ? await execFileAsync("git", ["ls-tree", "--name-only", "HEAD"], {
+      cwd: topLevel,
+      encoding: "utf8",
+    })
+    : await execFileAsync("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
+      cwd: topLevel,
+      encoding: "utf8",
+    });
+  const needle = leaf.toLowerCase();
+  const hits = stdout
+    .split("\n")
+    .map((name) => name.trim())
+    .filter((name) => name !== "" && basename(name).toLowerCase() === needle)
+    .map((name) => (parent === "." ? basename(name) : join(parent, basename(name))));
+  return hits.length === 1 ? hits[0] : undefined;
+}
+
+/**
+ * True when the projectInstruction path itself is a regular blob at calling-repo
+ * HEAD and the worktree bytes at that path match the blob. The path identity is
+ * the inspect-reported path (parent realpath + basename) — final-component
+ * symlinks are not followed into another HEAD path, and symlink leaves fail
+ * closed even when the target is a matching tracked blob (#521 shared-material).
  */
 export async function isHeadMatchedProjectInstruction(
   repositoryCwd: string,
@@ -346,19 +384,27 @@ export async function isHeadMatchedProjectInstruction(
       encoding: "utf8",
     });
     const topLevel = await realpath(topLevelOut.trim());
-    const resolvedPath = await realpath(absolutePath);
-    const relative = pathRelative(topLevel, resolvedPath);
+    // Resolve only the parent directory so a final-component symlink keeps its leaf name.
+    const parent = await realpath(dirname(absolutePath));
+    const leaf = basename(absolutePath);
+    if (leaf === "" || leaf === "." || leaf === "..") return false;
+    const candidate = join(parent, leaf);
+    const relative = pathRelative(topLevel, candidate);
     if (relative === "" || relative.startsWith("..") || isAbsolute(relative) || relative.includes("\0")) {
       return false;
     }
+    // Untracked (or any) symlink at this leaf must not inherit the target's HEAD identity.
+    if ((await lstat(candidate)).isSymbolicLink()) return false;
+    const headRel = await resolveHeadTreePath(topLevel, relative);
+    if (headRel === undefined) return false;
     const { stdout: headBlob } = await execFileAsync(
       "git",
-      ["rev-parse", "--verify", `HEAD:${relative}`],
+      ["rev-parse", "--verify", `HEAD:${headRel}`],
       { cwd: topLevel, encoding: "utf8" },
     );
     const { stdout: workBlob } = await execFileAsync(
       "git",
-      ["hash-object", "--", resolvedPath],
+      ["hash-object", "--", candidate],
       { cwd: topLevel, encoding: "utf8" },
     );
     return headBlob.trim() === workBlob.trim();

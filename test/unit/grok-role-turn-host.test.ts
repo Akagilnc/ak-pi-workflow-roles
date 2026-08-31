@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -537,6 +537,46 @@ process.stdout.write(JSON.stringify({
     });
     assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
     assert.equal(connected, true);
+
+    // Grok often reports Claude.md while HEAD stores CLAUDE.md — same leaf, not a symlink hop.
+    const grokCasePath = join(root, "Claude.md");
+    const casedInspect = await inspectControlledGrok({
+      binary: faux,
+      cwd: root,
+      env: {
+        ...process.env,
+        AK_PACKAGE_ROOT: packageRoot,
+        AK_FAUX_PROJECT_INSTRUCTIONS: JSON.stringify([grokCasePath]),
+      },
+      packageRoot,
+    });
+    assert.deepEqual(casedInspect.privateActive, []);
+
+    // Untracked symlink must not inherit the target's HEAD identity (realpath bypass).
+    const symlinkPath = join(root, "LINKED.md");
+    await symlink(claudePath, symlinkPath);
+    const symlinkInspect = await inspectControlledGrok({
+      binary: faux,
+      cwd: root,
+      env: {
+        ...process.env,
+        AK_PACKAGE_ROOT: packageRoot,
+        AK_FAUX_PROJECT_INSTRUCTIONS: JSON.stringify([symlinkPath]),
+      },
+      packageRoot,
+    });
+    assert.deepEqual(symlinkInspect.privateActive, [`projectInstructions:${symlinkPath}`]);
+    connected = false;
+    const symlinkRejected = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => { connected = true; throw new Error("must not connect"); },
+      inspect: async () => symlinkInspect,
+      prepare: async () => prepared(async () => ({ accepted: true }), [{ name: "ak-role" }]),
+    });
+    assert.equal((await symlinkRejected.executeTurn(request)).knownFailure?.identity?.code, "private-config-active");
+    assert.equal(connected, false);
+    await unlink(symlinkPath);
 
     await writeFile(claudePath, "# dirty local rewrite\n", "utf8");
     await writeFile(localPath, "# untracked local\n", "utf8");
