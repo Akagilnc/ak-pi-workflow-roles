@@ -118,9 +118,20 @@ export function resolveTicketProvenanceVolume(
   };
 }
 
+/** Honest failure when the offered-identity watermark cannot be read as written. */
+export class TicketProvenanceWatermarkError extends Error {
+  readonly code = "ticket-provenance-watermark" as const;
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "TicketProvenanceWatermarkError";
+  }
+}
+
 /**
  * Read identities already offered to the collector (append-only watermark).
- * Empty when absent. Malformed lines are skipped without washing the file.
+ * Absent file → empty set. Any non-empty line that is not a JSON object with a
+ * non-empty string `identity` throws TicketProvenanceWatermarkError (失败诚实：
+ * never interpret corruption as "unseen" and silently re-offer).
  */
 export function readOfferedIdentities(
   ticketNumber: number,
@@ -128,24 +139,41 @@ export function readOfferedIdentities(
 ): ReadonlySet<string> {
   const { offeredWatermarkFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
   if (!existsSync(offeredWatermarkFile)) return new Set();
-  const text = readFileSync(offeredWatermarkFile, "utf8");
+  let text: string;
+  try {
+    text = readFileSync(offeredWatermarkFile, "utf8");
+  } catch (error) {
+    throw new TicketProvenanceWatermarkError(
+      `ticket-provenance offered watermark unreadable (${offeredWatermarkFile}): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
   const seen = new Set<string>();
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
+  const lines = text.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index]!.trim();
     if (!trimmed) continue;
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      if (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        typeof (parsed as { identity?: unknown }).identity === "string" &&
-        (parsed as { identity: string }).identity.length > 0
-      ) {
-        seen.add((parsed as { identity: string }).identity);
-      }
-    } catch {
-      // keep scanning — do not wash
+      parsed = JSON.parse(trimmed);
+    } catch (error) {
+      throw new TicketProvenanceWatermarkError(
+        `ticket-provenance offered watermark malformed JSON at line ${index + 1} (${offeredWatermarkFile}): ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      typeof (parsed as { identity?: unknown }).identity !== "string" ||
+      (parsed as { identity: string }).identity.length === 0
+    ) {
+      throw new TicketProvenanceWatermarkError(
+        `ticket-provenance offered watermark bad shape at line ${index + 1} (${offeredWatermarkFile}): expected {"identity": non-empty string}`,
+      );
+    }
+    seen.add((parsed as { identity: string }).identity);
   }
   return seen;
 }

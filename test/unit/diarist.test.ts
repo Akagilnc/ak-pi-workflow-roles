@@ -23,7 +23,11 @@ import {
   parseDiaristLlmStdout,
 } from "../../src/diarist-llm-collector.ts";
 import { runDiarist } from "../../src/diarist.ts";
-import { readTicketProvenance } from "../../src/ticket-provenance.ts";
+import {
+  readTicketProvenance,
+  resolveTicketProvenanceVolume,
+  TicketProvenanceWatermarkError,
+} from "../../src/ticket-provenance.ts";
 
 function block(
   partial: Partial<DiaristSourceBlock> &
@@ -128,83 +132,161 @@ test("parseDiaristLlmStdout projects selections and drops OOB indexes", () => {
   assert.deepEqual(parsed[1]!.quotes, ["world"]);
 });
 
-test("runDiarist: unselected block is watermarked and not re-offered next court", async () => {
-  await withHermeticHome({ prefix: "ak-diarist-unsel-" }, async ({ home }) => {
+/** Shared two-block + later fixture for watermark advance / hold boundaries. */
+function watermarkFixtureBlocks() {
+  return {
+    a: block({
+      transcript: "块 A。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-a" },
+    }),
+    b: block({
+      transcript: "块 B。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-b" },
+    }),
+    later: block({
+      transcript: "块 later。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-later" },
+    }),
+  };
+}
+
+test("runDiarist watermark: partial select / empty-select advance; failure holds; corrupt fails", async () => {
+  await withHermeticHome({ prefix: "ak-diarist-wm-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
+    const { a, b, later } = watermarkFixtureBlocks();
 
-    const selected = block({
-      transcript: "立文件。送司天台记录。入选。",
-      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-sel" },
-    });
-    const unselected = block({
-      transcript: "这段 LLM 本庭不选，但不应每庭重送。",
-      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-skip" },
-    });
-    const later = block({
-      transcript: "第二庭才出现的新块。",
-      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-new" },
-    });
-
-    const seenIds: string[][] = [];
-    let pass = 0;
-    const collector = createScriptedDiaristCollector((input) => {
-      seenIds.push(
-        input.candidates.map((c) => String(c.sourceRef.entryId ?? "")),
-      );
-      pass += 1;
-      if (pass === 1) {
-        // Select only the first block — leave u-skip unselected.
+    // --- partial select: u-b unselected still watermarked ---
+    {
+      const seenIds: string[][] = [];
+      let pass = 0;
+      const collector = createScriptedDiaristCollector((input) => {
+        seenIds.push(input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
+        pass += 1;
+        if (pass === 1) {
+          return {
+            selections: [{ candidateIndex: 0, quotes: [] as string[] }],
+            rawStdout: "{}",
+            engineArgv: ["scripted"],
+          };
+        }
         return {
-          selections: [
-            {
-              candidateIndex: 0,
-              quotes: [] as string[],
-              triage: "relevant" as const,
-            },
-          ],
+          selections: input.candidates.map((_, i) => ({
+            candidateIndex: i,
+            quotes: [] as string[],
+          })),
           rawStdout: "{}",
           engineArgv: ["scripted"],
         };
-      }
-      return {
-        selections: input.candidates.map((_, i) => ({
-          candidateIndex: i,
-          quotes: [] as string[],
-          triage: "relevant" as const,
-        })),
-        rawStdout: "{}",
-        engineArgv: ["scripted"],
-      };
-    });
+      });
+      await runDiarist({ ticketNumber: 7, cwd: project, blocks: [a, b], collector });
+      assert.deepEqual(seenIds[0]!.sort(), ["u-a", "u-b"].sort());
+      const second = await runDiarist({
+        ticketNumber: 7,
+        cwd: project,
+        blocks: [a, b, later],
+        collector,
+      });
+      assert.deepEqual(seenIds[1], ["u-later"]);
+      assert.equal(second.freshCount, 1);
+    }
 
-    const first = await runDiarist({
-      ticketNumber: 7,
-      cwd: project,
-      blocks: [selected, unselected],
-      collector,
-    });
-    assert.equal(first.appended, 1);
-    assert.deepEqual(seenIds[0]!.sort(), ["u-sel", "u-skip"].sort());
+    // --- empty-selection also advances (ticket 8) ---
+    {
+      const seenIds: string[][] = [];
+      let pass = 0;
+      const collector = createScriptedDiaristCollector((input) => {
+        seenIds.push(input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
+        pass += 1;
+        return { selections: [], rawStdout: "{}", engineArgv: ["scripted"] };
+      });
+      const first = await runDiarist({
+        ticketNumber: 8,
+        cwd: project,
+        blocks: [a, b],
+        collector,
+      });
+      assert.equal(first.collectorStatus, "empty-selection");
+      assert.equal(first.appended, 0);
+      const second = await runDiarist({
+        ticketNumber: 8,
+        cwd: project,
+        blocks: [a, b, later],
+        collector,
+      });
+      assert.equal(second.freshCount, 1);
+      assert.deepEqual(seenIds[1], ["u-later"]);
+      assert.equal(seenIds.length, 2);
+    }
 
-    const second = await runDiarist({
-      ticketNumber: 7,
-      cwd: project,
-      blocks: [selected, unselected, later],
-      collector,
-    });
-    assert.equal(second.freshCount, 1);
-    assert.deepEqual(
-      seenIds[1],
-      ["u-new"],
-      "unselected u-skip must not re-enter collector; only later new block",
-    );
-    assert.equal(second.appended, 1);
+    // --- collector throw: watermark does not advance; next court re-offers ---
+    {
+      const seenIds: string[][] = [];
+      let pass = 0;
+      const collector = createScriptedDiaristCollector((input) => {
+        seenIds.push(input.candidates.map((c) => String(c.sourceRef.entryId ?? "")));
+        pass += 1;
+        if (pass === 1) throw new Error("engine down");
+        return {
+          selections: input.candidates.map((_, i) => ({
+            candidateIndex: i,
+            quotes: [] as string[],
+          })),
+          rawStdout: "{}",
+          engineArgv: ["scripted"],
+        };
+      });
+      const first = await runDiarist({
+        ticketNumber: 9,
+        cwd: project,
+        blocks: [a, b],
+        collector,
+      });
+      assert.equal(first.collectorStatus, "failed");
+      assert.ok(first.collectorError?.includes("engine down"));
+      const second = await runDiarist({
+        ticketNumber: 9,
+        cwd: project,
+        blocks: [a, b],
+        collector,
+      });
+      assert.equal(second.freshCount, 2);
+      assert.deepEqual(seenIds[1]!.sort(), ["u-a", "u-b"].sort());
+      assert.equal(second.collectorStatus, "ok");
+    }
 
-    const read = await readTicketProvenance(7, project);
-    assert.equal(read.entries.length, 2);
-    assert.ok(read.entries.every((e) => e.sourceRef.entryId !== "u-skip"));
+    // --- corrupt watermark: runDiarist fails honestly, does not silent re-offer ---
+    {
+      await runDiarist({
+        ticketNumber: 10,
+        cwd: project,
+        blocks: [a],
+        collector: createScriptedDiaristCollector({
+          selections: [],
+          rawStdout: "{}",
+          engineArgv: ["scripted"],
+        }),
+      });
+      const { offeredWatermarkFile } = resolveTicketProvenanceVolume(10, project);
+      await writeFile(offeredWatermarkFile, "{not-json\n", "utf8");
+      await assert.rejects(
+        () =>
+          runDiarist({
+            ticketNumber: 10,
+            cwd: project,
+            blocks: [a, b],
+            collector: createScriptedDiaristCollector({
+              selections: [],
+              rawStdout: "{}",
+              engineArgv: ["scripted"],
+            }),
+          }),
+        (error: unknown) =>
+          error instanceof TicketProvenanceWatermarkError &&
+          error.message.includes("malformed"),
+      );
+    }
   });
 });
 
