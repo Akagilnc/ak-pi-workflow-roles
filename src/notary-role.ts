@@ -8,6 +8,7 @@ import {
   NOTARY_ACCEPTED_TEXT,
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
+  NOTARY_TICKET_FLAG,
   notaryOutputSchema,
   projectLawfulNotaryOutput,
   retainNotarySubmission,
@@ -18,6 +19,7 @@ export {
   NOTARY_ACCEPTED_TEXT,
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
+  NOTARY_TICKET_FLAG,
 };
 
 export type NotaryRoleDependencies = {
@@ -33,6 +35,21 @@ export type NotaryRoleHostActions = {
   ): never;
 };
 
+function readOptionalTicketNumber(flag: unknown): number | undefined {
+  if (flag === undefined) return undefined;
+  if (typeof flag !== "string" || flag.trim() === "") {
+    throw new Error(
+      "Notary ak-notary-ticket-number is present but not a safe positive integer string",
+    );
+  }
+  const n = Number(flag);
+  if (!Number.isSafeInteger(n) || n < 1) {
+    throw new Error(
+      "Notary ak-notary-ticket-number is present but not a safe positive integer string",
+    );
+  }
+  return n;
+}
 
 export function createNotaryRoleRuntime(
   pi: RoleHost,
@@ -40,13 +57,18 @@ export function createNotaryRoleRuntime(
   host: NotaryRoleHostActions,
 ) {
   let activation:
-    | { soul: string; sourceRun: NotarySourceRunLocator }
+    | {
+        soul: string;
+        sourceRun: NotarySourceRunLocator;
+        ticketNumber?: number;
+      }
     | undefined;
   let registered = false;
   pi.registerFlag(
     NOTARY_SOURCE_RUN_FLAG.name,
     NOTARY_SOURCE_RUN_FLAG.definition,
   );
+  pi.registerFlag(NOTARY_TICKET_FLAG.name, NOTARY_TICKET_FLAG.definition);
 
   return {
     async activate() {
@@ -57,7 +79,14 @@ export function createNotaryRoleRuntime(
       const soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Notary soul is empty");
       const sourceRun = await dependencies.loadSourceRunLocator(path);
-      activation = { soul, sourceRun };
+      const ticketNumber = readOptionalTicketNumber(
+        pi.getFlag(NOTARY_TICKET_FLAG.name),
+      );
+      activation = {
+        soul,
+        sourceRun,
+        ...(ticketNumber === undefined ? {} : { ticketNumber }),
+      };
 
       if (!registered) {
         registered = true;
@@ -87,9 +116,12 @@ export function createNotaryRoleRuntime(
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
           }
-          // Locator only — never preload ticket/diff/draft body (self-fetch contract).
+          // Locator + optional ticket — never preload diary/diff/draft body (self-fetch).
           const bound = {
             sourceRun: activation.sourceRun,
+            ...(activation.ticketNumber === undefined
+              ? {}
+              : { ticketNumber: activation.ticketNumber }),
           };
           return {
             systemPrompt: `${event.systemPrompt}\n\n<notary_soul>\n${activation.soul}\n</notary_soul>\n\n<notary_source_run>\n${JSON.stringify(bound)}\n</notary_source_run>`,

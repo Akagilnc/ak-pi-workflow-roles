@@ -18,11 +18,17 @@ import {
   admitCountersignInvocation,
   parseCountersignArgv,
 } from "../../src/public-cli/invocation.ts";
-import { buildCountersignTurnRequest } from "../../src/public-cli/countersign-run.ts";
+import {
+  buildCountersignTurnRequest,
+  runCountersignDiaristStation,
+} from "../../src/public-cli/countersign-run.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { createScriptedDiaristCollector } from "../../src/diarist-llm-collector.ts";
+import type { DiaristIssueFace } from "../../src/diarist.ts";
+import { DiaristSourceReadError } from "../../src/diarist-mechanical.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
@@ -308,6 +314,135 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
       assert.equal(state?.role, "countersign");
       assert.equal(state?.state, "terminal");
     }
+  });
+});
+
+test("public countersign diarist station: issue face/comments/ADR from gh seam; attachments not mislabeled", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
+
+    const adrRel = "docs/adr/0075-ticket-provenance-diarist-pipeline.md";
+    await mkdir(join(project, "docs", "adr"), { recursive: true });
+    await writeFile(
+      join(project, adrRel),
+      "# 0075\n\n| `ticket-provenance-file` | 每票 |\n",
+      "utf8",
+    );
+
+    // Probe attachment must NOT become fake issue-body-comment.
+    const probe = join(project, "probe-attachment.md");
+    await writeFile(probe, "PROBE_ATTACHMENT_ONLY — not the issue body.\n", "utf8");
+
+    const face: DiaristIssueFace = {
+      body: [`「立文件。送司天台记录。」`, `see ${adrRel}`].join("\n"),
+      bodyUrl: "https://github.com/Akagilnc/ak-pi-workflow-roles/issues/582",
+      comments: [
+        {
+          id: 9001,
+          body: "评论：先起居郎再给事中。",
+          createdAt: "2026-08-31T12:00:00.000Z",
+          htmlUrl:
+            "https://github.com/Akagilnc/ak-pi-workflow-roles/issues/582#issuecomment-9001",
+        },
+      ],
+    };
+
+    const kindsSeen = new Set<string>();
+    const transcripts: string[] = [];
+    const collector = createScriptedDiaristCollector((input) => {
+      for (const c of input.candidates) {
+        kindsSeen.add(c.sourceKind);
+        transcripts.push(c.transcript);
+      }
+      return {
+        selections: [],
+        rawStdout: '{"selections":[]}',
+        engineArgv: ["scripted"],
+      };
+    });
+
+    const admitted = await admitCountersignInvocation({
+      home,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      instruction: "裁",
+      attachmentPaths: [probe],
+      ticket: 582,
+      createRunId: () => "01a0sign00-0000-7000-8000-000000000d01",
+    });
+    assert.equal(admitted.ticketNumber, 582);
+    assert.equal(admitted.attachments.length, 1);
+
+    const result = await runCountersignDiaristStation(admitted, {
+      cwd: project,
+      packageRoot,
+      diaristCollector: collector,
+      diaristIssueFaceFetcher: async () => face,
+      projectsRoot: join(home, "empty-cc"),
+    });
+    assert.ok(result);
+    assert.equal(result.collectorStatus, "empty-selection");
+    assert.ok(kindsSeen.has("issue-body-comment"));
+    assert.ok(kindsSeen.has("ticket-decree-block"));
+    assert.ok(kindsSeen.has("adr-decision-key"));
+    assert.ok(transcripts.some((t) => t.includes("立文件。送司天台记录。")));
+    assert.ok(transcripts.some((t) => t.includes("先起居郎再给事中")));
+    // Attachment body must not enter the candidate stream as issue face.
+    assert.equal(
+      transcripts.some((t) => t.includes("PROBE_ATTACHMENT_ONLY")),
+      false,
+    );
+  });
+});
+
+test("public countersign diarist station: referenced ADR missing fails typed", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "https://github.com/Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
+
+    const admitted = await admitCountersignInvocation({
+      home,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      instruction: "裁",
+      attachmentPaths: [],
+      ticket: 582,
+      createRunId: () => "01a0sign00-0000-7000-8000-000000000d02",
+    });
+
+    await assert.rejects(
+      () =>
+        runCountersignDiaristStation(admitted, {
+          cwd: project,
+          packageRoot,
+          diaristCollector: createScriptedDiaristCollector({
+            selections: [],
+            rawStdout: '{"selections":[]}',
+            engineArgv: ["scripted"],
+          }),
+          diaristIssueFaceFetcher: async () => ({
+            body: "see docs/adr/0075-ticket-provenance-diarist-pipeline.md",
+            bodyUrl: "https://github.com/Akagilnc/ak-pi-workflow-roles/issues/582",
+            comments: [],
+          }),
+          projectsRoot: join(home, "empty-cc"),
+        }),
+      (error: unknown) =>
+        error instanceof DiaristSourceReadError && error.reason === "adr-missing",
+    );
   });
 });
 

@@ -5,13 +5,20 @@
  */
 import { extractReferencedAdrPaths } from "./adr-path-refs.ts";
 import {
+  createGhCollectorGitHubTransport,
+  createGhIssueSoftFetcher,
+  type GhIssueSoftFetcher,
+  type CollectorGitHubTransport,
+} from "./collector-github.ts";
+import {
   blockToLlmEntry,
   buildDiaristAnchors,
   mechanicalSafeguardPipeline,
   readAdrDecisionKeyBlocks,
   readCcSessionBlocks,
-  readTicketFaceBlocks,
+  readIssueFaceBlocks,
   type DiaristAnchorSet,
+  type DiaristIssueFace,
   type DiaristSourceBlock,
 } from "./diarist-mechanical.ts";
 import {
@@ -19,7 +26,9 @@ import {
   type DiaristLlmCollector,
   type DiaristLlmCollectResult,
 } from "./diarist-llm-collector.ts";
+import { parseGitHubOriginRemote } from "./reviewer-pinned-git.ts";
 import {
+  appendCollectorFailureDiagnostic,
   appendTicketProvenanceEntry,
   ensureTicketProvenanceVolume,
   readOfferedIdentities,
@@ -27,19 +36,30 @@ import {
   recordOfferedIdentities,
   resolveTicketProvenanceVolume,
   ticketProvenanceEntryIdentity,
-  writeDiaristStationDiagnostic,
   writeTicketProvenanceHumanView,
 } from "./ticket-provenance.ts";
 import type { TicketProvenanceEntry } from "./ticket-provenance-contracts.ts";
 import { readSitianRecords, type RecordPointer } from "./sitian-facade.ts";
+import { execFileSync } from "node:child_process";
+
+export type { DiaristIssueFace } from "./diarist-mechanical.ts";
+
+/** Soft issue-face fetch: undefined = tracker/gh unavailable or issue absent. */
+export type DiaristIssueFaceFetcher = (input: {
+  readonly owner: string;
+  readonly repo: string;
+  readonly ticketNumber: number;
+  readonly signal?: AbortSignal;
+}) => Promise<DiaristIssueFace | undefined>;
 
 export type DiaristRunInput = {
   readonly ticketNumber: number;
   readonly cwd: string;
-  /** Ticket face body for face/decree/ADR source blocks + anchor extraction. */
-  readonly ticketBody?: string;
-  /** Provenance path for the ticket face (frozen attachment path). */
-  readonly ticketBodyPath?: string;
+  /**
+   * Frozen GitHub issue face (body + comments). Production loads via shared gh seam.
+   * Soft-unavailable → omit (no fake face from attachments).
+   */
+  readonly issueFace?: DiaristIssueFace;
   /** Extra cwd roots whose cc project folders are scanned. */
   readonly sessionCwds?: readonly string[];
   /** Override Claude projects root (tests). */
@@ -49,6 +69,8 @@ export type DiaristRunInput = {
   /** Injected collector; default = hermes. `null` = skip LLM (no mechanical-only fallback). */
   readonly collector?: DiaristLlmCollector | null;
   readonly signal?: AbortSignal;
+  /** Package root for hermes collector method material resolution. */
+  readonly packageRoot?: string;
 };
 
 export type DiaristRunResult = {
@@ -63,7 +85,6 @@ export type DiaristRunResult = {
   readonly entries: readonly TicketProvenanceEntry[];
   readonly humanViewFile: string;
   readonly volumeRecordFile: string;
-  readonly stationDiagnosticFile: string;
   readonly collectorStatus:
     | "ok"
     | "skipped-no-collector"
@@ -73,6 +94,63 @@ export type DiaristRunResult = {
   readonly collectorError?: string;
   readonly llmRawStdout?: string;
 };
+
+/**
+ * Production issue-face capability over shared gh execution seams.
+ * Soft-unavailable (tracker down / issue missing / gh cannot start) → undefined.
+ * Comment list hard failures after a successful body fetch keep true cause.
+ */
+export function createDiaristIssueFaceFetcher(options?: {
+  readonly fetchIssue?: GhIssueSoftFetcher;
+  readonly transport?: CollectorGitHubTransport;
+}): DiaristIssueFaceFetcher {
+  const fetchIssue = options?.fetchIssue ?? createGhIssueSoftFetcher();
+  const transport = options?.transport ?? createGhCollectorGitHubTransport();
+  return async (input) => {
+    const issue = await fetchIssue({
+      owner: input.owner,
+      repo: input.repo,
+      ticketNumber: input.ticketNumber,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    if (issue === undefined) return undefined;
+    const listed = await transport.listIssueComments({
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: input.ticketNumber,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    const bodyUrl = `https://github.com/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
+    return {
+      body: issue.body,
+      bodyUrl,
+      comments: listed.items.map((c) => ({
+        id: c.id,
+        body: c.body,
+        createdAt: c.createdAt,
+        htmlUrl: c.htmlUrl,
+      })),
+    };
+  };
+}
+
+/** github.com owner/repo from project origin remote; undefined when absent/non-github. */
+export function resolveDiaristGithubOrigin(
+  projectRoot: string,
+): { readonly owner: string; readonly repo: string } | undefined {
+  let remoteUrl: string;
+  try {
+    remoteUrl = execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+  if (remoteUrl.length === 0) return undefined;
+  return parseGitHubOriginRemote(remoteUrl);
+}
 
 /**
  * Identities already processed for this ticket:
@@ -110,8 +188,9 @@ function blockEntryIdentity(
 }
 
 /**
- * Single typed candidate stream: cc sessions + ticket face/decree + referenced ADRs.
+ * Single typed candidate stream: cc sessions + GitHub issue face/comments/decree + referenced ADRs.
  * Mechanical layer does not prose-filter for relevance (锚定宪法).
+ * Attachments are never merged in as fake issue-body-comment.
  */
 async function loadSourceBlocks(input: DiaristRunInput): Promise<DiaristSourceBlock[]> {
   if (input.blocks !== undefined) return [...input.blocks];
@@ -122,14 +201,13 @@ async function loadSourceBlocks(input: DiaristRunInput): Promise<DiaristSourceBl
       ...(input.projectsRoot === undefined ? {} : { projectsRoot: input.projectsRoot }),
     }),
   ];
-  if (input.ticketBody !== undefined && input.ticketBody.trim() !== "") {
-    blocks.push(
-      ...readTicketFaceBlocks({
-        ticketBody: input.ticketBody,
-        ...(input.ticketBodyPath === undefined ? {} : { sourcePath: input.ticketBodyPath }),
-      }),
-    );
-    const adrPaths = extractReferencedAdrPaths(input.ticketBody);
+  if (input.issueFace !== undefined) {
+    blocks.push(...readIssueFaceBlocks({ face: input.issueFace }));
+    const faceText = [
+      input.issueFace.body,
+      ...input.issueFace.comments.map((c) => c.body),
+    ].join("\n");
+    const adrPaths = extractReferencedAdrPaths(faceText);
     if (adrPaths.length > 0) {
       blocks.push(
         ...readAdrDecisionKeyBlocks({
@@ -142,18 +220,28 @@ async function loadSourceBlocks(input: DiaristRunInput): Promise<DiaristSourceBl
   return blocks;
 }
 
+function faceTextForAnchors(face: DiaristIssueFace | undefined): string | undefined {
+  if (face === undefined) return undefined;
+  const parts = [face.body, ...face.comments.map((c) => c.body)].filter(
+    (t) => t.trim() !== "",
+  );
+  if (parts.length === 0) return undefined;
+  return parts.join("\n");
+}
+
 /**
  * Run one diarist pass for a ticket: mechanical candidates → LLM collect →
  * reverse-verify → idempotent sitian append → human view refresh.
- * Always establishes the per-ticket volume + md + station diagnostic.
+ * Always establishes the per-ticket volume + md.
  */
 export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResult> {
   // Per-ticket volume exists for every bound court, including empty/fail paths.
   const volumePaths = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
 
+  const anchorText = faceTextForAnchors(input.issueFace);
   const anchors: DiaristAnchorSet = buildDiaristAnchors({
     ticketNumber: input.ticketNumber,
-    ...(input.ticketBody === undefined ? {} : { ticketBody: input.ticketBody }),
+    ...(anchorText === undefined ? {} : { ticketBody: anchorText }),
   });
   const rawBlocks = await loadSourceBlocks(input);
   // Safeguard only (notify filter + dedupe) — never prose-based exclusion.
@@ -174,7 +262,10 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     input.collector === null
       ? undefined
       : input.collector === undefined
-        ? createHermesDiaristCollector({ cwd: input.cwd })
+        ? createHermesDiaristCollector({
+            cwd: input.cwd,
+            ...(input.packageRoot === undefined ? {} : { packageRoot: input.packageRoot }),
+          })
         : input.collector;
 
   if (collector !== undefined) {
@@ -204,6 +295,12 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
         collectorStatus = "failed";
         collectorError =
           error instanceof Error ? error.message : String(error);
+        // Durable true-cause on the ticket volume (append-only history).
+        appendCollectorFailureDiagnostic({
+          ticketNumber: input.ticketNumber,
+          cwd: input.cwd,
+          collectorError,
+        });
       }
     }
   }
@@ -257,21 +354,6 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     entries: volume.entries,
   });
 
-  const stationDiagnosticFile = writeDiaristStationDiagnostic({
-    ticketNumber: input.ticketNumber,
-    cwd: input.cwd,
-    diagnostic: {
-      ticketNumber: input.ticketNumber,
-      collectorStatus,
-      candidateCount: safeguarded.length,
-      freshCount: fresh.length,
-      appended: accepted.length,
-      rejectedQuotes,
-      ...(collectorError === undefined ? {} : { collectorError }),
-      recordedAt: new Date().toISOString(),
-    },
-  });
-
   return {
     ticketNumber: input.ticketNumber,
     candidateCount: safeguarded.length,
@@ -282,7 +364,6 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     entries: volume.entries,
     humanViewFile,
     volumeRecordFile: volumePaths.recordFile,
-    stationDiagnosticFile,
     collectorStatus,
     ...(collectorError === undefined ? {} : { collectorError }),
     ...(llmRawStdout === undefined ? {} : { llmRawStdout }),

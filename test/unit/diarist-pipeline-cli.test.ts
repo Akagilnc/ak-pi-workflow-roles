@@ -24,7 +24,6 @@ import {
 } from "../../src/public-cli/countersign-run.ts";
 import { createScriptedDiaristCollector } from "../../src/diarist-llm-collector.ts";
 import { readTicketProvenance } from "../../src/ticket-provenance.ts";
-import type { DiaristSourceBlock } from "../../src/diarist-mechanical.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -97,42 +96,17 @@ test("runCountersignDiaristStation refreshes provenance before turn when ticket 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
-    const attach = join(project, "ticket.md");
-    await writeFile(
-      attach,
-      "---\nticketNumber: 582\n---\n\n「立文件。送司天台记录。」\n",
-      "utf8",
-    );
 
     const admitted = await admitCountersignInvocation({
       home,
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
       instruction: "裁",
-      attachmentPaths: [attach],
+      attachmentPaths: [],
+      ticket: 582,
       createRunId: () => "01a00000-0000-7000-8000-000000000583",
     });
     assert.equal(admitted.ticketNumber, 582);
-
-    const blocks: DiaristSourceBlock[] = [
-      {
-        sourceKind: "cc-session",
-        sourceRef: { sessionFile: "/s", entryId: "u1" },
-        transcript: "立文件。送司天台记录。所以每个票都应该有的一份文档。#582",
-        timestamp: "2026-08-31T00:00:00.000Z",
-        isUserTurn: true,
-        isNotification: false,
-      },
-    ];
-
-    // Inject blocks via collector that sees candidates from empty cc root —
-    // use runDiarist path through station with collector that still needs candidates.
-    // Station calls runDiarist without blocks; provide projectsRoot empty + collector
-    // that no-ops on empty. Instead call station after seeding via direct runDiarist
-    // is not the point — wire collector null and ensure skip-safe, then with scripted
-    // path through a thin override: monkey the module is heavy. Use onDiaristResult
-    // with collector that works when candidates exist by also setting projectsRoot
-    // with a session.
 
     const projectsRoot = join(home, "cc-projects");
     const sessionDir = join(projectsRoot, encodePath(project));
@@ -155,6 +129,13 @@ test("runCountersignDiaristStation refreshes provenance before turn when ticket 
     const result = await runCountersignDiaristStation(admitted, {
       cwd: project,
       projectsRoot,
+      packageRoot,
+      // Soft face inject — production uses shared gh seam; attachments are not the face.
+      diaristIssueFaceFetcher: async () => ({
+        body: "「立文件。送司天台记录。」",
+        bodyUrl: "https://github.com/o/r/issues/582",
+        comments: [],
+      }),
       diaristCollector: createScriptedDiaristCollector((input) => ({
         selections:
           input.candidates.length > 0
@@ -328,6 +309,11 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
         roleTurnHost: observingHost,
         createRunId: () => "01a00000-0000-7000-8000-000000000584",
         projectsRoot,
+        diaristIssueFaceFetcher: async () => ({
+          body: "「立文件。送司天台记录。」",
+          bodyUrl: "https://github.com/o/r/issues/582",
+          comments: [],
+        }),
         diaristCollector: createScriptedDiaristCollector((input) => ({
           selections:
             input.candidates.length > 0

@@ -2265,12 +2265,15 @@ export async function admitNotaryInvocation(options: {
 
 /** Package-owned fixed kickoff only — never caller instruction/attachments. */
 export function buildNotaryTransportPrompt(
-  _admitted: AdmittedNotaryInvocation,
+  admitted: AdmittedNotaryInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join(
-    "\n",
-  );
+  const lines = [NOTARY_FIXED_KICKOFF];
+  // Neutral delivery of admitted ticket coordinate (ADR 0073/0075) — no direction.
+  if (admitted.ticketNumber !== undefined) {
+    lines.push(`票号：#${admitted.ticketNumber}`);
+  }
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /**

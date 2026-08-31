@@ -247,8 +247,11 @@ export async function readTicketProvenance(
       skipped += 1;
       continue;
     }
-    // quote-verify-failed is diagnostic residue — not a readable diary entry.
-    if (entry.basis.method === "quote-verify-failed") {
+    // Diagnostic residue — not a readable diary entry (body stays separate).
+    if (
+      entry.basis.method === "quote-verify-failed" ||
+      entry.basis.method === "collector-failed"
+    ) {
       skipped += 1;
       continue;
     }
@@ -325,30 +328,37 @@ export function ensureTicketProvenanceVolume(
   return volume;
 }
 
-/** Filename for last diarist-station diagnostic (process state next to volume). */
-export const TICKET_PROVENANCE_STATION_DIAGNOSTIC = "diarist-station.json" as const;
-
-export type DiaristStationDiagnostic = {
-  readonly ticketNumber: number;
-  readonly collectorStatus: string;
-  readonly candidateCount: number;
-  readonly freshCount: number;
-  readonly appended: number;
-  readonly rejectedQuotes: number;
-  readonly collectorError?: string;
-  readonly recordedAt: string;
-};
-
-/** Persist last station outcome next to the volume (collector failure 真因留痕). */
-export function writeDiaristStationDiagnostic(input: {
+/**
+ * Append collector-failure true cause onto the ticket-provenance volume (append-only).
+ * Same sitian partition as diary entries; filtered from human-facing projection.
+ * Never a last-state sidecar that the next court can overwrite.
+ */
+export function appendCollectorFailureDiagnostic(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
-  readonly diagnostic: DiaristStationDiagnostic;
-}): string {
-  const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
-  const path = join(volume.volumeDir, TICKET_PROVENANCE_STATION_DIAGNOSTIC);
-  writeFileSync(path, `${JSON.stringify(input.diagnostic, null, 2)}\n`, "utf8");
-  return path;
+  readonly collectorError: string;
+  readonly recordedAt?: string;
+}): RecordPointer {
+  const recordedAt = input.recordedAt ?? new Date().toISOString();
+  // Transcript includes timestamp so each court failure is a distinct identity (history).
+  const transcript = `${recordedAt}\n${input.collectorError}`;
+  return appendTicketProvenanceEntry({
+    ticketNumber: input.ticketNumber,
+    cwd: input.cwd,
+    source: "diarist-collector-fail",
+    entry: {
+      basis: {
+        method: "collector-failed",
+        anchors: [`#${input.ticketNumber}`],
+        note: input.collectorError,
+      },
+      // Diagnostic residue uses a stable non-source pointer; kind is required by entry shape.
+      sourceKind: "cc-session",
+      sourceRef: { path: "diarist/collector-failure", entryId: recordedAt },
+      transcript,
+      timestamp: recordedAt,
+    },
+  });
 }
 
 /** Write the co-located human view next to the JSONL volume (derived, not dual-source).
