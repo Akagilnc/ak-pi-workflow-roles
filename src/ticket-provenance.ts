@@ -203,22 +203,21 @@ export function renderTicketProvenanceMarkdown(input: {
   return lines.join("\n");
 }
 
-/** Write the co-located human view next to the JSONL volume (derived, not dual-source). */
+/** Write the co-located human view next to the JSONL volume (derived, not dual-source).
+ * Caller must have already created the volume via sitian append (directory exists). */
 export function writeTicketProvenanceHumanView(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
   readonly entries: readonly TicketProvenanceEntry[];
 }): string {
-  const { humanViewFile, volumeDir } = resolveTicketProvenanceVolume(
+  const { humanViewFile } = resolveTicketProvenanceVolume(
     input.ticketNumber,
     input.cwd,
   );
-  // Volume dir is created by sitian append; ensure path exists for empty volumes.
   const md = renderTicketProvenanceMarkdown({
     ticketNumber: input.ticketNumber,
     entries: input.entries,
   });
   writeFileSync(humanViewFile, md, "utf8");
-  void volumeDir;
   return humanViewFile;
 }
