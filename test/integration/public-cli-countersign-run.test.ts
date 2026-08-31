@@ -356,19 +356,23 @@ test("public countersign diarist station: issue face/comments/ADR from gh seam; 
     const probe = join(project, "probe-attachment.md");
     await writeFile(probe, "PROBE_ATTACHMENT_ONLY — not the issue body.\n", "utf8");
 
-    const captureFile = join(home, "captured-hermes.json");
-    await installHermesFixture(join(home, "bin"), { captureFile });
+    const bodyUrl =
+      "https://github.com/Akagilnc/ak-pi-workflow-roles/issues/582";
+    const commentUrl =
+      "https://github.com/Akagilnc/ak-pi-workflow-roles/issues/582#issuecomment-9001";
+    // selectAll → volume entries carry typed sourceKind/sourceRef (durable face).
+    await installHermesFixture(join(home, "bin"), { selectAllCandidates: true });
     await installGhFixture(join(home, "bin"), {
       issues: {
         582: {
           body: [`「立文件。送司天台记录。」`, `see ${adrRel}`].join("\n"),
+          htmlUrl: bodyUrl,
           comments: [
             {
               id: 9001,
               body: "评论：先起居郎再给事中。",
               createdAt: "2026-08-31T12:00:00.000Z",
-              htmlUrl:
-                "https://github.com/Akagilnc/ak-pi-workflow-roles/issues/582#issuecomment-9001",
+              htmlUrl: commentUrl,
             },
           ],
         },
@@ -393,27 +397,28 @@ test("public countersign diarist station: issue face/comments/ADR from gh seam; 
       packageRoot,
     });
     assert.ok(result);
-    assert.equal(result.collectorStatus, "empty-selection");
+    assert.equal(result.collectorStatus, "ok");
+    assert.ok(result.appended >= 1);
 
-    const captured = JSON.parse(await readFile(captureFile, "utf8")) as {
-      candidates: Array<{
-        candidateIndex: number;
-        sourceKind: string;
-        transcript: string;
-      }>;
-    };
-    const kindsSeen = new Set(captured.candidates.map((c) => c.sourceKind));
-    const transcripts = captured.candidates.map((c) => c.transcript);
-
-    // Typed source identities only — no free-text transcript locks.
+    // Durable volume only — typed sourceKind/sourceRef; no transcript locks.
+    const volume = await readTicketProvenance(582, project);
+    const kindsSeen = new Set(volume.entries.map((e) => e.sourceKind));
+    const sourceRefs = volume.entries.map((e) => e.sourceRef);
     assert.ok(kindsSeen.has("issue-body-comment"));
     assert.ok(kindsSeen.has("ticket-decree-block"));
     assert.ok(kindsSeen.has("adr-decision-key"));
-    assert.ok(transcripts.some((t) => t.includes("立文件。送司天台记录。")));
-    assert.ok(transcripts.some((t) => t.includes("评论：先起居郎再给事中。")));
-    // Attachment frozen path / content must not appear as a candidate.
+    assert.ok(
+      sourceRefs.some((r) => r.url === bodyUrl && r.entryId === "body"),
+    );
+    assert.ok(
+      sourceRefs.some((r) => r.entryId === 9001 && r.url === commentUrl),
+    );
+    assert.ok(sourceRefs.some((r) => r.path === adrRel));
+    // Attachment frozen path must not appear as a candidate sourceRef.
     assert.equal(
-      transcripts.some((t) => t.includes("PROBE_ATTACHMENT_ONLY")),
+      sourceRefs.some(
+        (r) => r.path === frozenAttachment || r.path === probe,
+      ),
       false,
     );
   });

@@ -1,6 +1,8 @@
 /**
  * Shared Hermes / gh PATH executable fixtures (#582 / ADR 0075).
  * Real subprocess fixtures for countersign pre-court + diarist — NOT production APIs.
+ *
+ * Config/input errors fail loud (non-zero + stderr). Silent fallback is forbidden.
  */
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,8 +16,15 @@ export type HermesFixtureOptions = {
   /**
    * Collector stdout when staged body includes `candidates`.
    * Default: `{"selections":[]}`.
+   * Ignored when `selectAllCandidates` is true.
    */
   collectorResponse?: unknown;
+  /**
+   * Collector face: emit one selection per staged candidate using the full
+   * transcript as the sole quote (passes mechanical verbatim check).
+   * Enables durable volume assertions on typed sourceKind/sourceRef.
+   */
+  selectAllCandidates?: boolean;
   /** Force non-zero exit (both faces). */
   defaultExitCode?: number;
   /** Optional capture of the staged --query-file body path contents. */
@@ -24,6 +33,7 @@ export type HermesFixtureOptions = {
    * Optional control JSON file path. Shape:
    * `{ exitCode?, stderr?, resolverResponse?, collectorResponse?, response? }`
    * `response` forces the same stdout for either face.
+   * Missing file → defaults. Present but unreadable/unparseable → non-zero fail.
    */
   controlFile?: string;
 };
@@ -48,21 +58,48 @@ export async function installHermesFixture(
     options.collectorResponse === undefined
       ? { selections: [] }
       : options.collectorResponse;
+  const selectAll = options.selectAllCandidates === true;
 
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
+
+function fail(message, err) {
+  const detail = err && err.message ? (": " + err.message) : "";
+  process.stderr.write("hermes-fixture: " + message + detail + "\\n");
+  process.exit(2);
+}
+
 const args = process.argv.slice(2);
 const qIdx = args.indexOf("--query-file");
 const queryFile = qIdx >= 0 ? args[qIdx + 1] : undefined;
 
 let staged = null;
-if (queryFile && fs.existsSync(queryFile)) {
+if (qIdx >= 0) {
+  if (typeof queryFile !== "string" || queryFile.length === 0) {
+    fail("--query-file flag present without path");
+  }
+  if (!fs.existsSync(queryFile)) {
+    fail("staged query-file missing: " + queryFile);
+  }
+  let raw;
   try {
-    const raw = fs.readFileSync(queryFile, "utf8");
+    raw = fs.readFileSync(queryFile, "utf8");
+  } catch (err) {
+    fail("staged query-file unreadable: " + queryFile, err);
+  }
+  try {
     staged = JSON.parse(raw);
-    const cap = process.env.AK_TEST_HERMES_CAPTURE_FILE || ${JSON.stringify(options.captureFile ?? null)};
-    if (cap) fs.writeFileSync(cap, raw, "utf8");
-  } catch {}
+  } catch (err) {
+    fail("staged query-file is not JSON: " + queryFile, err);
+  }
+  const cap = process.env.AK_TEST_HERMES_CAPTURE_FILE || ${JSON.stringify(options.captureFile ?? null)};
+  if (cap) {
+    try {
+      fs.writeFileSync(cap, raw, "utf8");
+    } catch (err) {
+      fail("capture file unwritable: " + cap, err);
+    }
+  }
 }
 
 const isCollector = staged !== null && Array.isArray(staged.candidates);
@@ -77,9 +114,14 @@ if (process.env.AK_TEST_HERMES_RESPONSE) {
 }
 
 const controlFile = process.env.AK_TEST_HERMES_CONTROL_FILE || ${JSON.stringify(options.controlFile ?? null)};
-if (controlFile && fs.existsSync(controlFile)) {
-  try {
-    const ctrl = JSON.parse(fs.readFileSync(controlFile, "utf8"));
+if (controlFile) {
+  if (fs.existsSync(controlFile)) {
+    let ctrl;
+    try {
+      ctrl = JSON.parse(fs.readFileSync(controlFile, "utf8"));
+    } catch (err) {
+      fail("control file is not JSON: " + controlFile, err);
+    }
     if (ctrl.exitCode !== undefined) {
       if (ctrl.stderr) process.stderr.write(String(ctrl.stderr));
       process.exit(Number(ctrl.exitCode));
@@ -96,14 +138,26 @@ if (controlFile && fs.existsSync(controlFile)) {
       process.stdout.write(typeof ctrl.resolverResponse === "string" ? ctrl.resolverResponse : JSON.stringify(ctrl.resolverResponse));
       process.exit(0);
     }
-  } catch {}
+  }
 }
 
 ${options.defaultExitCode !== undefined ? `process.exit(${Number(options.defaultExitCode)});` : ""}
 
 if (isCollector) {
-  process.stdout.write(${embedJson(collectorDefault)});
-  process.exit(0);
+  ${
+    selectAll
+      ? `const selections = staged.candidates.map((c, i) => {
+    const transcript = typeof c.transcript === "string" ? c.transcript : "";
+    return {
+      candidateIndex: typeof c.candidateIndex === "number" ? c.candidateIndex : i,
+      quotes: transcript.length > 0 ? [transcript] : [],
+    };
+  });
+  process.stdout.write(JSON.stringify({ selections }));
+  process.exit(0);`
+      : `process.stdout.write(${embedJson(collectorDefault)});
+  process.exit(0);`
+  }
 }
 
 process.stdout.write(${embedJson(resolverDefault)});
@@ -144,6 +198,13 @@ export async function installGhFixture(
   const ghPath = join(binDir, "gh");
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
+
+function fail(message, err) {
+  const detail = err && err.message ? (": " + err.message) : "";
+  process.stderr.write("gh-fixture: " + message + detail + "\\n");
+  process.exit(2);
+}
+
 const args = process.argv.slice(2);
 const path =
   args.find(
@@ -187,7 +248,9 @@ let activeIssues = issues;
 if (controlFile && fs.existsSync(controlFile)) {
   try {
     activeIssues = JSON.parse(fs.readFileSync(controlFile, "utf8"));
-  } catch {}
+  } catch (err) {
+    fail("control file is not JSON: " + controlFile, err);
+  }
 }
 
 const issueMatch = path.match(new RegExp("issues/(\\\\d+)(/comments)?"));
