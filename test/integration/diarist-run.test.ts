@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { rmSync, mkdirSync } from "node:fs";
+import { rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -12,7 +12,12 @@ import {
   seedGitRepository,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
-import type { DiaristSourceBlock } from "../../src/diarist-mechanical.ts";
+import {
+  DiaristSourceReadError,
+  readAdrDecisionKeyBlocks,
+  readCcSessionBlocks,
+  type DiaristSourceBlock,
+} from "../../src/diarist-mechanical.ts";
 import { createScriptedDiaristCollector } from "../../src/diarist-llm-collector.ts";
 import { runDiarist } from "../../src/diarist.ts";
 import {
@@ -412,6 +417,58 @@ test("runDiarist enumerates ticket face + ADR paths into candidate stream with c
     assert.equal(result.collectorStatus, "ok");
   });
 });
+
+const SOURCE_READ_FAILURES: readonly {
+  readonly reason: DiaristSourceReadError["reason"];
+  readonly run: (root: string) => void;
+}[] = [
+  {
+    reason: "jsonl-line-unparseable",
+    run: (root) => {
+      const sessionDir = join(root, "-work");
+      mkdirSync(sessionDir, { recursive: true });
+      // Non-empty line that is not JSON — must not wash into empty blocks.
+      writeFileSync(join(sessionDir, "bad.jsonl"), "{not-json\n", "utf8");
+      readCcSessionBlocks({ projectsRoot: root, cwds: ["/work"] });
+    },
+  },
+  {
+    reason: "file-unreadable",
+    run: (root) => {
+      const sessionDir = join(root, "-work");
+      mkdirSync(sessionDir, { recursive: true });
+      const sessionFile = join(sessionDir, "dir-as-file.jsonl");
+      mkdirSync(sessionFile);
+      readCcSessionBlocks({ projectsRoot: root, cwds: ["/work"] });
+    },
+  },
+  {
+    reason: "adr-unreadable",
+    run: (root) => {
+      const adrRel = "docs/adr/0075-ticket-provenance-diarist-pipeline.md";
+      const abs = join(root, adrRel);
+      mkdirSync(join(root, "docs", "adr"), { recursive: true });
+      mkdirSync(abs); // path exists but is a directory → readFile fails
+      readAdrDecisionKeyBlocks({ cwd: root, adrPaths: [adrRel] });
+    },
+  },
+];
+
+for (const failure of SOURCE_READ_FAILURES) {
+  test(`source read failure (${failure.reason}) throws typed DiaristSourceReadError`, async () => {
+    await withHermeticHome({ prefix: "ak-diarist-src-fail-" }, async ({ home }) => {
+      const root = join(home, "src-root");
+      mkdirSync(root, { recursive: true });
+      assert.throws(
+        () => failure.run(root),
+        (error: unknown) =>
+          error instanceof DiaristSourceReadError &&
+          error.reason === failure.reason &&
+          error.code === "diarist-source-read",
+      );
+    });
+  });
+}
 
 test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {
   await withDiaristProject("ak-diarist-nocoll-", async (project) => {
