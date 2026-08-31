@@ -88,6 +88,14 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
   },
+  {
+    role: "gleaner-left",
+    phases: [null],
+    outputTool: "ak_gleaner_left_output",
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+  },
 ] as const;
 
 test("public registry exposes callable roles plus automatic configurable seats", () => {
@@ -100,6 +108,7 @@ test("public registry exposes callable roles plus automatic configurable seats",
   assert.equal(PUBLIC_CALLABLE_ROLES.length, EXPECTED_PACKAGED_ROLE_METADATA.length);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("countersign"), true);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("gleaner-left"), true);
   // #453: automatic gate seats join navigator as configurable-only (never caller commands).
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
@@ -170,6 +179,10 @@ test("startup model candidates follow #11 package defaults per seat", () => {
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ]);
   assert.deepEqual(publicStartupCandidates("reviewer"), [
+    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
+    { provider: "xai", model: "grok-4.5", thinking: "high" },
+  ]);
+  assert.deepEqual(publicStartupCandidates("gleaner-left"), [
     { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ]);

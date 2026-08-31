@@ -128,6 +128,7 @@ test("unconditional required: table required:true is the sole missing-option gat
   assert.deepEqual(requiredRows.sort(), [
     "collector/pr",
     "doctor/issue",
+    "gleaner-left/base",
     "notary/source-run",
     "reviewer/base",
   ]);

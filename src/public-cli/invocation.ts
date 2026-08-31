@@ -125,6 +125,12 @@ export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
   readonly role: "countersign";
 };
 
+export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "gleaner-left";
+  /** Required comparison-base revision for the unanchored merge-candidate diff. */
+  readonly baseRevision: string;
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -204,6 +210,7 @@ export type AdmittedMergerInvocation = AdmittedRoleInvocationBase & {
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCountersignInvocation
+  | AdmittedGleanerLeftInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -648,6 +655,15 @@ export type ParseReviewerArgvResult = {
   baseRevision: string;
   /** Repeatable durable authority references/URLs (exact order preserved). */
   authorityRefs: string[];
+  project?: string;
+};
+
+export type ParseGleanerLeftArgvResult = {
+  /** Optional caller prose; empty is the lawful path (无锚定). */
+  instruction: string;
+  attachmentPaths: string[];
+  /** Required comparison-base revision for the unanchored merge-candidate diff. */
+  baseRevision: string;
   project?: string;
 };
 
@@ -2311,6 +2327,176 @@ export function buildNotaryTransportPrompt(
  * Reviewer gathers its own evidence; users submit neither attachments nor capability packets.
  * Caller instruction remains scope/procedure provenance — not Spec authority.
  */
+/**
+ * Parse Gleaner-Left argv after the `gleaner-left` token.
+ * Public flags: --project, required --base. No --attach face (unanchored self-fetch).
+ * Instruction may be empty.
+ */
+export function parseGleanerLeftArgv(
+  args: readonly string[],
+): ParseGleanerLeftArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  let baseRevision: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+  const definitions = roleOptions("gleaner-left");
+  const options = createTypedOptionConsumer(definitions);
+
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      positional.push(...tokens);
+      break;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== undefined) {
+      if (taken.def.id === "project") {
+        project = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      if (taken.def.id === "base") {
+        baseRevision = requireOptionPath(taken.def.canonical, taken.value);
+        continue;
+      }
+      throw new CliUsageError(`unknown gleaner-left option: ${taken.def.canonical}`);
+    }
+    const token = tokens.shift()!;
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown gleaner-left option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  options.assertRequired();
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    baseRevision: baseRevision!,
+    ...(project === undefined ? {} : { project }),
+  };
+}
+
+export type AdmitGleanerLeftInvocationOptions = {
+  home: string;
+  principalAuthority: DurablePrincipalAuthority;
+  cwd: string;
+  instruction: string;
+  attachmentPaths: readonly string[];
+  baseRevision: string;
+  project?: string;
+  createRunId?: () => string;
+  model?: InvocationEffectiveModel;
+  correlationId?: string;
+};
+
+/**
+ * Admit a Gleaner-Left Role run on the fixed comparison base.
+ * Empty instruction is the lawful path; attachments are not a public face.
+ */
+export async function admitGleanerLeftInvocation(
+  options: AdmitGleanerLeftInvocationOptions,
+): Promise<AdmittedGleanerLeftInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  if (options.baseRevision.trim() === "") {
+    throw new CliUsageError("--base requires a nonempty revision");
+  }
+
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "gleaner-left",
+    home: options.home,
+  });
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "gleaner-left" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    principal,
+    ...ticketFields,
+    instruction,
+    instructionEmpty,
+    baseRevision: options.baseRevision,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+    ...(options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId }),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger(
+    { ...admitted, sessionDirectory, sessionFile },
+    admitted.role,
+    options.model,
+  );
+
+  return {
+    role: "gleaner-left",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    principal,
+    admittedRequestPath,
+    baseRevision: options.baseRevision,
+    ...ticketFields,
+    ...(options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId }),
+  };
+}
+
+/** Bound comparison base is a typed fact, not a directional instruction. */
+export function buildGleanerLeftTransportPrompt(
+  admitted: AdmittedGleanerLeftInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const lines: string[] = [
+    `左拾遗案已受理。比较基线：${admitted.baseRevision}`,
+  ];
+  if (!admitted.instructionEmpty) {
+    lines.push("", admitted.instruction);
+  }
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+
 export function parseReviewerArgv(
   args: readonly string[],
 ): ParseReviewerArgvResult {

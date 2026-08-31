@@ -133,6 +133,13 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
           ? []
           : ["--ak-countersign-ticket-number", String(activation.ticketNumber)]),
       ];
+    case "gleaner-left":
+      return [
+        "--ak-role",
+        "gleaner-left",
+        "--ak-gleaner-left-base",
+        activation.baseRevision,
+      ];
     default: {
       const _exhaustive: never = activation;
       return _exhaustive;
