@@ -1049,3 +1049,31 @@ test("public countersign path: asserted N absent from instruction → controlled
     assert.equal(result.admitted?.ticketNumber, undefined);
   });
 });
+
+test("public countersign path: substring of longer ticket number is not N → controlled failure", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const runId = "01a0sign00-0000-7000-8000-000000000p06";
+    // Instruction has complete #582 only; LLM asserts 82 (digit substring).
+    // Existence of #82 must not wash the incomplete-number identity failure.
+    const result = await runPublicCountersign(
+      ["裁：审票 #582 是否足以开工。"],
+      countersignPathEnv({
+        home,
+        project,
+        runId,
+        blockTurn: true,
+        diaristTicketResolver: createScriptedDiaristTicketResolver({
+          kind: "ticket",
+          ticketNumber: 82,
+        }),
+        ticketExistenceChecker: async () => true,
+        diaristCollector: null,
+      }),
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.ok(result.exitCode !== 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.admitted?.ticketNumber, undefined);
+  });
+});
