@@ -52,27 +52,41 @@ function resolveGrokBinary(operatorHome: string): string {
 }
 
 /**
+ * Primary-failure state for cleanup settlement. `undefined` is a legal primary
+ * value (throw/reject undefined), so presence is an explicit discriminant — never
+ * inferred from `value !== undefined`.
+ */
+export type ProductionGrokPrimaryFailure =
+  | Readonly<{ present: false }>
+  | Readonly<{ present: true; value: unknown }>;
+
+export const NO_PRODUCTION_GROK_PRIMARY_FAILURE = {
+  present: false,
+} as const satisfies ProductionGrokPrimaryFailure;
+
+/**
  * Sole cleanup settlement for production controlled homes (auth-bearing temp roots).
  * Cleanup failure is never silenced. When a primary failure is present and cleanup
- * also fails, both surface as AggregateError; cleanup success rethrows primary.
+ * also fails, both surface as AggregateError (including primary value `undefined`);
+ * cleanup success rethrows the primary value as-is.
  */
 export async function settleProductionGrokHomeCleanup(
   controlledHome: string,
-  primaryFailure: unknown,
+  primaryFailure: ProductionGrokPrimaryFailure,
   concurrentMessage: string,
 ): Promise<void> {
   try {
     await rm(controlledHome, { recursive: true, force: true });
   } catch (cleanupFailure) {
-    if (primaryFailure !== undefined) {
-      throw new AggregateError([primaryFailure, cleanupFailure], concurrentMessage, {
-        cause: primaryFailure,
+    if (primaryFailure.present) {
+      throw new AggregateError([primaryFailure.value, cleanupFailure], concurrentMessage, {
+        cause: primaryFailure.value,
       });
     }
     throw cleanupFailure;
   }
-  if (primaryFailure !== undefined) {
-    throw primaryFailure;
+  if (primaryFailure.present) {
+    throw primaryFailure.value;
   }
 }
 
@@ -89,10 +103,10 @@ export async function openProductionGrokHome(operatorHome: string): Promise<stri
   } catch (error) {
     await settleProductionGrokHomeCleanup(
       controlledHome,
-      error,
+      { present: true, value: error },
       "production grok home open failed and its cleanup also failed",
     );
-    // settle always throws when primaryFailure is set.
+    // settle always throws when primaryFailure is present.
     throw error;
   }
 }
@@ -133,15 +147,13 @@ export async function withProductionGrokIsolation<T>(
   run: (binding: ProductionGrokIsolationBinding) => Promise<T>,
 ): Promise<T> {
   let binding: ProductionGrokIsolationBinding | undefined;
-  let primaryFailure: unknown;
+  let primaryFailure: ProductionGrokPrimaryFailure = NO_PRODUCTION_GROK_PRIMARY_FAILURE;
   let value!: T;
-  let succeeded = false;
   try {
     binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
     value = await run(binding);
-    succeeded = true;
   } catch (error) {
-    primaryFailure = error;
+    primaryFailure = { present: true, value: error };
   }
 
   if (binding !== undefined) {
@@ -153,10 +165,7 @@ export async function withProductionGrokIsolation<T>(
     );
   }
 
-  if (primaryFailure !== undefined) throw primaryFailure;
-  if (!succeeded) {
-    throw new Error("production grok isolation ended without result");
-  }
+  if (primaryFailure.present) throw primaryFailure.value;
   return value;
 }
 
