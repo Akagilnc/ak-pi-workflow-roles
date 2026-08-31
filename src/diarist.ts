@@ -31,6 +31,7 @@ import { parseGitHubOriginRemote } from "./reviewer-pinned-git.ts";
 import {
   appendCollectorFailureDiagnostic,
   appendIssueSourceFailureDiagnostic,
+  appendQuoteVerifyFailureDiagnostic,
   appendTicketProvenanceEntry,
   ensureTicketProvenanceVolume,
   readOfferedIdentities,
@@ -393,12 +394,11 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
       });
       if (!projected.ok) {
         rejectedQuotes += 1;
-        // Honest diagnostic residue — not a reader-facing diary entry.
-        const ptr = appendTicketProvenanceEntry({
+        // Single diagnostic expression — never a disguised diary entry.
+        const ptr = appendQuoteVerifyFailureDiagnostic({
           ticketNumber: input.ticketNumber,
           cwd: input.cwd,
-          entry: projected.diagnostic,
-          source: "diarist-quote-verify",
+          cause: projected.cause,
         });
         pointers.push(ptr);
         continue;

@@ -1,6 +1,6 @@
 # 起居郎收集方法（owner-domain）
 
-本文件是起居郎 LLM 收集器的语义方法真源（ADR 0075 `diarist-llm-collector` / `transcribe-whole-blocks`）。机器在 -z 结构化输入中递送本文件字节与候选目录；判断以本方法为准。
+本文件是起居郎 LLM 收集器的语义方法真源（ADR 0075 `diarist-llm-collector` / `transcribe-whole-blocks`）。机器经共享 engine 接缝 staged prompt 递送本文件字节与冻结候选目录（不入 argv）；判断以本方法为准。
 
 ## 任务
 

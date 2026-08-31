@@ -27,15 +27,10 @@ export type TicketProvenanceSourceKind =
 
 /**
  * How a block entered the volume.
- * - llm-semantic: LLM collector selected the block (after mechanical reverse-verify)
- * - mechanical-prescreen: historical only (no production writer; kept for volume projection)
- * - quote-verify-failed: diagnostic only — quote failed verbatim check (not a diary entry);
- *   keeps the real source block pointer so residue stays attached to the failed candidate.
+ * - llm-semantic: LLM collector selected the block (after mechanical reverse-verify).
+ *   basis.anchors carry ticket # and mechanical/claimed quote notes for audit only.
  */
-export type TicketProvenanceBasisMethod =
-  | "llm-semantic"
-  | "mechanical-prescreen"
-  | "quote-verify-failed";
+export type TicketProvenanceBasisMethod = "llm-semantic";
 
 /** Basis for inclusion — LLM judgment plus mechanical anchor notes for audit. */
 export type TicketProvenanceBasis = {
@@ -72,7 +67,8 @@ export type TicketProvenanceEntry = {
  */
 export type TicketProvenanceDiagnosticKind =
   | "collector-failed"
-  | "issue-source-failed";
+  | "issue-source-failed"
+  | "quote-verify-failed";
 
 export type TicketProvenanceDiagnostic = {
   readonly recordClass: typeof TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC;
@@ -103,15 +99,12 @@ const SOURCE_KINDS = new Set<string>([
   "ticket-decree-block",
 ]);
 
-const BASIS_METHODS = new Set<string>([
-  "llm-semantic",
-  "mechanical-prescreen",
-  "quote-verify-failed",
-]);
+const BASIS_METHODS = new Set<string>(["llm-semantic"]);
 
 const DIAGNOSTIC_KINDS = new Set<string>([
   "collector-failed",
   "issue-source-failed",
+  "quote-verify-failed",
 ]);
 
 /**

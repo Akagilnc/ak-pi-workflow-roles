@@ -50,7 +50,9 @@ import {
   createNotaryRoleRuntime,
   NOTARY_SESSION_BOUND_ENTRY,
   projectNotaryBoundFromFlags,
+  readNotaryTicketFlag,
 } from "./notary-role.ts";
+import { NOTARY_TICKET_FLAG } from "./notary-contracts.ts";
 import {
   COUNTERSIGN_TOOL_SPEC,
   type CountersignRuntimeDependencies,
@@ -127,6 +129,14 @@ const COUNTERSIGN_TRANSPORT_FLAGS = Object.freeze([
       description: "Admitted ticketNumber for countersign Notary inner-gate material",
       type: "string" as const,
     }),
+  }),
+] as const);
+
+/** Notary private transport: optional court-diary ticket (ADR 0018 / 0075 — envelope-owned). */
+const NOTARY_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: NOTARY_TICKET_FLAG.name,
+    definition: NOTARY_TICKET_FLAG.definition,
   }),
 ] as const);
 
@@ -399,7 +409,11 @@ type ActivationRuntime = {
   bindReviewerParent(activation: ReviewerActivation): void;
   collector: { activate(context: HostContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
-  notary: { activate(): Promise<void> };
+  notary: {
+    activate(admitted?: import("./notary-role.ts").NotaryAdmittedTicket): Promise<void>;
+  };
+  /** Envelope decodes Notary ticket flag inside the activation stage (ADR 0018). */
+  decodeNotaryAdmitted(): import("./notary-role.ts").NotaryAdmittedTicket | undefined;
   countersign: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
@@ -437,7 +451,13 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
-    case "notary": return { id: "load-and-install", run: async () => runtime.notary.activate() };
+    case "notary": return {
+      id: "load-and-install",
+      run: async () => {
+        // Envelope owns ticket flag read (ADR 0018); role receives admitted value only.
+        await runtime.notary.activate(runtime.decodeNotaryAdmitted());
+      },
+    };
     case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
@@ -852,6 +872,9 @@ export function createRoleRuntimeExtension(
     for (const flag of COUNTERSIGN_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
+    for (const flag of NOTARY_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
 
     let admitted = false;
     let selectedRole: string | undefined;
@@ -948,7 +971,7 @@ export function createRoleRuntimeExtension(
         failInfrastructure(new ActivationBarrierError(role), ctx);
       }
       // Notary session bound: envelope-owned lifecycle write (ADR 0018 / #582).
-      // Role module only projects bound into prompt; typed ledger entry lives here.
+      // Ticket flag register/read + session entry live here; role projects admitted bound only.
       if (role === "notary") {
         const bound = projectNotaryBoundFromFlags((name) => roleHost.getFlag(name));
         if (bound !== undefined) {
@@ -1411,6 +1434,12 @@ export function createRoleRuntimeExtension(
         },
         bindReviewerParent(activation) {
           activeReviewerParent = activation;
+        },
+        decodeNotaryAdmitted() {
+          const ticketNumber = readNotaryTicketFlag(
+            roleHost.getFlag(NOTARY_TICKET_FLAG.name),
+          );
+          return ticketNumber === undefined ? undefined : { ticketNumber };
         },
         collector,
         doctor,

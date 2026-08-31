@@ -7,7 +7,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runEngineDetourOnce } from "./engine-detour.ts";
+import {
+  ENGINE_DETOUR_STAGED_PROMPT_TOKEN,
+  runEngineDetourOnce,
+} from "./engine-detour.ts";
 import type { DiaristSourceBlock } from "./diarist-mechanical.ts";
 
 /** Owner-domain method material for collector semantic judgment (ADR 0073/0075). */
@@ -205,7 +208,7 @@ export type DiaristCollectorEnginePayload = {
 /**
  * Machine kickoff payload (ADR 0073): method material bytes + frozen candidate catalog.
  * Semantic judgment lives in owner-domain method material — delivered as `method` bytes,
- * not a path coordinate. Serialized as one JSON argv entry for hermes -z.
+ * not a path coordinate. Serialized body is staged by the shared engine seam (never argv).
  */
 export function buildDiaristCollectorEnginePayload(input: {
   readonly ticketNumber: number;
@@ -225,7 +228,7 @@ export function buildDiaristCollectorEnginePayload(input: {
   };
 }
 
-/** Serialize engine payload to the single hermes -z argv string. */
+/** Serialize engine payload body for seam-owned staged prompt file delivery. */
 export function serializeDiaristCollectorEnginePayload(
   payload: DiaristCollectorEnginePayload,
 ): string {
@@ -246,10 +249,11 @@ export type HermesDiaristCollectorOptions = {
 };
 
 /**
- * Default cheap-engine collector via hermes -z (ADR 0069 detour seam).
+ * Default cheap-engine collector via hermes (ADR 0069 detour seam).
  * Owner-domain method material is read from the packaged file (sole source of truth)
- * and delivered as `method` bytes on the structured JSON -z argv entry. No path-only
- * coordinate transport; no env dual transport.
+ * and delivered as `method` bytes inside the structured JSON body. The body is staged
+ * by the shared engine seam (`--query-file` path token) — never a single argv blob
+ * (E2BIG / engine-dispatch). No path-only method coordinate; no env dual transport.
  * Engine failure and uninterpretable stdout throw — caller records honest diagnostic.
  */
 export function createHermesDiaristCollector(
@@ -273,18 +277,24 @@ export function createHermesDiaristCollector(
       method,
     });
     const prompt = serializeDiaristCollectorEnginePayload(payload);
-    // hermes -z takes the structured payload as one argv entry (no temp file).
-    // --ignore-rules keeps host identity out.
+    // File-path delivery via shared seam token (never paste body into argv).
+    // chat --query-file + -Q keeps final-response-only stdout; -t terminal avoids
+    // host toolset warning noise on stdout. --ignore-rules keeps host identity out.
     const argv = [
       executable,
       ...(options.extraArgv ?? []),
-      "-z",
-      prompt,
+      "chat",
+      "--query-file",
+      ENGINE_DETOUR_STAGED_PROMPT_TOKEN,
+      "-Q",
       "--no-restore-cwd",
       "--ignore-rules",
+      "-t",
+      "terminal",
     ];
     const result = await runDetour({
       argv,
+      stagedPrompt: prompt,
       cwd: options.cwd ?? process.cwd(),
       ...(options.env === undefined ? {} : { env: options.env }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
@@ -301,8 +311,8 @@ export function createHermesDiaristCollector(
     return {
       selections,
       rawStdout: result.stdout,
-      // Payload bytes redacted from argv face — delivery is the -z JSON payload itself.
-      engineArgv: argv.map((part, i) => (i === argv.indexOf(prompt) ? "<prompt>" : part)),
+      // Staged body redacted — argv face shows the path token only.
+      engineArgv: argv,
     };
   };
 }

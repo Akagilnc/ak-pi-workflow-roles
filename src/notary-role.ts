@@ -2,6 +2,8 @@ import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts"
 /**
  * Public Notary role runtime — direct officer seat (not through Gatekeeper province).
  * Caller supplies only a source-run locator; Notary self-fetches authoritative materials.
+ * Ticket flag register/read/session bind is envelope-owned (ADR 0018 / #582).
+ * This module keeps evidence assembly + projection only.
  */
 
 import {
@@ -87,6 +89,7 @@ export type NotaryFlagBoundRecord = {
 /**
  * Project notary bound from host flags (envelope consumption seam).
  * undefined when source-run flag absent/blank.
+ * Ticket invalid → throws (honest fail; envelope owns the read).
  */
 export function projectNotaryBoundFromFlags(
   getFlag: (name: string) => unknown,
@@ -110,6 +113,22 @@ export function assembleNotaryAgentStartPrompt(input: {
   return `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>`;
 }
 
+/**
+ * Project agent-start readingMaterial for Notary (evidence assembly only).
+ * Ticket binding is merged by the shared envelope from flags (ADR 0018).
+ */
+export function projectNotaryAgentStartMaterial(input: {
+  readonly sourceRun: NotarySourceRunLocator;
+  readonly ticketNumber?: number;
+}): NotarySessionBound {
+  return projectNotarySessionBound(input);
+}
+
+/** Envelope-admitted ticket binding (flag read owned by shared envelope). */
+export type NotaryAdmittedTicket = {
+  readonly ticketNumber?: number;
+};
+
 export function createNotaryRoleRuntime(
   pi: RoleHost,
   dependencies: NotaryRoleDependencies,
@@ -123,14 +142,18 @@ export function createNotaryRoleRuntime(
       }
     | undefined;
   let registered = false;
+  // Baseline source-run flag registration (pre-#582). Ticket flag is envelope-owned.
   pi.registerFlag(
     NOTARY_SOURCE_RUN_FLAG.name,
     NOTARY_SOURCE_RUN_FLAG.definition,
   );
-  pi.registerFlag(NOTARY_TICKET_FLAG.name, NOTARY_TICKET_FLAG.definition);
 
   return {
-    async activate(): Promise<void> {
+    /**
+     * @param admitted Optional ticket from envelope flag decode (ADR 0018).
+     * Role module never getFlag's the ticket — envelope owns that read.
+     */
+    async activate(admitted?: NotaryAdmittedTicket): Promise<void> {
       const path = pi.getFlag(NOTARY_SOURCE_RUN_FLAG.name);
       if (typeof path !== "string" || path.trim() === "") {
         throw new Error("Notary requires --ak-notary-source-run");
@@ -138,13 +161,12 @@ export function createNotaryRoleRuntime(
       const soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Notary soul is empty");
       const sourceRun = await dependencies.loadSourceRunLocator(path);
-      const ticketNumber = readNotaryTicketFlag(
-        pi.getFlag(NOTARY_TICKET_FLAG.name),
-      );
       activation = {
         soul,
         sourceRun,
-        ...(ticketNumber === undefined ? {} : { ticketNumber }),
+        ...(admitted?.ticketNumber === undefined
+          ? {}
+          : { ticketNumber: admitted.ticketNumber }),
       };
 
       if (!registered) {
@@ -171,25 +193,23 @@ export function createNotaryRoleRuntime(
             };
           },
         });
-        // Evidence assembly only (ADR 0018): soul into prompt body. The typed bound
-        // travels as readingMaterial (machine face; not free text) and is folded into
-        // the provider-visible prompt by the adapter. Session write is envelope-owned.
+        // Evidence assembly only (ADR 0018): soul + bound projection.
+        // Ticket value is envelope-admitted at activate — not re-read from flags here.
         pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
           }
-          const bound = projectNotarySessionBound({
-            sourceRun: activation.sourceRun,
-            ...(activation.ticketNumber === undefined
-              ? {}
-              : { ticketNumber: activation.ticketNumber }),
-          });
           return {
             systemPrompt: assembleNotaryAgentStartPrompt({
               baseSystemPrompt: event.systemPrompt,
               soul: activation.soul,
             }),
-            readingMaterial: bound,
+            readingMaterial: projectNotaryAgentStartMaterial({
+              sourceRun: activation.sourceRun,
+              ...(activation.ticketNumber === undefined
+                ? {}
+                : { ticketNumber: activation.ticketNumber }),
+            }),
           };
         });
       }
