@@ -15,7 +15,6 @@ import {
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
   inspectControlledGrok,
-  isHeadMatchedProjectInstruction,
   type GrokAcpConnection,
   type GrokPreparedTurn,
 } from "../../src/grok/role-turn-host.ts";
@@ -468,40 +467,22 @@ test("grok host rejects an uncontrolled personalized session before model work",
   assert.equal(connected, false);
 });
 
-test("HEAD path case-fold hashes the HEAD-casing worktree file, not the inspect leaf string", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-case-fold-"));
-  try {
-    git(root, ["init"]);
-    git(root, ["config", "user.email", "fix@example.com"]);
-    git(root, ["config", "user.name", "fix"]);
-    await writeFile(join(root, "CLAUDE.md"), "# shared\n", "utf8");
-    git(root, ["add", "CLAUDE.md"]);
-    git(root, ["commit", "-m", "seed"]);
-    // Inspect may report Claude.md while only CLAUDE.md exists in HEAD/worktree.
-    // Portable across case-sensitive FS: bytes are read via the resolved HEAD path.
-    assert.equal(await isHeadMatchedProjectInstruction(root, join(root, "CLAUDE.md")), true);
-    assert.equal(await isHeadMatchedProjectInstruction(root, join(root, "Claude.md")), true);
-    const link = join(root, "OTHER.md");
-    await symlink(join(root, "CLAUDE.md"), link);
-    assert.equal(await isHeadMatchedProjectInstruction(root, link), false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("inspect→provenance: HEAD-matched repo CLAUDE.md activates; dirty or untracked projectInstructions fail closed before connect", async () => {
+test("inspect→provenance: HEAD-matched repo CLAUDE.md activates; dirty, case-fold, symlink-replaced, or untracked projectInstructions fail closed before connect", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-head-match-"));
   try {
     git(root, ["init"]);
     git(root, ["config", "user.email", "fix@example.com"]);
     git(root, ["config", "user.name", "fix"]);
     const claudePath = join(root, "CLAUDE.md");
+    const twinPath = join(root, "TWIN.md");
     const agentsPath = join(root, "AGENTS.md");
     const localPath = join(root, "CLAUDE.local.md");
     const homePath = join(root, "home-claude.md");
+    // Identical bytes so a CLAUDE.md→TWIN.md symlink would hash-match HEAD without the symlink guard.
     await writeFile(claudePath, "# shared law\n", "utf8");
+    await writeFile(twinPath, "# shared law\n", "utf8");
     await writeFile(agentsPath, "# agents\n", "utf8");
-    git(root, ["add", "CLAUDE.md", "AGENTS.md"]);
+    git(root, ["add", "CLAUDE.md", "TWIN.md", "AGENTS.md"]);
     git(root, ["commit", "-m", "seed"]);
 
     const packageRoot = join(root, "pkg");
@@ -560,7 +541,7 @@ process.stdout.write(JSON.stringify({
     assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
     assert.equal(connected, true);
 
-    // Grok often reports Claude.md while HEAD stores CLAUDE.md — same leaf, not a symlink hop.
+    // Grok may report Claude.md while HEAD stores CLAUDE.md — bytes read via HEAD path casing.
     const grokCasePath = join(root, "Claude.md");
     const casedInspect = await inspectControlledGrok({
       binary: faux,
@@ -574,20 +555,21 @@ process.stdout.write(JSON.stringify({
     });
     assert.deepEqual(casedInspect.privateActive, []);
 
-    // Untracked symlink must not inherit the target's HEAD identity (realpath bypass).
-    const symlinkPath = join(root, "LINKED.md");
-    await symlink(claudePath, symlinkPath);
+    // Replace the HEAD path itself with a same-bytes symlink. HEAD mapping still finds CLAUDE.md;
+    // without the symlink guard, hash-object would follow the link and falsely match.
+    await unlink(claudePath);
+    await symlink(twinPath, claudePath);
     const symlinkInspect = await inspectControlledGrok({
       binary: faux,
       cwd: root,
       env: {
         ...process.env,
         AK_PACKAGE_ROOT: packageRoot,
-        AK_FAUX_PROJECT_INSTRUCTIONS: JSON.stringify([symlinkPath]),
+        AK_FAUX_PROJECT_INSTRUCTIONS: JSON.stringify([claudePath]),
       },
       packageRoot,
     });
-    assert.deepEqual(symlinkInspect.privateActive, [`projectInstructions:${symlinkPath}`]);
+    assert.deepEqual(symlinkInspect.privateActive, [`projectInstructions:${claudePath}`]);
     connected = false;
     const symlinkRejected = createGrokRoleTurnHost({
       sessionIdentity,
@@ -598,7 +580,8 @@ process.stdout.write(JSON.stringify({
     });
     assert.equal((await symlinkRejected.executeTurn(request)).knownFailure?.identity?.code, "private-config-active");
     assert.equal(connected, false);
-    await unlink(symlinkPath);
+    await unlink(claudePath);
+    await writeFile(claudePath, "# shared law\n", "utf8");
 
     await writeFile(claudePath, "# dirty local rewrite\n", "utf8");
     await writeFile(localPath, "# untracked local\n", "utf8");
