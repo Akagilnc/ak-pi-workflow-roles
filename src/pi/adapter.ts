@@ -1,5 +1,6 @@
 import {
   parseSkillBlock,
+  type BeforeAgentStartEventResult,
   type ExtensionAPI,
   type ExtensionContext,
   type SessionManager,
@@ -18,6 +19,7 @@ import type {
 } from "../host-contracts.ts";
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
+import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
@@ -93,6 +95,18 @@ function toPiResult<D>(result: HostToolResult<D>): HostToolResult<D> {
   return result;
 }
 
+/** Fold a host before_agent_start return: push readingMaterial into the provider-visible
+ * systemPrompt via the shared renderer and strip the typed field before Pi sees it. */
+function foldBeforeAgentStartReturn(result: unknown): BeforeAgentStartEventResult | void {
+  if (result === undefined || result === null || typeof result !== "object") return undefined;
+  const record = result as { systemPrompt?: string; readingMaterial?: unknown };
+  const { systemPrompt, readingMaterial } = record;
+  const folded = readingMaterial === undefined
+    ? systemPrompt
+    : renderAgentStartMaterials(systemPrompt ?? "", [readingMaterial]);
+  return folded === undefined ? {} : { systemPrompt: folded };
+}
+
 function toPiToolDefinition<S extends TSchema, D>(
   tool: HostToolDefinition<S, D>,
   projectContext: (context: ExtensionContext) => HostContext,
@@ -159,7 +173,11 @@ export function createPiRoleHostAdapter(
       const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
       if (registration[0] === "before_agent_start") {
         const [, handler] = registration;
-        pi.on("before_agent_start", (value, ctx) => handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, context(ctx)));
+        pi.on("before_agent_start", (value, ctx) => {
+          const result = handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, context(ctx));
+          if (result instanceof Promise) return result.then(foldBeforeAgentStartReturn);
+          return foldBeforeAgentStartReturn(result);
+        });
       } else if (registration[0] === "input") {
         const [, handler] = registration;
         pi.on("input", (value, ctx) => handler({ text: value.text, ...(value.images === undefined ? {} : { images: value.images }), source: value.source }, context(ctx)));

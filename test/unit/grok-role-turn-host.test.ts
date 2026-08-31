@@ -10,7 +10,7 @@ import {
   fixerBashSeatbeltDenyReason,
 } from "../../src/fixer-bash-seatbelt.ts";
 import { installGrokPreToolUseDeny } from "../../src/grok/bash-seatbelt.ts";
-import { classifyGrokInspection, controlledGrokChildEnv, createGrokRoleTurnHost, type GrokAcpConnection, type GrokPreparedTurn } from "../../src/grok/role-turn-host.ts";
+import { classifyGrokInspection, controlledGrokChildEnv, createGrokRoleTurnHost, renderGrokSystemPromptOverride, type GrokAcpConnection, type GrokPreparedTurn } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 const sessionIds = new WeakMap<object, string>();
@@ -26,12 +26,11 @@ const request = {
   agentDir: "/agent", runDirectory: "/run",
 } as RoleTurnRequest;
 
-function prepared(closeRound: GrokPreparedTurn["closeRound"], mcpServers: Readonly<Record<string, unknown>>[] = [{}]): GrokPreparedTurn {
+function prepared(closeRound: GrokPreparedTurn["closeRound"], mcpServers: Readonly<Record<string, unknown>>[] = [{}], materials: readonly unknown[] = []): GrokPreparedTurn {
   return {
     mcpServers,
-    systemPrompt: "law",
+    systemPrompt: { body: "law", materials },
     prompt: "decide",
-    agentStartReadingMaterials: [],
     closeRound,
   };
 }
@@ -107,6 +106,43 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
       mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }],
       _meta: { systemPromptOverride: "law", yoloMode: false },
     }]);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("grok host delivers structured systemPrompt as the rendered ACP override", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-grok-override-"));
+  try {
+    const localRequest = { ...request, home, agentDir: join(home, "agent"), runDirectory: join(home, "run") } as RoleTurnRequest;
+    const material = { sourceRun: "/run", ticketNumber: 582 };
+    const captures: Array<[string, unknown]> = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          captures.push([method, params]);
+          if (method === "session/new") return { sessionId: "s1" };
+          if (method === "session/prompt") return { stopReason: "end_turn" };
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: true }), [{}], [material]),
+    });
+
+    assert.deepEqual(await host.executeTurn(localRequest), { code: 0, stderr: "", timedOut: false });
+    const newParams = captures.find(([method]) => method === "session/new")?.[1] as
+      { _meta: { systemPromptOverride?: unknown } };
+    // The structured authority is the production input of the send path: the override
+    // Pi-equivalent adapter emits equals the pure renderer over body + materials.
+    assert.equal(
+      newParams._meta.systemPromptOverride,
+      renderGrokSystemPromptOverride({ body: "law", materials: [material] }),
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }
