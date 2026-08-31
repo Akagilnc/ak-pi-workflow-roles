@@ -10,6 +10,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -208,6 +209,12 @@ test("countersign --ticket admits and projects activation.ticketNumber onto turn
     assert.equal(turn.activation.role, "countersign");
     assert.ok(turn.activation.role === "countersign");
     assert.equal(turn.activation.ticketNumber, 582);
+
+    // Pi adapter output contract: structured argv carries the admitted binding.
+    const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
+    const flagAt = piArgv.indexOf("--ak-countersign-ticket-number");
+    assert.ok(flagAt >= 0);
+    assert.equal(piArgv[flagAt + 1], "582");
   });
 });
 
