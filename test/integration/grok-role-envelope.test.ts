@@ -58,7 +58,7 @@ async function callThroughMcp(server: McpServer, name: string, args: unknown): P
   }
 }
 
-test("Grok projection maps all eight public activations onto the shared envelope", () => {
+test("Grok projection maps public activations onto the shared envelope", () => {
   const activations: RoleTurnRequest["activation"][] = [
     { role: "judge" },
     { role: "fixer", phase: "apply", packetPath: "/fix", prerequisitesPath: "/prereqs" },
@@ -68,6 +68,7 @@ test("Grok projection maps all eight public activations onto the shared envelope
     { role: "doctor", casePath: "/case" },
     { role: "merger", inputPath: "/merge" },
     { role: "notary", sourceRun: "/source" },
+    { role: "countersign", ticketNumber: 582 },
   ];
   for (const activation of activations) {
     const flags = projectGrokActivationFlags({ activation } as RoleTurnRequest);
@@ -76,6 +77,18 @@ test("Grok projection maps all eight public activations onto the shared envelope
   assert.equal(projectGrokActivationFlags({ activation: activations[1]! } as RoleTurnRequest).get("ak-fixer-prerequisites"), "/prereqs");
   assert.equal(projectGrokActivationFlags({ activation: activations[3]! } as RoleTurnRequest).get("ak-review-authority-refs"), JSON.stringify(["issue:1"]));
   assert.equal(projectGrokActivationFlags({ activation: activations[4]! } as RoleTurnRequest).get("ak-collector-request-manifest"), "/manifest");
+  assert.equal(
+    projectGrokActivationFlags({ activation: activations[8]! } as RoleTurnRequest).get(
+      "ak-countersign-ticket-number",
+    ),
+    "582",
+  );
+  assert.equal(
+    projectGrokActivationFlags({
+      activation: { role: "countersign" },
+    } as RoleTurnRequest).has("ak-countersign-ticket-number"),
+    false,
+  );
 });
 
 test("Grok MCP projection activates shared Judge materials and all active AK tools", async () => {

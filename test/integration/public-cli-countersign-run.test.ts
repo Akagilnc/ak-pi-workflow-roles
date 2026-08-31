@@ -172,6 +172,42 @@ test("countersign admission freezes attachments and binds the countersign role",
       continuation: { kind: "initial", prompt: "裁：本票是否足以开工。" },
     });
     assert.equal(turn.activation.role, "countersign");
+    // Unbound admission: no ticket on activation (legal).
+    assert.equal(
+      "ticketNumber" in turn.activation ? turn.activation.ticketNumber : undefined,
+      undefined,
+    );
+  });
+});
+
+test("countersign --ticket admits and projects activation.ticketNumber onto turn request", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const ticket = join(project, "ticket.md");
+    await writeFile(ticket, "---\nticketNumber: 100\n---\n\n五问。\n", "utf8");
+
+    const admitted = await admitCountersignInvocation({
+      home,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      instruction: "裁",
+      attachmentPaths: [ticket],
+      ticket: 582,
+      createRunId: () => "01a0sign00-0000-7000-8000-000000000582",
+    });
+    assert.equal(admitted.ticketNumber, 582);
+
+    const turn = buildCountersignTurnRequest(admitted, {
+      packageRoot,
+      home,
+      agentDir: join(home, ".pi"),
+      continuation: { kind: "initial", prompt: "裁" },
+    });
+    assert.equal(turn.activation.role, "countersign");
+    assert.ok(turn.activation.role === "countersign");
+    assert.equal(turn.activation.ticketNumber, 582);
   });
 });
 
