@@ -11121,10 +11121,6 @@ async function prepareGrokRoleEnvelope(options) {
   const methodSkills = /* @__PURE__ */ new Map();
   let preferredTools = [];
   let rejection;
-  let sealedNotify;
-  const sealed = new Promise((resolve13) => {
-    sealedNotify = resolve13;
-  });
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID2();
   await mkdir3(request.runDirectory, { recursive: true });
   for (const method of request.methods) {
@@ -11371,7 +11367,6 @@ async function prepareGrokRoleEnvelope(options) {
       }
     }
     if (closure !== void 0) {
-      sealedNotify?.();
       return { accepted: true };
     }
     if (rejection !== void 0) {
@@ -11417,7 +11412,6 @@ async function prepareGrokRoleEnvelope(options) {
     systemPrompt,
     prompt,
     closeRound,
-    whenSealed: () => sealed,
     dispose
   };
 }
