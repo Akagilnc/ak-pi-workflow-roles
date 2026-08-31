@@ -267,9 +267,9 @@ export async function readTicketProvenance(
 
 /**
  * Fence long enough that any backtick run inside `text` cannot close the block.
- * Presentation helper only — not a machine contract.
+ * Presentation helper only — not a machine contract; not exported.
  */
-export function markdownFenceFor(text: string): string {
+function markdownFenceFor(text: string): string {
   let longest = 0;
   const runs = text.match(/`+/g);
   if (runs !== null) {
