@@ -1,8 +1,14 @@
 /**
  * Production composition for the grok-build RoleTurnHost adapter (#580 / #522).
  * Owns injectables around the S6 true adapter; does not alter S6 adapter behavior.
+ *
+ * Isolation contract: subprocess GROK_HOME, Fixer seatbelt hang root, and auth
+ * copy share one ephemeral directory outside the retained run ledger. The grok
+ * binary still resolves from the operator home. Callers pass that isolated home
+ * into S6 as request.home (bash-seatbelt.ts: "callers must pass the isolated home").
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../canonical-skill-binding.ts";
@@ -34,13 +40,13 @@ function resolveGrokBinary(operatorHome: string): string {
   return join(operatorHome, ".grok", "bin", "grok");
 }
 
-function controlledHomePath(request: RoleTurnRequest): string {
-  return join(request.runDirectory, "grok-home");
-}
-
-async function ensureControlledHome(request: RoleTurnRequest): Promise<string> {
-  const controlledHome = controlledHomePath(request);
-  await prepareControlledGrokHome(request.home, controlledHome);
+/**
+ * Open the production isolation root: auth copy only, never under runDirectory.
+ * Caller owns cleanup (typically turn finally).
+ */
+export async function openProductionGrokHome(operatorHome: string): Promise<string> {
+  const controlledHome = await mkdtemp(join(tmpdir(), "ak-grok-home-"));
+  await prepareControlledGrokHome(operatorHome, controlledHome);
   return controlledHome;
 }
 
@@ -109,27 +115,59 @@ async function recordGrokCapabilities(
  */
 export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOptions): RoleTurnHost {
   const { packageRoot, principalAuthority } = options;
-  return createComposedGrokRoleTurnHost({
+  // Single-slot turn isolation; outer serial keeps operator/controlled pairing intact.
+  let turn: { operatorHome: string; controlledHome: string } | undefined;
+  let serial = Promise.resolve();
+
+  const inner = createComposedGrokRoleTurnHost({
     sessionIdentity: createGrokSessionIdentityAuthority(principalAuthority),
     roleRuntimeDependencies: createGrokRoleRuntimeDependencies(packageRoot),
     recordCapabilities: recordGrokCapabilities,
     async inspect(request) {
-      const controlledHome = await ensureControlledHome(request);
+      if (turn === undefined) {
+        throw new Error("production grok inspect requires an active isolated turn");
+      }
       return inspectControlledGrok({
-        binary: resolveGrokBinary(request.home),
+        binary: resolveGrokBinary(turn.operatorHome),
         cwd: request.cwd,
-        env: childEnv(controlledHome, packageRoot),
+        env: childEnv(turn.controlledHome, packageRoot),
         packageRoot,
       });
     },
     async connect(request) {
-      const controlledHome = await ensureControlledHome(request);
+      if (turn === undefined) {
+        throw new Error("production grok connect requires an active isolated turn");
+      }
       return connectGrokAcpStdio({
-        binary: resolveGrokBinary(request.home),
+        binary: resolveGrokBinary(turn.operatorHome),
         cwd: request.cwd,
-        env: childEnv(controlledHome, packageRoot),
+        env: childEnv(turn.controlledHome, packageRoot),
         ...(request.model === undefined ? {} : { model: request.model.model }),
       });
     },
   });
+
+  return {
+    executeTurn(request) {
+      const execution = serial.then(async () => {
+        const operatorHome = request.home;
+        const controlledHome = await openProductionGrokHome(operatorHome);
+        turn = { operatorHome, controlledHome };
+        try {
+          // S6 seatbelt hangs on request.home — pass the same isolated root as GROK_HOME.
+          return await inner.executeTurn({ ...request, home: controlledHome });
+        } finally {
+          turn = undefined;
+          await rm(controlledHome, { recursive: true, force: true }).catch(() => {
+            /* Preserve the original turn result; tmp cleanup is best-effort. */
+          });
+        }
+      });
+      serial = execution.then(
+        () => undefined,
+        () => undefined,
+      );
+      return execution;
+    },
+  };
 }

@@ -34,7 +34,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
-import { createProductionGrokRoleTurnHost } from "../grok/production-host.ts";
+import { loadProductionGrokHostFactory } from "./load-production-grok-host.ts";
 import {
   createPiRoleTurnHost,
   appendPiSessionCustomEntry,
@@ -277,12 +277,21 @@ function resolveRoleTurnHost(
         // Selection-time model×host rejection is owned by the selected adapter (S7 C2).
         // S6 executeTurn also guards provider !== "xai"; create mirrors that before turn.
         if (model !== undefined && model.provider !== "xai") return { ok: false as const };
+        // Factory loads outside the public bin static graph (ADR 0052 peer-free discovery).
+        let hostPromise: Promise<RoleTurnHost> | undefined;
         return {
           ok: true as const,
-          host: createProductionGrokRoleTurnHost({
-            packageRoot: env.packageRoot,
-            principalAuthority: options.principalAuthority,
-          }),
+          host: {
+            executeTurn: async (request) => {
+              hostPromise ??= loadProductionGrokHostFactory(env.packageRoot).then((create) =>
+                create({
+                  packageRoot: env.packageRoot,
+                  principalAuthority: options.principalAuthority,
+                }),
+              );
+              return (await hostPromise).executeTurn(request);
+            },
+          },
         };
       },
     },
