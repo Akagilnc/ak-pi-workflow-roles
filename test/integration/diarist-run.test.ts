@@ -543,7 +543,7 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("hermes collector: real child receives method bytes via seam-staged --query-file", async () => {
+test("hermes collector: real child receives method bytes via seam-staged --query-file (1MiB safe)", async () => {
   await withHermeticHome({ prefix: "ak-diarist-method-qf-" }, async ({ home }) => {
     const methodPath = resolveDiaristCollectMethodPath(packageRoot);
     assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
@@ -555,17 +555,20 @@ test("hermes collector: real child receives method bytes via seam-staged --query
     const capturePath = join(home, "method-payload-capture.json");
     const childScript = join(home, "engine-child.mjs");
     // Real subprocess on the detour seam: read staged --query-file body (not argv blob).
+    // 1MiB candidates are the E2BIG boundary — one trunk proves delivery + size + cleanup.
     await writeFile(
       childScript,
       [
-        "import { readFileSync, writeFileSync } from 'node:fs';",
+        "import { readFileSync, writeFileSync, statSync } from 'node:fs';",
         "const qf = process.argv.indexOf('--query-file');",
         "const path = qf >= 0 ? process.argv[qf + 1] : undefined;",
         "let method = null;",
         "let methodPath = null;",
         "let candidateCount = null;",
+        "let size = 0;",
         "let argvHasPromptBlob = false;",
         "try {",
+        "  size = path ? statSync(path).size : 0;",
         "  const raw = path ? readFileSync(path, 'utf8') : undefined;",
         "  const payload = JSON.parse(raw);",
         "  method = typeof payload?.method === 'string' ? payload.method : null;",
@@ -573,13 +576,15 @@ test("hermes collector: real child receives method bytes via seam-staged --query
         "  candidateCount = Array.isArray(payload?.candidates) ? payload.candidates.length : null;",
         "  argvHasPromptBlob = process.argv.some((a) => typeof a === 'string' && a.includes('\"method\"'));",
         "} catch {}",
-        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ method, methodPath, candidateCount, argvHasPromptBlob, queryFilePath: path ?? null }), 'utf8');",
+        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ method, methodPath, candidateCount, size, argvHasPromptBlob, queryFilePath: path ?? null }), 'utf8');",
         "process.stdout.write(JSON.stringify({ selections: [] }));",
         "",
       ].join("\n"),
       "utf8",
     );
 
+    // ~1.2 MiB candidate bodies — formerly single-argv E2BIG; now staged by the seam.
+    const big = "X".repeat(600_000);
     const collector = createHermesDiaristCollector({
       packageRoot,
       executable: process.execPath,
@@ -591,8 +596,12 @@ test("hermes collector: real child receives method bytes via seam-staged --query
       ticketNumber: 582,
       candidates: [
         block({
-          transcript: "立文件",
+          transcript: big,
           sourceRef: { sessionFile: "/s", entryId: "1" },
+        }),
+        block({
+          transcript: big,
+          sourceRef: { sessionFile: "/s", entryId: "2" },
         }),
       ],
     });
@@ -600,13 +609,14 @@ test("hermes collector: real child receives method bytes via seam-staged --query
       method: string | null;
       methodPath: string | null;
       candidateCount: number | null;
+      size: number;
       argvHasPromptBlob: boolean;
       queryFilePath: string | null;
     };
     // External visible: engine child received method material bytes from staged file.
     assert.equal(captured.method, methodBytes);
-    assert.equal(captured.candidateCount, 1);
-    assert.equal(typeof captured.queryFilePath, "string");
+    assert.equal(captured.candidateCount, 2);
+    assert.ok(captured.size > 1_000_000);
     assert.ok(captured.queryFilePath);
     // Seam-owned lifecycle: staged prompt file is gone after collector returns.
     assert.equal(existsSync(captured.queryFilePath), false);
@@ -614,73 +624,6 @@ test("hermes collector: real child receives method bytes via seam-staged --query
     assert.equal(captured.methodPath, null);
     // Body must not ride argv (E2BIG root cause).
     assert.equal(captured.argvHasPromptBlob, false);
-  });
-});
-
-test("hermes collector: 1MiB candidates stage via query-file (no spawn E2BIG)", async () => {
-  await withHermeticHome({ prefix: "ak-diarist-e2big-" }, async ({ home }) => {
-    const capturePath = join(home, "big-capture.json");
-    const childScript = join(home, "engine-child.mjs");
-    await writeFile(
-      childScript,
-      [
-        "import { readFileSync, writeFileSync, statSync } from 'node:fs';",
-        "const qf = process.argv.indexOf('--query-file');",
-        "const path = qf >= 0 ? process.argv[qf + 1] : undefined;",
-        "let ok = false;",
-        "let size = 0;",
-        "let candidateCount = 0;",
-        "try {",
-        "  size = path ? statSync(path).size : 0;",
-        "  const payload = JSON.parse(readFileSync(path, 'utf8'));",
-        "  candidateCount = Array.isArray(payload?.candidates) ? payload.candidates.length : 0;",
-        "  ok = candidateCount > 0 && size > 1_000_000;",
-        "} catch (e) {",
-        "  writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ ok: false, error: String(e), queryFilePath: path ?? null }), 'utf8');",
-        "  process.stdout.write(JSON.stringify({ selections: [] }));",
-        "  process.exit(0);",
-        "}",
-        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ ok, size, candidateCount, queryFilePath: path ?? null }), 'utf8');",
-        "process.stdout.write(JSON.stringify({ selections: [] }));",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    // ~1.2 MiB of candidate transcript bodies — formerly single-argv E2BIG.
-    const big = "X".repeat(600_000);
-    const candidates = [
-      block({
-        transcript: big,
-        sourceRef: { sessionFile: "/s", entryId: "1" },
-      }),
-      block({
-        transcript: big,
-        sourceRef: { sessionFile: "/s", entryId: "2" },
-      }),
-    ];
-
-    const collector = createHermesDiaristCollector({
-      packageRoot,
-      executable: process.execPath,
-      extraArgv: [childScript],
-      env: { ...process.env, AK_CAPTURE_PATH: capturePath },
-    });
-    const result = await collector({ ticketNumber: 582, candidates });
-    assert.deepEqual(result.selections, []);
-    const captured = JSON.parse(await readFile(capturePath, "utf8")) as {
-      ok: boolean;
-      size: number;
-      candidateCount: number;
-      queryFilePath: string | null;
-      error?: string;
-    };
-    assert.equal(captured.ok, true, captured.error ?? "expected staged 1MiB payload");
-    assert.equal(captured.candidateCount, 2);
-    assert.ok(captured.size > 1_000_000);
-    assert.ok(captured.queryFilePath);
-    // Large payload still exits through the same seam cleanup path.
-    assert.equal(existsSync(captured.queryFilePath), false);
   });
 });
 

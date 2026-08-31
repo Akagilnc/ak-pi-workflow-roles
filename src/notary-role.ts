@@ -113,17 +113,6 @@ export function assembleNotaryAgentStartPrompt(input: {
   return `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>`;
 }
 
-/**
- * Project agent-start readingMaterial for Notary (evidence assembly only).
- * Ticket binding is merged by the shared envelope from flags (ADR 0018).
- */
-export function projectNotaryAgentStartMaterial(input: {
-  readonly sourceRun: NotarySourceRunLocator;
-  readonly ticketNumber?: number;
-}): NotarySessionBound {
-  return projectNotarySessionBound(input);
-}
-
 /** Envelope-admitted ticket binding (flag read owned by shared envelope). */
 export type NotaryAdmittedTicket = {
   readonly ticketNumber?: number;
@@ -204,7 +193,7 @@ export function createNotaryRoleRuntime(
               baseSystemPrompt: event.systemPrompt,
               soul: activation.soul,
             }),
-            readingMaterial: projectNotaryAgentStartMaterial({
+            readingMaterial: projectNotarySessionBound({
               sourceRun: activation.sourceRun,
               ...(activation.ticketNumber === undefined
                 ? {}
