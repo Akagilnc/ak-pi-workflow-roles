@@ -1,7 +1,6 @@
 /**
  * Mid-tier: real git worktree + faux inspect JSON → classify HEAD provenance.
  * Host private-config-active / accept gates stay in unit (existing shortest contracts).
- * skills.paths ↔ real Grok is test/adjudication/.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -16,7 +15,7 @@ function git(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
 
-test("inspectControlledGrok: HEAD match and Claude.md case-fold leave privateActive empty; dirty, HEAD-path symlink replace, and untracked stay private", async () => {
+test("inspectControlledGrok: HEAD match, case-fold, and same-byte symlink leave privateActive empty; dirty, different-byte symlink, untracked stay private", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-head-match-"));
   try {
     git(root, ["init"]);
@@ -24,10 +23,12 @@ test("inspectControlledGrok: HEAD match and Claude.md case-fold leave privateAct
     git(root, ["config", "user.name", "test"]);
     const claudePath = join(root, "CLAUDE.md");
     const twinPath = join(root, "TWIN.md");
+    const otherPath = join(root, "OTHER.md");
     const localPath = join(root, "CLAUDE.local.md");
     await writeFile(claudePath, "# shared law\n", "utf8");
     await writeFile(twinPath, "# shared law\n", "utf8");
-    git(root, ["add", "CLAUDE.md", "TWIN.md"]);
+    await writeFile(otherPath, "# other bytes\n", "utf8");
+    git(root, ["add", "CLAUDE.md", "TWIN.md", "OTHER.md"]);
     git(root, ["commit", "-m", "seed"]);
 
     const packageRoot = join(root, "pkg");
@@ -60,11 +61,18 @@ process.stdout.write(JSON.stringify({
     });
     assert.deepEqual((await inspect([join(root, "Claude.md")])).privateActive, []);
 
+    // Same bytes via final-component symlink: still HEAD-carried path + matching read bytes.
     await unlink(claudePath);
     await symlink(twinPath, claudePath);
+    assert.deepEqual((await inspect([claudePath])).privateActive, []);
+
+    // Different bytes via symlink → private (local rewrite).
+    await unlink(claudePath);
+    await symlink(otherPath, claudePath);
     assert.deepEqual((await inspect([claudePath])).privateActive, [
       `projectInstructions:${claudePath}`,
     ]);
+
     await unlink(claudePath);
     await writeFile(claudePath, "# dirty\n", "utf8");
     await writeFile(localPath, "# local\n", "utf8");

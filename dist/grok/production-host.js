@@ -4420,7 +4420,7 @@ function loadGatekeeperSessionMaterials(role) {
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { mkdir as mkdir3, readFile as readFile10 } from "node:fs/promises";
 import { createServer } from "node:net";
-import { basename as basename6, dirname as dirname13, join as join17 } from "node:path";
+import { basename as basename7, dirname as dirname14, join as join17 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/gatekeeper-role.ts
@@ -10585,8 +10585,8 @@ function createRoleRuntimeExtension(dependencies) {
 
 // src/grok/role-turn-host.ts
 import { execFile as execFile3, spawn as spawn3 } from "node:child_process";
-import { copyFile, mkdir as mkdir2 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { copyFile, mkdir as mkdir2, realpath as realpath6 } from "node:fs/promises";
+import { basename as basename6, dirname as dirname13, isAbsolute as isAbsolute6, join as join16, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify as promisify3 } from "node:util";
 
@@ -10871,9 +10871,136 @@ function createGrokRoleTurnHost(config) {
 var PRIVATE_COMPAT_ENV = Object.fromEntries(
   ["CLAUDE", "CURSOR", "CODEX"].flatMap((vendor) => ["SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"].map((kind) => [`GROK_${vendor}_${kind}_ENABLED`, "false"]))
 );
-function classifyGrokInspection(document, packageRoot) {
+var execFileAsync3 = promisify3(execFile3);
+function errnoCode2(error) {
+  if (typeof error !== "object" || error === null || !("code" in error)) return void 0;
+  const code = error.code;
+  return typeof code === "string" ? code : void 0;
+}
+function isGitBinaryMissing(error) {
+  return errnoCode2(error) === "ENOENT";
+}
+function isGitAbsentPathError(error) {
+  if (isGitBinaryMissing(error)) return false;
+  if (typeof error !== "object" || error === null) return false;
+  const code = error.code;
+  if (code !== 128 && code !== 1) return false;
+  const stderr = String(error.stderr ?? "");
+  if (/permission denied|eacces|eperm/i.test(stderr)) return false;
+  return /could not open|no such file|does not exist|not a valid object name|bad revision|pathspec|needed a single revision/i.test(stderr);
+}
+async function realpathIfPresent(path) {
+  try {
+    return await realpath6(path);
+  } catch (error) {
+    if (errnoCode2(error) === "ENOENT") return void 0;
+    throw error;
+  }
+}
+async function resolveHeadTreePath(topLevel, relativePath) {
+  const { stdout: exactOut } = await execFileAsync3(
+    "git",
+    ["ls-tree", "--name-only", "HEAD", "--", relativePath],
+    { cwd: topLevel, encoding: "utf8" }
+  );
+  const exactHits = exactOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
+  if (exactHits.includes(relativePath)) return relativePath;
+  const parent = dirname13(relativePath);
+  const leaf = basename6(relativePath);
+  let listing;
+  try {
+    const { stdout } = parent === "." ? await execFileAsync3("git", ["ls-tree", "--name-only", "HEAD"], {
+      cwd: topLevel,
+      encoding: "utf8"
+    }) : await execFileAsync3("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
+      cwd: topLevel,
+      encoding: "utf8"
+    });
+    listing = stdout;
+  } catch (error) {
+    if (isGitBinaryMissing(error)) throw error;
+    if (isGitAbsentPathError(error)) return void 0;
+    throw error;
+  }
+  const needle = leaf.toLowerCase();
+  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename6(name).toLowerCase() === needle).map((name) => parent === "." ? basename6(name) : join16(parent, basename6(name)));
+  return hits.length === 1 ? hits[0] : void 0;
+}
+async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
+  if (absolutePath === "" || absolutePath.includes("\0")) return false;
+  const { stdout: topLevelOut } = await execFileAsync3("git", ["rev-parse", "--show-toplevel"], {
+    cwd: repositoryCwd,
+    encoding: "utf8"
+  });
+  await execFileAsync3("git", ["rev-parse", "--verify", "HEAD"], {
+    cwd: repositoryCwd,
+    encoding: "utf8"
+  });
+  const topLevel = await realpath6(topLevelOut.trim());
+  const parent = await realpathIfPresent(dirname13(absolutePath));
+  if (parent === void 0) return false;
+  const leaf = basename6(absolutePath);
+  if (leaf === "" || leaf === "." || leaf === "..") return false;
+  const candidate = join16(parent, leaf);
+  const relative3 = pathRelative(topLevel, candidate);
+  if (relative3 === "" || relative3.startsWith("..") || isAbsolute6(relative3) || relative3.includes("\0")) {
+    return false;
+  }
+  const headRel = await resolveHeadTreePath(topLevel, relative3);
+  if (headRel === void 0) return false;
+  const headFile = join16(topLevel, headRel);
+  const { stdout: headBlobOut } = await execFileAsync3(
+    "git",
+    ["rev-parse", "--verify", `HEAD:${headRel}`],
+    { cwd: topLevel, encoding: "utf8" }
+  );
+  const headBlob = headBlobOut.trim();
+  let workBlob;
+  try {
+    const { stdout } = await execFileAsync3("git", ["hash-object", "--", candidate], {
+      cwd: topLevel,
+      encoding: "utf8"
+    });
+    workBlob = stdout.trim();
+  } catch (error) {
+    if (!isGitAbsentPathError(error) && errnoCode2(error) !== "ENOENT") throw error;
+    if (candidate === headFile) return false;
+    try {
+      const { stdout } = await execFileAsync3("git", ["hash-object", "--", headFile], {
+        cwd: topLevel,
+        encoding: "utf8"
+      });
+      workBlob = stdout.trim();
+    } catch (headReadError) {
+      if (isGitAbsentPathError(headReadError) || errnoCode2(headReadError) === "ENOENT") return false;
+      throw headReadError;
+    }
+  }
+  return headBlob === workBlob;
+}
+function inspectItemPath(value) {
+  if (typeof value.source?.path === "string") return value.source.path;
+  if (typeof value.path === "string") return value.path;
+  return "";
+}
+function isInspectItemActive(value) {
+  return value.disabled !== true && value.enabled !== false && value.compatibilityStatus !== "disabled";
+}
+function listActiveProjectInstructionPaths(document) {
+  const items = document.projectInstructions;
+  if (!Array.isArray(items)) return [];
+  const paths = [];
+  for (const value of items) {
+    if (!isInspectItemActive(value)) continue;
+    const path = inspectItemPath(value);
+    if (path !== "") paths.push(path);
+  }
+  return paths;
+}
+function classifyGrokInspection(document, packageRoot, options = {}) {
   const privateActive = /* @__PURE__ */ new Set();
   const akActive = /* @__PURE__ */ new Set();
+  const headMatched = options.headMatchedProjectInstructionPaths ?? /* @__PURE__ */ new Set();
   const externalCompat = document.externalCompat;
   if (Array.isArray(externalCompat?.cells)) {
     for (const cell of externalCompat.cells) {
@@ -10885,19 +11012,18 @@ function classifyGrokInspection(document, packageRoot) {
     const items = document[section];
     if (!Array.isArray(items)) continue;
     for (const value of items) {
-      if (value.disabled === true || value.enabled === false || value.compatibilityStatus === "disabled") continue;
-      const source = value.source;
-      const sourceType = source?.type;
-      const path = typeof source?.path === "string" ? source.path : typeof value.path === "string" ? value.path : "";
+      if (!isInspectItemActive(value)) continue;
+      const sourceType = value.source?.type;
+      const path = inspectItemPath(value);
       const identity = `${section}:${typeof value.name === "string" ? value.name : path}`;
       if (sourceType === "builtin" || sourceType === "bundled") continue;
       if (path === packageRoot || path.startsWith(`${packageRoot}/`)) akActive.add(identity);
+      else if (section === "projectInstructions" && headMatched.has(path)) continue;
       else privateActive.add(identity);
     }
   }
   return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
 }
-var execFileAsync3 = promisify3(execFile3);
 async function prepareControlledGrokHome(sourceHome, controlledHome) {
   await mkdir2(controlledHome, { recursive: true, mode: 448 });
   await copyFile(join16(sourceHome, ".grok", "auth.json"), join16(controlledHome, "auth.json"));
@@ -10912,7 +11038,15 @@ async function inspectControlledGrok(options) {
   if (typeof document !== "object" || document === null || Array.isArray(document)) {
     throw new Error("Grok structured inspection did not return an object");
   }
-  return classifyGrokInspection(document, options.packageRoot);
+  const record4 = document;
+  const headMatchedProjectInstructionPaths = /* @__PURE__ */ new Set();
+  for (const path of listActiveProjectInstructionPaths(record4)) {
+    if (path === options.packageRoot || path.startsWith(`${options.packageRoot}/`)) continue;
+    if (await isHeadMatchedProjectInstruction(options.cwd, path)) {
+      headMatchedProjectInstructionPaths.add(path);
+    }
+  }
+  return classifyGrokInspection(record4, options.packageRoot, { headMatchedProjectInstructionPaths });
 }
 function controlledGrokChildEnv(base, grokHome) {
   return {
@@ -10939,7 +11073,7 @@ function buildGrokSkillExpansion(methodSkills, prompt) {
   return Object.freeze({
     name: parsed.name,
     location: method.path,
-    content: `References are relative to ${dirname13(method.path)}.
+    content: `References are relative to ${dirname14(method.path)}.
 
 ${method.body}`,
     userMessage: parsed.userMessage
@@ -11001,7 +11135,7 @@ async function prepareGrokRoleEnvelope(options) {
   await mkdir3(request.runDirectory, { recursive: true });
   for (const method of request.methods) {
     if (method.kind !== "skill") continue;
-    const name = basename6(dirname13(method.path));
+    const name = basename7(dirname14(method.path));
     const raw = await readFile10(method.path, "utf8");
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
@@ -11272,7 +11406,7 @@ async function prepareGrokRoleEnvelope(options) {
 
 // src/grok/session-identity.ts
 import { mkdir as mkdir4, readFile as readFile11, rename, writeFile as writeFile5 } from "node:fs/promises";
-import { dirname as dirname14, join as join18 } from "node:path";
+import { dirname as dirname15, join as join18 } from "node:path";
 function createGrokSessionIdentityAuthority(authority) {
   const bindingPath = (principal) => join18(authority.decode(principal).sessionDirectory, "grok-acp-session.json");
   return {
@@ -11290,7 +11424,7 @@ function createGrokSessionIdentityAuthority(authority) {
     },
     async bind(principal, sessionId) {
       const target = bindingPath(principal);
-      await mkdir4(dirname14(target), { recursive: true });
+      await mkdir4(dirname15(target), { recursive: true });
       const temporary = `${target}.${process.pid}.tmp`;
       await writeFile5(temporary, `${JSON.stringify({ sessionId })}
 `, { encoding: "utf8", mode: 384 });

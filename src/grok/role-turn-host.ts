@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, lstat, mkdir, realpath } from "node:fs/promises";
+import { copyFile, mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -330,35 +330,77 @@ export type GrokInspectionClassificationOptions = Readonly<{
 
 const execFileAsync = promisify(execFile);
 
+function errnoCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  const code = (error as { code: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** Spawn-level absence of the git binary — never a path-match negative. */
+function isGitBinaryMissing(error: unknown): boolean {
+  return errnoCode(error) === "ENOENT";
+}
+
+/**
+ * Git exited because a path/object is absent from the worktree or HEAD.
+ * Permission and other IO stay loud; only clear absence is an expected negative.
+ */
+function isGitAbsentPathError(error: unknown): boolean {
+  if (isGitBinaryMissing(error)) return false;
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  if (code !== 128 && code !== 1) return false;
+  const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+  if (/permission denied|eacces|eperm/i.test(stderr)) return false;
+  return /could not open|no such file|does not exist|not a valid object name|bad revision|pathspec|needed a single revision/i.test(stderr);
+}
+
+async function realpathIfPresent(path: string): Promise<string | undefined> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 /**
  * Map a worktree-relative path to the unique HEAD tree path it names.
  * Exact match first; otherwise a single case-insensitive hit in the same
  * directory (Grok may report `Claude.md` while HEAD stores `CLAUDE.md`).
- * Does not follow worktree symlinks — the path string is the identity.
+ * Path identity keeps the inspect leaf name (final symlink not followed).
+ * Git/IO failures propagate; only "not in HEAD" returns undefined.
  */
 async function resolveHeadTreePath(topLevel: string, relativePath: string): Promise<string | undefined> {
-  try {
-    await execFileAsync("git", ["rev-parse", "--verify", `HEAD:${relativePath}`], {
-      cwd: topLevel,
-      encoding: "utf8",
-    });
-    return relativePath;
-  } catch {
-    // Fall through to case-insensitive directory lookup.
-  }
+  const { stdout: exactOut } = await execFileAsync(
+    "git",
+    ["ls-tree", "--name-only", "HEAD", "--", relativePath],
+    { cwd: topLevel, encoding: "utf8" },
+  );
+  const exactHits = exactOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
+  if (exactHits.includes(relativePath)) return relativePath;
+
   const parent = dirname(relativePath);
   const leaf = basename(relativePath);
-  const { stdout } = parent === "."
-    ? await execFileAsync("git", ["ls-tree", "--name-only", "HEAD"], {
-      cwd: topLevel,
-      encoding: "utf8",
-    })
-    : await execFileAsync("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
-      cwd: topLevel,
-      encoding: "utf8",
-    });
+  let listing: string;
+  try {
+    const { stdout } = parent === "."
+      ? await execFileAsync("git", ["ls-tree", "--name-only", "HEAD"], {
+        cwd: topLevel,
+        encoding: "utf8",
+      })
+      : await execFileAsync("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
+        cwd: topLevel,
+        encoding: "utf8",
+      });
+    listing = stdout;
+  } catch (error) {
+    if (isGitBinaryMissing(error)) throw error;
+    if (isGitAbsentPathError(error)) return undefined;
+    throw error;
+  }
   const needle = leaf.toLowerCase();
-  const hits = stdout
+  const hits = listing
     .split("\n")
     .map((name) => name.trim())
     .filter((name) => name !== "" && basename(name).toLowerCase() === needle)
@@ -367,67 +409,78 @@ async function resolveHeadTreePath(topLevel: string, relativePath: string): Prom
 }
 
 /**
- * True when the projectInstruction path itself is a regular blob at calling-repo
- * HEAD and the worktree bytes at that path match the blob. The path identity is
- * the inspect-reported path (parent realpath + basename) — final-component
- * symlinks are not followed into another HEAD path, and symlink leaves fail
- * closed even when the target is a matching tracked blob (#521 shared-material).
+ * True when inspect-reported path is carried by calling-repo HEAD and the bytes
+ * a host reads through that path match the HEAD blob
+ * (#521 repo-instructions-are-shared-material).
+ *
+ * Expected negatives (return false): empty/outside path, HEAD does not carry
+ * the path, worktree absent, or worktree bytes ≠ HEAD blob.
+ * Infrastructure (throw with cause): git unavailable, unexpected git/repo
+ * failure, permission or other IO on realpath/hash.
  */
 export async function isHeadMatchedProjectInstruction(
   repositoryCwd: string,
   absolutePath: string,
 ): Promise<boolean> {
   if (absolutePath === "" || absolutePath.includes("\0")) return false;
-  try {
-    const { stdout: topLevelOut } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: repositoryCwd,
-      encoding: "utf8",
-    });
-    const topLevel = await realpath(topLevelOut.trim());
-    // Resolve only the parent directory so a final-component symlink keeps its leaf name.
-    const parent = await realpath(dirname(absolutePath));
-    const leaf = basename(absolutePath);
-    if (leaf === "" || leaf === "." || leaf === "..") return false;
-    const candidate = join(parent, leaf);
-    const relative = pathRelative(topLevel, candidate);
-    if (relative === "" || relative.startsWith("..") || isAbsolute(relative) || relative.includes("\0")) {
-      return false;
-    }
-    // Symlink at the inspect leaf must not inherit another path's HEAD identity.
-    try {
-      if ((await lstat(candidate)).isSymbolicLink()) return false;
-    } catch {
-      // Exact-case leaf may be absent on a case-sensitive FS; HEAD casing is resolved below.
-    }
-    const headRel = await resolveHeadTreePath(topLevel, relative);
-    if (headRel === undefined) return false;
-    // Bytes are always read from the unique HEAD path (correct casing on disk).
-    // Classification identity stays the inspect-reported path in the caller.
-    const headFile = join(topLevel, headRel);
-    if ((await lstat(headFile)).isSymbolicLink()) return false;
-    try {
-      const candidateStat = await lstat(candidate);
-      const headStat = await lstat(headFile);
-      // Distinct directory entries that only share a case-fold must not alias (case-sensitive FS).
-      if (candidateStat.dev !== headStat.dev || candidateStat.ino !== headStat.ino) return false;
-    } catch {
-      // Inspect path exact casing missing: allow only when it case-folds to the HEAD path.
-      if (relative.toLowerCase() !== headRel.toLowerCase()) return false;
-    }
-    const { stdout: headBlob } = await execFileAsync(
-      "git",
-      ["rev-parse", "--verify", `HEAD:${headRel}`],
-      { cwd: topLevel, encoding: "utf8" },
-    );
-    const { stdout: workBlob } = await execFileAsync(
-      "git",
-      ["hash-object", "--", headFile],
-      { cwd: topLevel, encoding: "utf8" },
-    );
-    return headBlob.trim() === workBlob.trim();
-  } catch {
+
+  const { stdout: topLevelOut } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: repositoryCwd,
+    encoding: "utf8",
+  });
+  // Prove HEAD is readable before path negatives — corrupt/missing HEAD stays loud.
+  await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+    cwd: repositoryCwd,
+    encoding: "utf8",
+  });
+  const topLevel = await realpath(topLevelOut.trim());
+
+  // Keep final leaf identity (do not realpath through a final-component symlink).
+  const parent = await realpathIfPresent(dirname(absolutePath));
+  if (parent === undefined) return false;
+  const leaf = basename(absolutePath);
+  if (leaf === "" || leaf === "." || leaf === "..") return false;
+  const candidate = join(parent, leaf);
+  const relative = pathRelative(topLevel, candidate);
+  if (relative === "" || relative.startsWith("..") || isAbsolute(relative) || relative.includes("\0")) {
     return false;
   }
+
+  const headRel = await resolveHeadTreePath(topLevel, relative);
+  if (headRel === undefined) return false;
+  const headFile = join(topLevel, headRel);
+
+  const { stdout: headBlobOut } = await execFileAsync(
+    "git",
+    ["rev-parse", "--verify", `HEAD:${headRel}`],
+    { cwd: topLevel, encoding: "utf8" },
+  );
+  const headBlob = headBlobOut.trim();
+
+  // Prefer inspect-reported path bytes (hash-object follows symlink content).
+  // When exact casing is absent, fall back to the unique HEAD-cased path.
+  let workBlob: string;
+  try {
+    const { stdout } = await execFileAsync("git", ["hash-object", "--", candidate], {
+      cwd: topLevel,
+      encoding: "utf8",
+    });
+    workBlob = stdout.trim();
+  } catch (error) {
+    if (!isGitAbsentPathError(error) && errnoCode(error) !== "ENOENT") throw error;
+    if (candidate === headFile) return false;
+    try {
+      const { stdout } = await execFileAsync("git", ["hash-object", "--", headFile], {
+        cwd: topLevel,
+        encoding: "utf8",
+      });
+      workBlob = stdout.trim();
+    } catch (headReadError) {
+      if (isGitAbsentPathError(headReadError) || errnoCode(headReadError) === "ENOENT") return false;
+      throw headReadError;
+    }
+  }
+  return headBlob === workBlob;
 }
 
 function inspectItemPath(value: InspectItem): string {
