@@ -117,7 +117,10 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
     try {
       const server = prepared.mcpServers[0] as McpServer;
       const listed = await listThroughMcp(server) as { tools?: Array<{ name: string }> };
-      assert.deepEqual(listed.tools?.map(({ name }) => name), [JUDGE_OUTPUT_TOOL_NAME]);
+      const names = listed.tools?.map(({ name }) => name) ?? [];
+      // Judge output is required; shared envelope may also register engine detour.
+      assert.ok(names.includes(JUDGE_OUTPUT_TOOL_NAME));
+      assert.equal(names.filter((name) => name === JUDGE_OUTPUT_TOOL_NAME).length, 1);
     } finally {
       await prepared.dispose?.();
     }
