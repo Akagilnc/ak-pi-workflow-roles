@@ -18,10 +18,7 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
-import {
-  createGrokRoleTurnHost,
-  renderGrokSystemPromptOverride,
-} from "../../src/grok/role-turn-host.ts";
+import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import {
   issuePiDurablePrincipalCoordinates,
   piDurablePrincipalAuthority,
@@ -377,56 +374,74 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
       });
       assert.deepEqual(prepared.systemPrompt.materials, [expectedBound]);
 
-      // Provider send boundary: adapter must fold structured authority into ACP override.
+      // Provider send boundary: capture ACP systemPromptOverride under controlled materials.
+      // Observation is differential (not renderer self-compare): materials must change the wire
+      // form; empty materials must passthrough body; distinct materials must differ.
       // closeRound stubbed — this probe is the systemPromptOverride seam only.
-      const sessionIds = new WeakMap<object, string>();
-      const acpCalls: Array<[string, unknown]> = [];
-      const host = createGrokRoleTurnHost({
-        sessionIdentity: {
-          async load(principal) {
-            return sessionIds.get(principal);
+      async function captureOverride(
+        materials: readonly unknown[],
+      ): Promise<unknown> {
+        const sessionIds = new WeakMap<object, string>();
+        const acpCalls: Array<[string, unknown]> = [];
+        const host = createGrokRoleTurnHost({
+          sessionIdentity: {
+            async load(principal) {
+              return sessionIds.get(principal);
+            },
+            async bind(principal, sessionId) {
+              sessionIds.set(principal, sessionId);
+            },
           },
-          async bind(principal, sessionId) {
-            sessionIds.set(principal, sessionId);
-          },
-        },
-        recordCapabilities: async () => {},
-        connect: async () => ({
-          async request(method, params) {
-            acpCalls.push([method, params]);
-            if (method === "initialize") {
-              return {
-                _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } },
-              };
-            }
-            if (method === "session/new") return { sessionId: "notary-s1" };
-            if (method === "session/prompt") return { stopReason: "end_turn" };
-            return {};
-          },
-          notify() {},
-          async close() {},
-        }),
-        inspect: async () => ({
-          privateActive: [],
-          akActive: [NOTARY_OUTPUT_TOOL_NAME],
-        }),
-        prepare: async () => ({
-          ...prepared,
-          closeRound: async () => ({ accepted: true as const }),
-        }),
+          recordCapabilities: async () => {},
+          connect: async () => ({
+            async request(method, params) {
+              acpCalls.push([method, params]);
+              if (method === "initialize") {
+                return {
+                  _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } },
+                };
+              }
+              if (method === "session/new") return { sessionId: `notary-${acpCalls.length}` };
+              if (method === "session/prompt") return { stopReason: "end_turn" };
+              return {};
+            },
+            notify() {},
+            async close() {},
+          }),
+          inspect: async () => ({
+            privateActive: [],
+            akActive: [NOTARY_OUTPUT_TOOL_NAME],
+          }),
+          prepare: async () => ({
+            ...prepared,
+            systemPrompt: { body: prepared.systemPrompt.body, materials },
+            closeRound: async () => ({ accepted: true as const }),
+          }),
+        });
+        // Fresh principal each capture so session identity does not resume.
+        const turnRequest = { ...envelopeRequest, principal: {} };
+        assert.deepEqual(await host.executeTurn(turnRequest), {
+          code: 0,
+          stderr: "",
+          timedOut: false,
+        });
+        const sessionNew = acpCalls.find(([method]) => method === "session/new")?.[1] as
+          | { _meta?: { systemPromptOverride?: unknown } }
+          | undefined;
+        return sessionNew?._meta?.systemPromptOverride;
+      }
+
+      const overrideWithBound = await captureOverride(prepared.systemPrompt.materials);
+      const overrideEmpty = await captureOverride([]);
+      const otherBound = projectNotarySessionBound({
+        sourceRun: admitted.sourceRun,
+        ticketNumber: 999,
       });
-      assert.deepEqual(await host.executeTurn(envelopeRequest), {
-        code: 0,
-        stderr: "",
-        timedOut: false,
-      });
-      const sessionNew = acpCalls.find(([method]) => method === "session/new")?.[1] as
-        | { _meta?: { systemPromptOverride?: unknown } }
-        | undefined;
-      assert.equal(
-        sessionNew?._meta?.systemPromptOverride,
-        renderGrokSystemPromptOverride(prepared.systemPrompt),
-      );
+      const overrideOtherTicket = await captureOverride([otherBound]);
+
+      assert.equal(overrideEmpty, prepared.systemPrompt.body);
+      assert.notEqual(overrideWithBound, overrideEmpty);
+      assert.notEqual(overrideWithBound, overrideOtherTicket);
 
       // Session custom entry is the envelope durable twin of the flag-derived bound.
       const sessionFile = join(envelopeRequest.runDirectory, "grok-envelope.jsonl");
@@ -445,7 +460,7 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
       assert.equal(sessionBound.ticketNumber, 582);
       assert.equal(sessionBound.sourceRunPath, admitted.sourceRunPath);
     } finally {
-      // executeTurn disposes the prepared envelope when prepare returns it.
+      await prepared.dispose?.();
     }
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
