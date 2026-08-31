@@ -119,6 +119,28 @@ function childEnv(controlledHome: string, packageRoot: string): NodeJS.ProcessEn
 }
 
 /**
+ * Point first-party Grok discovery at packaged method skills so inspect observes
+ * AK material under packageRoot (akActive). Without this, an external install's
+ * packageRoot never appears in calling-repo inspect and activation dies on
+ * ak-config-missing after private projectInstructions are correctly cleared.
+ */
+export async function writeProductionGrokPackageSkillPaths(
+  controlledHome: string,
+  packageRoot: string,
+): Promise<void> {
+  const methodsRoot = join(packageRoot, "resources", "methods");
+  // TOML basic string — escape backslash and double-quote only.
+  const escaped = methodsRoot
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\"", "\\\"");
+  await writeFile(
+    join(controlledHome, "config.toml"),
+    `[skills]\npaths = ["${escaped}"]\n`,
+    "utf8",
+  );
+}
+
+/**
  * Single production isolation binding: auth root, GROK_HOME/HOME, and binary
  * resolution. Production executeTurn passes controlledHome as S6 request.home
  * (seatbelt hang root proven separately by S6 seatbelt tests).
@@ -128,6 +150,16 @@ export async function bindProductionGrokIsolation(
   packageRoot: string,
 ): Promise<ProductionGrokIsolationBinding> {
   const controlledHome = await openProductionGrokHome(operatorHome);
+  try {
+    await writeProductionGrokPackageSkillPaths(controlledHome, packageRoot);
+  } catch (error) {
+    await settleProductionGrokHomeCleanup(
+      controlledHome,
+      { present: true, value: error },
+      "production grok home skill-path write failed and its cleanup also failed",
+    );
+    throw error;
+  }
   return {
     operatorHome,
     controlledHome,
