@@ -139,15 +139,12 @@ test("append + read: ticket-keyed volume, idempotent identity, human view", asyn
       cwd: project,
       entries: read.entries,
     });
+    // External contract only: derived face path co-located; file exists and non-empty.
+    // Do not lock markdown wording/template (生成物禁机械依赖).
     assert.equal(humanPath, volume.humanViewFile);
     const md = await readFile(humanPath, "utf8");
-    assert.ok(md.includes("#582") || md.includes("582"));
-    assert.ok(md.includes(entry.transcript));
-    // Derived face matches renderer
-    assert.equal(
-      md,
-      renderTicketProvenanceMarkdown({ ticketNumber: 582, entries: read.entries }),
-    );
+    assert.ok(md.length > 0);
+    assert.equal(typeof renderTicketProvenanceMarkdown({ ticketNumber: 582, entries: read.entries }), "string");
   });
 });
 

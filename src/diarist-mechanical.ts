@@ -91,66 +91,7 @@ export function buildDiaristAnchors(input: {
   };
 }
 
-function textHitsAnchors(text: string, anchors: DiaristAnchorSet): boolean {
-  const ticketTokens = [
-    `#${anchors.ticketNumber}`,
-    String(anchors.ticketNumber),
-  ];
-  for (const token of ticketTokens) {
-    if (text.includes(token)) return true;
-  }
-  for (const q of anchors.quotes) {
-    if (q.length > 0 && text.includes(q)) return true;
-  }
-  for (const kw of anchors.keywords) {
-    if (kw.length > 0 && text.includes(kw)) return true;
-  }
-  return false;
-}
-
-/**
- * Mechanical candidate prefilter. Hit on ticket # / quote / keyword.
- * Result is a candidate set only — not a production relevance judgment.
- */
-export function selectMechanicalCandidates(
-  blocks: readonly DiaristSourceBlock[],
-  anchors: DiaristAnchorSet,
-): DiaristSourceBlock[] {
-  return blocks.filter((block) => textHitsAnchors(block.transcript, anchors));
-}
-
-/**
- * Expand candidates: when an assistant/non-user hit is selected, also keep the
- * next user turn (adjacency rule from probe v2 — recovers anaphora turns).
- */
-export function expandAdjacentUserTurns(
-  allBlocks: readonly DiaristSourceBlock[],
-  candidates: readonly DiaristSourceBlock[],
-): DiaristSourceBlock[] {
-  const selected = new Set(candidates);
-  const indexByRef = new Map<string, number>();
-  for (let i = 0; i < allBlocks.length; i += 1) {
-    indexByRef.set(blockKey(allBlocks[i]!), i);
-  }
-  const out = new Set(candidates);
-  for (const c of candidates) {
-    if (c.isUserTurn) continue;
-    const idx = indexByRef.get(blockKey(c));
-    if (idx === undefined) continue;
-    for (let j = idx + 1; j < allBlocks.length; j += 1) {
-      const next = allBlocks[j]!;
-      if (next.isUserTurn) {
-        out.add(next);
-        break;
-      }
-    }
-  }
-  void selected;
-  // Preserve source order.
-  return allBlocks.filter((b) => out.has(b));
-}
-
-/** Drop notification/system noise blocks. */
+/** Drop notification/system noise blocks (typed flags only — no prose match). */
 export function filterNotifications(
   blocks: readonly DiaristSourceBlock[],
 ): DiaristSourceBlock[] {
@@ -206,17 +147,23 @@ export function verifyQuotesVerbatim(
 }
 
 /**
- * Apply the full mechanical pipeline to a raw block list:
- * filter notifications → anchor candidates → adjacency expand → dedupe.
+ * Mechanical safeguard only — never a relevance gate (ADR 0075 / 锚定宪法).
+ * filter notifications (typed) → dedupe. Semantic selection is LLM-only.
+ * Anchors are retained for reverse-verify notes, not for exclusion.
  */
+export function mechanicalSafeguardPipeline(
+  blocks: readonly DiaristSourceBlock[],
+  _anchors?: DiaristAnchorSet,
+): DiaristSourceBlock[] {
+  return dedupeSourceBlocks(filterNotifications(blocks));
+}
+
+/** @deprecated alias — same as mechanicalSafeguardPipeline (no prose exclusion). */
 export function mechanicalCandidatePipeline(
   blocks: readonly DiaristSourceBlock[],
-  anchors: DiaristAnchorSet,
+  anchors?: DiaristAnchorSet,
 ): DiaristSourceBlock[] {
-  const cleaned = filterNotifications(blocks);
-  const hits = selectMechanicalCandidates(cleaned, anchors);
-  const expanded = expandAdjacentUserTurns(cleaned, hits);
-  return dedupeSourceBlocks(expanded);
+  return mechanicalSafeguardPipeline(blocks, anchors);
 }
 
 /** Claude Code project-dir encoding: abs path with / → -. */

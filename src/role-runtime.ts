@@ -659,10 +659,19 @@ function readBoundTicketNumberFromRunEnv(): number | undefined {
   return undefined;
 }
 
+/** Optional pre-accept hook on the shared filed-officer envelope (ADR 0075). */
+type FiledOfficerBeforeAccept = (input: {
+  readonly toolCallId: string;
+  readonly parameters: unknown;
+  readonly signal: AbortSignal | undefined;
+  readonly ctx: HostContext;
+}) => Promise<void>;
+
 /**
  * Shared registration envelope for filed officers (ADR 0018 / #572):
  * activate, tool register, before_agent_start prompt, inventory check.
  * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
+ * Optional beforeAccept is the sole extension seam (e.g. countersign Notary gate).
  */
 function createFiledOfficerRuntime(
   roleHost: RoleHost,
@@ -671,6 +680,7 @@ function createFiledOfficerRuntime(
     tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
     acceptedText: string;
     soulTag: string;
+    beforeAccept?: FiledOfficerBeforeAccept;
   },
   dependencies: { loadSoul(): Promise<string> },
 ) {
@@ -689,8 +699,11 @@ function createFiledOfficerRuntime(
           description: spec.tool.description,
           promptSnippet: spec.tool.promptSnippet,
           parameters: spec.tool.parameters as never,
-          async execute(_toolCallId, parameters, _signal, _onUpdate, _ctx): Promise<HostToolResult<unknown>> {
+          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+            if (spec.beforeAccept !== undefined) {
+              await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
+            }
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
@@ -719,76 +732,36 @@ export function createCountersignRoleRuntime(
   dependencies: CountersignRuntimeDependencies,
   hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
-  // Notary inner gate on countersign submission (ADR 0075 notary-inner-gate):
-  // isomorphic to judge_draft → gatekeeper → notary. When hostActions is
-  // absent (unit harness without gate), accept-as-is like other filed officers.
-  if (hostActions === undefined || roleHost.requireGatekeeperPass === undefined) {
-    return createFiledOfficerRuntime(
-      roleHost,
-      {
-        role: "countersign",
-        tool: COUNTERSIGN_TOOL_SPEC,
-        acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
-        soulTag: "countersign",
-      },
-      dependencies,
-    );
-  }
-  let soul: string | undefined;
-  let registered = false;
-  const actions = hostActions;
-  return {
-    async activate() {
-      const loaded = (await dependencies.loadSoul()).trim();
-      if (loaded.length === 0) throw new Error("countersign soul is empty");
-      soul = loaded;
-      if (!registered) {
-        registered = true;
-        roleHost.registerTool({
-          name: COUNTERSIGN_TOOL_SPEC.name,
-          label: COUNTERSIGN_TOOL_SPEC.label,
-          description: COUNTERSIGN_TOOL_SPEC.description,
-          promptSnippet: COUNTERSIGN_TOOL_SPEC.promptSnippet,
-          parameters: COUNTERSIGN_TOOL_SPEC.parameters as never,
-          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
-            if (soul === undefined) throw new Error("countersign 职分未装载");
-            // Bundle ticketNumber when the public run bound one — Notary inner gate
-            // reads 起居录 by ticket key (ADR 0075). Locator only; no ticket body.
-            const ticketNumber = readBoundTicketNumberFromRunEnv();
-            const material = JSON.stringify(
-              ticketNumber === undefined
-                ? { verdict: parameters }
-                : { verdict: parameters, ticketNumber },
-            );
-            await roleHost.requireGatekeeperPass!({
-              context: ctx,
-              subject: {
-                kind: "countersign_verdict",
-                material,
-              },
-              ...(signal === undefined ? {} : { signal }),
-              hostActions: actions,
-              toolCallId,
-            });
-            return {
-              content: [{ type: "text" as const, text: COUNTERSIGN_ACCEPTED_TEXT }],
-              details: parameters,
-              terminate: true as const,
-            };
-          },
-        });
-        roleHost.on("before_agent_start", (event) => {
-          if (soul === undefined) throw new Error("countersign 职分未装载");
-          const tail = `\n\n<countersign_soul>\n${soul}\n</countersign_soul>`;
-          return { systemPrompt: `${event.systemPrompt}${tail}` };
-        });
-      }
-      const all = roleHost.getAllTools().map((tool) => tool.name);
-      if (all.filter((name) => name === COUNTERSIGN_TOOL_SPEC.name).length !== 1) {
-        throw new Error(`countersign required tool collision or missing: ${COUNTERSIGN_TOOL_SPEC.name}`);
-      }
+  // Notary inner gate difference only — lifecycle stays on the shared envelope.
+  const beforeAccept: FiledOfficerBeforeAccept | undefined =
+    hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
+      ? async ({ toolCallId, parameters, signal, ctx }) => {
+          const ticketNumber = readBoundTicketNumberFromRunEnv();
+          const material = JSON.stringify(
+            ticketNumber === undefined
+              ? { verdict: parameters }
+              : { verdict: parameters, ticketNumber },
+          );
+          await roleHost.requireGatekeeperPass!({
+            context: ctx,
+            subject: { kind: "countersign_verdict", material },
+            ...(signal === undefined ? {} : { signal }),
+            hostActions,
+            toolCallId,
+          });
+        }
+      : undefined;
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "countersign",
+      tool: COUNTERSIGN_TOOL_SPEC,
+      acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
+      soulTag: "countersign",
+      ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
-  };
+    dependencies,
+  );
 }
 
 export function createRoleRuntimeExtension(

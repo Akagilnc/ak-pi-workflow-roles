@@ -3,10 +3,6 @@
  * Cheap engine selects decision-related blocks from a frozen candidate set.
  * Every claimed quote must pass mechanical reverse-verify before entry.
  */
-import { writeFile, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { runEngineDetourOnce } from "./engine-detour.ts";
 import type { DiaristSourceBlock } from "./diarist-mechanical.ts";
 
@@ -133,7 +129,7 @@ export function buildDiaristCollectorPrompt(input: {
   }));
   return [
     `你是起居郎收集器。票号 #${input.ticketNumber}。`,
-    "下面是已冻结的候选对话块（机械预筛）。请挑出与本票决策相关的块。",
+    "下面是已冻结的来源对话块（仅去通知/去重，未经相关性裁剪）。请挑出与本票决策相关的块。",
     "只输出 JSON，形状：",
     '{"selections":[{"candidateIndex":0,"quotes":["必须是 transcript 中的连续原文子串"],"triage":"relevant|context|irrelevant","note":"可选摘要"}]}',
     "规则：",
@@ -141,7 +137,7 @@ export function buildDiaristCollectorPrompt(input: {
     "2. 宁多勿漏：决策相关都收；明显无关标 irrelevant 且可不入 selections。",
     "3. 不要输出 JSON 以外的文字。",
     "",
-    "候选：",
+    "来源块：",
     JSON.stringify(catalog),
   ].join("\n");
 }
@@ -168,43 +164,35 @@ export function createHermesDiaristCollector(
       ticketNumber: input.ticketNumber,
       candidates: input.candidates,
     });
-    const dir = await mkdtemp(join(tmpdir(), "ak-diarist-"));
-    const promptFile = join(dir, "prompt.txt");
-    try {
-      await writeFile(promptFile, prompt, "utf8");
-      // hermes -z takes the prompt as one argv; file content via $(cat) is the
-      // labor-line form, but we pass the prompt string directly as one arg.
-      const argv = [
-        executable,
-        ...(options.extraArgv ?? []),
-        "-z",
-        prompt,
-        "--no-restore-cwd",
-        "--ignore-rules",
-      ];
-      const result = await runEngineDetourOnce({
-        argv,
-        cwd: options.cwd ?? process.cwd(),
-        ...(options.env === undefined ? {} : { env: options.env }),
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-      });
-      if (result.code !== 0) {
-        throw new Error(
-          `diarist LLM collector engine exited ${result.code}: ${result.stderr.slice(0, 500)}`,
-        );
-      }
-      const selections = parseDiaristLlmStdout(
-        result.stdout,
-        input.candidates.length,
+    // hermes -z takes the prompt as one argv entry (no temp file).
+    const argv = [
+      executable,
+      ...(options.extraArgv ?? []),
+      "-z",
+      prompt,
+      "--no-restore-cwd",
+      "--ignore-rules",
+    ];
+    const result = await runEngineDetourOnce({
+      argv,
+      cwd: options.cwd ?? process.cwd(),
+      ...(options.env === undefined ? {} : { env: options.env }),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    if (result.code !== 0) {
+      throw new Error(
+        `diarist LLM collector engine exited ${result.code}: ${result.stderr.slice(0, 500)}`,
       );
-      return {
-        selections,
-        rawStdout: result.stdout,
-        engineArgv: argv.map((part, i) => (i === argv.indexOf(prompt) ? "<prompt>" : part)),
-      };
-    } finally {
-      await rm(dir, { recursive: true, force: true });
     }
+    const selections = parseDiaristLlmStdout(
+      result.stdout,
+      input.candidates.length,
+    );
+    return {
+      selections,
+      rawStdout: result.stdout,
+      engineArgv: argv.map((part, i) => (i === argv.indexOf(prompt) ? "<prompt>" : part)),
+    };
   };
 }
 

@@ -33,7 +33,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 - **真源**：司天台 JSONL，kind=`ticket-provenance`，subject＝票号字符串；落盘仍走 `resolveSitianRecordPathInLedger`（`bookDir/ticket-provenance/<sha256(票号)>/records.jsonl`）。
 - **逐收录块一条 entry**（誊录制）：`basis` / `sourceKind` / `sourceRef` / `transcript` / `timestamp`。追加不改写。
 - **人读面**：同分区 md 渲染视图；只有 JSONL 权威。
-- **起居郎（`diarist`）**：流水线步，非公开席位。LLM 语义收集＋机械保全（来源枚举、逐字材料、去重滤通知、幂等落盘、LLM 引语逐字反验——失败留真因、该引语拒入录）。散文匹配只作候选预筛与反验，不升格生产相关性判据。
+- **起居郎（`diarist`）**：流水线步，非公开席位。LLM 语义收集＋机械保全（来源枚举、逐字材料、去重滤通知、幂等落盘、LLM 引语逐字反验——失败留真因、该引语拒入录）。**相关性只由 LLM 裁决**；机械层不得以票号/引语/关键词散文命中排除来源（锚定宪法）。散文锚点仅作反验笔记，不构成遗漏闸。
 - **时序**：票庭流水线在给事中席位 turn **前**跑起居郎；先后≠调用；调用者无感；每次过庭都跑。
 - **符宝郎内闸**：给事中交卷闸出席符宝郎（与大理寺闸 gatekeeper→notary 同构）；缺录/缺条打回给事中。
 - **调用面**：`--ticket` 只加给事中与符宝郎；其余席位零改动。
