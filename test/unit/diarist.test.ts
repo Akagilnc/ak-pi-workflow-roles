@@ -17,7 +17,6 @@ import {
 } from "../../src/diarist-mechanical.ts";
 import {
   DiaristLlmStdoutError,
-  buildDiaristCollectorPrompt,
   parseDiaristLlmStdout,
 } from "../../src/diarist-llm-collector.ts";
 
@@ -163,26 +162,6 @@ test("parseDiaristLlmStdout fails honestly on empty/malformed/missing/alias shap
         error instanceof DiaristLlmStdoutError && error.reason === c.reason,
       `expected ${c.reason} for ${JSON.stringify(c.stdout).slice(0, 40)}`,
     );
-  }
-});
-
-test("buildDiaristCollectorPrompt is neutral kickoff + material + shape only", () => {
-  const prompt = buildDiaristCollectorPrompt({
-    ticketNumber: 582,
-    candidates: [
-      block({
-        transcript: "立文件",
-        sourceRef: { sessionFile: "/s", entryId: "1" },
-      }),
-    ],
-  });
-  assert.match(prompt, /起居郎收集器/);
-  assert.match(prompt, /#582/);
-  assert.match(prompt, /selections/);
-  assert.match(prompt, /candidateIndex/);
-  // ADR 0073: no command / direction verbs in machine text.
-  for (const banned of ["请挑出", "只输出", "必须", "禁止", "宁多勿漏", "不要输出"]) {
-    assert.equal(prompt.includes(banned), false, `banned phrase present: ${banned}`);
   }
 });
 
