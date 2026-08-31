@@ -276,11 +276,12 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             // Race so acceptance is not blocked on a missing end_turn.
             const result = await Promise.race([
               promptResult,
-              prepared.whenSealed().then(() => ({ stopReason: "end_turn" as const, sealedEarly: true })),
+              prepared.whenSealed().then(() => ({ stopReason: "end_turn" as const, sealedEarly: true as const })),
             ]);
             if (result.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
+            const sealedEarly = "sealedEarly" in result && result.sealedEarly === true;
             // session/prompt resolution (or early seal) is the typed round boundary.
             const closure = await prepared.closeRound();
             if (closure.accepted) {
@@ -288,8 +289,20 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               // process; Stop hooks and fire-and-forget cancellation are not closure.
               try {
                 await connection.request("session/close", { sessionId });
-              } catch {
-                // Early seal may race child teardown; acceptance is already ledger-true.
+              } catch (error) {
+                // Documented only for seal-early: child may already be gone when the
+                // ledger sealed before end_turn. Unknown close failures stay loud.
+                if (!sealedEarly) throw error;
+                const code = typeof error === "object" && error !== null && "code" in error
+                  ? (error as { code: unknown }).code
+                  : undefined;
+                if (
+                  code !== "acp-closed"
+                  && code !== "acp-connection-closed"
+                  && code !== "acp-write-failed"
+                ) {
+                  throw error;
+                }
               }
               accepted = true;
               return { code: 0, stderr: "", timedOut: false };
