@@ -464,3 +464,69 @@ test("countersign runtime: unbound invocation omits ticketNumber (no new reject)
   };
   assert.equal(parsed.ticketNumber, undefined);
 });
+
+test("countersign runtime: corrupt invocation.json fails honestly before notary gate", async () => {
+  await withHermeticHome({ prefix: "ak-cs-inv-bad-" }, async ({ home }) => {
+    const runDir = join(home, "run");
+    await mkdir(runDir, { recursive: true });
+    // Present but unparseable — must not wash into unbound and still call gate.
+    await writeFile(join(runDir, "invocation.json"), "{not-json\n", "utf8");
+
+    const tools = new Map<string, { name: string; execute: Function }>();
+    const gateCalls: unknown[] = [];
+    const roleHost = {
+      registerTool(tool: { name: string; execute: Function }) {
+        tools.set(tool.name, tool);
+      },
+      on() {},
+      getAllTools() {
+        return [{ name: COUNTERSIGN_OUTPUT_TOOL_NAME }];
+      },
+      getFlag() {
+        return undefined; // no activation flag — falls back to invocation.json
+      },
+      async requireGatekeeperPass() {
+        gateCalls.push(true);
+      },
+    };
+    const runtime = createCountersignRoleRuntime(
+      roleHost as never,
+      { loadSoul: async () => "LAW" },
+      {
+        failInfrastructure(): never {
+          throw new Error("fail");
+        },
+        bindSubmissionNonPass() {},
+      },
+    );
+    await runtime.activate();
+
+    const prior = process.env.AK_ROLE_RUN_DIR;
+    process.env.AK_ROLE_RUN_DIR = runDir;
+    try {
+      await assert.rejects(
+        () =>
+          tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
+            "call-1",
+            { countersignStatus: "converged" },
+            undefined,
+            undefined,
+            {
+              cwd: "/tmp",
+              mode: "json",
+              model: undefined,
+              sessionManager: {} as never,
+              abort() {},
+            },
+          ),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("invocation.json unparseable"),
+      );
+      assert.equal(gateCalls.length, 0, "notary gate must not run after corrupt invocation");
+    } finally {
+      if (prior === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = prior;
+    }
+  });
+});
