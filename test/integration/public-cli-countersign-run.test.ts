@@ -355,11 +355,11 @@ test("public countersign diarist station: issue face/comments/ADR from gh seam; 
     };
 
     const kindsSeen = new Set<string>();
-    const transcripts: string[] = [];
+    const sourceRefs: Array<{ url?: string; path?: string; entryId?: string | number }> = [];
     const collector = createScriptedDiaristCollector((input) => {
       for (const c of input.candidates) {
         kindsSeen.add(c.sourceKind);
-        transcripts.push(c.transcript);
+        sourceRefs.push({ ...c.sourceRef });
       }
       return {
         selections: [],
@@ -379,6 +379,7 @@ test("public countersign diarist station: issue face/comments/ADR from gh seam; 
     });
     assert.equal(admitted.ticketNumber, 582);
     assert.equal(admitted.attachments.length, 1);
+    const frozenAttachment = admitted.attachments[0]!.frozenPath;
 
     const result = await runCountersignDiaristStation(admitted, {
       cwd: project,
@@ -389,14 +390,15 @@ test("public countersign diarist station: issue face/comments/ADR from gh seam; 
     });
     assert.ok(result);
     assert.equal(result.collectorStatus, "empty-selection");
+    // Typed source identities only — no free-text transcript locks.
     assert.ok(kindsSeen.has("issue-body-comment"));
     assert.ok(kindsSeen.has("ticket-decree-block"));
     assert.ok(kindsSeen.has("adr-decision-key"));
-    assert.ok(transcripts.some((t) => t.includes("立文件。送司天台记录。")));
-    assert.ok(transcripts.some((t) => t.includes("先起居郎再给事中")));
-    // Attachment body must not enter the candidate stream as issue face.
+    assert.ok(sourceRefs.some((r) => r.url === face.bodyUrl && r.entryId === "body"));
+    assert.ok(sourceRefs.some((r) => r.entryId === 9001 && r.url === face.comments[0]!.htmlUrl));
+    // Attachment frozen path must not appear as a candidate sourceRef.
     assert.equal(
-      transcripts.some((t) => t.includes("PROBE_ATTACHMENT_ONLY")),
+      sourceRefs.some((r) => r.path === frozenAttachment || r.path === probe),
       false,
     );
   });

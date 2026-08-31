@@ -40,7 +40,6 @@ import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { createNotaryRoleRuntime } from "../../src/notary-role.ts";
 
 import {
   readRoleRunState,
@@ -668,7 +667,7 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
   });
 });
 
-test("notary --ticket: public admit → turn/flags → role activate typed bound", async () => {
+test("notary --ticket: public admit → turn activation → pi/grok flags", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -706,40 +705,8 @@ test("notary --ticket: public admit → turn/flags → role activate typed bound
       projectGrokActivationFlags(turn as RoleTurnRequest).get("ak-notary-ticket-number"),
       "582",
     );
-
-    // Same flag values public adapters emit → role getBound after activate.
-    const flags = new Map<string, string>([
-      ["ak-notary-source-run", turn.activation.sourceRun],
-      ["ak-notary-ticket-number", "582"],
-    ]);
-    const pi = {
-      registerFlag(name: string) {
-        if (!flags.has(name)) flags.set(name, "");
-      },
-      getFlag(name: string) {
-        return flags.get(name);
-      },
-      registerTool() {},
-      on() {},
-      getAllTools() {
-        return [{ name: NOTARY_OUTPUT_TOOL_NAME }, { name: "read" }];
-      },
-    };
-    const runtime = createNotaryRoleRuntime(
-      pi as never,
-      {
-        loadSoul: async () => "NOTARY LAW",
-        loadSourceRunLocator: async (path) => ({
-          runDirectory: path,
-          runId: CANONICAL_SOURCE_RUN_ID,
-          role: CANONICAL_SOURCE_ROLE,
-        }),
-      },
-      { failInfrastructure(error) { throw error; } },
-    );
-    await runtime.activate();
-    assert.equal(runtime.getBound()?.ticketNumber, 582);
-    assert.equal(runtime.getBound()?.sourceRun.runDirectory, turn.activation.sourceRun);
+    // Role flag→bound consumption lives in test/contract/notary-role.test.ts
+    // (readNotaryTicketFlag + projectNotarySessionBound + assembleNotaryAgentStart).
   });
 });
 

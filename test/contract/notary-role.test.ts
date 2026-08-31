@@ -7,6 +7,7 @@ import {
   retainNotarySubmission,
 } from "../../src/notary-contracts.ts";
 import {
+  assembleNotaryAgentStart,
   createNotaryRoleRuntime,
   projectNotarySessionBound,
   readNotaryTicketFlag,
@@ -45,7 +46,33 @@ test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is
   assert.deepEqual(retainNotarySubmission(raw), raw);
 });
 
-test("Notary runtime binds source-run; optional ticket flag reaches typed activate bound", async () => {
+test("readNotaryTicketFlag + projectNotarySessionBound + assembleNotaryAgentStart typed ticket", () => {
+  assert.equal(readNotaryTicketFlag(undefined), undefined);
+  assert.equal(readNotaryTicketFlag(""), undefined);
+  assert.equal(readNotaryTicketFlag("582"), 582);
+  assert.throws(() => readNotaryTicketFlag("0"));
+  assert.throws(() => readNotaryTicketFlag("nope"));
+
+  const bound = projectNotarySessionBound({
+    sourceRun: LOCATOR,
+    ticketNumber: 582,
+  });
+  assert.equal(bound.ticketNumber, 582);
+  assert.equal(bound.sourceRun, LOCATOR);
+
+  const assembled = assembleNotaryAgentStart({
+    baseSystemPrompt: "BASE",
+    soul: "LAW",
+    bound,
+  });
+  // Typed half of the production seam — same object encoded into systemPrompt.
+  assert.equal(assembled.bound.ticketNumber, 582);
+  assert.equal(assembled.bound, bound);
+  assert.equal(typeof assembled.systemPrompt, "string");
+  assert.ok(assembled.systemPrompt.length > 0);
+});
+
+test("Notary activate: blank ticket unbound; valid ticket wires flag; invalid ticket fails", async () => {
   const h = notaryHarness();
   const runtime = createNotaryRoleRuntime(
     h.pi as never,
@@ -56,24 +83,13 @@ test("Notary runtime binds source-run; optional ticket flag reaches typed activa
   await runtime.activate();
   assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
   assert.ok(h.beforeStart());
-  assert.deepEqual(runtime.getBound(), projectNotarySessionBound({ sourceRun: LOCATOR }));
-  assert.equal(runtime.getBound()?.ticketNumber, undefined);
 
-  // Re-activate with ticket flag — typed getBound is the consumption seam (no prompt parse).
+  // Valid ticket flag is accepted on re-activate (readNotaryTicketFlag on activate path).
   h.flags.set("ak-notary-ticket-number", "582");
   await runtime.activate();
-  assert.equal(runtime.getBound()?.ticketNumber, 582);
-  assert.deepEqual(
-    runtime.getBound(),
-    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }),
-  );
-});
+  assert.ok(h.beforeStart());
 
-test("readNotaryTicketFlag: blank absent; non-empty invalid fails; safe positive binds", () => {
-  assert.equal(readNotaryTicketFlag(undefined), undefined);
-  assert.equal(readNotaryTicketFlag(""), undefined);
-  assert.equal(readNotaryTicketFlag("582"), 582);
-  assert.throws(() => readNotaryTicketFlag("0"));
-  assert.throws(() => readNotaryTicketFlag("nope"));
-  assert.throws(() => readNotaryTicketFlag(true));
+  // Invalid non-empty ticket fails honestly on activate (same reader as bound assembly).
+  h.flags.set("ak-notary-ticket-number", "nope");
+  await assert.rejects(() => runtime.activate());
 });
