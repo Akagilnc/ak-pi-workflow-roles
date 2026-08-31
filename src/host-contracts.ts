@@ -223,7 +223,12 @@ type HostEventMap = {
 
 type HostInputResult = { action: "continue" } | { action: "transform"; text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> } | { action: "handled" };
 type HostEventResultMap = {
-  before_agent_start: { systemPrompt?: string };
+  /**
+   * systemPrompt — model-facing prompt bytes (presentation).
+   * readingMaterial — optional typed reading-material projection for the same
+   * agent-start turn (machine contract; hosts that need it may surface it).
+   */
+  before_agent_start: { systemPrompt?: string; readingMaterial?: unknown };
   input: HostInputResult;
   tool_call: { block?: boolean; reason?: string; terminate?: boolean };
   tool_result: { content?: HostToolResult["content"]; details?: unknown; isError?: boolean };

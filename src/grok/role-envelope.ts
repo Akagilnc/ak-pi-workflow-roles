@@ -394,6 +394,14 @@ export async function prepareGrokRoleEnvelope(options: {
   const systemPrompt = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
     typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
     ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+  // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
+  const agentStartReadingMaterials: unknown[] = [];
+  for (const value of promptResults) {
+    if (typeof value !== "object" || value === null) continue;
+    if (!("readingMaterial" in value)) continue;
+    const material = (value as { readingMaterial?: unknown }).readingMaterial;
+    if (material !== undefined) agentStartReadingMaterials.push(material);
+  }
 
   priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
   process.env.AK_ROLE_RUN_DIR = request.runDirectory;
@@ -411,6 +419,7 @@ export async function prepareGrokRoleEnvelope(options: {
     }],
     systemPrompt,
     prompt,
+    agentStartReadingMaterials,
     closeRound,
     dispose,
   };

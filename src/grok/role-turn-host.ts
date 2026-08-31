@@ -28,6 +28,11 @@ export type GrokPreparedTurn = Readonly<{
   systemPrompt: string;
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
+  /**
+   * Typed agent-start reading materials returned by before_agent_start handlers
+   * (e.g. Notary session bound). Machine contract face — not prompt substrings.
+   */
+  readonly agentStartReadingMaterials: readonly unknown[];
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
   closeRound(): Promise<
     | { readonly accepted: true }
