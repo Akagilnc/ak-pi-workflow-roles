@@ -19,7 +19,9 @@ import {
 } from "./diarist-llm-collector.ts";
 import {
   appendTicketProvenanceEntry,
+  readOfferedIdentities,
   readTicketProvenance,
+  recordOfferedIdentities,
   resolveTicketProvenanceVolume,
   ticketProvenanceEntryIdentity,
   writeTicketProvenanceHumanView,
@@ -70,7 +72,11 @@ export type DiaristRunResult = {
   readonly llmRawStdout?: string;
 };
 
-/** Identities already committed on the ticket volume (incl. verify-fail residue). */
+/**
+ * Identities already processed for this ticket:
+ * - volume record identities (selected / verify-fail residue)
+ * - offered watermark (blocks shown to collector, selected or not)
+ */
 async function loadSeenEntryIdentities(
   ticketNumber: number,
   cwd: string,
@@ -82,6 +88,9 @@ async function loadSeenEntryIdentities(
     if (typeof record.identity === "string" && record.identity.length > 0) {
       seen.add(record.identity);
     }
+  }
+  for (const identity of readOfferedIdentities(ticketNumber, cwd)) {
+    seen.add(identity);
   }
   return seen;
 }
@@ -152,6 +161,16 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
         llmRawStdout = collect.rawStdout;
         collectorStatus =
           collect.selections.length === 0 ? "empty-selection" : "ok";
+        // Successful collector pass (incl. empty selection): mark all offered
+        // identities so unselected blocks are not re-sent next court. Failure
+        // does not advance the watermark (retry honestly).
+        recordOfferedIdentities({
+          ticketNumber: input.ticketNumber,
+          cwd: input.cwd,
+          identities: fresh.map((block) =>
+            blockEntryIdentity(input.ticketNumber, block),
+          ),
+        });
       } catch (error) {
         collectorStatus = "failed";
         collectorError =

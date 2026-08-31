@@ -9,6 +9,12 @@ export const TICKET_PROVENANCE_KIND = "ticket-provenance" as const;
 /** Human-read view filename co-located with the JSONL volume. */
 export const TICKET_PROVENANCE_HUMAN_VIEW = "起居录.md" as const;
 
+/**
+ * Incremental watermark: identities already offered to the collector this ticket
+ * (selected or not). Process state next to the volume — not a diary dual-source.
+ */
+export const TICKET_PROVENANCE_OFFERED_WATERMARK = "offered-identities.jsonl" as const;
+
 /** Source families the diarist may enumerate (v1). */
 export type TicketProvenanceSourceKind =
   | "cc-session"
