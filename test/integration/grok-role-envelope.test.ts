@@ -112,8 +112,11 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorEngine = process.env.AK_ROLE_ENGINE;
   process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
+  // Tool-list contract is engine-free; ambient factory AK_ROLE_ENGINE must not leak detour.
+  delete process.env.AK_ROLE_ENGINE;
   try {
     const socketPath = join(root, "mcp.sock");
     const request = {
@@ -144,6 +147,7 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -444,7 +448,8 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
       assert.notEqual(overrideWithBound, overrideOtherTicket);
 
       // Session custom entry is the envelope durable twin of the flag-derived bound.
-      const sessionFile = join(envelopeRequest.runDirectory, "grok-envelope.jsonl");
+      // Durable principal layout is session/session.jsonl (settlement history face).
+      const sessionFile = join(envelopeRequest.runDirectory, "session", "session.jsonl");
       const lines = (await readFile(sessionFile, "utf8"))
         .split("\n")
         .filter((l) => l.trim().length > 0)
@@ -469,7 +474,7 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
   }
 });
 
-test("Grok MCP projection executes a terminal submission through the single ledger gate to typed closure", async () => {
+test("Grok MCP projection seals only after closeRound typed boundary; terminal candidate alone does not accept", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
@@ -479,12 +484,16 @@ test("Grok MCP projection executes a terminal submission through the single ledg
     const socketPath = join(root, "mcp.sock");
     // Production run face is `<runId>@<role>`; settlement reads bare admitted.runId.
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ac";
+    const runDirectory = join(root, "runs", `${runId}@notary`);
     const request = {
       principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
       continuation: { kind: "initial", prompt: "attest" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@notary`),
+      agentDir: join(root, "agent"), runDirectory,
     } as RoleTurnRequest;
+
+    let settleCount = 0;
+
     const prepared = await prepareGrokRoleEnvelope({
       request,
       socketPath,
@@ -494,21 +503,169 @@ test("Grok MCP projection executes a terminal submission through the single ledg
         loadJudgeSoul: async () => "judge",
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: join(root, "work"),
+          subject: "envelope seal regression",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: () => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => { settleCount += 1; },
+          dispose() {},
+        }),
       },
     });
     try {
+      // Durable principal layout is seeded at prepare (settlement history / attempt append).
+      const sessionPath = join(runDirectory, "session", "session.jsonl");
+      const sessionHeader = JSON.parse((await readFile(sessionPath, "utf8")).trim().split("\n")[0]!) as {
+        type?: string;
+        id?: string;
+      };
+      assert.equal(sessionHeader.type, "session");
+      assert.equal(sessionHeader.id, `${runId}@notary`);
+
       const server = prepared.mcpServers[0] as McpServer;
       const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(reply.error, undefined);
       assert.equal((reply.result as { isError?: boolean })?.isError, undefined);
+      const disposition = (reply.result as { structuredContent?: { submissionDisposition?: unknown } })?.structuredContent?.submissionDisposition;
+      assert.equal(disposition, "pending-round-closure");
+
+      // Candidate after tool path must not seal: no settle, no ledger accept.
+      await Promise.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(settleCount, 0);
+      assert.equal(await readSealedSubmission(process.cwd(), runId, root), undefined);
+
       const closure = await prepared.closeRound();
       assert.deepEqual(closure, { accepted: true });
+      assert.equal(settleCount, 1);
+
       // Settlement seam: bare runId must resolve the sealed projection written under
       // AK_ROLE_RUN_DIR → runIdFromRunDirectory identity (not session header `<uuid>@role`).
       const sealed = await readSealedSubmission(process.cwd(), runId, root);
       assert.equal(sealed?.kind, "accepted");
       assert.equal(sealed?.role, "notary");
       assert.equal(sealed?.status, "pass");
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok prepare keeps existing durable session history on resume", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-session-"));
+  const priorHome = process.env.HOME;
+  process.env.HOME = root;
+  try {
+    const runDirectory = join(root, "runs", "resume-run");
+    const sessionPath = join(runDirectory, "session", "session.jsonl");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const priorHeader = JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "resume-run",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      cwd: process.cwd(),
+    });
+    const priorHistory = JSON.stringify({
+      type: "message",
+      message: { role: "assistant", content: [{ type: "text", text: "prior turn" }] },
+    });
+    const priorBytes = `${priorHeader}\n${priorHistory}\n`;
+    await writeFile(sessionPath, priorBytes, "utf8");
+
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "resume", prompt: "continue" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory,
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      assert.equal(await readFile(sessionPath, "utf8"), priorBytes);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok delayed sibling after terminal candidate is not early-accepted at closeRound", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-sibling-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
+    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
+        continuation: { kind: "initial", prompt: "attest" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory,
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadNotarySoul: async () => "NOTARY SOUL",
+        loadNotarySourceRun: async () => ({ runDirectory: root, runId: "run-1", role: "notary" }),
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: join(root, "work"),
+          subject: "sibling round",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: () => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => {},
+          dispose() {},
+        }),
+      },
+    });
+    try {
+      const server = prepared.mcpServers[0] as McpServer;
+      const terminal = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      assert.equal(terminal.error, undefined);
+      assert.equal(
+        (terminal.result as { structuredContent?: { submissionDisposition?: unknown } })?.structuredContent?.submissionDisposition,
+        "pending-round-closure",
+      );
+
+      const sibling = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      assert.equal(sibling.error, undefined);
+
+      const closure = await prepared.closeRound();
+      assert.equal(closure.accepted, false);
+      assert.ok("retry" in closure);
+      assert.equal(closure.retry.code, "non-sole-round");
+      assert.equal(closure.retry.toolCallIds.length, 2);
+      assert.equal(await readSealedSubmission(process.cwd(), runId, root), undefined);
     } finally {
       await prepared.dispose?.();
     }
