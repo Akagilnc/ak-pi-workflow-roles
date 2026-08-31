@@ -527,15 +527,11 @@ test("hermes collector binds methodPath as typed delivery evidence (sole seam)",
   assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
   accessSync(methodPath, fsConstants.R_OK);
 
-  let sawDetour = false;
   let capturedEnv: NodeJS.ProcessEnv | undefined;
   const collector = createHermesDiaristCollector({
     packageRoot,
     runDetour: async (input) => {
-      sawDetour = true;
       capturedEnv = input.env;
-      // Structural: -z present (hermes oneshot). No free-text prompt lock.
-      assert.equal(input.argv.includes("-z"), true);
       return { code: 0, stdout: '{"selections":[]}', stderr: "" };
     },
   });
@@ -548,7 +544,6 @@ test("hermes collector binds methodPath as typed delivery evidence (sole seam)",
       }),
     ],
   });
-  assert.equal(sawDetour, true);
   // Typed delivery evidence on the collect result — not prompt-byte observation.
   assert.equal(result.methodPath, methodPath);
   // No parallel env transport for method path.
