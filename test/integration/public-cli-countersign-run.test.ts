@@ -21,7 +21,10 @@ import {
 import {
   buildCountersignTurnRequest,
   runCountersignDiaristStation,
+  runPublicCountersign,
 } from "../../src/public-cli/countersign-run.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -198,6 +201,7 @@ test("countersign --ticket admits and projects activation.ticketNumber onto turn
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const ticket = join(project, "ticket.md");
+    // Frontmatter ticket is present; explicit --ticket must win.
     await writeFile(ticket, "---\nticketNumber: 100\n---\n\n五问。\n", "utf8");
 
     const admitted = await admitCountersignInvocation({
@@ -584,5 +588,123 @@ test("countersign runs are one-shot — resume is refused", async () => {
     });
     assert.equal(refused.exitCode, 2);
     assert.equal(refused.terminal, undefined);
+  });
+});
+
+function encodeCcProjectPath(cwd: string): string {
+  const abs = cwd.startsWith("/") ? cwd : `/${cwd}`;
+  return abs.replace(/\//g, "-");
+}
+
+test("runPublicCountersign: diarist station fills ticket volume before role turn", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+      { cwd: project },
+    );
+
+    const ticketPath = join(project, "ticket.md");
+    await writeFile(
+      ticketPath,
+      "---\nticketNumber: 582\n---\n\n「立文件。送司天台记录。」\n",
+      "utf8",
+    );
+
+    const projectsRoot = join(home, "cc-projects");
+    const sessionDir = join(projectsRoot, encodeCcProjectPath(project));
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, "s.jsonl"),
+      `${JSON.stringify({
+        type: "user",
+        uuid: "u-real",
+        timestamp: "2026-08-31T10:00:00.000Z",
+        message: {
+          role: "user",
+          content: "立文件。送司天台记录。所以每个票都应该有的一份文档。#582 起居录",
+        },
+      })}\n`,
+      "utf8",
+    );
+
+    let diaristObserved = false;
+    let volumeAtTurn: number | undefined;
+    let turnStarted = false;
+
+    const baseHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedCountersignSession({
+        countersignStatus: "converged",
+        note: "署",
+      }),
+    });
+
+    const observingHost = {
+      async executeTurn(request: RoleTurnRequest) {
+        turnStarted = true;
+        const read = await readTicketProvenance(582, project);
+        volumeAtTurn = read.entries.length;
+        assert.ok(
+          diaristObserved,
+          "onDiaristResult must fire before executeTurn",
+        );
+        assert.ok(
+          (volumeAtTurn ?? 0) >= 1,
+          "ticket-provenance volume must be visible before role turn",
+        );
+        return baseHost.executeTurn(request);
+      },
+    };
+
+    const result = await runPublicCountersign(
+      ["--ticket", "582", "--attach", ticketPath, "裁：本票是否足以开工。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: observingHost,
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000584",
+        projectsRoot,
+        diaristIssueFaceFetcher: async () => ({
+          body: "「立文件。送司天台记录。」",
+          bodyUrl: "https://github.com/o/r/issues/582",
+          comments: [],
+        }),
+        diaristCollector: createScriptedDiaristCollector((input) => ({
+          selections:
+            input.candidates.length > 0
+              ? [
+                  {
+                    candidateIndex: 0,
+                    quotes: ["立文件。送司天台记录。"],
+                    triage: "relevant" as const,
+                  },
+                ]
+              : [],
+          rawStdout: "{}",
+          engineArgv: ["scripted"],
+        })),
+        onDiaristResult: () => {
+          diaristObserved = true;
+        },
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(turnStarted, true);
+    assert.equal(diaristObserved, true);
+    assert.ok((volumeAtTurn ?? 0) >= 1);
+    const final = await readTicketProvenance(582, project);
+    assert.ok(final.entries.length >= 1);
   });
 });
