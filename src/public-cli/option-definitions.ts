@@ -23,6 +23,7 @@ export type OptionOwner =
   | "global"
   | "judge"
   | "countersign"
+  | "gleaner-left"
   | "coder"
   | "fixer"
   | "reviewer"
@@ -389,6 +390,11 @@ const COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const GLEANER_LEFT_OPTIONS = [
+  bindOwner("gleaner-left", SHARED_PROJECT_SEMANTICS),
+  bindOwner("gleaner-left", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
 const CODER_OPTIONS = [
   {
     id: "phase",
@@ -735,6 +741,7 @@ export const PUBLIC_OPTION_TABLE = {
   global: GLOBAL_OPTIONS,
   judge: JUDGE_OPTIONS,
   countersign: COUNTERSIGN_OPTIONS,
+  "gleaner-left": GLEANER_LEFT_OPTIONS,
   coder: CODER_OPTIONS,
   fixer: FIXER_OPTIONS,
   reviewer: REVIEWER_OPTIONS,
@@ -751,6 +758,7 @@ export type PublicRoleOptionOwner = Exclude<OptionOwner, "global">;
 export const PUBLIC_ROLE_OPTION_OWNERS = [
   "judge",
   "countersign",
+  "gleaner-left",
   "coder",
   "fixer",
   "reviewer",
@@ -1067,6 +1075,15 @@ const ROLE_COMMAND_HELP = {
     examples: [
       'ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"',
       'ak-role countersign --attach ./plan.md --attach ./adr.md "裁：方案五问。"',
+    ],
+  },
+  "gleaner-left": {
+    command: "gleaner-left",
+    summary: "Unanchored pre-merge memorials; findings only, no bounce.",
+    usage: ["ak-role gleaner-left [options] [instruction]"],
+    examples: [
+      "ak-role gleaner-left",
+      "ak-role gleaner-left --project ./worktree",
     ],
   },
   coder: {

@@ -125,6 +125,10 @@ export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
   readonly role: "countersign";
 };
 
+export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "gleaner-left";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -204,6 +208,7 @@ export type AdmittedMergerInvocation = AdmittedRoleInvocationBase & {
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCountersignInvocation
+  | AdmittedGleanerLeftInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -494,14 +499,15 @@ export type ParseInstructionArgvResult = {
   project?: string;
 };
 
-/** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
+/** Judge/Countersign/Gleaner-Left 命令面同形：--project/--attach/opaque instruction。 */
 export type ParseJudgeArgvResult = ParseInstructionArgvResult;
 export type ParseCountersignArgvResult = ParseInstructionArgvResult;
+export type ParseGleanerLeftArgvResult = ParseInstructionArgvResult;
 
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign",
+  owner: "judge" | "countersign" | "gleaner-left",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -719,6 +725,10 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
 
 export function parseCountersignArgv(args: readonly string[]): ParseCountersignArgvResult {
   return parseInstructionArgv(args, "countersign");
+}
+
+export function parseGleanerLeftArgv(args: readonly string[]): ParseGleanerLeftArgvResult {
+  return parseInstructionArgv(args, "gleaner-left");
 }
 
 /**
@@ -984,7 +994,7 @@ export async function admitJudgeInvocation(
   };
 }
 
-/** Shared prompt transport for instruction-seat roles (judge/countersign). */
+/** Shared prompt transport for instruction-seat roles (judge/countersign/gleaner-left). */
 function buildInstructionTransportPrompt(
   admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
   engineMaterial?: EngineSessionMaterial,
@@ -1106,6 +1116,105 @@ export async function admitCountersignInvocation(
 /** Build the Pi prompt transport for an admitted Countersign request. */
 export function buildCountersignTransportPrompt(
   admitted: AdmittedCountersignInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+
+export type AdmitGleanerLeftInvocationOptions = {
+  home: string;
+  cwd: string;
+  instruction: string;
+  attachmentPaths: readonly string[];
+  project?: string;
+  createRunId?: () => string;
+  principalAuthority: DurablePrincipalAuthority;
+  model?: InvocationEffectiveModel;
+  correlationId?: string;
+};
+
+/**
+ * Atomically admit a Gleaner-Left Role run: freeze Attachments, persist the
+ * request, write the invocation ledger (#502). Instruction may be empty.
+ */
+export async function admitGleanerLeftInvocation(
+  options: AdmitGleanerLeftInvocationOptions,
+): Promise<AdmittedGleanerLeftInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "gleaner-left",
+    home: options.home,
+  });
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "gleaner-left" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    principal,
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+    ...ticketFields,
+    instruction,
+    instructionEmpty,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+
+  return {
+    role: "gleaner-left",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    principal,
+    admittedRequestPath,
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+    ...ticketFields,
+  };
+}
+
+/** Build the Pi prompt transport for an admitted Gleaner-Left request. */
+export function buildGleanerLeftTransportPrompt(
+  admitted: AdmittedGleanerLeftInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   return buildInstructionTransportPrompt(admitted, engineMaterial);
