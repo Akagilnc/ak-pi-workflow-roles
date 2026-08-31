@@ -4420,7 +4420,7 @@ function loadGatekeeperSessionMaterials(role) {
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { mkdir as mkdir3, readFile as readFile10 } from "node:fs/promises";
 import { createServer } from "node:net";
-import { basename as basename7, dirname as dirname14, join as join17 } from "node:path";
+import { basename as basename8, dirname as dirname14, join as join17 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/gatekeeper-role.ts
@@ -4436,12 +4436,13 @@ import "@earendil-works/pi-ai";
 import { Type as Type9 } from "typebox";
 
 // src/auditor-dossier-tool.ts
-import { dirname as dirname8, join as join8, resolve as resolve6 } from "node:path";
+import { basename as basename4, dirname as dirname8, join as join8, resolve as resolve6 } from "node:path";
 import { Type as Type8 } from "typebox";
 function auditorRunDirectory(context) {
   const sessionFile = context.sessionManager?.getSessionFile?.();
-  if (sessionFile !== void 0) return resolve6(dirname8(dirname8(sessionFile)));
-  return void 0;
+  if (sessionFile === void 0) return void 0;
+  const parent = resolve6(dirname8(sessionFile));
+  return basename4(parent) === "session" ? resolve6(dirname8(parent)) : parent;
 }
 
 // src/sitian-appender.ts
@@ -4449,7 +4450,7 @@ init_activation_ledger_git();
 init_activation_ledger_topology();
 import { createHash as createHash5, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync as existsSync2, readFileSync } from "node:fs";
-import { basename as basename4, dirname as dirname9, join as join9, resolve as resolve7 } from "node:path";
+import { basename as basename5, dirname as dirname9, join as join9, resolve as resolve7 } from "node:path";
 
 // src/sitian-contracts.ts
 function attachDirectErrnoCode(error, cause) {
@@ -4487,7 +4488,7 @@ function safeBookKey(cwd) {
   try {
     return resolveBookKeyFromGit(cwd);
   } catch {
-    return basename4(resolve7(cwd)) || "default";
+    return basename5(resolve7(cwd)) || "default";
   }
 }
 function resolveSitianRecordPathInLedger(input, ledgerHome) {
@@ -6000,9 +6001,9 @@ import { Value as Value5 } from "typebox/value";
 init_activation_ledger_topology();
 
 // src/run-terminal-artifacts.ts
-import { basename as basename5, dirname as dirname11, join as join14 } from "node:path";
+import { basename as basename6, dirname as dirname11, join as join14 } from "node:path";
 function runIdFromRunDirectory(runDirectory) {
-  const name = basename5(runDirectory);
+  const name = basename6(runDirectory);
   const at = name.lastIndexOf("@");
   if (at <= 0 || at === name.length - 1) return void 0;
   return name.slice(0, at);
@@ -10586,7 +10587,7 @@ function createRoleRuntimeExtension(dependencies) {
 // src/grok/role-turn-host.ts
 import { execFile as execFile3, spawn as spawn3 } from "node:child_process";
 import { copyFile, mkdir as mkdir2, realpath as realpath6 } from "node:fs/promises";
-import { basename as basename6, dirname as dirname13, isAbsolute as isAbsolute6, join as join16, relative as pathRelative } from "node:path";
+import { basename as basename7, dirname as dirname13, isAbsolute as isAbsolute6, join as join16, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify as promisify3 } from "node:util";
 
@@ -10825,22 +10826,30 @@ function createGrokRoleTurnHost(config) {
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
           let prompt = prepared.prompt;
           for (let attempt = 0; attempt < 8; attempt += 1) {
-            const result2 = await connection.request("session/prompt", {
+            const promptResult = connection.request("session/prompt", {
               sessionId,
               prompt: [{ type: "text", text: prompt }]
             });
+            const result2 = await Promise.race([
+              promptResult,
+              prepared.whenSealed().then(() => ({ stopReason: "end_turn", sealedEarly: true }))
+            ]);
             if (result2.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
             const closure = await prepared.closeRound();
             if (closure.accepted) {
-              await connection.request("session/close", { sessionId });
+              try {
+                await connection.request("session/close", { sessionId });
+              } catch {
+              }
               accepted = true;
               return { code: 0, stderr: "", timedOut: false };
             }
             if ("failure" in closure) {
               return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
             }
+            await promptResult.catch(() => void 0);
             prompt = `The prior terminal submission was rejected (${closure.retry.code}). Resubmit it as the sole terminal tool call. Rejected call ids: ${closure.retry.toolCallIds.join(", ") || "none"}.`;
           }
           return failure("output", "GrokAcpRoundLimit", "round-retry-limit", { sessionId });
@@ -10906,7 +10915,7 @@ async function resolveHeadTreePath(topLevel, relativePath) {
   const exactHits = exactOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
   if (exactHits.includes(relativePath)) return relativePath;
   const parent = dirname13(relativePath);
-  const leaf = basename6(relativePath);
+  const leaf = basename7(relativePath);
   let listing;
   try {
     const { stdout } = parent === "." ? await execFileAsync3("git", ["ls-tree", "--name-only", "HEAD"], {
@@ -10923,7 +10932,7 @@ async function resolveHeadTreePath(topLevel, relativePath) {
     throw error;
   }
   const needle = leaf.toLowerCase();
-  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename6(name).toLowerCase() === needle).map((name) => parent === "." ? basename6(name) : join16(parent, basename6(name)));
+  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename7(name).toLowerCase() === needle).map((name) => parent === "." ? basename7(name) : join16(parent, basename7(name)));
   return hits.length === 1 ? hits[0] : void 0;
 }
 async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
@@ -10939,7 +10948,7 @@ async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
   const topLevel = await realpath6(topLevelOut.trim());
   const parent = await realpathIfPresent(dirname13(absolutePath));
   if (parent === void 0) return false;
-  const leaf = basename6(absolutePath);
+  const leaf = basename7(absolutePath);
   if (leaf === "" || leaf === "." || leaf === "..") return false;
   const candidate = join16(parent, leaf);
   const relative3 = pathRelative(topLevel, candidate);
@@ -11131,11 +11140,15 @@ async function prepareGrokRoleEnvelope(options) {
   const methodSkills = /* @__PURE__ */ new Map();
   let preferredTools = [];
   let rejection;
+  let sealedNotify;
+  const sealed = new Promise((resolve13) => {
+    sealedNotify = resolve13;
+  });
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID2();
   await mkdir3(request.runDirectory, { recursive: true });
   for (const method of request.methods) {
     if (method.kind !== "skill") continue;
-    const name = basename7(dirname14(method.path));
+    const name = basename8(dirname14(method.path));
     const raw = await readFile10(method.path, "utf8");
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
@@ -11156,6 +11169,7 @@ async function prepareGrokRoleEnvelope(options) {
       },
       appendCustomEntry(customType, data) {
         customEntries.push({ customType, data });
+        if (customType === "ak-role-submission-closure") sealedNotify?.();
       }
     },
     abort() {
@@ -11400,6 +11414,7 @@ async function prepareGrokRoleEnvelope(options) {
     systemPrompt,
     prompt,
     closeRound,
+    whenSealed: () => sealed,
     dispose
   };
 }

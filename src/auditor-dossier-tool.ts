@@ -1,4 +1,4 @@
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
@@ -17,8 +17,11 @@ export type AuditorDossierLocation = {
 /** Resolve the exact run binding already carried by the parent record session. */
 export function auditorRunDirectory(context: ExtensionContext | HostContext): string | undefined {
   const sessionFile = context.sessionManager?.getSessionFile?.();
-  if (sessionFile !== undefined) return resolve(dirname(dirname(sessionFile)));
-  return undefined;
+  if (sessionFile === undefined) return undefined;
+  const parent = resolve(dirname(sessionFile));
+  // Pi layout: <run>/session/session.jsonl → climb one more level.
+  // Grok layout: <run>/grok-envelope.jsonl → session file already sits at run root.
+  return basename(parent) === "session" ? resolve(dirname(parent)) : parent;
 }
 
 /** The one shared, run-bound dossier locator exposed to every auditor seat. */

@@ -39,6 +39,8 @@ function prepared(closeRound: GrokPreparedTurn["closeRound"], mcpServers: Readon
     systemPrompt: "law",
     prompt: "decide",
     closeRound,
+    // Unit mocks drive the prompt path; seal-early is covered by live/envelope wiring.
+    whenSealed: () => new Promise(() => {}),
   };
 }
 

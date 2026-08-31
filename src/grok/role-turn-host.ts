@@ -34,6 +34,12 @@ export type GrokPreparedTurn = Readonly<{
     | { readonly accepted: false; readonly retry: { readonly code: string; readonly toolCallIds: readonly string[] } }
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
+  /**
+   * Resolves when the shared ledger writes ak-role-submission-closure.
+   * Grok may keep the ACP prompt open after a terminating tool; the host races
+   * this against session/prompt so a sealed receipt is not stuck on end_turn.
+   */
+  whenSealed(): Promise<void>;
   dispose?(): Promise<void>;
 }>;
 
@@ -262,26 +268,38 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
           let prompt = prepared.prompt;
           for (let attempt = 0; attempt < 8; attempt += 1) {
-            const result = await connection.request("session/prompt", {
+            const promptResult = connection.request("session/prompt", {
               sessionId,
               prompt: [{ type: "text", text: prompt }],
             });
+            // Seal may land while Grok keeps the prompt open after terminate.
+            // Race so acceptance is not blocked on a missing end_turn.
+            const result = await Promise.race([
+              promptResult,
+              prepared.whenSealed().then(() => ({ stopReason: "end_turn" as const, sealedEarly: true })),
+            ]);
             if (result.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
-            // session/prompt resolution is ACP's typed round boundary. At this point
-            // the shared ledger has seen every MCP execute in the round.
+            // session/prompt resolution (or early seal) is the typed round boundary.
             const closure = await prepared.closeRound();
             if (closure.accepted) {
               // Wait for ACP's typed close acknowledgement before tearing down the
               // process; Stop hooks and fire-and-forget cancellation are not closure.
-              await connection.request("session/close", { sessionId });
+              try {
+                await connection.request("session/close", { sessionId });
+              } catch {
+                // Early seal may race child teardown; acceptance is already ledger-true.
+              }
               accepted = true;
               return { code: 0, stderr: "", timedOut: false };
             }
             if ("failure" in closure) {
               return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
             }
+            // Rejection path still needs the live prompt to finish so Grok can resubmit
+            // in-session; if we won via sealedEarly the ledger would have accepted.
+            await promptResult.catch(() => undefined);
             prompt = `The prior terminal submission was rejected (${closure.retry.code}). Resubmit it as the sole terminal tool call. Rejected call ids: ${closure.retry.toolCallIds.join(", ") || "none"}.`;
           }
           return failure("output", "GrokAcpRoundLimit", "round-retry-limit", { sessionId });
