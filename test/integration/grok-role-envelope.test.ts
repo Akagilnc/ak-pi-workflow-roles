@@ -327,22 +327,18 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
   }
 });
 
-test("Grok prepare keeps existing session history on resume; delayed sibling after terminal is not early-accepted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-sibling-"));
+test("Grok prepare keeps existing durable session history on resume", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-session-"));
   const priorHome = process.env.HOME;
-  const priorRun = process.env.AK_ROLE_RUN_DIR;
   process.env.HOME = root;
-  delete process.env.AK_ROLE_RUN_DIR;
   try {
-    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
-    const runDirectory = join(root, "runs", `${runId}@notary`);
-    const sessionDir = join(runDirectory, "session");
-    await mkdir(sessionDir, { recursive: true });
-    const sessionPath = join(sessionDir, "session.jsonl");
+    const runDirectory = join(root, "runs", "resume-run");
+    const sessionPath = join(runDirectory, "session", "session.jsonl");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
     const priorHeader = JSON.stringify({
       type: "session",
       version: 3,
-      id: `${runId}@notary`,
+      id: "resume-run",
       timestamp: "2026-01-01T00:00:00.000Z",
       cwd: process.cwd(),
     });
@@ -350,17 +346,50 @@ test("Grok prepare keeps existing session history on resume; delayed sibling aft
       type: "message",
       message: { role: "assistant", content: [{ type: "text", text: "prior turn" }] },
     });
-    await writeFile(sessionPath, `${priorHeader}\n${priorHistory}\n`, "utf8");
-
-    const request = {
-      principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
-      continuation: { kind: "resume", prompt: "continue" },
-      model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory,
-    } as RoleTurnRequest;
+    const priorBytes = `${priorHeader}\n${priorHistory}\n`;
+    await writeFile(sessionPath, priorBytes, "utf8");
 
     const prepared = await prepareGrokRoleEnvelope({
-      request,
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "resume", prompt: "continue" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory,
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      assert.equal(await readFile(sessionPath, "utf8"), priorBytes);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok delayed sibling after terminal candidate is not early-accepted at closeRound", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-sibling-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
+    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
+        continuation: { kind: "initial", prompt: "attest" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory,
+      } as RoleTurnRequest,
       socketPath: join(root, "mcp.sock"),
       dependencies: {
         loadNotarySoul: async () => "NOTARY SOUL",
@@ -370,7 +399,7 @@ test("Grok prepare keeps existing session history on resume; delayed sibling aft
         activationTraceWriter: async () => {},
         loadNavigatorWorkContext: async () => ({
           subjectKey: join(root, "work"),
-          subject: "resume sibling",
+          subject: "sibling round",
           authority: "test",
           subjectProvenance: "role_input" as const,
         }),
@@ -385,10 +414,6 @@ test("Grok prepare keeps existing session history on resume; delayed sibling aft
       },
     });
     try {
-      const afterPrepare = await readFile(sessionPath, "utf8");
-      assert.equal(afterPrepare.includes(priorHistory), true, "prepare must not truncate prior session history");
-      assert.equal(afterPrepare.startsWith(`${priorHeader}\n`), true);
-
       const server = prepared.mcpServers[0] as McpServer;
       const terminal = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(terminal.error, undefined);
@@ -397,17 +422,14 @@ test("Grok prepare keeps existing session history on resume; delayed sibling aft
         "pending-round-closure",
       );
 
-      // Delayed sibling after terminal candidate, still before typed closeRound.
       const sibling = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(sibling.error, undefined);
 
       const closure = await prepared.closeRound();
-      assert.equal(closure.accepted, false, "sibling in the same round must not early-accept");
-      assert.ok("retry" in closure || "failure" in closure);
-      if ("retry" in closure) {
-        assert.equal(closure.retry.code, "non-sole-round");
-        assert.equal(closure.retry.toolCallIds.length, 2);
-      }
+      assert.equal(closure.accepted, false);
+      assert.ok("retry" in closure);
+      assert.equal(closure.retry.code, "non-sole-round");
+      assert.equal(closure.retry.toolCallIds.length, 2);
       assert.equal(await readSealedSubmission(process.cwd(), runId, root), undefined);
     } finally {
       await prepared.dispose?.();
