@@ -115,6 +115,17 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   }),
 ] as const);
 
+/** Countersign private transport: admitted ticket binding for Notary gate (ADR 0075). */
+const COUNTERSIGN_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: "ak-countersign-ticket-number",
+    definition: Object.freeze({
+      description: "Admitted ticketNumber for countersign Notary inner-gate material",
+      type: "string" as const,
+    }),
+  }),
+] as const);
+
 /**
  * Decode private transport flags into frozen admitted inputs.
  * Envelope-owned; necessary JSON decode only (public --authority-ref owns grammar).
@@ -634,27 +645,48 @@ export async function projectClosedSubmissionLifecycle(
 }
 
 /**
- * Read typed ticketNumber from the public run's invocation.json when present.
- * Used only as a locator coordinate for the Notary inner gate (ADR 0075).
+ * Resolve admitted ticketNumber for the Notary inner gate (ADR 0075).
+ * Prefer the activation transport flag (admitted typed binding along the seam).
+ * Fallback: invocation.json — present-but-unreadable fails honestly (not washed
+ * into "unbound"). Absent file or absent field remains legal unbound.
  */
-function readBoundTicketNumberFromRunEnv(): number | undefined {
+function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefined {
+  const fromFlag = roleHost.getFlag?.("ak-countersign-ticket-number");
+  if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
+    return Number(fromFlag);
+  }
+
   const runDir = process.env.AK_ROLE_RUN_DIR;
   if (typeof runDir !== "string" || runDir.trim() === "") return undefined;
+  const invocationPath = pathJoin(runDir, "invocation.json");
+  let rawText: string;
   try {
-    const raw = JSON.parse(
-      readFileSync(pathJoin(runDir, "invocation.json"), "utf8"),
-    ) as unknown;
-    if (
-      typeof raw === "object" &&
-      raw !== null &&
-      typeof (raw as { ticketNumber?: unknown }).ticketNumber === "number" &&
-      Number.isSafeInteger((raw as { ticketNumber: number }).ticketNumber) &&
-      (raw as { ticketNumber: number }).ticketNumber >= 1
-    ) {
-      return (raw as { ticketNumber: number }).ticketNumber;
-    }
-  } catch {
-    return undefined;
+    rawText = readFileSync(invocationPath, "utf8");
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err && err.code === "ENOENT") return undefined;
+    throw new Error(
+      `countersign Notary gate: invocation.json unreadable (${invocationPath})`,
+      { cause: error },
+    );
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(rawText);
+  } catch (error) {
+    throw new Error(
+      `countersign Notary gate: invocation.json unparseable (${invocationPath})`,
+      { cause: error },
+    );
+  }
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    typeof (raw as { ticketNumber?: unknown }).ticketNumber === "number" &&
+    Number.isSafeInteger((raw as { ticketNumber: number }).ticketNumber) &&
+    (raw as { ticketNumber: number }).ticketNumber >= 1
+  ) {
+    return (raw as { ticketNumber: number }).ticketNumber;
   }
   return undefined;
 }
@@ -736,7 +768,7 @@ export function createCountersignRoleRuntime(
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
     hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
       ? async ({ toolCallId, parameters, signal, ctx }) => {
-          const ticketNumber = readBoundTicketNumberFromRunEnv();
+          const ticketNumber = readBoundTicketNumberForNotaryGate(roleHost);
           const material = JSON.stringify(
             ticketNumber === undefined
               ? { verdict: parameters }
@@ -780,6 +812,9 @@ export function createRoleRuntimeExtension(
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of COUNTERSIGN_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
 

@@ -8,12 +8,18 @@ import test from "node:test";
 import {
   dedupeSourceBlocks,
   extractCornerQuotes,
+  extractReferencedAdrPaths,
   filterNotifications,
   mechanicalSafeguardPipeline,
+  readTicketFaceBlocks,
   verifyQuotesVerbatim,
   type DiaristSourceBlock,
 } from "../../src/diarist-mechanical.ts";
-import { parseDiaristLlmStdout } from "../../src/diarist-llm-collector.ts";
+import {
+  DiaristLlmStdoutError,
+  buildDiaristCollectorPrompt,
+  parseDiaristLlmStdout,
+} from "../../src/diarist-llm-collector.ts";
 
 function block(
   partial: Partial<DiaristSourceBlock> &
@@ -97,18 +103,103 @@ test("mechanical safeguard: typed notify filter + dedupe; no prose exclusion", (
   assert.equal(dedupeSourceBlocks(cleaned).length, pipeline.length);
 });
 
-test("parseDiaristLlmStdout projects selections and drops OOB indexes", () => {
+test("parseDiaristLlmStdout consumes sole selections object; ignores unknown fields", () => {
   const stdout = JSON.stringify({
+    extraTop: true,
     selections: [
-      { candidateIndex: 0, quotes: ["hello"], triage: "relevant" },
-      { candidateIndex: 99, quotes: ["nope"] },
-      { index: 1, quote: "world", triage: "context" },
+      {
+        candidateIndex: 0,
+        quotes: ["hello"],
+        triage: "relevant",
+        unknownRow: 1,
+      },
+      { candidateIndex: 1, quotes: [] },
     ],
   });
   const parsed = parseDiaristLlmStdout(stdout, 2);
   assert.equal(parsed.length, 2);
   assert.equal(parsed[0]!.candidateIndex, 0);
   assert.deepEqual(parsed[0]!.quotes, ["hello"]);
+  assert.equal(parsed[0]!.triage, "relevant");
   assert.equal(parsed[1]!.candidateIndex, 1);
-  assert.deepEqual(parsed[1]!.quotes, ["world"]);
+  assert.deepEqual(parsed[1]!.quotes, []);
+});
+
+test("parseDiaristLlmStdout fails honestly on empty/malformed/missing/alias shapes", () => {
+  const cases: Array<{ stdout: string; reason: string; count?: number }> = [
+    { stdout: "", reason: "empty-stdout" },
+    { stdout: "not-json", reason: "unparseable-json" },
+    { stdout: "[]", reason: "not-object" },
+    { stdout: "{}", reason: "selections-missing" },
+    { stdout: '{"selections":"x"}', reason: "selections-wrong-type" },
+    {
+      stdout: JSON.stringify({ selections: [{ index: 0, quote: "x" }] }),
+      reason: "selection-uninterpretable",
+      count: 1,
+    },
+    {
+      stdout: JSON.stringify({
+        selections: [{ candidateIndex: 0, quotes: "not-array" }],
+      }),
+      reason: "selection-uninterpretable",
+      count: 1,
+    },
+    {
+      stdout: JSON.stringify({
+        selections: [{ candidateIndex: 99, quotes: [] }],
+      }),
+      reason: "selection-uninterpretable",
+      count: 1,
+    },
+    {
+      stdout: "```json\n{\"selections\":[]}\n```",
+      reason: "unparseable-json",
+    },
+  ];
+  for (const c of cases) {
+    assert.throws(
+      () => parseDiaristLlmStdout(c.stdout, c.count ?? 2),
+      (error: unknown) =>
+        error instanceof DiaristLlmStdoutError && error.reason === c.reason,
+      `expected ${c.reason} for ${JSON.stringify(c.stdout).slice(0, 40)}`,
+    );
+  }
+});
+
+test("buildDiaristCollectorPrompt is neutral kickoff + material + shape only", () => {
+  const prompt = buildDiaristCollectorPrompt({
+    ticketNumber: 582,
+    candidates: [
+      block({
+        transcript: "立文件",
+        sourceRef: { sessionFile: "/s", entryId: "1" },
+      }),
+    ],
+  });
+  assert.match(prompt, /起居郎收集器/);
+  assert.match(prompt, /#582/);
+  assert.match(prompt, /selections/);
+  assert.match(prompt, /candidateIndex/);
+  // ADR 0073: no command / direction verbs in machine text.
+  for (const banned of ["请挑出", "只输出", "必须", "禁止", "宁多勿漏", "不要输出"]) {
+    assert.equal(prompt.includes(banned), false, `banned phrase present: ${banned}`);
+  }
+});
+
+test("readTicketFaceBlocks emits issue body + decree blocks; extract ADR paths", () => {
+  const body = [
+    "---",
+    "ticketNumber: 582",
+    "---",
+    "",
+    "「立文件。送司天台记录。」",
+    "see docs/adr/0075-ticket-provenance-diarist-pipeline.md and docs/adr/0073-machine-text-neutrality-law.md",
+  ].join("\n");
+  const blocks = readTicketFaceBlocks({ ticketBody: body, sourcePath: "/t.md" });
+  assert.ok(blocks.some((b) => b.sourceKind === "issue-body-comment"));
+  assert.ok(blocks.some((b) => b.sourceKind === "ticket-decree-block"));
+  assert.deepEqual(extractReferencedAdrPaths(body), [
+    "docs/adr/0075-ticket-provenance-diarist-pipeline.md",
+    "docs/adr/0073-machine-text-neutrality-law.md",
+  ]);
 });

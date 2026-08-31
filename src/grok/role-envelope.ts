@@ -76,6 +76,9 @@ export function projectGrokActivationFlags(request: RoleTurnRequest): Map<string
     flags.set("ak-review-authority-refs", JSON.stringify(activation.authorityRefs));
     if (activation.ticketNumber !== undefined) flags.set("ak-review-ticket-number", String(activation.ticketNumber));
   }
+  if (activation.role === "countersign" && activation.ticketNumber !== undefined) {
+    flags.set("ak-countersign-ticket-number", String(activation.ticketNumber));
+  }
   if (activation.role === "collector") {
     flags.set("ak-collector-repo", activation.repo);
     flags.set("ak-collector-pr", activation.pr);

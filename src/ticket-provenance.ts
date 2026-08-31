@@ -308,21 +308,61 @@ export function renderTicketProvenanceMarkdown(input: {
   return lines.join("\n");
 }
 
+/**
+ * Ensure the per-ticket JSONL volume partition exists (empty file OK).
+ * Every bound-ticket court establishes the volume even with zero diary entries
+ * (ADR 0075 ticket-provenance-file — 每票一份起居录). Does not forge entries.
+ */
+export function ensureTicketProvenanceVolume(
+  ticketNumber: number,
+  cwd: string,
+): TicketProvenanceVolumePath {
+  const volume = resolveTicketProvenanceVolume(ticketNumber, cwd);
+  mkdirSync(volume.volumeDir, { recursive: true });
+  if (!existsSync(volume.recordFile)) {
+    writeFileSync(volume.recordFile, "", "utf8");
+  }
+  return volume;
+}
+
+/** Filename for last diarist-station diagnostic (process state next to volume). */
+export const TICKET_PROVENANCE_STATION_DIAGNOSTIC = "diarist-station.json" as const;
+
+export type DiaristStationDiagnostic = {
+  readonly ticketNumber: number;
+  readonly collectorStatus: string;
+  readonly candidateCount: number;
+  readonly freshCount: number;
+  readonly appended: number;
+  readonly rejectedQuotes: number;
+  readonly collectorError?: string;
+  readonly recordedAt: string;
+};
+
+/** Persist last station outcome next to the volume (collector failure 真因留痕). */
+export function writeDiaristStationDiagnostic(input: {
+  readonly ticketNumber: number;
+  readonly cwd: string;
+  readonly diagnostic: DiaristStationDiagnostic;
+}): string {
+  const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
+  const path = join(volume.volumeDir, TICKET_PROVENANCE_STATION_DIAGNOSTIC);
+  writeFileSync(path, `${JSON.stringify(input.diagnostic, null, 2)}\n`, "utf8");
+  return path;
+}
+
 /** Write the co-located human view next to the JSONL volume (derived, not dual-source).
- * Caller must have already created the volume via sitian append (directory exists). */
+ * Ensures volume dir exists so empty courts still get the md face. */
 export function writeTicketProvenanceHumanView(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
   readonly entries: readonly TicketProvenanceEntry[];
 }): string {
-  const { humanViewFile } = resolveTicketProvenanceVolume(
-    input.ticketNumber,
-    input.cwd,
-  );
+  const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
   const md = renderTicketProvenanceMarkdown({
     ticketNumber: input.ticketNumber,
     entries: input.entries,
   });
-  writeFileSync(humanViewFile, md, "utf8");
-  return humanViewFile;
+  writeFileSync(volume.humanViewFile, md, "utf8");
+  return volume.humanViewFile;
 }

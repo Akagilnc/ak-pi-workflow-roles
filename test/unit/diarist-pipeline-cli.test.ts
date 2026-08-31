@@ -360,10 +360,11 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
   });
 });
 
-test("countersign runtime with hostActions runs notary inner gate on submit", async () => {
+test("countersign runtime: bound ticketNumber reaches notary inner gate material", async () => {
   const tools = new Map<string, { name: string; execute: Function }>();
   let beforeStart: ((event: { systemPrompt: string }) => unknown) | undefined;
   const gateCalls: Array<{ kind: string; material: string }> = [];
+  const flags = new Map<string, string>([["ak-countersign-ticket-number", "582"]]);
   const roleHost = {
     registerTool(tool: { name: string; execute: Function }) {
       tools.set(tool.name, tool);
@@ -373,6 +374,9 @@ test("countersign runtime with hostActions runs notary inner gate on submit", as
     },
     getAllTools() {
       return [{ name: COUNTERSIGN_OUTPUT_TOOL_NAME }];
+    },
+    getFlag(name: string) {
+      return flags.get(name);
     },
     async requireGatekeeperPass(options: {
       subject: { kind: string; material: string };
@@ -408,10 +412,55 @@ test("countersign runtime with hostActions runs notary inner gate on submit", as
   );
   assert.equal(gateCalls.length, 1);
   assert.equal(gateCalls[0]!.kind, "countersign_verdict");
-  assert.ok(gateCalls[0]!.material.includes("converged"));
   const parsed = JSON.parse(gateCalls[0]!.material) as {
     verdict?: { countersignStatus?: string };
+    ticketNumber?: number;
   };
   assert.equal(parsed.verdict?.countersignStatus, "converged");
+  assert.equal(parsed.ticketNumber, 582);
   void beforeStart;
+});
+
+test("countersign runtime: unbound invocation omits ticketNumber (no new reject)", async () => {
+  const tools = new Map<string, { name: string; execute: Function }>();
+  const gateCalls: Array<{ material: string }> = [];
+  const roleHost = {
+    registerTool(tool: { name: string; execute: Function }) {
+      tools.set(tool.name, tool);
+    },
+    on() {},
+    getAllTools() {
+      return [{ name: COUNTERSIGN_OUTPUT_TOOL_NAME }];
+    },
+    getFlag() {
+      return undefined;
+    },
+    async requireGatekeeperPass(options: {
+      subject: { material: string };
+    }) {
+      gateCalls.push({ material: options.subject.material });
+    },
+  };
+  const runtime = createCountersignRoleRuntime(
+    roleHost as never,
+    { loadSoul: async () => "LAW" },
+    {
+      failInfrastructure(): never {
+        throw new Error("fail");
+      },
+      bindSubmissionNonPass() {},
+    },
+  );
+  await runtime.activate();
+  await tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
+    "call-1",
+    { countersignStatus: "converged" },
+    undefined,
+    undefined,
+    { cwd: "/tmp", mode: "json", model: undefined, sessionManager: {} as never, abort() {} },
+  );
+  const parsed = JSON.parse(gateCalls[0]!.material) as {
+    ticketNumber?: number;
+  };
+  assert.equal(parsed.ticketNumber, undefined);
 });

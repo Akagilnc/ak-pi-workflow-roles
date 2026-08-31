@@ -31,80 +31,133 @@ export type DiaristLlmCollector = (input: {
   readonly signal?: AbortSignal;
 }) => Promise<DiaristLlmCollectResult>;
 
+/** Typed cause when collector stdout cannot be consumed as the sole selections object. */
+export type DiaristLlmStdoutReason =
+  | "empty-stdout"
+  | "unparseable-json"
+  | "not-object"
+  | "selections-missing"
+  | "selections-wrong-type"
+  | "selection-uninterpretable";
+
+export class DiaristLlmStdoutError extends Error {
+  readonly code = "diarist-llm-stdout" as const;
+  readonly reason: DiaristLlmStdoutReason;
+  constructor(reason: DiaristLlmStdoutReason, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "DiaristLlmStdoutError";
+    this.reason = reason;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * Parse collector stdout. Prefer a fenced JSON array/object; fall back to
- * whole-stdout JSON. Unknown shape → empty selections (honest empty, not throw).
+ * Consumer-driven parse of collector stdout.
+ * Sole shape: one JSON object with typed `selections` array.
+ * Unknown top-level / row fields are ignored. No fence/substring recovery,
+ * no blocks/index/i/quote aliases. Empty or uninterpretable input fails honestly.
  */
 export function parseDiaristLlmStdout(
   stdout: string,
   candidateCount: number,
 ): DiaristLlmSelection[] {
   const trimmed = stdout.trim();
-  if (trimmed.length === 0) return [];
-
-  let jsonText = trimmed;
-  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
-  if (fence !== null && fence[1] !== undefined && fence[1].trim() !== "") {
-    jsonText = fence[1].trim();
+  if (trimmed.length === 0) {
+    throw new DiaristLlmStdoutError("empty-stdout", "diarist collector stdout is empty");
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    // Try last JSON array/object substring.
-    const startArr = jsonText.indexOf("[");
-    const startObj = jsonText.indexOf("{");
-    let start = -1;
-    if (startArr >= 0 && (startObj < 0 || startArr < startObj)) start = startArr;
-    else if (startObj >= 0) start = startObj;
-    if (start < 0) return [];
-    const endArr = jsonText.lastIndexOf("]");
-    const endObj = jsonText.lastIndexOf("}");
-    const end = Math.max(endArr, endObj);
-    if (end <= start) return [];
-    try {
-      parsed = JSON.parse(jsonText.slice(start, end + 1));
-    } catch {
-      return [];
-    }
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    throw new DiaristLlmStdoutError(
+      "unparseable-json",
+      "diarist collector stdout is not JSON",
+      { cause: error },
+    );
   }
 
-  const rows: unknown[] = Array.isArray(parsed)
-    ? parsed
-    : isRecord(parsed) && Array.isArray(parsed.selections)
-      ? parsed.selections
-      : isRecord(parsed) && Array.isArray(parsed.blocks)
-        ? parsed.blocks
-        : [];
+  if (!isRecord(parsed)) {
+    throw new DiaristLlmStdoutError(
+      "not-object",
+      "diarist collector stdout must be one JSON object",
+    );
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(parsed, "selections")) {
+    throw new DiaristLlmStdoutError(
+      "selections-missing",
+      "diarist collector stdout missing selections",
+    );
+  }
+
+  if (!Array.isArray(parsed.selections)) {
+    throw new DiaristLlmStdoutError(
+      "selections-wrong-type",
+      "diarist collector selections must be an array",
+    );
+  }
 
   const out: DiaristLlmSelection[] = [];
-  for (const row of rows) {
-    if (!isRecord(row)) continue;
-    const indexRaw = row.candidateIndex ?? row.index ?? row.i;
-    const index =
-      typeof indexRaw === "number"
-        ? indexRaw
-        : typeof indexRaw === "string" && /^\d+$/.test(indexRaw)
-          ? Number(indexRaw)
-          : NaN;
-    if (!Number.isInteger(index) || index < 0 || index >= candidateCount) continue;
-    const quotesRaw = row.quotes ?? row.quote;
-    const quotes = Array.isArray(quotesRaw)
-      ? quotesRaw.filter((q): q is string => typeof q === "string" && q.length > 0)
-      : typeof quotesRaw === "string" && quotesRaw.length > 0
-        ? [quotesRaw]
-        : [];
+  for (let rowIndex = 0; rowIndex < parsed.selections.length; rowIndex += 1) {
+    const row = parsed.selections[rowIndex];
+    if (!isRecord(row)) {
+      throw new DiaristLlmStdoutError(
+        "selection-uninterpretable",
+        `diarist collector selection[${rowIndex}] is not an object`,
+      );
+    }
+
+    // Consume only typed fields; ignore unknown row keys.
+    if (typeof row.candidateIndex !== "number" || !Number.isInteger(row.candidateIndex)) {
+      throw new DiaristLlmStdoutError(
+        "selection-uninterpretable",
+        `diarist collector selection[${rowIndex}].candidateIndex is not an integer`,
+      );
+    }
+    const index = row.candidateIndex;
+    if (index < 0 || index >= candidateCount) {
+      throw new DiaristLlmStdoutError(
+        "selection-uninterpretable",
+        `diarist collector selection[${rowIndex}].candidateIndex ${index} out of range 0..${candidateCount - 1}`,
+      );
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(row, "quotes")) {
+      throw new DiaristLlmStdoutError(
+        "selection-uninterpretable",
+        `diarist collector selection[${rowIndex}].quotes missing`,
+      );
+    }
+    if (!Array.isArray(row.quotes)) {
+      throw new DiaristLlmStdoutError(
+        "selection-uninterpretable",
+        `diarist collector selection[${rowIndex}].quotes must be an array`,
+      );
+    }
+    const quotes: string[] = [];
+    for (let qIndex = 0; qIndex < row.quotes.length; qIndex += 1) {
+      const q = row.quotes[qIndex];
+      if (typeof q !== "string") {
+        throw new DiaristLlmStdoutError(
+          "selection-uninterpretable",
+          `diarist collector selection[${rowIndex}].quotes[${qIndex}] is not a string`,
+        );
+      }
+      // Empty string quotes are skipped at reverse-verify; keep non-empty only.
+      if (q.length > 0) quotes.push(q);
+    }
+
     const triage =
       row.triage === "relevant" ||
       row.triage === "context" ||
       row.triage === "irrelevant"
         ? row.triage
         : undefined;
+
     out.push({
       candidateIndex: index,
       quotes,
@@ -115,7 +168,10 @@ export function parseDiaristLlmStdout(
   return out;
 }
 
-/** Build the one-shot collector prompt (neutral shape description for the engine). */
+/**
+ * Machine kickoff text only (ADR 0073): start session, deliver material, describe output shape.
+ * Semantic judgment lives in owner-domain method material — not here.
+ */
 export function buildDiaristCollectorPrompt(input: {
   readonly ticketNumber: number;
   readonly candidates: readonly DiaristSourceBlock[];
@@ -128,15 +184,10 @@ export function buildDiaristCollectorPrompt(input: {
     transcript: block.transcript,
   }));
   return [
-    `你是起居郎收集器。票号 #${input.ticketNumber}。`,
-    "下面是已冻结的来源对话块（仅去通知/去重，未经相关性裁剪）。请挑出与本票决策相关的块。",
-    "只输出 JSON，形状：",
-    '{"selections":[{"candidateIndex":0,"quotes":["必须是 transcript 中的连续原文子串"],"triage":"relevant|context|irrelevant","note":"可选摘要"}]}',
-    "规则：",
-    "1. quotes 必须是对应 transcript 的连续原文，禁止拼接、禁止改写。",
-    "2. 宁多勿漏：决策相关都收；明显无关标 irrelevant 且可不入 selections。",
-    "3. 不要输出 JSON 以外的文字。",
-    "",
+    `起居郎收集器。票号 #${input.ticketNumber}。`,
+    "材料：已冻结来源对话块目录（JSON）。",
+    "输出形状：单一 JSON 对象",
+    '{"selections":[{"candidateIndex":0,"quotes":["transcript 连续原文子串"],"triage":"relevant|context|irrelevant","note":"可选"}]}',
     "来源块：",
     JSON.stringify(catalog),
   ].join("\n");
@@ -153,7 +204,7 @@ export type HermesDiaristCollectorOptions = {
 
 /**
  * Default cheap-engine collector via hermes -z (ADR 0069 detour seam).
- * Engine failure throws — caller records honest diagnostic.
+ * Engine failure and uninterpretable stdout throw — caller records honest diagnostic.
  */
 export function createHermesDiaristCollector(
   options: HermesDiaristCollectorOptions = {},
