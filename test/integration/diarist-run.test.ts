@@ -23,7 +23,6 @@ import {
   createHermesDiaristCollector,
   createScriptedDiaristCollector,
   DIARIST_COLLECT_METHOD_RELATIVE,
-  HERMES_DIARIST_COLLECTOR_TOOLSET,
   resolveDiaristCollectMethodPath,
 } from "../../src/diarist-llm-collector.ts";
 import { accessSync, chmodSync, constants as fsConstants } from "node:fs";
@@ -567,14 +566,18 @@ test("hermes collector argv: empty toolset boundary (never terminal/process tool
       ],
     });
     assert.ok(capturedArgv);
+    // Independent of production constant: hermes `context_engine` resolves to
+    // zero tools; terminal/file/web must not appear as enabled toolsets.
     const toolFlagAt = capturedArgv!.indexOf("-t");
     assert.ok(toolFlagAt >= 0, "collector must pin an explicit toolset");
-    assert.equal(capturedArgv![toolFlagAt + 1], HERMES_DIARIST_COLLECTOR_TOOLSET);
-    assert.equal(
-      capturedArgv!.includes("terminal"),
-      false,
-      "terminal/process toolset must not be enabled on untrusted ticket text",
-    );
+    assert.equal(capturedArgv![toolFlagAt + 1], "context_engine");
+    for (const banned of ["terminal", "file", "web", "hermes-cli", "coding", "safe"] as const) {
+      assert.equal(
+        capturedArgv!.includes(banned),
+        false,
+        `${banned} toolset must not be enabled on untrusted ticket text`,
+      );
+    }
     assert.deepEqual(result.engineArgv, capturedArgv);
   });
 });

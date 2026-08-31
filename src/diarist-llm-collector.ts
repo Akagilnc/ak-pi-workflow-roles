@@ -238,8 +238,9 @@ export function serializeDiaristCollectorEnginePayload(
 /**
  * Hermes built-in toolset that resolves to zero tools.
  * Collector labor is pure JSON selection — never a tools-capable agent surface.
+ * Not exported — callers must not depend on the name; argv face is the contract.
  */
-export const HERMES_DIARIST_COLLECTOR_TOOLSET = "context_engine" as const;
+const HERMES_DIARIST_COLLECTOR_TOOLSET = "context_engine" as const;
 
 export type HermesDiaristCollectorOptions = {
   /** Executable name or path. Default hermes. */
