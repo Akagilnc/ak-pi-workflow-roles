@@ -1,8 +1,7 @@
 /**
  * Shared Hermes / gh PATH executable fixtures (#582 / ADR 0075).
  * Real subprocess fixtures for countersign pre-court + diarist — NOT production APIs.
- *
- * Config/input errors fail loud (non-zero + stderr). Silent fallback is forbidden.
+ * Install-time options only; no env/control dual channels.
  */
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,64 +19,18 @@ export type HermesFixtureOptions = {
    */
   collectorResponse?: unknown;
   /**
-   * Collector face: emit one selection per staged candidate using the full
-   * transcript as the sole quote (passes mechanical verbatim check).
-   * Enables durable volume assertions on typed sourceKind/sourceRef.
+   * Collector face: one selection per staged candidate, full transcript as quote
+   * (passes mechanical verbatim check → durable volume sourceKind/sourceRef).
    */
   selectAllCandidates?: boolean;
   /** Force non-zero exit (both faces). */
   defaultExitCode?: number;
-  /** Optional capture of the staged --query-file body path contents. */
-  captureFile?: string;
-  /**
-   * Optional control JSON file path. Shape:
-   * `{ exitCode?, stderr?, resolverResponse?, collectorResponse?, response? }`
-   * `response` forces the same stdout for either face.
-   * When configured (install option or AK_TEST_HERMES_CONTROL_FILE), the file
-   * must exist and parse — missing/unreadable/bad JSON → non-zero fail.
-   */
-  controlFile?: string;
 };
 
 function embedJson(value: unknown): string {
   return JSON.stringify(
     typeof value === "string" ? value : JSON.stringify(value),
   );
-}
-
-/**
- * Shared fail-loud control-file loader body (Hermes + gh).
- * `label` names the fixture in stderr; `envKey` is the runtime override env.
- * `installedPathJson` is JSON.stringify of the install-time path or null.
- */
-function controlFileLoaderSource(input: {
-  readonly label: string;
-  readonly envKey: string;
-  readonly installedPathJson: string;
-}): string {
-  return `
-function fail(message, err) {
-  const detail = err && err.message ? (": " + err.message) : "";
-  process.stderr.write(${JSON.stringify(input.label + ": ")} + message + detail + "\\n");
-  process.exit(2);
-}
-
-function loadControlFile() {
-  const controlFile = process.env[${JSON.stringify(input.envKey)}] || ${input.installedPathJson};
-  if (!controlFile) return null;
-  let raw;
-  try {
-    raw = require("node:fs").readFileSync(controlFile, "utf8");
-  } catch (err) {
-    fail("control file missing or unreadable: " + controlFile, err);
-  }
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    fail("control file is not JSON: " + controlFile, err);
-  }
-}
-`;
 }
 
 export async function installHermesFixture(
@@ -95,80 +48,26 @@ export async function installHermesFixture(
       ? { selections: [] }
       : options.collectorResponse;
   const selectAll = options.selectAllCandidates === true;
+  const exitCode =
+    options.defaultExitCode === undefined
+      ? undefined
+      : Number(options.defaultExitCode);
 
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
-${controlFileLoaderSource({
-  label: "hermes-fixture",
-  envKey: "AK_TEST_HERMES_CONTROL_FILE",
-  installedPathJson: JSON.stringify(options.controlFile ?? null),
-})}
-
 const args = process.argv.slice(2);
 const qIdx = args.indexOf("--query-file");
 const queryFile = qIdx >= 0 ? args[qIdx + 1] : undefined;
 
 let staged = null;
-if (qIdx >= 0) {
-  if (typeof queryFile !== "string" || queryFile.length === 0) {
-    fail("--query-file flag present without path");
-  }
-  if (!fs.existsSync(queryFile)) {
-    fail("staged query-file missing: " + queryFile);
-  }
-  let raw;
-  try {
-    raw = fs.readFileSync(queryFile, "utf8");
-  } catch (err) {
-    fail("staged query-file unreadable: " + queryFile, err);
-  }
-  try {
-    staged = JSON.parse(raw);
-  } catch (err) {
-    fail("staged query-file is not JSON: " + queryFile, err);
-  }
-  const cap = process.env.AK_TEST_HERMES_CAPTURE_FILE || ${JSON.stringify(options.captureFile ?? null)};
-  if (cap) {
-    try {
-      fs.writeFileSync(cap, raw, "utf8");
-    } catch (err) {
-      fail("capture file unwritable: " + cap, err);
-    }
-  }
+// Production always stages --query-file; missing/bad JSON throws → non-zero (no wash).
+if (typeof queryFile === "string" && queryFile.length > 0) {
+  staged = JSON.parse(fs.readFileSync(queryFile, "utf8"));
 }
 
 const isCollector = staged !== null && Array.isArray(staged.candidates);
 
-if (process.env.AK_TEST_HERMES_EXIT_CODE) {
-  process.exit(Number(process.env.AK_TEST_HERMES_EXIT_CODE));
-}
-
-if (process.env.AK_TEST_HERMES_RESPONSE) {
-  process.stdout.write(process.env.AK_TEST_HERMES_RESPONSE);
-  process.exit(0);
-}
-
-const ctrl = loadControlFile();
-if (ctrl !== null) {
-  if (ctrl.exitCode !== undefined) {
-    if (ctrl.stderr) process.stderr.write(String(ctrl.stderr));
-    process.exit(Number(ctrl.exitCode));
-  }
-  if (ctrl.response !== undefined) {
-    process.stdout.write(typeof ctrl.response === "string" ? ctrl.response : JSON.stringify(ctrl.response));
-    process.exit(0);
-  }
-  if (isCollector && ctrl.collectorResponse !== undefined) {
-    process.stdout.write(typeof ctrl.collectorResponse === "string" ? ctrl.collectorResponse : JSON.stringify(ctrl.collectorResponse));
-    process.exit(0);
-  }
-  if (!isCollector && ctrl.resolverResponse !== undefined) {
-    process.stdout.write(typeof ctrl.resolverResponse === "string" ? ctrl.resolverResponse : JSON.stringify(ctrl.resolverResponse));
-    process.exit(0);
-  }
-}
-
-${options.defaultExitCode !== undefined ? `process.exit(${Number(options.defaultExitCode)});` : ""}
+${exitCode !== undefined ? `process.exit(${exitCode});` : ""}
 
 if (isCollector) {
   ${
@@ -214,7 +113,6 @@ export type GhFixtureOptions = {
       }>;
     }
   >;
-  controlFile?: string;
 };
 
 export async function installGhFixture(
@@ -224,13 +122,6 @@ export async function installGhFixture(
   await mkdir(binDir, { recursive: true });
   const ghPath = join(binDir, "gh");
   const script = `#!/usr/bin/env node
-const fs = require("node:fs");
-${controlFileLoaderSource({
-  label: "gh-fixture",
-  envKey: "AK_TEST_GH_CONTROL_FILE",
-  installedPathJson: JSON.stringify(options.controlFile ?? null),
-})}
-
 const args = process.argv.slice(2);
 const path =
   args.find(
@@ -262,18 +153,11 @@ function reply(status, statusText, body) {
   process.exit(0);
 }
 
-const ctrl = loadControlFile();
-
 if (path.includes("user")) {
   ok({ login: "fixture-user" });
 }
 
-// When control is configured it is the live issues table (install shape).
-// Missing/unreadable/bad JSON already failed inside loadControlFile.
-const issues = (ctrl !== null && typeof ctrl === "object" && !Array.isArray(ctrl))
-  ? ctrl
-  : ${JSON.stringify(options.issues ?? {})};
-
+const issues = ${JSON.stringify(options.issues ?? {})};
 const issueMatch = path.match(new RegExp("issues/(\\\\d+)(/comments)?"));
 if (issueMatch) {
   const num = Number(issueMatch[1]);
@@ -326,18 +210,4 @@ reply(404, "Not Found", { message: "Not Found" });
   await writeFile(ghPath, script, "utf8");
   await chmod(ghPath, 0o755);
   return binDir;
-}
-
-export function withPrependedPath<T>(
-  binDir: string,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const prior = process.env.PATH;
-  process.env.PATH = prior ? `${binDir}:${prior}` : binDir;
-  return Promise.resolve()
-    .then(fn)
-    .finally(() => {
-      if (prior === undefined) delete process.env.PATH;
-      else process.env.PATH = prior;
-    });
 }
