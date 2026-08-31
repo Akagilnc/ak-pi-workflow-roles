@@ -15,6 +15,7 @@ import {
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
   inspectControlledGrok,
+  isHeadMatchedProjectInstruction,
   type GrokAcpConnection,
   type GrokPreparedTurn,
 } from "../../src/grok/role-turn-host.ts";
@@ -465,6 +466,27 @@ test("grok host rejects an uncontrolled personalized session before model work",
     },
   });
   assert.equal(connected, false);
+});
+
+test("HEAD path case-fold hashes the HEAD-casing worktree file, not the inspect leaf string", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-case-fold-"));
+  try {
+    git(root, ["init"]);
+    git(root, ["config", "user.email", "fix@example.com"]);
+    git(root, ["config", "user.name", "fix"]);
+    await writeFile(join(root, "CLAUDE.md"), "# shared\n", "utf8");
+    git(root, ["add", "CLAUDE.md"]);
+    git(root, ["commit", "-m", "seed"]);
+    // Inspect may report Claude.md while only CLAUDE.md exists in HEAD/worktree.
+    // Portable across case-sensitive FS: bytes are read via the resolved HEAD path.
+    assert.equal(await isHeadMatchedProjectInstruction(root, join(root, "CLAUDE.md")), true);
+    assert.equal(await isHeadMatchedProjectInstruction(root, join(root, "Claude.md")), true);
+    const link = join(root, "OTHER.md");
+    await symlink(join(root, "CLAUDE.md"), link);
+    assert.equal(await isHeadMatchedProjectInstruction(root, link), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("inspect→provenance: HEAD-matched repo CLAUDE.md activates; dirty or untracked projectInstructions fail closed before connect", async () => {

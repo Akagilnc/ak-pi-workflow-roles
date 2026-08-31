@@ -393,10 +393,27 @@ export async function isHeadMatchedProjectInstruction(
     if (relative === "" || relative.startsWith("..") || isAbsolute(relative) || relative.includes("\0")) {
       return false;
     }
-    // Untracked (or any) symlink at this leaf must not inherit the target's HEAD identity.
-    if ((await lstat(candidate)).isSymbolicLink()) return false;
+    // Symlink at the inspect leaf must not inherit another path's HEAD identity.
+    try {
+      if ((await lstat(candidate)).isSymbolicLink()) return false;
+    } catch {
+      // Exact-case leaf may be absent on a case-sensitive FS; HEAD casing is resolved below.
+    }
     const headRel = await resolveHeadTreePath(topLevel, relative);
     if (headRel === undefined) return false;
+    // Bytes are always read from the unique HEAD path (correct casing on disk).
+    // Classification identity stays the inspect-reported path in the caller.
+    const headFile = join(topLevel, headRel);
+    if ((await lstat(headFile)).isSymbolicLink()) return false;
+    try {
+      const candidateStat = await lstat(candidate);
+      const headStat = await lstat(headFile);
+      // Distinct directory entries that only share a case-fold must not alias (case-sensitive FS).
+      if (candidateStat.dev !== headStat.dev || candidateStat.ino !== headStat.ino) return false;
+    } catch {
+      // Inspect path exact casing missing: allow only when it case-folds to the HEAD path.
+      if (relative.toLowerCase() !== headRel.toLowerCase()) return false;
+    }
     const { stdout: headBlob } = await execFileAsync(
       "git",
       ["rev-parse", "--verify", `HEAD:${headRel}`],
@@ -404,7 +421,7 @@ export async function isHeadMatchedProjectInstruction(
     );
     const { stdout: workBlob } = await execFileAsync(
       "git",
-      ["hash-object", "--", candidate],
+      ["hash-object", "--", headFile],
       { cwd: topLevel, encoding: "utf8" },
     );
     return headBlob.trim() === workBlob.trim();
