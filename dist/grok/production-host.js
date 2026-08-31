@@ -11188,7 +11188,6 @@ async function prepareGrokRoleEnvelope(options) {
       },
       appendCustomEntry(customType, data) {
         customEntries.push({ customType, data });
-        if (customType === "ak-role-submission-closure") sealedNotify?.();
       }
     },
     abort() {
@@ -11343,6 +11342,9 @@ async function prepareGrokRoleEnvelope(options) {
                 isError: false
               });
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...projected.isError ? { isError: true } : {} });
+              if (customEntries.some((entry) => entry.customType === "ak-role-submission-closure")) {
+                sealedNotify?.();
+              }
             } catch (error) {
               const projected = await projectToolResult(toolCallId, name, {
                 content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],

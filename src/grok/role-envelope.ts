@@ -167,7 +167,6 @@ export async function prepareGrokRoleEnvelope(options: {
       setSessionFile(path) { sessionFile = path; },
       appendCustomEntry(customType, data) {
         customEntries.push({ customType, data });
-        if (customType === "ak-role-submission-closure") sealedNotify?.();
       },
     },
     abort() {},
@@ -316,6 +315,11 @@ export async function prepareGrokRoleEnvelope(options: {
                 isError: false,
               });
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
+              // Notify seal only after execute fully returns (ledger + navigator settle).
+              // Mid-execute notify races session/close against the still-running tool stack.
+              if (customEntries.some((entry) => entry.customType === "ak-role-submission-closure")) {
+                sealedNotify?.();
+              }
             } catch (error) {
               // The shared envelope's tool_result handler is the sole classifier:
               // it projects either the structured submission non-pass (correctable
