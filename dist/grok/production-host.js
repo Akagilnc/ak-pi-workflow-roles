@@ -11342,8 +11342,14 @@ async function prepareGrokRoleEnvelope(options) {
                 isError: false
               });
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...projected.isError ? { isError: true } : {} });
-              if (customEntries.some((entry) => entry.customType === "ak-role-submission-closure")) {
-                sealedNotify?.();
+              const disposition = typeof projected.details === "object" && projected.details !== null && !Array.isArray(projected.details) ? projected.details.submissionDisposition : void 0;
+              if (disposition === "pending-round-closure" && calls.length > 0) {
+                const roundCalls = [...calls];
+                calls.length = 0;
+                await emit("turn_end", { turnIndex: 0, calls: roundCalls });
+                if (customEntries.some((entry) => entry.customType === "ak-role-submission-closure")) {
+                  sealedNotify?.();
+                }
               }
             } catch (error) {
               const projected = await projectToolResult(toolCallId, name, {
@@ -11382,7 +11388,11 @@ async function prepareGrokRoleEnvelope(options) {
     }
   };
   const closeRound = async () => {
-    await emit("turn_end", { turnIndex: 0, calls: [...calls] });
+    if (calls.length > 0) {
+      const roundCalls = [...calls];
+      calls.length = 0;
+      await emit("turn_end", { turnIndex: 0, calls: roundCalls });
+    }
     let closure;
     for (let index = customEntries.length - 1; index >= 0; index -= 1) {
       if (customEntries[index]?.customType === "ak-role-submission-closure") {
@@ -11390,8 +11400,10 @@ async function prepareGrokRoleEnvelope(options) {
         break;
       }
     }
-    calls.length = 0;
-    if (closure !== void 0) return { accepted: true };
+    if (closure !== void 0) {
+      sealedNotify?.();
+      return { accepted: true };
+    }
     if (rejection !== void 0) {
       const retry = { code: rejection.code, toolCallIds: rejection.toolCallIds };
       rejection = void 0;

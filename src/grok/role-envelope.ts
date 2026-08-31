@@ -315,10 +315,21 @@ export async function prepareGrokRoleEnvelope(options: {
                 isError: false,
               });
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
-              // Notify seal only after execute fully returns (ledger + navigator settle).
-              // Mid-execute notify races session/close against the still-running tool stack.
-              if (customEntries.some((entry) => entry.customType === "ak-role-submission-closure")) {
-                sealedNotify?.();
+              // Terminating tools return pending-round-closure; the shared ledger seals on
+              // turn_end. Emit that boundary here so whenSealed can unblock executeTurn while
+              // Grok may keep session/prompt open. Notify only after turn_end returns — that
+              // awaits navigator settle; mid-append notify races session/close against settle.
+              const disposition = typeof projected.details === "object" && projected.details !== null
+                && !Array.isArray(projected.details)
+                ? (projected.details as { submissionDisposition?: unknown }).submissionDisposition
+                : undefined;
+              if (disposition === "pending-round-closure" && calls.length > 0) {
+                const roundCalls = [...calls];
+                calls.length = 0;
+                await emit("turn_end", { turnIndex: 0, calls: roundCalls });
+                if (customEntries.some((entry) => entry.customType === "ak-role-submission-closure")) {
+                  sealedNotify?.();
+                }
               }
             } catch (error) {
               // The shared envelope's tool_result handler is the sole classifier:
@@ -363,13 +374,21 @@ export async function prepareGrokRoleEnvelope(options: {
   };
 
   const closeRound: GrokPreparedTurn["closeRound"] = async () => {
-    await emit("turn_end", { turnIndex: 0, calls: [...calls] });
+    // Tool path may already have sealed a pending-round-closure turn; only emit when
+    // calls remain (prompt ended with tools not yet closed, or non-pending path).
+    if (calls.length > 0) {
+      const roundCalls = [...calls];
+      calls.length = 0;
+      await emit("turn_end", { turnIndex: 0, calls: roundCalls });
+    }
     let closure: { customType: string; data: unknown } | undefined;
     for (let index = customEntries.length - 1; index >= 0; index -= 1) {
       if (customEntries[index]?.customType === "ak-role-submission-closure") { closure = customEntries[index]; break; }
     }
-    calls.length = 0;
-    if (closure !== undefined) return { accepted: true as const };
+    if (closure !== undefined) {
+      sealedNotify?.();
+      return { accepted: true as const };
+    }
     if (rejection !== undefined) {
       const retry = { code: rejection.code, toolCallIds: rejection.toolCallIds };
       rejection = undefined;
