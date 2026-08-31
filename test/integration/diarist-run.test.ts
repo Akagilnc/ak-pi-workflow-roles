@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -607,6 +607,9 @@ test("hermes collector: real child receives method bytes via seam-staged --query
     assert.equal(captured.method, methodBytes);
     assert.equal(captured.candidateCount, 1);
     assert.equal(typeof captured.queryFilePath, "string");
+    assert.ok(captured.queryFilePath);
+    // Seam-owned lifecycle: staged prompt file is gone after collector returns.
+    assert.equal(existsSync(captured.queryFilePath), false);
     // Coordinate-only transport must not reappear as the delivery claim.
     assert.equal(captured.methodPath, null);
     // Body must not ride argv (E2BIG root cause).
@@ -633,11 +636,11 @@ test("hermes collector: 1MiB candidates stage via query-file (no spawn E2BIG)", 
         "  candidateCount = Array.isArray(payload?.candidates) ? payload.candidates.length : 0;",
         "  ok = candidateCount > 0 && size > 1_000_000;",
         "} catch (e) {",
-        "  writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ ok: false, error: String(e) }), 'utf8');",
+        "  writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ ok: false, error: String(e), queryFilePath: path ?? null }), 'utf8');",
         "  process.stdout.write(JSON.stringify({ selections: [] }));",
         "  process.exit(0);",
         "}",
-        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ ok, size, candidateCount }), 'utf8');",
+        "writeFileSync(process.env.AK_CAPTURE_PATH, JSON.stringify({ ok, size, candidateCount, queryFilePath: path ?? null }), 'utf8');",
         "process.stdout.write(JSON.stringify({ selections: [] }));",
         "",
       ].join("\n"),
@@ -669,11 +672,15 @@ test("hermes collector: 1MiB candidates stage via query-file (no spawn E2BIG)", 
       ok: boolean;
       size: number;
       candidateCount: number;
+      queryFilePath: string | null;
       error?: string;
     };
     assert.equal(captured.ok, true, captured.error ?? "expected staged 1MiB payload");
     assert.equal(captured.candidateCount, 2);
     assert.ok(captured.size > 1_000_000);
+    assert.ok(captured.queryFilePath);
+    // Large payload still exits through the same seam cleanup path.
+    assert.equal(existsSync(captured.queryFilePath), false);
   });
 });
 
@@ -703,6 +710,25 @@ test("referenced ADR path escape fails typed at real IO seam (not silent read)",
         }),
       (error: unknown) =>
         error instanceof DiaristSourceReadError && error.reason === "adr-escape",
+    );
+
+    // Physical escape: cwd-internal symlink whose realpath leaves the circle.
+    // Lexical pathContainedIn passes; physicallyContainedIn must refuse before read.
+    mkdirSync(join(root, "docs", "adr"), { recursive: true });
+    const outside = join(home, "outside-secret.md");
+    writeFileSync(outside, "TOP SECRET\n", "utf8");
+    const linkRel = "docs/adr/0075-via-symlink.md";
+    symlinkSync(outside, join(root, linkRel));
+    assert.throws(
+      () =>
+        readAdrDecisionKeyBlocks({
+          cwd: root,
+          adrPaths: [linkRel],
+        }),
+      (error: unknown) =>
+        error instanceof DiaristSourceReadError &&
+        error.reason === "adr-escape" &&
+        error.code === "diarist-source-read",
     );
   });
 });

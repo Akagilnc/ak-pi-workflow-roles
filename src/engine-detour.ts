@@ -173,18 +173,39 @@ export async function runEngineDetourOnce(
   }
   const stagingDir = await mkdtemp(join(tmpdir(), "ak-engine-detour-"));
   const stagedPath = join(stagingDir, "prompt.txt");
+  let result: EngineDetourResult;
+  let runError: unknown;
   try {
     await writeFile(stagedPath, input.stagedPrompt, "utf8");
     const argv = resolveArgvWithStagedPrompt(input.argv, stagedPath);
-    return await spawnEngineDetourOnce({
+    result = await spawnEngineDetourOnce({
       argv,
       cwd: input.cwd,
       ...(input.env === undefined ? {} : { env: input.env }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
-  } finally {
-    await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+  } catch (error) {
+    runError = error;
   }
+  // Cleanup is seam-owned and fail-closed: never wash rm failure into success
+  // (失败诚实). force only covers already-absent nodes, not permission/IO faults.
+  try {
+    await rm(stagingDir, { recursive: true, force: true });
+  } catch (cleanupError) {
+    if (runError !== undefined) {
+      throw new Error(
+        `劳务引擎 stagedPrompt 清理失败（原运行错误保留为 cause）: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        { cause: runError },
+      );
+    }
+    throw cleanupError instanceof Error
+      ? cleanupError
+      : new Error(String(cleanupError));
+  }
+  if (runError !== undefined) {
+    throw runError instanceof Error ? runError : new Error(String(runError));
+  }
+  return result!;
 }
 
 /** Failure predicate: nonzero exit OR stdout trim-empty (including whitespace-only). */
