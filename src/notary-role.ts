@@ -53,7 +53,10 @@ export function readNotaryTicketFlag(flag: unknown): number | undefined {
   return n;
 }
 
-/** Typed session bound material (locator + optional ticket). Sole projection for LLM inject. */
+/**
+ * Typed session bound (locator + optional ticket).
+ * Sole production projection fed into before_agent_start material assembly.
+ */
 export function projectNotarySessionBound(input: {
   readonly sourceRun: NotarySourceRunLocator;
   readonly ticketNumber?: number;
@@ -67,10 +70,23 @@ export function projectNotarySessionBound(input: {
   };
 }
 
-export type NotaryActivationBound = {
-  readonly sourceRun: NotarySourceRunLocator;
-  readonly ticketNumber?: number;
-};
+export type NotarySessionBound = ReturnType<typeof projectNotarySessionBound>;
+
+/**
+ * Assemble systemPrompt patch from soul + typed bound.
+ * Returns bound alongside prompt so callers observe the same object the prompt encodes
+ * (production host only consumes systemPrompt; bound is the typed half of this seam).
+ */
+export function assembleNotaryAgentStart(input: {
+  readonly baseSystemPrompt: string;
+  readonly soul: string;
+  readonly bound: NotarySessionBound;
+}): { readonly systemPrompt: string; readonly bound: NotarySessionBound } {
+  return {
+    bound: input.bound,
+    systemPrompt: `${input.baseSystemPrompt}\n\n<notary_soul>\n${input.soul}\n</notary_soul>\n\n<notary_source_run>\n${JSON.stringify(input.bound)}\n</notary_source_run>`,
+  };
+}
 
 export function createNotaryRoleRuntime(
   pi: RoleHost,
@@ -92,17 +108,6 @@ export function createNotaryRoleRuntime(
   pi.registerFlag(NOTARY_TICKET_FLAG.name, NOTARY_TICKET_FLAG.definition);
 
   return {
-    /** Typed bound after activate — consumption seam for tests/hosts (not presentation). */
-    getBound(): NotaryActivationBound | undefined {
-      if (activation === undefined) return undefined;
-      return projectNotarySessionBound({
-        sourceRun: activation.sourceRun,
-        ...(activation.ticketNumber === undefined
-          ? {}
-          : { ticketNumber: activation.ticketNumber }),
-      });
-    },
-    /** Bind source-run (+ optional ticket) from host flags. */
     async activate(): Promise<void> {
       const path = pi.getFlag(NOTARY_SOURCE_RUN_FLAG.name);
       if (typeof path !== "string" || path.trim() === "") {
@@ -155,9 +160,13 @@ export function createNotaryRoleRuntime(
               ? {}
               : { ticketNumber: activation.ticketNumber }),
           });
-          return {
-            systemPrompt: `${event.systemPrompt}\n\n<notary_soul>\n${activation.soul}\n</notary_soul>\n\n<notary_source_run>\n${JSON.stringify(bound)}\n</notary_source_run>`,
-          };
+          const assembled = assembleNotaryAgentStart({
+            baseSystemPrompt: event.systemPrompt,
+            soul: activation.soul,
+            bound,
+          });
+          // Host event result only carries systemPrompt; bound is assembled with it.
+          return { systemPrompt: assembled.systemPrompt };
         });
       }
 
