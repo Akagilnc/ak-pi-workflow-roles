@@ -128,6 +128,75 @@ test("parseDiaristLlmStdout projects selections and drops OOB indexes", () => {
   assert.deepEqual(parsed[1]!.quotes, ["world"]);
 });
 
+test("runDiarist second court: collector only receives blocks not yet on the volume", async () => {
+  await withHermeticHome({ prefix: "ak-diarist-incr-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+
+    const blockA = block({
+      transcript: "立文件。送司天台记录。第一庭。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-a" },
+    });
+    const blockB = block({
+      transcript: "起居郎只管如实记录。第二庭新增。",
+      sourceRef: { sessionFile: "/s.jsonl", entryId: "u-b" },
+    });
+
+    const seenSizes: number[] = [];
+    const seenIds: string[][] = [];
+    const collector = createScriptedDiaristCollector((input) => {
+      seenSizes.push(input.candidates.length);
+      seenIds.push(
+        input.candidates.map((c) => String(c.sourceRef.entryId ?? "")),
+      );
+      return {
+        selections: input.candidates.map((_, i) => ({
+          candidateIndex: i,
+          quotes: [] as string[],
+          triage: "relevant" as const,
+        })),
+        rawStdout: "{}",
+        engineArgv: ["scripted"],
+      };
+    });
+
+    const first = await runDiarist({
+      ticketNumber: 582,
+      cwd: project,
+      blocks: [blockA],
+      collector,
+    });
+    assert.equal(first.freshCount, 1);
+    assert.equal(first.appended, 1);
+    assert.deepEqual(seenIds[0], ["u-a"]);
+
+    const second = await runDiarist({
+      ticketNumber: 582,
+      cwd: project,
+      blocks: [blockA, blockB],
+      collector,
+    });
+    assert.equal(second.freshCount, 1, "only the new block is fresh");
+    assert.equal(second.appended, 1);
+    assert.deepEqual(seenIds[1], ["u-b"], "collector must not re-see u-a");
+    assert.equal(seenSizes[1], 1);
+
+    const third = await runDiarist({
+      ticketNumber: 582,
+      cwd: project,
+      blocks: [blockA, blockB],
+      collector,
+    });
+    assert.equal(third.freshCount, 0);
+    assert.equal(third.collectorStatus, "skipped-no-fresh");
+    assert.equal(seenSizes.length, 2, "collector not invoked when no fresh");
+
+    const read = await readTicketProvenance(582, project);
+    assert.equal(read.entries.length, 2);
+  });
+});
+
 test("runDiarist: LLM receives blocks without ticket/keyword (no mechanical prose gate)", async () => {
   await withHermeticHome({ prefix: "ak-diarist-fullsrc-" }, async ({ home }) => {
     const project = join(home, "proj");
@@ -226,14 +295,16 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
     assert.equal(read1.entries[0]!.basis.method, "llm-semantic");
     assert.equal(read1.entries[0]!.transcript, good);
 
-    // Second court run — identity idempotent, still one reader entry.
+    // Second court run — no fresh blocks; collector skipped; reader entry unchanged.
     const second = await runDiarist({
       ticketNumber: 582,
       cwd: project,
       blocks,
       collector,
     });
-    assert.equal(second.appended, 1); // accepted projection count this pass
+    assert.equal(second.freshCount, 0);
+    assert.equal(second.collectorStatus, "skipped-no-fresh");
+    assert.equal(second.appended, 0);
     const read2 = await readTicketProvenance(582, project);
     assert.equal(read2.entries.length, 1);
   });

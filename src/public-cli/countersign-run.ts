@@ -40,6 +40,8 @@ export type CountersignRunEnv = PostAdmissionEnv & {
   diaristCollector?: DiaristLlmCollector | null;
   /** Test seam: observe diarist result without changing caller face. */
   onDiaristResult?: (result: DiaristRunResult) => void;
+  /** Test seam: override Claude projects root for diarist source enum. */
+  projectsRoot?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
