@@ -259,6 +259,7 @@ test("every packaged role seals through the production ledger host", async () =>
     { role: "merger" as const, details: { status: "escalate", attemptId: "a", diagnosis: "d", report: "r" }, status: "escalate" },
     { role: "notary" as const, details: { status: "pass", findings: [] }, status: "pass" },
     { role: "countersign" as const, details: { countersignStatus: "converged" }, status: "converged" },
+    { role: "gleaner-left" as const, details: { status: "completed", findings: [] }, status: "completed" },
     // acceptedFacts(Collector) → collected — never the fallback "accepted"
     { role: "collector" as const, details: { groups: [] }, status: "collected" },
   ];

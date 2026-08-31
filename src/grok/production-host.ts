@@ -186,6 +186,7 @@ export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRunt
     loadDoctorCase,
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
+    loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),

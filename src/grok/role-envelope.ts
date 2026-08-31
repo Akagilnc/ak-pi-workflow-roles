@@ -83,6 +83,9 @@ export function projectGrokActivationFlags(request: RoleTurnRequest): Map<string
   if (activation.role === "notary" && activation.ticketNumber !== undefined) {
     flags.set("ak-notary-ticket-number", String(activation.ticketNumber));
   }
+  if (activation.role === "gleaner-left") {
+    flags.set("ak-gleaner-left-base", activation.baseRevision);
+  }
   if (activation.role === "collector") {
     flags.set("ak-collector-repo", activation.repo);
     flags.set("ak-collector-pr", activation.pr);

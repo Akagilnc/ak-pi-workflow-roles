@@ -92,6 +92,11 @@ import {
   validateRecordedCountersignOutput,
 } from "../countersign-contracts.ts";
 import {
+  GLEANER_LEFT_OUTPUT_TOOL_NAME,
+  gleanerLeftDecisiveFacts,
+  validateRecordedGleanerLeftOutput,
+} from "../gleaner-left-contracts.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -122,6 +127,7 @@ import {
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
   type AdmittedCountersignInvocation,
+  type AdmittedGleanerLeftInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -3254,6 +3260,102 @@ export async function trySettleCountersignTerminalResult(
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulCountersignTerminalResult(admitted, authority);
+}
+
+/** Lawful Gleaner-Left accepted outcome (completed 弹章, #502). */
+export type LawfulGleanerLeftRoleOutcome = {
+  kind: "accepted";
+  role: "gleaner-left";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "gleaner-left") {
+    let acceptedNonUsable: unknown | undefined;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(
+        entries,
+        index,
+        message,
+        GLEANER_LEFT_OUTPUT_TOOL_NAME,
+      );
+      if (residual !== undefined) {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false },
+        }, authority);
+      }
+      if (
+        acceptedNonUsable === undefined &&
+        message.toolName === GLEANER_LEFT_OUTPUT_TOOL_NAME &&
+        isAcceptedPackagedRoleTerminalResult(message)
+      ) {
+        try {
+          validateRecordedGleanerLeftOutput(message.details);
+        } catch {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== undefined) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: "左拾遗回执无显式 completed",
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
+      }, authority);
+    }
+    return undefined;
+  }
+  const output = validateRecordedGleanerLeftOutput(roleOutcome.decisiveFacts);
+  const accepted: LawfulGleanerLeftRoleOutcome = {
+    kind: "accepted",
+    role: "gleaner-left",
+    status: roleOutcome.status,
+    decisiveFacts: gleanerLeftDecisiveFacts(output),
+  };
+  const navigator = extractNavigatorFact(entries);
+  return withOptionalGateProjection(
+    {
+      roleOutcome: accepted,
+      navigator,
+      artifacts: [],
+      runId: admitted.runId,
+    },
+    sessionDirectory,
+  );
+}
+
+/** Settle a lawful Gleaner-Left Terminal from the admitted session. */
+export async function settleGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulGleanerLeftTerminalResult(admitted, authority);
+  if (settled === undefined) {
+    throw new Error(
+      "Gleaner-Left Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Gleaner-Left Terminal; undefined only for genuine absence. */
+export async function trySettleGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulGleanerLeftTerminalResult(admitted, authority);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

@@ -45,6 +45,7 @@ import {
   parseCoderArgv,
   parseCollectorArgv,
   parseCountersignArgv,
+  parseGleanerLeftArgv,
   parseDoctorArgv,
   parseFixerArgv,
   parseJudgeArgv,
@@ -67,6 +68,7 @@ import {
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicCountersign } from "./countersign-run.ts";
+import { runPublicGleanerLeft } from "./gleaner-left-run.ts";
 import { ONE_SHOT_ROLES } from "../packaged-role-registry.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
@@ -110,6 +112,7 @@ export type { CliIo } from "./cli-io.ts";
 export const PUBLIC_ROLE_ARGV = {
   judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
   countersign: { parse: parseCountersignArgv, options: optionsForOwner("countersign") },
+  "gleaner-left": { parse: parseGleanerLeftArgv, options: optionsForOwner("gleaner-left") },
   coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
   fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
   collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
@@ -317,7 +320,7 @@ function resolveRoleTurnHost(
 }
 
 type RoleEnvironmentOptions = {
-  role: "judge" | "coder" | "fixer" | "reviewer" | "merger" | "collector" | "doctor" | "notary" | "countersign";
+  role: PublicCallableRole;
   home: string;
   agentDir: string;
   cwd: string;
@@ -1230,6 +1233,31 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: "countersign", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.countersign.parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Gleaner-Left pre-merge memorial run path (#502 / ADR 0067) — one-shot.
+    if (parsed.command === "gleaner-left") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "gleaner-left",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicGleanerLeft(
+        parsed.args,
+        createRoleEnvironment(env, { role: "gleaner-left", home, agentDir, cwd, credentials, seat, config }),
+        io,
+        PUBLIC_ROLE_ARGV["gleaner-left"].parse,
       );
       return {
         exitCode: result.exitCode,

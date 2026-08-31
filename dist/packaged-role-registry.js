@@ -6,6 +6,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.js";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.js";
 import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.js";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.js";
+import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.js";
 const NOTARY_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/notary.md",
@@ -114,13 +115,27 @@ const PUBLIC_ROLE_RECORDS = [
     phaseFlag: void 0,
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/countersign.md"]
+  },
+  {
+    role: "gleaner-left",
+    phases: [null],
+    outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    inputFlag: void 0,
+    phaseFlag: void 0,
+    activationStage: "load-and-install",
+    sessionMaterials: [
+      "CLAUDE.md",
+      "souls/gleaner-left.md",
+      "souls/quality-law.md"
+    ]
   }
 ];
 const ONE_SHOT_ROLES = [
   "collector",
   "doctor",
   "notary",
-  "countersign"
+  "countersign",
+  "gleaner-left"
 ];
 const PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
 function packagedRoleMetadata(role) {

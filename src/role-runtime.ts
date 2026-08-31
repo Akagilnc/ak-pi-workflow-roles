@@ -62,6 +62,11 @@ import {
   type CountersignRuntimeDependencies,
 } from "./countersign-role.ts";
 import { COUNTERSIGN_ACCEPTED_TEXT } from "./countersign-contracts.ts";
+import {
+  GLEANER_LEFT_TOOL_SPEC,
+  type GleanerLeftRuntimeDependencies,
+} from "./gleaner-left-role.ts";
+import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_BASE_FLAG } from "./gleaner-left-contracts.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -141,6 +146,14 @@ const NOTARY_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: NOTARY_TICKET_FLAG.name,
     definition: NOTARY_TICKET_FLAG.definition,
+  }),
+] as const);
+
+/** Gleaner-left private transport: comparison-base revision (ADR 0018 / #502). */
+const GLEANER_LEFT_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: GLEANER_LEFT_BASE_FLAG.name,
+    definition: GLEANER_LEFT_BASE_FLAG.definition,
   }),
 ] as const);
 
@@ -419,6 +432,7 @@ type ActivationRuntime = {
   /** Envelope decodes Notary ticket flag inside the activation stage (ADR 0018). */
   decodeNotaryAdmitted(): import("./notary-role.ts").NotaryAdmittedTicket | undefined;
   countersign: { activate(): Promise<void> };
+  gleanerLeft: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -463,6 +477,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
       },
     };
     case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
+    case "gleaner-left": return { id: "load-and-install", run: async () => runtime.gleanerLeft.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -547,6 +562,7 @@ export type RoleRuntimeDependencies = {
   loadNotarySoul?(): Promise<string>;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadCountersignSoul?(): Promise<string>;
+  loadGleanerLeftSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -855,6 +871,30 @@ function createFiledOfficerRuntime(
   };
 }
 
+export function createGleanerLeftRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: GleanerLeftRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "gleaner-left",
+      tool: GLEANER_LEFT_TOOL_SPEC,
+      acceptedText: GLEANER_LEFT_ACCEPTED_TEXT,
+      soulTag: "gleaner-left",
+    },
+    dependencies,
+  );
+}
+
+function decodeGleanerLeftBase(getFlag: (name: string) => unknown): string {
+  const baseRevision = getFlag(GLEANER_LEFT_BASE_FLAG.name);
+  if (typeof baseRevision !== "string" || !baseRevision.trim()) {
+    throw new Error("Gleaner-left role requires --ak-gleaner-left-base");
+  }
+  return baseRevision;
+}
+
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,
   dependencies: CountersignRuntimeDependencies,
@@ -914,6 +954,9 @@ export function createRoleRuntimeExtension(
       roleHost.registerFlag(flag.name, flag.definition);
     }
     for (const flag of NOTARY_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of GLEANER_LEFT_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
 
@@ -1339,6 +1382,18 @@ export function createRoleRuntimeExtension(
         return dependencies.loadCountersignSoul();
       },
     }, hostActions);
+    const gleanerLeftRuntime = createGleanerLeftRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadGleanerLeftSoul) throw new Error("Gleaner-left runtime dependencies are not configured");
+        return dependencies.loadGleanerLeftSoul();
+      },
+    });
+    const gleanerLeft = {
+      async activate() {
+        decodeGleanerLeftBase((name) => envelopeHost.host.getFlag(name));
+        return gleanerLeftRuntime.activate();
+      },
+    };
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1486,6 +1541,7 @@ export function createRoleRuntimeExtension(
         doctor,
         notary,
         countersign,
+        gleanerLeft,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);
