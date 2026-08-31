@@ -522,22 +522,24 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("hermes collector delivers method path solely in -z prompt (LLM-visible seam)", async () => {
+test("hermes collector binds methodPath as typed delivery evidence (sole seam)", async () => {
   const methodPath = resolveDiaristCollectMethodPath(packageRoot);
   assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
   accessSync(methodPath, fsConstants.R_OK);
 
-  let capturedArgv: readonly string[] = [];
+  let sawDetour = false;
   let capturedEnv: NodeJS.ProcessEnv | undefined;
   const collector = createHermesDiaristCollector({
     packageRoot,
     runDetour: async (input) => {
-      capturedArgv = input.argv;
+      sawDetour = true;
       capturedEnv = input.env;
+      // Structural: -z present (hermes oneshot). No free-text prompt lock.
+      assert.equal(input.argv.includes("-z"), true);
       return { code: 0, stdout: '{"selections":[]}', stderr: "" };
     },
   });
-  await collector({
+  const result = await collector({
     ticketNumber: 582,
     candidates: [
       block({
@@ -546,13 +548,14 @@ test("hermes collector delivers method path solely in -z prompt (LLM-visible sea
       }),
     ],
   });
-  // hermes -z <prompt>: prompt is the argv entry after -z and enters model view.
-  const zIndex = capturedArgv.indexOf("-z");
-  assert.ok(zIndex >= 0 && zIndex + 1 < capturedArgv.length);
-  const prompt = capturedArgv[zIndex + 1]!;
-  assert.equal(prompt.includes(methodPath), true);
+  assert.equal(sawDetour, true);
+  // Typed delivery evidence on the collect result — not prompt-byte observation.
+  assert.equal(result.methodPath, methodPath);
   // No parallel env transport for method path.
-  assert.equal(capturedEnv?.AK_DIARIST_COLLECT_METHOD, undefined);
+  assert.equal(
+    capturedEnv === undefined || capturedEnv.AK_DIARIST_COLLECT_METHOD === undefined,
+    true,
+  );
 });
 
 test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {

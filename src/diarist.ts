@@ -7,6 +7,7 @@ import { extractReferencedAdrPaths } from "./adr-path-refs.ts";
 import {
   createGhApiRunner,
   createGhCollectorGitHubTransport,
+  projectGhIssueBody,
   type CollectorGitHubTransport,
   type GhApiRunner,
 } from "./collector-github.ts";
@@ -126,26 +127,10 @@ export type DiaristRunResult = {
   readonly llmRawStdout?: string;
 };
 
-function isAmbiguousGhFailure(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { ambiguousGhFailure?: unknown }).ambiguousGhFailure === true
-  );
-}
-
-function isGhProcessStartFailure(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const code = (error as NodeJS.ErrnoException).code;
-  if (code === "ENOENT") return true;
-  const syscall = (error as NodeJS.ErrnoException).syscall;
-  return typeof syscall === "string" && (syscall === "spawn" || syscall.startsWith("spawn "));
-}
-
 /**
  * Production issue-face capability over shared gh execution seams.
- * Bound-ticket diarist does NOT reuse Reviewer Spec soft-fetch: tracker/gh/issue
- * failures throw typed DiaristIssueSourceError (caller persists diagnostic + decides).
+ * Body fetch/parse is sole-owned by projectGhIssueBody; this maps hard disposition
+ * (typed DiaristIssueSourceError) instead of Reviewer Spec soft-undefined.
  * Comment list failures after body success keep true cause under comments-failed.
  */
 export function createDiaristIssueFaceFetcher(options?: {
@@ -155,64 +140,40 @@ export function createDiaristIssueFaceFetcher(options?: {
   const runner = options?.runner ?? createGhApiRunner();
   const transport = options?.transport ?? createGhCollectorGitHubTransport();
   return async (input) => {
-    const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
-    let response;
-    try {
-      response = await runner(
-        ["api", "--hostname", "github.com", "--include", "-X", "GET", path],
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
-    } catch (error) {
-      if (isAmbiguousGhFailure(error) || isGhProcessStartFailure(error)) {
+    const projected = await projectGhIssueBody(runner, input);
+    let body: string;
+    if (projected.status === "available") {
+      body = projected.body;
+    } else if (projected.status === "unavailable") {
+      if (projected.reason === "pull-request") {
         throw new DiaristIssueSourceError(
-          "issue-unavailable",
-          `issue face unavailable for ${input.owner}/${input.repo}#${input.ticketNumber} (tracker/gh transport)`,
-          { cause: error },
+          "issue-is-pull-request",
+          `ticket #${input.ticketNumber} resolves to a pull request, not an issue face`,
+          projected.cause === undefined ? undefined : { cause: projected.cause },
         );
       }
       throw new DiaristIssueSourceError(
         "issue-unavailable",
-        `issue face fetch failed for ${input.owner}/${input.repo}#${input.ticketNumber}`,
-        { cause: error },
+        `issue face unavailable for ${input.owner}/${input.repo}#${input.ticketNumber}`,
+        projected.cause === undefined ? undefined : { cause: projected.cause },
       );
-    }
-    if (response.status < 200 || response.status >= 300) {
-      throw new DiaristIssueSourceError(
-        "issue-unavailable",
-        `issue face HTTP ${response.status} for ${input.owner}/${input.repo}#${input.ticketNumber}`,
-      );
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(response.bodyText);
-    } catch (error) {
+    } else if (projected.reason === "not-json") {
       throw new DiaristIssueSourceError(
         "issue-not-json",
         `issue face payload is not JSON for ${input.owner}/${input.repo}#${input.ticketNumber}`,
-        { cause: error },
+        projected.cause === undefined ? undefined : { cause: projected.cause },
       );
-    }
-    if (typeof parsed !== "object" || parsed === null) {
+    } else if (projected.reason === "not-object") {
       throw new DiaristIssueSourceError(
         "issue-not-object",
         `issue face payload must be a JSON object for ${input.owner}/${input.repo}#${input.ticketNumber}`,
       );
-    }
-    // Issues endpoint also returns PRs — not an issue face for diarist sources.
-    if (Object.hasOwn(parsed, "pull_request")) {
-      throw new DiaristIssueSourceError(
-        "issue-is-pull-request",
-        `ticket #${input.ticketNumber} resolves to a pull request, not an issue face`,
-      );
-    }
-    const bodyRaw = (parsed as { body?: unknown }).body;
-    if (bodyRaw !== undefined && bodyRaw !== null && typeof bodyRaw !== "string") {
+    } else {
       throw new DiaristIssueSourceError(
         "issue-body-invalid",
         `issue face body must be string or null for ${input.owner}/${input.repo}#${input.ticketNumber}`,
       );
     }
-    const body = typeof bodyRaw === "string" ? bodyRaw : "";
     let listed;
     try {
       listed = await transport.listIssueComments({

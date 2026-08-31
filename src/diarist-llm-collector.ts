@@ -39,6 +39,11 @@ export type DiaristLlmCollectResult = {
   /** Raw engine stdout retained for diagnostics (not a gate). */
   readonly rawStdout: string;
   readonly engineArgv: readonly string[];
+  /**
+   * Absolute path of owner-domain method material bound for this collect.
+   * Typed delivery evidence — production hermes collector always sets it.
+   */
+  readonly methodPath?: string;
 };
 
 export type DiaristLlmCollector = (input: {
@@ -275,7 +280,9 @@ export function createHermesDiaristCollector(
     return {
       selections,
       rawStdout: result.stdout,
+      // Prompt bytes redacted — method path is the typed delivery evidence.
       engineArgv: argv.map((part, i) => (i === argv.indexOf(prompt) ? "<prompt>" : part)),
+      methodPath,
     };
   };
 }
