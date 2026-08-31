@@ -57,11 +57,8 @@ test("production isolation binding shares one home for GROK_HOME, auth, and bina
       await readFile(join(binding.controlledHome, "auth.json"), "utf8"),
       "SECRET-AUTH\n",
     );
-    // Packaged method skills are on the controlled home skills.paths so first-party
-    // inspect can observe AK material under packageRoot (external install path).
-    const config = await readFile(join(binding.controlledHome, "config.toml"), "utf8");
-    assert.match(config, /^\[skills\]$/m);
-    assert.match(config, new RegExp(join(packageRoot, "resources", "methods").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    // skills.paths observability is proven via inspect/activation structured fields in
+    // test/integration/grok-project-instruction-provenance.test.ts (not generated TOML text).
 
     // Ephemeral root is not the operator home; binary still resolves from operator home.
     assert.notEqual(binding.controlledHome, operatorHome);
