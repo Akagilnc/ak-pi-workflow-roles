@@ -363,17 +363,15 @@ test("public Notary --ticket: admit→activation→agent-start reading material 
       },
     });
     try {
-      // Model reading material (agent-start systemPrompt) carries the same typed bound.
+      // Agent-start consumption seam: typed readingMaterial from before_agent_start (not prompt text).
       const expectedBound = projectNotarySessionBound({
         sourceRun: admitted.sourceRun,
         ticketNumber: 582,
       });
-      assert.equal(expectedBound.ticketNumber, 582);
-      // Structured JSON of the typed bound — not a free-text template lock.
+      assert.deepEqual(prepared.agentStartReadingMaterials, [expectedBound]);
       assert.equal(
-        prepared.systemPrompt.includes(JSON.stringify(expectedBound)),
-        true,
-        "agent-start systemPrompt must embed typed session bound with ticket",
+        (prepared.agentStartReadingMaterials[0] as { ticketNumber?: number }).ticketNumber,
+        582,
       );
 
       // Session custom entry is the envelope durable twin of the flag-derived bound.

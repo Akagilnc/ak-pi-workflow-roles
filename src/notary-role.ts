@@ -171,6 +171,7 @@ export function createNotaryRoleRuntime(
           },
         });
         // Evidence assembly only (ADR 0018): soul + bound into prompt. Session write is envelope-owned.
+        // readingMaterial is the same typed bound that feeds the prompt (machine face; not free text).
         pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
@@ -187,6 +188,7 @@ export function createNotaryRoleRuntime(
               soul: activation.soul,
               bound,
             }),
+            readingMaterial: bound,
           };
         });
       }
