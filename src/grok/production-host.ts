@@ -31,8 +31,11 @@ import {
 } from "./role-turn-host.ts";
 import { createGrokSessionIdentityAuthority } from "./session-identity.ts";
 
-/** Active turn isolation visible to inspect/connect and to the test inner-host seam. */
-export type ProductionGrokTurnIsolation = Readonly<{
+/**
+ * Authoritative production isolation binding consumed by inspect/connect and by
+ * the S6 request.home rewrite (controlledHome).
+ */
+export type ProductionGrokIsolationBinding = Readonly<{
   operatorHome: string;
   controlledHome: string;
   binary: string;
@@ -42,13 +45,6 @@ export type ProductionGrokTurnIsolation = Readonly<{
 export type ProductionGrokHostOptions = Readonly<{
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
-  /**
-   * Test seam: substitute the S6 composed adapter. Production omits this.
-   * `getTurn` is defined only during executeTurn after isolation is bound.
-   */
-  createInnerHost?: (api: {
-    getTurn: () => ProductionGrokTurnIsolation;
-  }) => RoleTurnHost;
 }>;
 
 function resolveGrokBinary(operatorHome: string): string {
@@ -57,12 +53,26 @@ function resolveGrokBinary(operatorHome: string): string {
 
 /**
  * Open the production isolation root: auth copy only, never under runDirectory.
- * Caller owns cleanup (typically turn finally).
+ * If auth copy fails after the temp root is created, the root is removed; open
+ * failure and cleanup failure both surface (AggregateError when concurrent).
  */
 export async function openProductionGrokHome(operatorHome: string): Promise<string> {
   const controlledHome = await mkdtemp(join(tmpdir(), "ak-grok-home-"));
-  await prepareControlledGrokHome(operatorHome, controlledHome);
-  return controlledHome;
+  try {
+    await prepareControlledGrokHome(operatorHome, controlledHome);
+    return controlledHome;
+  } catch (error) {
+    try {
+      await rm(controlledHome, { recursive: true, force: true });
+    } catch (cleanupFailure) {
+      throw new AggregateError(
+        [error, cleanupFailure],
+        "production grok home open failed and its cleanup also failed",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 function childEnv(controlledHome: string, packageRoot: string): NodeJS.ProcessEnv {
@@ -70,6 +80,60 @@ function childEnv(controlledHome: string, packageRoot: string): NodeJS.ProcessEn
     ...controlledGrokChildEnv(process.env, controlledHome),
     AK_PACKAGE_ROOT: packageRoot,
   };
+}
+
+/**
+ * Single production isolation binding: auth root, GROK_HOME/HOME, and binary
+ * resolution. S6 must receive `controlledHome` as request.home so the Fixer
+ * seatbelt hangs on the same root (proven by S6 seatbelt tests separately).
+ */
+export async function bindProductionGrokIsolation(
+  operatorHome: string,
+  packageRoot: string,
+): Promise<ProductionGrokIsolationBinding> {
+  const controlledHome = await openProductionGrokHome(operatorHome);
+  return {
+    operatorHome,
+    controlledHome,
+    binary: resolveGrokBinary(operatorHome),
+    env: childEnv(controlledHome, packageRoot),
+  };
+}
+
+/**
+ * Bind isolation, run the turn body, always attempt controlledHome cleanup.
+ * Success, typed-result, and throw paths all clean up. Cleanup failure is never
+ * silenced; primary + cleanup failures surface together as AggregateError.
+ */
+export async function withProductionGrokIsolation<T>(
+  operatorHome: string,
+  packageRoot: string,
+  run: (binding: ProductionGrokIsolationBinding) => Promise<T>,
+): Promise<T> {
+  let binding: ProductionGrokIsolationBinding | undefined;
+  let primaryFailure: unknown;
+  try {
+    binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
+    return await run(binding);
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
+  } finally {
+    if (binding !== undefined) {
+      try {
+        await rm(binding.controlledHome, { recursive: true, force: true });
+      } catch (cleanupFailure) {
+        if (primaryFailure !== undefined) {
+          throw new AggregateError(
+            [primaryFailure, cleanupFailure],
+            "production grok isolation turn and cleanup failed",
+            { cause: primaryFailure },
+          );
+        }
+        throw cleanupFailure;
+      }
+    }
+  }
 }
 
 /** Host-neutral packaged role runtime deps for the Grok parent-process envelope. */
@@ -131,63 +195,50 @@ async function recordGrokCapabilities(
 export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOptions): RoleTurnHost {
   const { packageRoot, principalAuthority } = options;
   // Single-slot turn isolation; outer serial keeps operator/controlled pairing intact.
-  let turn: ProductionGrokTurnIsolation | undefined;
+  let turn: ProductionGrokIsolationBinding | undefined;
   let serial = Promise.resolve();
-  const getTurn = (): ProductionGrokTurnIsolation => {
-    if (turn === undefined) {
-      throw new Error("production grok turn isolation is not active");
-    }
-    return turn;
-  };
 
-  const inner =
-    options.createInnerHost?.({ getTurn }) ??
-    createComposedGrokRoleTurnHost({
-      sessionIdentity: createGrokSessionIdentityAuthority(principalAuthority),
-      roleRuntimeDependencies: createGrokRoleRuntimeDependencies(packageRoot),
-      recordCapabilities: recordGrokCapabilities,
-      async inspect(request) {
-        const active = getTurn();
-        return inspectControlledGrok({
-          binary: active.binary,
-          cwd: request.cwd,
-          env: active.env,
-          packageRoot,
-        });
-      },
-      async connect(request) {
-        const active = getTurn();
-        return connectGrokAcpStdio({
-          binary: active.binary,
-          cwd: request.cwd,
-          env: active.env,
-          ...(request.model === undefined ? {} : { model: request.model.model }),
-        });
-      },
-    });
+  const inner = createComposedGrokRoleTurnHost({
+    sessionIdentity: createGrokSessionIdentityAuthority(principalAuthority),
+    roleRuntimeDependencies: createGrokRoleRuntimeDependencies(packageRoot),
+    recordCapabilities: recordGrokCapabilities,
+    async inspect(request) {
+      if (turn === undefined) {
+        throw new Error("production grok inspect requires an active isolated turn");
+      }
+      return inspectControlledGrok({
+        binary: turn.binary,
+        cwd: request.cwd,
+        env: turn.env,
+        packageRoot,
+      });
+    },
+    async connect(request) {
+      if (turn === undefined) {
+        throw new Error("production grok connect requires an active isolated turn");
+      }
+      return connectGrokAcpStdio({
+        binary: turn.binary,
+        cwd: request.cwd,
+        env: turn.env,
+        ...(request.model === undefined ? {} : { model: request.model.model }),
+      });
+    },
+  });
 
   return {
     executeTurn(request) {
-      const execution = serial.then(async () => {
-        const operatorHome = request.home;
-        const controlledHome = await openProductionGrokHome(operatorHome);
-        // One controlledHome feeds child env, auth root, and S6 request.home.
-        turn = {
-          operatorHome,
-          controlledHome,
-          binary: resolveGrokBinary(operatorHome),
-          env: childEnv(controlledHome, packageRoot),
-        };
-        try {
-          // S6 seatbelt hangs on request.home — pass the same isolated root as GROK_HOME.
-          return await inner.executeTurn({ ...request, home: controlledHome });
-        } finally {
-          turn = undefined;
-          await rm(controlledHome, { recursive: true, force: true }).catch(() => {
-            /* Preserve the original turn result; tmp cleanup is best-effort. */
-          });
-        }
-      });
+      const execution = serial.then(() =>
+        withProductionGrokIsolation(request.home, packageRoot, async (binding) => {
+          turn = binding;
+          try {
+            // S6 seatbelt hangs on request.home — same isolated root as GROK_HOME.
+            return await inner.executeTurn({ ...request, home: binding.controlledHome });
+          } finally {
+            turn = undefined;
+          }
+        }),
+      );
       serial = execution.then(
         () => undefined,
         () => undefined,
