@@ -22,6 +22,7 @@ import {
 import {
   createHermesDiaristCollector,
   createScriptedDiaristCollector,
+  DIARIST_COLLECT_METHOD_ENV,
   DIARIST_COLLECT_METHOD_RELATIVE,
   resolveDiaristCollectMethodPath,
 } from "../../src/diarist-llm-collector.ts";
@@ -524,20 +525,20 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("hermes collector delivers methodPath as typed result field", async () => {
+test("hermes collector delivers method path on engine child env coordinate", async () => {
   const methodPath = resolveDiaristCollectMethodPath(packageRoot);
   assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
   accessSync(methodPath, fsConstants.R_OK);
 
+  let seenEnv: NodeJS.ProcessEnv | undefined;
   const collector = createHermesDiaristCollector({
     packageRoot,
-    runDetour: async () => ({
-      code: 0,
-      stdout: '{"selections":[]}',
-      stderr: "",
-    }),
+    runDetour: async (input) => {
+      seenEnv = input.env;
+      return { code: 0, stdout: '{"selections":[]}', stderr: "" };
+    },
   });
-  const result = await collector({
+  await collector({
     ticketNumber: 582,
     candidates: [
       block({
@@ -546,8 +547,8 @@ test("hermes collector delivers methodPath as typed result field", async () => {
       }),
     ],
   });
-  // Typed delivery coordinate only — no free-text / argv body observation.
-  assert.equal(result.methodPath, methodPath);
+  // Formal env coordinate received by the engine process (not a self-reported field).
+  assert.equal(seenEnv?.[DIARIST_COLLECT_METHOD_ENV], methodPath);
 });
 
 test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {

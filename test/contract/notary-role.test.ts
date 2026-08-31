@@ -7,11 +7,12 @@ import {
   retainNotarySubmission,
 } from "../../src/notary-contracts.ts";
 import {
-  assembleNotaryAgentStart,
   createNotaryRoleRuntime,
+  NOTARY_SESSION_BOUND_ENTRY,
   projectNotarySessionBound,
   readNotaryTicketFlag,
 } from "../../src/notary-role.ts";
+import type { HostContext } from "../../src/host-contracts.ts";
 
 const LOCATOR = {
   runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -23,15 +24,42 @@ const LOCATOR = {
 function notaryHarness() {
   const flags = new Map<string, string>();
   const tools = new Map<string, { name: string; execute: Function; parameters?: unknown }>();
-  let beforeStart: ((event: { systemPrompt: string }) => unknown) | undefined;
+  const customEntries: Array<{ type: string; data: unknown }> = [];
+  let beforeStart:
+    | ((event: { systemPrompt: string }, ctx: HostContext) => unknown)
+    | undefined;
   const pi = {
     registerFlag(name: string) { flags.set(name, ""); },
     getFlag(name: string) { return flags.get(name); },
     registerTool(tool: { name: string; execute: Function; parameters?: unknown }) { tools.set(tool.name, tool); },
-    on(event: string, handler: (event: { systemPrompt: string }) => unknown) { if (event === "before_agent_start") beforeStart = handler; },
+    on(
+      event: string,
+      handler: (event: { systemPrompt: string }, ctx: HostContext) => unknown,
+    ) {
+      if (event === "before_agent_start") beforeStart = handler;
+    },
     getAllTools() { return [{ name: NOTARY_OUTPUT_TOOL_NAME }, { name: "bash" }, { name: "read" }]; },
   };
-  return { flags, tools, pi, beforeStart: () => beforeStart };
+  function makeCtx(): HostContext {
+    return {
+      cwd: "/tmp",
+      mode: "test",
+      model: undefined,
+      sessionManager: {
+        getLeafEntry: () => undefined,
+        getLeafId: () => null,
+        getEntries: () => [],
+        getSessionDir: () => "/tmp",
+        getSessionFile: () => undefined,
+        appendCustomEntry(type: string, data?: unknown) {
+          customEntries.push({ type, data });
+          return undefined;
+        },
+      },
+      abort() {},
+    };
+  }
+  return { flags, tools, pi, beforeStart: () => beforeStart, customEntries, makeCtx };
 }
 
 test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is", () => {
@@ -46,33 +74,34 @@ test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is
   assert.deepEqual(retainNotarySubmission(raw), raw);
 });
 
-test("readNotaryTicketFlag + projectNotarySessionBound + assembleNotaryAgentStart typed ticket", () => {
-  assert.equal(readNotaryTicketFlag(undefined), undefined);
-  assert.equal(readNotaryTicketFlag(""), undefined);
-  assert.equal(readNotaryTicketFlag("582"), 582);
-  assert.throws(() => readNotaryTicketFlag("0"));
-  assert.throws(() => readNotaryTicketFlag("nope"));
+test("Notary activate flag→before_agent_start writes typed session bound with ticket", async () => {
+  const h = notaryHarness();
+  const runtime = createNotaryRoleRuntime(
+    h.pi as never,
+    { loadSoul: async () => "NOTARY LAW", loadSourceRunLocator: async () => LOCATOR },
+    { failInfrastructure(error) { throw error; } },
+  );
+  h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
+  h.flags.set("ak-notary-ticket-number", "582");
+  await runtime.activate();
+  assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
 
-  const bound = projectNotarySessionBound({
-    sourceRun: LOCATOR,
-    ticketNumber: 582,
-  });
+  const handler = h.beforeStart();
+  assert.ok(handler);
+  // Real agent-start path: handler runs and retains typed bound on the session ledger.
+  handler!({ systemPrompt: "BASE" }, h.makeCtx());
+  assert.equal(h.customEntries.length, 1);
+  assert.equal(h.customEntries[0]!.type, NOTARY_SESSION_BOUND_ENTRY);
+  const bound = h.customEntries[0]!.data as ReturnType<typeof projectNotarySessionBound>;
   assert.equal(bound.ticketNumber, 582);
-  assert.equal(bound.sourceRun, LOCATOR);
-
-  const assembled = assembleNotaryAgentStart({
-    baseSystemPrompt: "BASE",
-    soul: "LAW",
+  assert.deepEqual(bound.sourceRun, LOCATOR);
+  assert.deepEqual(
     bound,
-  });
-  // Typed half of the production seam — same object encoded into systemPrompt.
-  assert.equal(assembled.bound.ticketNumber, 582);
-  assert.equal(assembled.bound, bound);
-  assert.equal(typeof assembled.systemPrompt, "string");
-  assert.ok(assembled.systemPrompt.length > 0);
+    projectNotarySessionBound({ sourceRun: LOCATOR, ticketNumber: 582 }),
+  );
 });
 
-test("Notary activate: blank ticket unbound; valid ticket wires flag; invalid ticket fails", async () => {
+test("Notary activate rejects invalid ticket flag; blank stays unbound in session bound", async () => {
   const h = notaryHarness();
   const runtime = createNotaryRoleRuntime(
     h.pi as never,
@@ -81,15 +110,12 @@ test("Notary activate: blank ticket unbound; valid ticket wires flag; invalid ti
   );
   h.flags.set("ak-notary-source-run", LOCATOR.runDirectory);
   await runtime.activate();
-  assert.ok(h.tools.has(NOTARY_OUTPUT_TOOL_NAME));
-  assert.ok(h.beforeStart());
+  h.beforeStart()!({ systemPrompt: "BASE" }, h.makeCtx());
+  const unbound = h.customEntries[0]!.data as { ticketNumber?: number };
+  assert.equal(unbound.ticketNumber, undefined);
 
-  // Valid ticket flag is accepted on re-activate (readNotaryTicketFlag on activate path).
-  h.flags.set("ak-notary-ticket-number", "582");
-  await runtime.activate();
-  assert.ok(h.beforeStart());
-
-  // Invalid non-empty ticket fails honestly on activate (same reader as bound assembly).
   h.flags.set("ak-notary-ticket-number", "nope");
   await assert.rejects(() => runtime.activate());
+  assert.equal(readNotaryTicketFlag("582"), 582);
+  assert.equal(readNotaryTicketFlag(""), undefined);
 });

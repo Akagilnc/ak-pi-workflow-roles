@@ -39,9 +39,10 @@ export type DiaristLlmCollectResult = {
   /** Raw engine stdout retained for diagnostics (not a gate). */
   readonly rawStdout: string;
   readonly engineArgv: readonly string[];
-  /** Packaged method material path delivered to the engine (hermes collector). */
-  readonly methodPath?: string;
 };
+
+/** Child-env key carrying the absolute diarist-collect method path into the engine process. */
+export const DIARIST_COLLECT_METHOD_ENV = "AK_DIARIST_COLLECT_METHOD" as const;
 
 export type DiaristLlmCollector = (input: {
   readonly ticketNumber: number;
@@ -257,10 +258,16 @@ export function createHermesDiaristCollector(
       "--no-restore-cwd",
       "--ignore-rules",
     ];
+    // Formal delivery coordinate: method path on child env (engine process sees it).
+    // Prompt still names the path neutrally for the model (ADR 0073 path delivery).
+    const childEnv: NodeJS.ProcessEnv = {
+      ...(options.env ?? process.env),
+      [DIARIST_COLLECT_METHOD_ENV]: methodPath,
+    };
     const result = await runDetour({
       argv,
       cwd: options.cwd ?? process.cwd(),
-      ...(options.env === undefined ? {} : { env: options.env }),
+      env: childEnv,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     if (result.code !== 0) {
@@ -276,7 +283,6 @@ export function createHermesDiaristCollector(
       selections,
       rawStdout: result.stdout,
       engineArgv: argv.map((part, i) => (i === argv.indexOf(prompt) ? "<prompt>" : part)),
-      methodPath,
     };
   };
 }
