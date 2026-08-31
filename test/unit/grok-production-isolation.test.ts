@@ -6,7 +6,7 @@
  * file does not claim end-to-end seatbelt installation.
  */
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,8 +18,16 @@ import {
 } from "../../src/grok/production-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
+const CONTROLLED_HOME_PREFIX = "ak-grok-home-";
+
 function under(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
+}
+
+/** Snapshot of production controlled-home temp dirs currently under os.tmpdir(). */
+async function listControlledHomeTemps(): Promise<string[]> {
+  const names = await readdir(tmpdir());
+  return names.filter((name) => name.startsWith(CONTROLLED_HOME_PREFIX)).sort();
 }
 
 async function seedOperatorHome(): Promise<string> {
@@ -37,7 +45,7 @@ test("production isolation binding shares one home for GROK_HOME, auth, and S6 r
     const binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
     controlledHome = binding.controlledHome;
 
-    // Single root: auth copy === child GROK_HOME/HOME === S6 request.home target.
+    // Single root: auth copy === child GROK_HOME/HOME (S6 request.home target is this same controlledHome).
     assert.equal(binding.env.GROK_HOME, binding.controlledHome);
     assert.equal(binding.env.HOME, binding.controlledHome);
     assert.equal(binding.env.AK_PACKAGE_ROOT, packageRoot);
@@ -45,8 +53,6 @@ test("production isolation binding shares one home for GROK_HOME, auth, and S6 r
       await readFile(join(binding.controlledHome, "auth.json"), "utf8"),
       "SECRET-AUTH\n",
     );
-    // Production executeTurn rewrites request.home to controlledHome — same binding.
-    assert.equal(binding.controlledHome, binding.env.GROK_HOME);
 
     // Not the operator home, not under the retained run ledger.
     assert.notEqual(binding.controlledHome, operatorHome);
@@ -113,9 +119,13 @@ test("openProductionGrokHome cleans a partial root when auth copy fails", async 
   const operatorHome = await mkdtemp(join(tmpdir(), "ak-grok-op-noauth-"));
   try {
     // No .grok/auth.json — prepareControlledGrokHome must fail after mkdtemp.
+    const before = await listControlledHomeTemps();
     await assert.rejects(() => openProductionGrokHome(operatorHome));
-    // Best observable check: a second open still works (no leaked lock) and the
-    // operator home was not written into by the failed open.
+    const after = await listControlledHomeTemps();
+    // External visible result: no new ak-grok-home-* leaked under tmpdir.
+    const leaked = after.filter((name) => !before.includes(name));
+    assert.deepEqual(leaked, []);
+    // Operator home must not absorb auth/hooks from the failed open.
     await assert.rejects(access(join(operatorHome, "auth.json")));
     await assert.rejects(access(join(operatorHome, "hooks")));
   } finally {
