@@ -991,3 +991,40 @@ test("public countersign path: substring of longer ticket number is not N → co
     assert.equal(result.admitted?.ticketNumber, undefined);
   });
 });
+
+test("public countersign path: resolver engine non-zero → controlled failure, no wash to unbound", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    // PATH hermes exits non-zero: product must settle failure, not wash to true-unbound.
+    await installHermesFixture(join(home, "bin"), { defaultExitCode: 2 });
+    const runId = "01a0sign00-0000-7000-8000-000000000p07";
+    const result = await runPublicCountersign(
+      ["裁：本庭问询。"],
+      countersignPathEnv({
+        home,
+        project,
+        runId,
+        blockTurn: true,
+      }),
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.ok(result.exitCode !== 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.admitted?.ticketNumber, undefined);
+    const coords = issuePiDurablePrincipalCoordinates({
+      cwd: project,
+      runId,
+      role: "countersign",
+      home,
+    });
+    assert.equal(
+      (await readRoleRunState(coords.runDirectory, piDurablePrincipalAuthority))
+        ?.state,
+      "terminal",
+    );
+    const inv = JSON.parse(
+      await readFile(join(coords.runDirectory, "invocation.json"), "utf8"),
+    ) as { ticketNumber?: number };
+    assert.equal(inv.ticketNumber, undefined);
+  });
+});
