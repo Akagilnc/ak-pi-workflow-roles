@@ -107,7 +107,8 @@ export type RoleTurnActivation =
     }
   | { readonly role: "doctor"; readonly casePath: string }
   | { readonly role: "notary"; readonly sourceRun: string }
-  | { readonly role: "countersign" };
+  | { readonly role: "countersign" }
+  | { readonly role: "gleaner-left" };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }

@@ -969,6 +969,8 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
       return [role, "--source-run", "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge", "--project", project];
     case "countersign":
       return [role, "--project", project, "engine axis probe"];
+    case "gleaner-left":
+      return [role, "--project", project];
     default: {
       const _exhaustive: never = role;
       throw new Error(`unexpected role: ${String(_exhaustive)}`);
@@ -978,7 +980,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 9);
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 10);
     await withTempHome(async (home) => {
       const baseProject = join(home, "project");
       await mkdir(baseProject, { recursive: true });
