@@ -102,11 +102,8 @@ test("isHeadMatchedProjectInstruction: worktree permission failure stays loud wi
     await assert.rejects(
       () => isHeadMatchedProjectInstruction(root, claudePath),
       (error: unknown) => {
-        // Must not wash into false; keep permission identity at the call boundary.
-        if (typeof error !== "object" || error === null) return false;
-        const err = error as { code?: unknown; stderr?: unknown };
-        if (err.code === "EACCES") return true;
-        return /permission denied/i.test(String(err.stderr ?? ""));
+        // Must not wash into false; typed FS errno only — no Git stderr prose oracle.
+        return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "EACCES";
       },
     );
   } finally {

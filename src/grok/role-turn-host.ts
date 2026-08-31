@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, realpath } from "node:fs/promises";
+import { copyFile, mkdir, open, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -35,9 +35,8 @@ export type GrokPreparedTurn = Readonly<{
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
   /**
-   * Resolves when the shared ledger writes ak-role-submission-closure.
-   * Grok may keep the ACP prompt open after a terminating tool; the host races
-   * this against session/prompt so a sealed receipt is not stuck on end_turn.
+   * Resolves when closeRound seals the shared ledger (ak-role-submission-closure).
+   * Observation only — acceptance waits on the typed session/prompt boundary.
    */
   whenSealed(): Promise<void>;
   dispose?(): Promise<void>;
@@ -211,7 +210,10 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
         let sessionId: string | undefined;
         let accepted = false;
         try {
-          if (inspected.akActive.length === 0 || prepared.mcpServers.length === 0) {
+          // AK injection proof is prepared MCP composition (envelope), not inspect.akActive.
+          // Inspect only classifies first-party already-active sources; external packageRoot
+          // materials reach session/new via prepare, not via Grok-native inspect paths.
+          if (prepared.mcpServers.length === 0) {
             return failure("activation", "UncontrolledGrokSession", "ak-config-missing");
           }
           connection = await config.connect(request);
@@ -268,51 +270,25 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
           let prompt = prepared.prompt;
           for (let attempt = 0; attempt < 8; attempt += 1) {
-            const promptResult = connection.request("session/prompt", {
+            const result = await connection.request("session/prompt", {
               sessionId,
               prompt: [{ type: "text", text: prompt }],
             });
-            // Seal may land while Grok keeps the prompt open after terminate.
-            // Race so acceptance is not blocked on a missing end_turn.
-            const result = await Promise.race([
-              promptResult,
-              prepared.whenSealed().then(() => ({ stopReason: "end_turn" as const, sealedEarly: true as const })),
-            ]);
             if (result.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
-            const sealedEarly = "sealedEarly" in result && result.sealedEarly === true;
-            // session/prompt resolution (or early seal) is the typed round boundary.
+            // session/prompt resolution is the sole typed round boundary before seal.
             const closure = await prepared.closeRound();
             if (closure.accepted) {
               // Wait for ACP's typed close acknowledgement before tearing down the
               // process; Stop hooks and fire-and-forget cancellation are not closure.
-              try {
-                await connection.request("session/close", { sessionId });
-              } catch (error) {
-                // Documented only for seal-early: child may already be gone when the
-                // ledger sealed before end_turn. Unknown close failures stay loud.
-                if (!sealedEarly) throw error;
-                const code = typeof error === "object" && error !== null && "code" in error
-                  ? (error as { code: unknown }).code
-                  : undefined;
-                if (
-                  code !== "acp-closed"
-                  && code !== "acp-connection-closed"
-                  && code !== "acp-write-failed"
-                ) {
-                  throw error;
-                }
-              }
+              await connection.request("session/close", { sessionId });
               accepted = true;
               return { code: 0, stderr: "", timedOut: false };
             }
             if ("failure" in closure) {
               return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
             }
-            // Rejection path still needs the live prompt to finish so Grok can resubmit
-            // in-session; if we won via sealedEarly the ledger would have accepted.
-            await promptResult.catch(() => undefined);
             prompt = `The prior terminal submission was rejected (${closure.retry.code}). Resubmit it as the sole terminal tool call. Rejected call ids: ${closure.retry.toolCallIds.join(", ") || "none"}.`;
           }
           return failure("output", "GrokAcpRoundLimit", "round-retry-limit", { sessionId });
@@ -367,30 +343,26 @@ function errnoCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-/** Spawn-level absence of the git binary — never a path-match negative. */
-function isGitBinaryMissing(error: unknown): boolean {
-  return errnoCode(error) === "ENOENT";
-}
-
-/**
- * Git exited because a path/object is absent from the worktree or HEAD.
- * Permission and other IO stay loud; only clear absence is an expected negative.
- */
-function isGitAbsentPathError(error: unknown): boolean {
-  if (isGitBinaryMissing(error)) return false;
-  if (typeof error !== "object" || error === null) return false;
-  const code = (error as { code?: unknown }).code;
-  if (code !== 128 && code !== 1) return false;
-  const stderr = String((error as { stderr?: unknown }).stderr ?? "");
-  if (/permission denied|eacces|eperm/i.test(stderr)) return false;
-  return /could not open|no such file|does not exist|not a valid object name|bad revision|pathspec|needed a single revision/i.test(stderr);
-}
-
 async function realpathIfPresent(path: string): Promise<string | undefined> {
   try {
     return await realpath(path);
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/**
+ * Typed worktree readability: ENOENT → absent; permission and other IO stay loud.
+ * Does not consult Git diagnostics.
+ */
+async function worktreeFilePresence(path: string): Promise<"absent" | "present"> {
+  try {
+    const handle = await open(path, "r");
+    await handle.close();
+    return "present";
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return "absent";
     throw error;
   }
 }
@@ -413,23 +385,27 @@ async function resolveHeadTreePath(topLevel: string, relativePath: string): Prom
 
   const parent = dirname(relativePath);
   const leaf = basename(relativePath);
-  let listing: string;
-  try {
-    const { stdout } = parent === "."
-      ? await execFileAsync("git", ["ls-tree", "--name-only", "HEAD"], {
-        cwd: topLevel,
-        encoding: "utf8",
-      })
-      : await execFileAsync("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
-        cwd: topLevel,
-        encoding: "utf8",
-      });
-    listing = stdout;
-  } catch (error) {
-    if (isGitBinaryMissing(error)) throw error;
-    if (isGitAbsentPathError(error)) return undefined;
-    throw error;
+  // Path absence is an empty structured ls-tree result (exit 0), never stderr prose.
+  if (parent !== ".") {
+    const { stdout: parentOut } = await execFileAsync(
+      "git",
+      ["ls-tree", "--name-only", "HEAD", "--", parent],
+      { cwd: topLevel, encoding: "utf8" },
+    );
+    const parentHits = parentOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
+    if (!parentHits.includes(parent)) return undefined;
   }
+
+  // Parent confirmed present (or root): list children. Any failure stays loud infrastructure.
+  const { stdout: listing } = parent === "."
+    ? await execFileAsync("git", ["ls-tree", "--name-only", "HEAD"], {
+      cwd: topLevel,
+      encoding: "utf8",
+    })
+    : await execFileAsync("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
+      cwd: topLevel,
+      encoding: "utf8",
+    });
   const needle = leaf.toLowerCase();
   const hits = listing
     .split("\n")
@@ -489,29 +465,21 @@ export async function isHeadMatchedProjectInstruction(
   const headBlob = headBlobOut.trim();
 
   // Prefer inspect-reported path bytes (hash-object follows symlink content).
+  // Worktree absence is typed FS ENOENT; permission and other IO stay loud.
   // When exact casing is absent, fall back to the unique HEAD-cased path.
-  let workBlob: string;
-  try {
-    const { stdout } = await execFileAsync("git", ["hash-object", "--", candidate], {
-      cwd: topLevel,
-      encoding: "utf8",
-    });
-    workBlob = stdout.trim();
-  } catch (error) {
-    if (!isGitAbsentPathError(error) && errnoCode(error) !== "ENOENT") throw error;
+  let hashTarget = candidate;
+  const candidatePresence = await worktreeFilePresence(candidate);
+  if (candidatePresence === "absent") {
     if (candidate === headFile) return false;
-    try {
-      const { stdout } = await execFileAsync("git", ["hash-object", "--", headFile], {
-        cwd: topLevel,
-        encoding: "utf8",
-      });
-      workBlob = stdout.trim();
-    } catch (headReadError) {
-      if (isGitAbsentPathError(headReadError) || errnoCode(headReadError) === "ENOENT") return false;
-      throw headReadError;
-    }
+    const headPresence = await worktreeFilePresence(headFile);
+    if (headPresence === "absent") return false;
+    hashTarget = headFile;
   }
-  return headBlob === workBlob;
+  const { stdout } = await execFileAsync("git", ["hash-object", "--", hashTarget], {
+    cwd: topLevel,
+    encoding: "utf8",
+  });
+  return headBlob === stdout.trim();
 }
 
 function inspectItemPath(value: InspectItem): string {
