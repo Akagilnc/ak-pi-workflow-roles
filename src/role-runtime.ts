@@ -644,6 +644,23 @@ export async function projectClosedSubmissionLifecycle(
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
 
+/** Typed cause when the Notary-gate fallback cannot read admitted invocation binding. */
+export type CountersignInvocationBindingReason = "unreadable" | "unparseable";
+
+export class CountersignInvocationBindingError extends Error {
+  readonly code = "countersign-invocation-binding" as const;
+  readonly reason: CountersignInvocationBindingReason;
+  constructor(
+    reason: CountersignInvocationBindingReason,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "CountersignInvocationBindingError";
+    this.reason = reason;
+  }
+}
+
 /**
  * Resolve admitted ticketNumber for the Notary inner gate (ADR 0075).
  * Prefer the activation transport flag (admitted typed binding along the seam).
@@ -651,7 +668,7 @@ export async function projectClosedSubmissionLifecycle(
  * into "unbound"). Absent file or absent field remains legal unbound.
  */
 function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefined {
-  const fromFlag = roleHost.getFlag?.("ak-countersign-ticket-number");
+  const fromFlag = roleHost.getFlag("ak-countersign-ticket-number");
   if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
     return Number(fromFlag);
   }
@@ -665,7 +682,8 @@ function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefi
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
     if (err && err.code === "ENOENT") return undefined;
-    throw new Error(
+    throw new CountersignInvocationBindingError(
+      "unreadable",
       `countersign Notary gate: invocation.json unreadable (${invocationPath})`,
       { cause: error },
     );
@@ -674,7 +692,8 @@ function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefi
   try {
     raw = JSON.parse(rawText);
   } catch (error) {
-    throw new Error(
+    throw new CountersignInvocationBindingError(
+      "unparseable",
       `countersign Notary gate: invocation.json unparseable (${invocationPath})`,
       { cause: error },
     );
