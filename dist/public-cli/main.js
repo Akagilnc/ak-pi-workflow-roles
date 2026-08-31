@@ -26265,17 +26265,6 @@ function readAdrDecisionKeyBlocks(input) {
   }
   return blocks;
 }
-function projectLlmSemanticAnchors(input) {
-  const out = [`#${input.anchors.ticketNumber}`];
-  const seen = new Set(out);
-  for (const q of [...input.anchors.quotes, ...input.quotes]) {
-    if (seen.has(q)) continue;
-    seen.add(q);
-    out.push(q);
-    if (out.length >= 12) break;
-  }
-  return out;
-}
 function blockToLlmEntry(block, input) {
   const verify = verifyQuotesVerbatim(block.transcript, input.quotes);
   if (!verify.ok) {
@@ -26285,15 +26274,20 @@ function blockToLlmEntry(block, input) {
       cause: `verbatim verify failed: ${verify.failedQuotes.join(" | ")}`
     };
   }
+  const anchorNotes = [`#${input.anchors.ticketNumber}`];
+  const seen = new Set(anchorNotes);
+  for (const q of [...input.anchors.quotes, ...input.quotes]) {
+    if (seen.has(q)) continue;
+    seen.add(q);
+    anchorNotes.push(q);
+    if (anchorNotes.length >= 12) break;
+  }
   return {
     ok: true,
     entry: {
       basis: {
         method: "llm-semantic",
-        anchors: projectLlmSemanticAnchors({
-          anchors: input.anchors,
-          quotes: input.quotes
-        }),
+        anchors: anchorNotes,
         ...input.note === void 0 ? {} : { note: input.note }
       },
       sourceKind: block.sourceKind,
