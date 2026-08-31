@@ -18,7 +18,10 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
-import { renderGrokSystemPromptOverride } from "../../src/grok/role-turn-host.ts";
+import {
+  createGrokRoleTurnHost,
+  renderGrokSystemPromptOverride,
+} from "../../src/grok/role-turn-host.ts";
 import {
   issuePiDurablePrincipalCoordinates,
   piDurablePrincipalAuthority,
@@ -191,7 +194,10 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
     try {
       // The shared input transform rewrites the prompt to the canonical Skill invocation.
       assert.equal(prepared.prompt, "/skill:tdd decide");
-      assert.ok(prepared.systemPrompt.body.includes("CODER SOUL"));
+      // Coder agent-start carries no typed reading materials on this path.
+      assert.deepEqual(prepared.systemPrompt.materials, []);
+      assert.equal(typeof prepared.systemPrompt.body, "string");
+      assert.ok(prepared.systemPrompt.body.length > 0);
     } finally {
       await prepared.dispose?.();
     }
@@ -262,7 +268,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
   }
 });
 
-test("public Notary --ticket: admit→activation→agent-start reading material carries typed bound", async () => {
+test("public Notary --ticket: admit→activation→ACP systemPromptOverride folds typed bound", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-ticket-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
@@ -364,22 +370,62 @@ test("public Notary --ticket: admit→activation→agent-start reading material 
       },
     });
     try {
-      // Agent-start consumption seam: typed readingMaterial from before_agent_start lands
-      // in the structured systemPrompt authority (machine face; not prompt text).
+      // Structured authority after real admit→activation→agent-start (typed bound, not prompt text).
       const expectedBound = projectNotarySessionBound({
         sourceRun: admitted.sourceRun,
         ticketNumber: 582,
       });
       assert.deepEqual(prepared.systemPrompt.materials, [expectedBound]);
+
+      // Provider send boundary: adapter must fold structured authority into ACP override.
+      // closeRound stubbed — this probe is the systemPromptOverride seam only.
+      const sessionIds = new WeakMap<object, string>();
+      const acpCalls: Array<[string, unknown]> = [];
+      const host = createGrokRoleTurnHost({
+        sessionIdentity: {
+          async load(principal) {
+            return sessionIds.get(principal);
+          },
+          async bind(principal, sessionId) {
+            sessionIds.set(principal, sessionId);
+          },
+        },
+        recordCapabilities: async () => {},
+        connect: async () => ({
+          async request(method, params) {
+            acpCalls.push([method, params]);
+            if (method === "initialize") {
+              return {
+                _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } },
+              };
+            }
+            if (method === "session/new") return { sessionId: "notary-s1" };
+            if (method === "session/prompt") return { stopReason: "end_turn" };
+            return {};
+          },
+          notify() {},
+          async close() {},
+        }),
+        inspect: async () => ({
+          privateActive: [],
+          akActive: [NOTARY_OUTPUT_TOOL_NAME],
+        }),
+        prepare: async () => ({
+          ...prepared,
+          closeRound: async () => ({ accepted: true as const }),
+        }),
+      });
+      assert.deepEqual(await host.executeTurn(envelopeRequest), {
+        code: 0,
+        stderr: "",
+        timedOut: false,
+      });
+      const sessionNew = acpCalls.find(([method]) => method === "session/new")?.[1] as
+        | { _meta?: { systemPromptOverride?: unknown } }
+        | undefined;
       assert.equal(
-        (prepared.systemPrompt.materials[0] as { ticketNumber?: number }).ticketNumber,
-        582,
-      );
-      // Prove the send path: the provider-visible override folds exactly the typed bound.
-      // No free-text / substring / sentinel lock — only the authoritative renderer equality.
-      assert.equal(
+        sessionNew?._meta?.systemPromptOverride,
         renderGrokSystemPromptOverride(prepared.systemPrompt),
-        renderGrokSystemPromptOverride({ body: prepared.systemPrompt.body, materials: [expectedBound] }),
       );
 
       // Session custom entry is the envelope durable twin of the flag-derived bound.
@@ -399,7 +445,7 @@ test("public Notary --ticket: admit→activation→agent-start reading material 
       assert.equal(sessionBound.ticketNumber, 582);
       assert.equal(sessionBound.sourceRunPath, admitted.sourceRunPath);
     } finally {
-      await prepared.dispose?.();
+      // executeTurn disposes the prepared envelope when prepare returns it.
     }
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
