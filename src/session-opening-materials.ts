@@ -5,8 +5,10 @@
  * name-only here, not a public role record. Auditor composition stays in
  * loadAuditorSoul; loaders share joinPackageMaterials.
  */
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   NOTARY_SESSION_MATERIALS,
@@ -14,7 +16,26 @@ import {
   type PackagedRole,
 } from "./packaged-role-registry.ts";
 
-const packageRootUrl = new URL("..", import.meta.url);
+/**
+ * Resolve the install package root from this module's location.
+ * Works for src/ layout and for bundled artifacts under dist/ (walk up until
+ * package.json + souls/ — the shipped material tree).
+ */
+function resolvePackageRootDir(moduleUrl: string = import.meta.url): string {
+  let dir = dirname(fileURLToPath(moduleUrl));
+  for (let i = 0; i < 8; i += 1) {
+    if (existsSync(join(dir, "package.json")) && existsSync(join(dir, "souls"))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Legacy fallback: module lived directly under src/.
+  return fileURLToPath(new URL("..", moduleUrl));
+}
+
+const packageRootUrl = pathToFileURL(resolvePackageRootDir() + "/").href;
 
 /** Self-locate one package-relative material. Native I/O errors propagate. */
 export async function readPackageMaterial(relativePath: string): Promise<string> {
