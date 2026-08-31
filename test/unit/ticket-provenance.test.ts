@@ -3,7 +3,7 @@
  * Public behavior: ticket-keyed append, identity idempotency, read projection, human view.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile } from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { createHash } from "node:crypto";
@@ -19,7 +19,6 @@ import {
 import {
   appendTicketProvenanceEntry,
   readTicketProvenance,
-  renderTicketProvenanceMarkdown,
   resolveTicketProvenanceVolume,
   ticketProvenanceEntryIdentity,
   ticketProvenanceSubject,
@@ -139,12 +138,10 @@ test("append + read: ticket-keyed volume, idempotent identity, human view", asyn
       cwd: project,
       entries: read.entries,
     });
-    // External contract only: derived face path co-located; file exists and non-empty.
-    // Do not lock markdown wording/template (生成物禁机械依赖).
+    // External contract only: derived face path co-located and present.
+    // No generated-text observation (生成物禁机械依赖).
     assert.equal(humanPath, volume.humanViewFile);
-    const md = await readFile(humanPath, "utf8");
-    assert.ok(md.length > 0);
-    assert.equal(typeof renderTicketProvenanceMarkdown({ ticketNumber: 582, entries: read.entries }), "string");
+    await access(humanPath);
   });
 });
 

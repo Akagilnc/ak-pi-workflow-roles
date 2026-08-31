@@ -11,7 +11,6 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import {
-  buildDiaristAnchors,
   dedupeSourceBlocks,
   extractCornerQuotes,
   filterNotifications,
@@ -64,10 +63,6 @@ test("verifyQuotesVerbatim accepts contiguous quotes and rejects splices", () =>
 });
 
 test("mechanical safeguard: typed notify filter + dedupe; no prose exclusion", () => {
-  const anchors = buildDiaristAnchors({
-    ticketNumber: 582,
-    extraQuotes: ["立文件。送司天台记录。"],
-  });
   const blocks: DiaristSourceBlock[] = [
     block({
       transcript: "<command-name>/compact</command-name>",
@@ -104,7 +99,7 @@ test("mechanical safeguard: typed notify filter + dedupe; no prose exclusion", (
   assert.equal(cleaned.some((b) => b.isNotification), false);
   assert.equal(cleaned.length, 5);
 
-  const pipeline = mechanicalSafeguardPipeline(blocks, anchors);
+  const pipeline = mechanicalSafeguardPipeline(blocks);
   assert.ok(pipeline.every((b) => !b.isNotification));
   assert.equal(
     pipeline.filter((b) => b.sourceRef.entryId === "u1").length,
