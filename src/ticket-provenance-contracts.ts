@@ -115,67 +115,42 @@ const DIAGNOSTIC_KINDS = new Set<string>([
 ]);
 
 /**
- * Project a typed diagnostic payload (recordClass discriminator).
- * Also accepts legacy collector-failed rows that were disguised as diary entries
- * (basis.method + fake sourceKind) so historical volumes remain readable.
+ * Project a typed diagnostic payload (recordClass discriminator only).
+ * Disguised diary-entry shapes are not diagnostics — no branch-intermediate compat.
  */
 export function projectTicketProvenanceDiagnostic(
   value: unknown,
 ): TicketProvenanceDiagnostic | undefined {
   if (!isRecord(value)) return undefined;
-
-  if (value.recordClass === TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC) {
-    if (
-      typeof value.diagnosticKind !== "string" ||
-      !DIAGNOSTIC_KINDS.has(value.diagnosticKind)
-    ) {
-      return undefined;
-    }
-    if (typeof value.cause !== "string" || value.cause.length === 0) {
-      return undefined;
-    }
-    if (typeof value.recordedAt !== "string" || value.recordedAt.length === 0) {
-      return undefined;
-    }
-    return {
-      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-      diagnosticKind: value.diagnosticKind as TicketProvenanceDiagnosticKind,
-      cause: value.cause,
-      recordedAt: value.recordedAt,
-      ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
-    };
+  if (value.recordClass !== TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC) {
+    return undefined;
   }
-
-  // Legacy: collector-failed disguised as TicketProvenanceEntry (sourceKind forged).
   if (
-    isRecord(value.basis) &&
-    value.basis.method === "collector-failed" &&
-    typeof value.timestamp === "string" &&
-    value.timestamp.length > 0
+    typeof value.diagnosticKind !== "string" ||
+    !DIAGNOSTIC_KINDS.has(value.diagnosticKind)
   ) {
-    const cause =
-      typeof value.basis.note === "string" && value.basis.note.length > 0
-        ? value.basis.note
-        : typeof value.transcript === "string" && value.transcript.length > 0
-          ? value.transcript
-          : undefined;
-    if (cause === undefined) return undefined;
-    return {
-      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-      diagnosticKind: "collector-failed",
-      cause,
-      recordedAt: value.timestamp,
-    };
+    return undefined;
   }
-
-  return undefined;
+  if (typeof value.cause !== "string" || value.cause.length === 0) {
+    return undefined;
+  }
+  if (typeof value.recordedAt !== "string" || value.recordedAt.length === 0) {
+    return undefined;
+  }
+  return {
+    recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
+    diagnosticKind: value.diagnosticKind as TicketProvenanceDiagnosticKind,
+    cause: value.cause,
+    recordedAt: value.recordedAt,
+    ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+  };
 }
 
 /**
  * Project a lawful diary entry from unknown payload bytes.
  * Shape is not an admission gate for role output; this is the diarist/write seam
  * self-check so garbage does not enter the volume.
- * Diagnostics (recordClass or legacy collector-failed) are not entries.
+ * Diagnostics (recordClass discriminator) are not entries.
  */
 export function projectTicketProvenanceEntry(
   value: unknown,
