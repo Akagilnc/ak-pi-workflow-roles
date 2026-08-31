@@ -36,12 +36,14 @@ export type NotaryRoleHostActions = {
 };
 
 function readOptionalTicketNumber(flag: unknown): number | undefined {
+  // Optional flag: absent / blank = unbound (legal). Non-empty invalid = honest fail.
   if (flag === undefined) return undefined;
-  if (typeof flag !== "string" || flag.trim() === "") {
+  if (typeof flag !== "string") {
     throw new Error(
       "Notary ak-notary-ticket-number is present but not a safe positive integer string",
     );
   }
+  if (flag.trim() === "") return undefined;
   const n = Number(flag);
   if (!Number.isSafeInteger(n) || n < 1) {
     throw new Error(

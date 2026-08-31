@@ -39,6 +39,8 @@ export type DiaristLlmCollectResult = {
   /** Raw engine stdout retained for diagnostics (not a gate). */
   readonly rawStdout: string;
   readonly engineArgv: readonly string[];
+  /** Packaged method material path delivered to the engine (hermes collector). */
+  readonly methodPath?: string;
 };
 
 export type DiaristLlmCollector = (input: {
@@ -222,6 +224,8 @@ export type HermesDiaristCollectorOptions = {
   readonly extraArgv?: readonly string[];
   /** Package root for resolving diarist-collect method material. */
   readonly packageRoot?: string;
+  /** Test seam: inject detour runner (default production runEngineDetourOnce). */
+  readonly runDetour?: typeof runEngineDetourOnce;
 };
 
 /**
@@ -236,6 +240,7 @@ export function createHermesDiaristCollector(
   if (!existsSync(methodPath)) {
     throw new Error(`diarist collect method material missing (${methodPath})`);
   }
+  const runDetour = options.runDetour ?? runEngineDetourOnce;
   return async (input) => {
     const prompt = buildDiaristCollectorPrompt({
       ticketNumber: input.ticketNumber,
@@ -252,7 +257,7 @@ export function createHermesDiaristCollector(
       "--no-restore-cwd",
       "--ignore-rules",
     ];
-    const result = await runEngineDetourOnce({
+    const result = await runDetour({
       argv,
       cwd: options.cwd ?? process.cwd(),
       ...(options.env === undefined ? {} : { env: options.env }),
@@ -271,6 +276,7 @@ export function createHermesDiaristCollector(
       selections,
       rawStdout: result.stdout,
       engineArgv: argv.map((part, i) => (i === argv.indexOf(prompt) ? "<prompt>" : part)),
+      methodPath,
     };
   };
 }

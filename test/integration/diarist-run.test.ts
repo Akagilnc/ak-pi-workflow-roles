@@ -20,10 +20,12 @@ import {
   type DiaristSourceBlock,
 } from "../../src/diarist-mechanical.ts";
 import {
-  buildDiaristCollectorPrompt,
+  createHermesDiaristCollector,
   createScriptedDiaristCollector,
+  DIARIST_COLLECT_METHOD_RELATIVE,
   resolveDiaristCollectMethodPath,
 } from "../../src/diarist-llm-collector.ts";
+import { accessSync, constants as fsConstants } from "node:fs";
 import { runDiarist } from "../../src/diarist.ts";
 import {
   readTicketProvenance,
@@ -521,11 +523,21 @@ for (const failure of SOURCE_READ_FAILURES) {
   });
 }
 
-test("collector prompt delivers owner-domain method path (ADR 0073 neutral)", () => {
+test("hermes collector delivers methodPath typed field and path coordinate on engine argv", async () => {
   const methodPath = resolveDiaristCollectMethodPath(packageRoot);
-  const prompt = buildDiaristCollectorPrompt({
+  assert.equal(methodPath.endsWith(DIARIST_COLLECT_METHOD_RELATIVE), true);
+  accessSync(methodPath, fsConstants.R_OK);
+
+  let seenArgv: readonly string[] = [];
+  const collector = createHermesDiaristCollector({
+    packageRoot,
+    runDetour: async (input) => {
+      seenArgv = input.argv;
+      return { code: 0, stdout: '{"selections":[]}', stderr: "" };
+    },
+  });
+  const result = await collector({
     ticketNumber: 582,
-    methodPath,
     candidates: [
       block({
         transcript: "立文件",
@@ -533,10 +545,11 @@ test("collector prompt delivers owner-domain method path (ADR 0073 neutral)", ()
       }),
     ],
   });
-  assert.ok(prompt.includes(methodPath));
-  assert.ok(prompt.includes("本次配置的方法材料"));
-  // No command/direction vocabulary in machine text.
-  assert.equal(/请挑出|必须|禁止|宁多勿漏/.test(prompt), false);
+  // Typed delivery coordinate on the collector result (not free-text observation).
+  assert.equal(result.methodPath, methodPath);
+  // Engine argv carries the absolute method path as one prompt entry coordinate.
+  assert.ok(seenArgv.some((part) => part.includes(methodPath)));
+  assert.ok(seenArgv.includes("--ignore-rules"));
 });
 
 test("runDiarist without collector still establishes empty volume (no mechanical-only)", async () => {
