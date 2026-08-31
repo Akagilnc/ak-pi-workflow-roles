@@ -149,21 +149,11 @@ export function verifyQuotesVerbatim(
 /**
  * Mechanical safeguard only — never a relevance gate (ADR 0075 / 锚定宪法).
  * filter notifications (typed) → dedupe. Semantic selection is LLM-only.
- * Anchors are retained for reverse-verify notes, not for exclusion.
  */
 export function mechanicalSafeguardPipeline(
   blocks: readonly DiaristSourceBlock[],
-  _anchors?: DiaristAnchorSet,
 ): DiaristSourceBlock[] {
   return dedupeSourceBlocks(filterNotifications(blocks));
-}
-
-/** @deprecated alias — same as mechanicalSafeguardPipeline (no prose exclusion). */
-export function mechanicalCandidatePipeline(
-  blocks: readonly DiaristSourceBlock[],
-  anchors?: DiaristAnchorSet,
-): DiaristSourceBlock[] {
-  return mechanicalSafeguardPipeline(blocks, anchors);
 }
 
 /** Claude Code project-dir encoding: abs path with / → -. */

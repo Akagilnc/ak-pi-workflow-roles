@@ -85,7 +85,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
   const rawBlocks = await loadSourceBlocks(input);
   // Safeguard only (notify filter + dedupe) — never prose-based exclusion.
   // LLM sees the full frozen source set and alone decides relevance.
-  const candidates = mechanicalSafeguardPipeline(rawBlocks, anchors);
+  const candidates = mechanicalSafeguardPipeline(rawBlocks);
 
   const llmRequired = input.llmRequired !== false;
   let collectorStatus: DiaristRunResult["collectorStatus"] = "skipped-no-collector";
