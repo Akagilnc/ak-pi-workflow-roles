@@ -66,6 +66,7 @@ export async function runPublicNotary(
       cwd: env.cwd,
       sourceRun: parsed.sourceRun,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
+      ...(parsed.ticket === undefined ? {} : { ticket: parsed.ticket }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),

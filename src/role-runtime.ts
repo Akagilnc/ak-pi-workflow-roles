@@ -1,4 +1,5 @@
-import { writeSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
+import { join as pathJoin } from "node:path";
 import {
   ExplicitInternalActivationError,
   type HostContext,
@@ -633,6 +634,32 @@ export async function projectClosedSubmissionLifecycle(
 }
 
 /**
+ * Read typed ticketNumber from the public run's invocation.json when present.
+ * Used only as a locator coordinate for the Notary inner gate (ADR 0075).
+ */
+function readBoundTicketNumberFromRunEnv(): number | undefined {
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") return undefined;
+  try {
+    const raw = JSON.parse(
+      readFileSync(pathJoin(runDir, "invocation.json"), "utf8"),
+    ) as unknown;
+    if (
+      typeof raw === "object" &&
+      raw !== null &&
+      typeof (raw as { ticketNumber?: unknown }).ticketNumber === "number" &&
+      Number.isSafeInteger((raw as { ticketNumber: number }).ticketNumber) &&
+      (raw as { ticketNumber: number }).ticketNumber >= 1
+    ) {
+      return (raw as { ticketNumber: number }).ticketNumber;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
  * Shared registration envelope for filed officers (ADR 0018 / #572):
  * activate, tool register, before_agent_start prompt, inventory check.
  * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
@@ -690,17 +717,78 @@ function createFiledOfficerRuntime(
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,
   dependencies: CountersignRuntimeDependencies,
+  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
-  return createFiledOfficerRuntime(
-    roleHost,
-    {
-      role: "countersign",
-      tool: COUNTERSIGN_TOOL_SPEC,
-      acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
-      soulTag: "countersign",
+  // Notary inner gate on countersign submission (ADR 0075 notary-inner-gate):
+  // isomorphic to judge_draft → gatekeeper → notary. When hostActions is
+  // absent (unit harness without gate), accept-as-is like other filed officers.
+  if (hostActions === undefined || roleHost.requireGatekeeperPass === undefined) {
+    return createFiledOfficerRuntime(
+      roleHost,
+      {
+        role: "countersign",
+        tool: COUNTERSIGN_TOOL_SPEC,
+        acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
+        soulTag: "countersign",
+      },
+      dependencies,
+    );
+  }
+  let soul: string | undefined;
+  let registered = false;
+  const actions = hostActions;
+  return {
+    async activate() {
+      const loaded = (await dependencies.loadSoul()).trim();
+      if (loaded.length === 0) throw new Error("countersign soul is empty");
+      soul = loaded;
+      if (!registered) {
+        registered = true;
+        roleHost.registerTool({
+          name: COUNTERSIGN_TOOL_SPEC.name,
+          label: COUNTERSIGN_TOOL_SPEC.label,
+          description: COUNTERSIGN_TOOL_SPEC.description,
+          promptSnippet: COUNTERSIGN_TOOL_SPEC.promptSnippet,
+          parameters: COUNTERSIGN_TOOL_SPEC.parameters as never,
+          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
+            if (soul === undefined) throw new Error("countersign 职分未装载");
+            // Bundle ticketNumber when the public run bound one — Notary inner gate
+            // reads 起居录 by ticket key (ADR 0075). Locator only; no ticket body.
+            const ticketNumber = readBoundTicketNumberFromRunEnv();
+            const material = JSON.stringify(
+              ticketNumber === undefined
+                ? { verdict: parameters }
+                : { verdict: parameters, ticketNumber },
+            );
+            await roleHost.requireGatekeeperPass!({
+              context: ctx,
+              subject: {
+                kind: "countersign_verdict",
+                material,
+              },
+              ...(signal === undefined ? {} : { signal }),
+              hostActions: actions,
+              toolCallId,
+            });
+            return {
+              content: [{ type: "text" as const, text: COUNTERSIGN_ACCEPTED_TEXT }],
+              details: parameters,
+              terminate: true as const,
+            };
+          },
+        });
+        roleHost.on("before_agent_start", (event) => {
+          if (soul === undefined) throw new Error("countersign 职分未装载");
+          const tail = `\n\n<countersign_soul>\n${soul}\n</countersign_soul>`;
+          return { systemPrompt: `${event.systemPrompt}${tail}` };
+        });
+      }
+      const all = roleHost.getAllTools().map((tool) => tool.name);
+      if (all.filter((name) => name === COUNTERSIGN_TOOL_SPEC.name).length !== 1) {
+        throw new Error(`countersign required tool collision or missing: ${COUNTERSIGN_TOOL_SPEC.name}`);
+      }
     },
-    dependencies,
-  );
+  };
 }
 
 export function createRoleRuntimeExtension(
@@ -1135,7 +1223,7 @@ export function createRoleRuntimeExtension(
         if (!dependencies.loadCountersignSoul) throw new Error("Countersign runtime dependencies are not configured");
         return dependencies.loadCountersignSoul();
       },
-    });
+    }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },

@@ -95,8 +95,12 @@ ak-role doctor --issue 115 "Diagnose this retained case."
 # merger — resolve one merge already in conflict (start it with Git's ort first)
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
-# notary — document-fidelity check on one retained source run; one-shot
+# notary — document-fidelity check on one retained source run; one-shot; optional --ticket for court diary
 ak-role notary --source-run <runId@role|path>
+ak-role notary --source-run <runId@role|path> --ticket 582
+
+# countersign — ticket-court five questions; optional --ticket (diarist pipeline refreshes court diary first)
+ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
 
 # analyst — deterministic metrics; bare call = whole book
 ak-role analyst
@@ -192,6 +196,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
 | `--source-run` | — | `runId@role\|path` | yes | no | option | — | Required source run locator (runId@role under the book home, or path to that run directory). Zero prompt/attachment projection. |
+| `--ticket` | — | `number` | no | no | option | — | Optional ticket/issue number when Notary reads the court diary (ticket-provenance) for a ticket. |
 
 
 ### `countersign`
@@ -200,6 +205,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
 | `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+| `--ticket` | — | `number` | no | no | option | — | Ticket/issue number for court diary (diarist) and ticket-keyed provenance. Overrides attachment frontmatter when both present. |
 
 ### `analyst`
 
@@ -218,5 +224,5 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 ## Normative pointers
 
 - Command usage and refusal text: `ak-role help <command>`, `ak-role help config` (sole authority).
-- Decisions and rationale: `docs/adr/` (composition ADR 0010, public CLI face ADR 0052, submission gates ADR 0066/0067/0070/0072, labor engines ADR 0069/0071, among others; not exhaustive).
+- Decisions and rationale: `docs/adr/` (composition ADR 0010, public CLI face ADR 0052, submission gates ADR 0066/0067/0070/0072, labor engines ADR 0069/0071, court diary ADR 0075, among others; not exhaustive).
 - Glossary: [CONTEXT.md](CONTEXT.md). Programmatic contracts: `src/package-contracts/` exports.

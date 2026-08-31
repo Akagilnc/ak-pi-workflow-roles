@@ -92,8 +92,12 @@ ak-role doctor --issue 115 "Diagnose this retained case."
 # 校书郎——调和已在冲突的 merge（先用 Git ort 起动）
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
-# 符宝郎——文书核验一份留存 source run；一次性
+# 符宝郎——文书核验一份留存 source run；一次性；可选 --ticket 调起居录
 ak-role notary --source-run <runId@role|path>
+ak-role notary --source-run <runId@role|path> --ticket 582
+
+# 给事中——票庭五问；可选 --ticket（起居郎流水线前序工序按票刷新起居录）
+ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
 
 # 太史——确定性指标；裸调＝整簿
 ak-role analyst
@@ -116,9 +120,9 @@ ak-role resume <runId> "<裁定>"
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
 | **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
 | **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **审署诏敕与质量保证的省。** 交卷时判断受审物、够不够审、该谁审，派察院或符宝郎；给事中票庭由调用者开工前传召；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
-| **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
+| **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实（以起居录为据）／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。票庭流水线在本席 turn 前跑起居郎工序（调用者无感）；交卷闸出席符宝郎。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **察院** | inspector（无独立 CLI；可由门下省派发） | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。原给事中，ADR 0074 分立。 |
-| **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）；引语真伪与票面对齐为手段。受审物是大理寺拟判等文书；可被门下省派发，也可 `ak-role notary` 单独调。 |
+| **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
 | **游奕使** | navigator（无 CLI，自动出席） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
@@ -129,7 +133,8 @@ ak-role resume <runId> "<裁定>"
 | --- | --- | --- | --- |
 | doctor | **太医署** | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建 |
 | analyst | **太史** | 司天台分析席：只读司天记录、出高阶指标；确定性机制，非 LLM，可单独调用 | 已建（[ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
-| — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
+| — | **司天台** | 记候簿——只打点、只指针，不分析不执法；二期含每票起居录 kind `ticket-provenance` | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担；起居录见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
+| — | **起居郎** | 票庭流水线前序工序：LLM 语义收集＋机械保全，按票刷新起居录 | **非公开席位**（无 soul 开府、不出席闸；[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)；机器面键 `diarist`） |
 | gleaner-left | **左拾遗** | 合并前以无锚定冷眼审全幅合并候选，只上弹章、不封驳不裁决（风闻） | soul 已落＋[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案；机器席位待建 |
 | marshal | **尚书省** | 审→判→修 质量收敛环的省部级驱动角色：调用方递票号与 baseline，尚书省驱动御史台/大理寺/修内司滚到收敛（converged 唯庭可判）或 escalate 上呈，交回 typed 报告；不弹、不判、不修，只让链条转到收敛 | 已定名（#145）；席位待落地（#146） |
 | — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建 |
@@ -225,6 +230,7 @@ ak-role resume <runId> "<裁定>"
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
 | `--source-run` | — | `runId@role\|path` | 是 | 否 | option | — | 必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。零 prompt/附件投影。 |
+| `--ticket` | — | `number` | 否 | 否 | option | — | 可选票号：符宝郎按票键调取起居录时使用。 |
 
 
 ### `countersign`
@@ -233,6 +239,7 @@ ak-role resume <runId> "<裁定>"
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份的项目根（默认 process cwd）。 |
 | `--attach` | — | `path` | 否 | 是 | option | — | 附卷普通文件；受理时冻结（可重复）。 |
+| `--ticket` | — | `number` | 否 | 否 | option | — | 票号：起居郎流水线与起居录票键。与附件 frontmatter 并存时以本旗为准。 |
 
 ### `analyst`
 
@@ -251,5 +258,5 @@ ak-role resume <runId> "<裁定>"
 ## 规范指针
 
 - 命令用法与拒绝文案：`ak-role help <command>`、`ak-role help config`（唯一权威）。
-- 决策与法理：`docs/adr/`（组合与顺序 ADR 0010、公开 CLI 面 ADR 0052、交卷闸 ADR 0066/0067/0070/0072、劳务引擎 ADR 0069/0071 等，未尽举）。
+- 决策与法理：`docs/adr/`（组合与顺序 ADR 0010、公开 CLI 面 ADR 0052、交卷闸 ADR 0066/0067/0070/0072、劳务引擎 ADR 0069/0071、起居录 ADR 0075 等，未尽举）。
 - 术语表：[CONTEXT.md](CONTEXT.md)。编程契约：`src/package-contracts/` 导出。
