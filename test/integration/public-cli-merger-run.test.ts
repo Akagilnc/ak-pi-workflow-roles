@@ -15,6 +15,7 @@ import test from "node:test";
 
 test.after(() => { process.exitCode = undefined; });
 
+import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -108,14 +109,20 @@ async function conflictedRepository(root: string) {
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-role-table-"));
+  const binDir = join(home, "bin");
+  await installHermesFixture(binDir);
   const priorHome = process.env.HOME;
+  const priorPath = process.env.PATH;
   process.env.HOME = home;
+  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
   try {
     const project = join(home, "work");
     await mkdir(project);
     seedGitProject(project);
     return await run(home, project);
   } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
     if (priorHome === undefined) delete process.env.HOME;
     else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });

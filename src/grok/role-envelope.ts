@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
+import { appendFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -75,6 +76,12 @@ export function projectGrokActivationFlags(request: RoleTurnRequest): Map<string
     flags.set("ak-review-base", activation.baseRevision);
     flags.set("ak-review-authority-refs", JSON.stringify(activation.authorityRefs));
     if (activation.ticketNumber !== undefined) flags.set("ak-review-ticket-number", String(activation.ticketNumber));
+  }
+  if (activation.role === "countersign" && activation.ticketNumber !== undefined) {
+    flags.set("ak-countersign-ticket-number", String(activation.ticketNumber));
+  }
+  if (activation.role === "notary" && activation.ticketNumber !== undefined) {
+    flags.set("ak-notary-ticket-number", String(activation.ticketNumber));
   }
   if (activation.role === "collector") {
     flags.set("ak-collector-repo", activation.repo);
@@ -169,6 +176,12 @@ export async function prepareGrokRoleEnvelope(options: {
       setSessionFile(path) { sessionFile = path; },
       appendCustomEntry(customType, data) {
         customEntries.push({ customType, data });
+        // Same external face as Pi session custom entries (type/customType/data JSONL).
+        appendFileSync(
+          sessionFile,
+          `${JSON.stringify({ type: "custom", customType, data })}\n`,
+          "utf8",
+        );
       },
     },
     abort() {},
@@ -405,9 +418,18 @@ export async function prepareGrokRoleEnvelope(options: {
     systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
     systemPromptOptions: {},
   });
-  const systemPrompt = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
+  const systemPromptBody = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
     typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
     ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+  // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
+  // Folded into the provider-visible systemPrompt by the adapter at the send boundary.
+  const readingMaterials: unknown[] = [];
+  for (const value of promptResults) {
+    if (typeof value !== "object" || value === null) continue;
+    if (!("readingMaterial" in value)) continue;
+    const material = (value as { readingMaterial?: unknown }).readingMaterial;
+    if (material !== undefined) readingMaterials.push(material);
+  }
 
   priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
   process.env.AK_ROLE_RUN_DIR = request.runDirectory;
@@ -423,7 +445,7 @@ export async function prepareGrokRoleEnvelope(options: {
         { name: "AK_GROK_MCP_TOKEN", value: token },
       ],
     }],
-    systemPrompt,
+    systemPrompt: { body: systemPromptBody, materials: readingMaterials },
     prompt,
     closeRound,
     dispose,

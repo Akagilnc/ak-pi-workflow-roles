@@ -1,4 +1,9 @@
-import { writeSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
+import { join as pathJoin } from "node:path";
+import {
+  loadNotarySourceRunLocator,
+  NotarySourceRunError,
+} from "./notary-source-run.ts";
 import {
   ExplicitInternalActivationError,
   type HostContext,
@@ -45,7 +50,13 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
-import { createNotaryRoleRuntime } from "./notary-role.ts";
+import {
+  createNotaryRoleRuntime,
+  NOTARY_SESSION_BOUND_ENTRY,
+  projectNotaryBoundFromFlags,
+  readNotaryTicketFlag,
+} from "./notary-role.ts";
+import { NOTARY_TICKET_FLAG } from "./notary-contracts.ts";
 import {
   COUNTERSIGN_TOOL_SPEC,
   type CountersignRuntimeDependencies,
@@ -111,6 +122,25 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
       description: "Typed ticketNumber for Spec self-fetch primary path",
       type: "string" as const,
     }),
+  }),
+] as const);
+
+/** Countersign private transport: admitted ticket binding for Notary gate (ADR 0075). */
+const COUNTERSIGN_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: "ak-countersign-ticket-number",
+    definition: Object.freeze({
+      description: "Admitted ticketNumber for countersign Notary inner-gate material",
+      type: "string" as const,
+    }),
+  }),
+] as const);
+
+/** Notary private transport: optional court-diary ticket (ADR 0018 / 0075 — envelope-owned). */
+const NOTARY_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: NOTARY_TICKET_FLAG.name,
+    definition: NOTARY_TICKET_FLAG.definition,
   }),
 ] as const);
 
@@ -383,7 +413,11 @@ type ActivationRuntime = {
   bindReviewerParent(activation: ReviewerActivation): void;
   collector: { activate(context: HostContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
-  notary: { activate(): Promise<void> };
+  notary: {
+    activate(admitted?: import("./notary-role.ts").NotaryAdmittedTicket): Promise<void>;
+  };
+  /** Envelope decodes Notary ticket flag inside the activation stage (ADR 0018). */
+  decodeNotaryAdmitted(): import("./notary-role.ts").NotaryAdmittedTicket | undefined;
   countersign: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
@@ -421,7 +455,13 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
-    case "notary": return { id: "load-and-install", run: async () => runtime.notary.activate() };
+    case "notary": return {
+      id: "load-and-install",
+      run: async () => {
+        // Envelope owns ticket flag read (ADR 0018); role receives admitted value only.
+        await runtime.notary.activate(runtime.decodeNotaryAdmitted());
+      },
+    };
     case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
@@ -632,10 +672,134 @@ export async function projectClosedSubmissionLifecycle(
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
 
+/** Typed cause when admitted countersign ticket binding cannot be resolved. */
+export type CountersignInvocationBindingReason =
+  | "flag-invalid"
+  | "unreadable"
+  | "unparseable";
+
+export class CountersignInvocationBindingError extends Error {
+  readonly code = "countersign-invocation-binding" as const;
+  readonly reason: CountersignInvocationBindingReason;
+  constructor(
+    reason: CountersignInvocationBindingReason,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "CountersignInvocationBindingError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Resolve admitted ticketNumber for the Notary inner gate (ADR 0075).
+ * Prefer the activation transport flag (admitted typed binding along the seam).
+ * Flag absent → fall back to invocation.json.
+ * Flag present-but-invalid → typed failure (never wash into unbound / invocation fallback).
+ * Invocation present-but-unreadable/unparseable → typed failure.
+ * Invocation absent or field absent → legal unbound.
+ */
+function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefined {
+  const fromFlag = roleHost.getFlag("ak-countersign-ticket-number");
+  if (fromFlag !== undefined) {
+    if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
+      const n = Number(fromFlag);
+      if (Number.isSafeInteger(n) && n >= 1) return n;
+    }
+    throw new CountersignInvocationBindingError(
+      "flag-invalid",
+      "countersign Notary gate: ak-countersign-ticket-number is present but not a safe positive integer string",
+    );
+  }
+
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") return undefined;
+  const invocationPath = pathJoin(runDir, "invocation.json");
+  let rawText: string;
+  try {
+    rawText = readFileSync(invocationPath, "utf8");
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err && err.code === "ENOENT") return undefined;
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      `countersign Notary gate: invocation.json unreadable (${invocationPath})`,
+      { cause: error },
+    );
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(rawText);
+  } catch (error) {
+    throw new CountersignInvocationBindingError(
+      "unparseable",
+      `countersign Notary gate: invocation.json unparseable (${invocationPath})`,
+      { cause: error },
+    );
+  }
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    typeof (raw as { ticketNumber?: unknown }).ticketNumber === "number" &&
+    Number.isSafeInteger((raw as { ticketNumber: number }).ticketNumber) &&
+    (raw as { ticketNumber: number }).ticketNumber >= 1
+  ) {
+    return (raw as { ticketNumber: number }).ticketNumber;
+  }
+  return undefined;
+}
+
+/**
+ * Assemble Notary inner-gate material for countersign verdict.
+ * ticket-bound → ticketNumber; true-unbound → sourceRun via sole notary-source-run loader.
+ * Gate attendance itself never branches away.
+ */
+async function buildCountersignNotaryGateMaterial(input: {
+  readonly roleHost: RoleHost;
+  readonly parameters: unknown;
+}): Promise<string> {
+  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
+  if (ticketNumber !== undefined) {
+    return JSON.stringify({ verdict: input.parameters, ticketNumber });
+  }
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") {
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      "countersign Notary gate: true-unbound material requires AK_ROLE_RUN_DIR source-run locator",
+    );
+  }
+  let sourceRun;
+  try {
+    // Sole authority for run-dir name + retained identity (DRY #14 / notary-source-run).
+    sourceRun = await loadNotarySourceRunLocator(runDir);
+  } catch (error) {
+    if (error instanceof NotarySourceRunError) {
+      throw new CountersignInvocationBindingError(
+        "unreadable",
+        `countersign Notary gate: source-run locator unusable (${error.message})`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  return JSON.stringify({ verdict: input.parameters, sourceRun });
+}
+
+/** Optional pre-accept hook on the shared filed-officer envelope (ADR 0075). */
+type FiledOfficerBeforeAccept = (input: {
+  readonly toolCallId: string;
+  readonly parameters: unknown;
+  readonly signal: AbortSignal | undefined;
+  readonly ctx: HostContext;
+}) => Promise<void>;
+
 /**
  * Shared registration envelope for filed officers (ADR 0018 / #572):
  * activate, tool register, before_agent_start prompt, inventory check.
  * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
+ * Optional beforeAccept is the sole extension seam (e.g. countersign Notary gate).
  */
 function createFiledOfficerRuntime(
   roleHost: RoleHost,
@@ -644,6 +808,7 @@ function createFiledOfficerRuntime(
     tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
     acceptedText: string;
     soulTag: string;
+    beforeAccept?: FiledOfficerBeforeAccept;
   },
   dependencies: { loadSoul(): Promise<string> },
 ) {
@@ -662,8 +827,11 @@ function createFiledOfficerRuntime(
           description: spec.tool.description,
           promptSnippet: spec.tool.promptSnippet,
           parameters: spec.tool.parameters as never,
-          async execute(_toolCallId, parameters, _signal, _onUpdate, _ctx): Promise<HostToolResult<unknown>> {
+          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+            if (spec.beforeAccept !== undefined) {
+              await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
+            }
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
@@ -690,7 +858,27 @@ function createFiledOfficerRuntime(
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,
   dependencies: CountersignRuntimeDependencies,
+  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
+  // Notary inner gate difference only — lifecycle stays on the shared envelope.
+  // Always-present: ticket-bound material carries ticketNumber; true-unbound
+  // carries the current countersign source-run locator (never bare verdict).
+  const beforeAccept: FiledOfficerBeforeAccept | undefined =
+    hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
+      ? async ({ toolCallId, parameters, signal, ctx }) => {
+          const material = await buildCountersignNotaryGateMaterial({
+            roleHost,
+            parameters,
+          });
+          await roleHost.requireGatekeeperPass!({
+            context: ctx,
+            subject: { kind: "countersign_verdict", material },
+            ...(signal === undefined ? {} : { signal }),
+            hostActions,
+            toolCallId,
+          });
+        }
+      : undefined;
   return createFiledOfficerRuntime(
     roleHost,
     {
@@ -698,6 +886,7 @@ export function createCountersignRoleRuntime(
       tool: COUNTERSIGN_TOOL_SPEC,
       acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
       soulTag: "countersign",
+      ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
     dependencies,
   );
@@ -719,6 +908,12 @@ export function createRoleRuntimeExtension(
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of COUNTERSIGN_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of NOTARY_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
 
@@ -815,6 +1010,14 @@ export function createRoleRuntimeExtension(
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
+      }
+      // Notary session bound: envelope-owned lifecycle write (ADR 0018 / #582).
+      // Ticket flag register/read + session entry live here; role projects admitted bound only.
+      if (role === "notary") {
+        const bound = projectNotaryBoundFromFlags((name) => roleHost.getFlag(name));
+        if (bound !== undefined) {
+          ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
+        }
       }
       if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorWorkContext.contextError === undefined) {
         // Flagged roles already have a concrete packet/task/case/review input.
@@ -1135,7 +1338,7 @@ export function createRoleRuntimeExtension(
         if (!dependencies.loadCountersignSoul) throw new Error("Countersign runtime dependencies are not configured");
         return dependencies.loadCountersignSoul();
       },
-    });
+    }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1272,6 +1475,12 @@ export function createRoleRuntimeExtension(
         },
         bindReviewerParent(activation) {
           activeReviewerParent = activation;
+        },
+        decodeNotaryAdmitted() {
+          const ticketNumber = readNotaryTicketFlag(
+            roleHost.getFlag(NOTARY_TICKET_FLAG.name),
+          );
+          return ticketNumber === undefined ? undefined : { ticketNumber };
         },
         collector,
         doctor,

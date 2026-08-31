@@ -106,8 +106,17 @@ export type RoleTurnActivation =
       readonly requestManifestPath?: string;
     }
   | { readonly role: "doctor"; readonly casePath: string }
-  | { readonly role: "notary"; readonly sourceRun: string }
-  | { readonly role: "countersign" };
+  | {
+      readonly role: "notary";
+      readonly sourceRun: string;
+      /** Optional --ticket for court-diary lookup (ADR 0075). */
+      readonly ticketNumber?: number;
+    }
+  | {
+      readonly role: "countersign";
+      /** Admitted ticket binding for Notary inner-gate material (ADR 0075). */
+      readonly ticketNumber?: number;
+    };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
@@ -214,7 +223,13 @@ type HostEventMap = {
 
 type HostInputResult = { action: "continue" } | { action: "transform"; text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> } | { action: "handled" };
 type HostEventResultMap = {
-  before_agent_start: { systemPrompt?: string };
+  /**
+   * systemPrompt — model-facing prompt body (presentation bytes).
+   * readingMaterial — optional typed material for the same agent-start turn.
+   * Host adapters fold readingMaterial into the provider-visible system prompt
+   * at the send boundary; it is not a test-only parallel face.
+   */
+  before_agent_start: { systemPrompt?: string; readingMaterial?: unknown };
   input: HostInputResult;
   tool_call: { block?: boolean; reason?: string; terminate?: boolean };
   tool_result: { content?: HostToolResult["content"]; details?: unknown; isError?: boolean };
@@ -231,7 +246,10 @@ type HostEventResultMap = {
 type HostEventHandler<K extends keyof HostEventMap> = (event: HostEventMap[K], ctx: HostContext) => HostEventResultMap[K] | void | Promise<HostEventResultMap[K] | void>;
 export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, handler: HostEventHandler<K>] }[keyof HostEventMap];
 
-type HostGatekeeperSubject = { readonly kind: "worker_completion" | "judge_draft"; readonly material: string };
+type HostGatekeeperSubject = {
+  readonly kind: "worker_completion" | "judge_draft" | "countersign_verdict";
+  readonly material: string;
+};
 /** Gatekeeper bounce/no_receipt plus other correct submission rejects share one projection map. */
 type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" } & Record<string, unknown>;
 export type HostSubmissionNonPass =

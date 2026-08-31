@@ -387,6 +387,20 @@ const JUDGE_OPTIONS = [
 const COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
   bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
+  {
+    id: "ticket",
+    owner: "countersign",
+    canonical: "--ticket",
+    aliases: [],
+    valueMetavar: "number",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Ticket/issue number for court diary (diarist) and ticket-keyed provenance. Overrides attachment frontmatter when both present.",
+      zh: "票号：起居郎流水线与起居录票键。与附件 frontmatter 并存时以本旗为准。",
+    },
+  },
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const CODER_OPTIONS = [
@@ -572,6 +586,20 @@ const NOTARY_OPTIONS = [
     description: {
       en: "Required source run locator (runId@role under the book home, or path to that run directory). Zero prompt/attachment projection.",
       zh: "必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。零 prompt/附件投影。",
+    },
+  },
+  {
+    id: "ticket",
+    owner: "notary",
+    canonical: "--ticket",
+    aliases: [],
+    valueMetavar: "number",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Optional ticket/issue number when Notary reads the court diary (ticket-provenance) for a ticket.",
+      zh: "可选票号：符宝郎按票键调取起居录时使用。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];
@@ -1065,7 +1093,7 @@ const ROLE_COMMAND_HELP = {
     summary: "Ticket-court review before work starts; five questions, 署/封驳/上呈.",
     usage: ["ak-role countersign [options] [instruction]"],
     examples: [
-      'ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"',
+      'ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"',
       'ak-role countersign --attach ./plan.md --attach ./adr.md "裁：方案五问。"',
     ],
   },
@@ -1126,6 +1154,7 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role notary --source-run <runId@role|path> [options]"],
     examples: [
       "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+      "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@countersign --ticket 582",
     ],
   },
   analyst: {

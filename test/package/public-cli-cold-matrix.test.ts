@@ -23,6 +23,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import test from "node:test";
 
@@ -396,6 +397,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
     const shimDir = resolve(home, "pi-shim-matrix");
     const argvLog = resolve(home, "matrix-pi-argv.json");
     await writePiArgvShim(shimDir, argvLog);
+    await installHermesFixture(shimDir);
     const shimEnv = {
       PATH: `${shimDir}:${process.env.PATH ?? ""}`,
       PI_OFFLINE: "1",

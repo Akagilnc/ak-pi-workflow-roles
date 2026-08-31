@@ -15,7 +15,8 @@ const SUBJECT_TOOL = "ak_gatekeeper_subject";
 
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion"; readonly material: string }
-  | { readonly kind: "judge_draft"; readonly material: string };
+  | { readonly kind: "judge_draft"; readonly material: string }
+  | { readonly kind: "countersign_verdict"; readonly material: string };
 
 export type GatekeeperResult =
   | { readonly status: "pass"; readonly officer: "inspector" | "notary"; readonly findings: readonly string[] }

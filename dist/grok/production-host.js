@@ -357,10 +357,10 @@ __export(archivist_record_entry_exports, {
 });
 import { createHash as createHash6 } from "node:crypto";
 import { existsSync as existsSync4, readFileSync as readFileSync2, realpathSync as realpathSync2, writeFileSync } from "node:fs";
-import { dirname as dirname10, resolve as resolve8, join as join10 } from "node:path";
+import { dirname as dirname10, resolve as resolve8, join as join11 } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 function readCurrentSession(sessionDir) {
-  const ledger = join10(sessionDir, CURRENT_SESSION_LEDGER);
+  const ledger = join11(sessionDir, CURRENT_SESSION_LEDGER);
   try {
     const value = JSON.parse(readFileSync2(ledger, "utf8"));
     if (typeof value !== "object" || value === null || typeof value.sessionFile !== "string" || value.sessionFile.length === 0) {
@@ -375,7 +375,7 @@ function readCurrentSession(sessionDir) {
   }
 }
 function writeCurrentSession(sessionDir, sessionFile) {
-  const ledger = join10(sessionDir, CURRENT_SESSION_LEDGER);
+  const ledger = join11(sessionDir, CURRENT_SESSION_LEDGER);
   try {
     writeFileSync(ledger, `${JSON.stringify({ sessionFile })}
 `, { flag: "wx" });
@@ -426,7 +426,7 @@ function createRecordSession(options) {
   let parentSession;
   if (options.subject !== void 0) {
     const digest = createHash6("sha256").update(options.subject).digest("hex").slice(0, 32);
-    sessionDir = join10(
+    sessionDir = join11(
       activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)),
       options.kind,
       digest
@@ -436,7 +436,7 @@ function createRecordSession(options) {
     return SessionManager.inMemory(cwd);
   } else {
     const parentResolved = resolve8(parentFile);
-    sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join10(dirname10(parentResolved), options.kind) : join10(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
+    sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join11(dirname10(parentResolved), options.kind) : join11(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
     parentSession = parentFile;
   }
   const nestAlreadyExists = existsSync4(sessionDir);
@@ -554,9 +554,9 @@ __export(in_process_session_exports, {
   openInProcessAgentSession: () => openInProcessAgentSession,
   openPiInstitutionalSession: () => openPiInstitutionalSession
 });
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join as join11 } from "node:path";
+import { mkdtemp as mkdtemp2, rm as rm2 } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join12 } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -728,7 +728,7 @@ async function openPiInstitutionalSession(options) {
   let scratchDir;
   let resolvedAgentDir = options.agentDir;
   if (resolvedAgentDir === void 0) {
-    scratchDir = await mkdtemp(join11(options.credentialScratchParent ?? tmpdir(), "ak-institutional-"));
+    scratchDir = await mkdtemp2(join12(options.credentialScratchParent ?? tmpdir2(), "ak-institutional-"));
     resolvedAgentDir = scratchDir;
   }
   try {
@@ -1118,7 +1118,7 @@ async function openPiInstitutionalSession(options) {
         }
         if (scratchDir !== void 0) {
           try {
-            await rm(scratchDir, { recursive: true, force: true });
+            await rm2(scratchDir, { recursive: true, force: true });
           } catch (error) {
             throw error;
           }
@@ -1137,7 +1137,7 @@ async function openPiInstitutionalSession(options) {
   } catch (openError) {
     if (scratchDir !== void 0) {
       try {
-        await rm(scratchDir, { recursive: true, force: true });
+        await rm2(scratchDir, { recursive: true, force: true });
       } catch (cleanupFailure) {
         throw new AggregateError(
           [openError, cleanupFailure],
@@ -1161,9 +1161,9 @@ var init_in_process_session = __esm({
 });
 
 // src/grok/production-host.ts
-import { mkdtemp as mkdtemp3, readFile as readFile12, rm as rm3, writeFile as writeFile7 } from "node:fs/promises";
-import { tmpdir as tmpdir3 } from "node:os";
-import { join as join19 } from "node:path";
+import { mkdtemp as mkdtemp4, readFile as readFile12, rm as rm4, writeFile as writeFile8 } from "node:fs/promises";
+import { tmpdir as tmpdir4 } from "node:os";
+import { join as join20 } from "node:path";
 
 // src/canonical-skill-binding.ts
 import { readFile, realpath } from "node:fs/promises";
@@ -1484,46 +1484,64 @@ function isGhProcessStartFailure(error) {
   const syscall = error.syscall;
   return typeof syscall === "string" && (syscall === "spawn" || syscall.startsWith("spawn "));
 }
+async function projectGhIssueBody(runner, input) {
+  const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
+  let response;
+  try {
+    response = await runner(
+      ["api", "--hostname", "github.com", "--include", "-X", "GET", path],
+      input.signal === void 0 ? {} : { signal: input.signal }
+    );
+  } catch (error) {
+    if (isAmbiguousGhFailure(error) || isGhProcessStartFailure(error)) {
+      return { status: "unavailable", reason: "transport", cause: error };
+    }
+    throw error;
+  }
+  if (response.status < 200 || response.status >= 300) {
+    return {
+      status: "unavailable",
+      reason: "http-non-2xx",
+      httpStatus: response.status
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(response.bodyText);
+  } catch (error) {
+    return { status: "invalid", reason: "not-json", cause: error };
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return { status: "invalid", reason: "not-object" };
+  }
+  if (Object.hasOwn(parsed, "pull_request")) {
+    return { status: "unavailable", reason: "pull-request" };
+  }
+  const bodyRaw = parsed.body;
+  if (bodyRaw !== void 0 && bodyRaw !== null && typeof bodyRaw !== "string") {
+    return { status: "invalid", reason: "body-invalid" };
+  }
+  const body = typeof bodyRaw === "string" ? bodyRaw : "";
+  return { status: "available", body };
+}
 function createGhIssueSoftFetcher(runner = createGhApiRunner()) {
   return async (input) => {
-    const path = `repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
-    let response;
-    try {
-      response = await runner(
-        [
-          "api",
-          "--hostname",
-          "github.com",
-          "--include",
-          "-X",
-          "GET",
-          path
-        ],
-        input.signal === void 0 ? {} : { signal: input.signal }
-      );
-    } catch (error) {
-      if (isAmbiguousGhFailure(error) || isGhProcessStartFailure(error)) return void 0;
-      throw error;
+    const projected = await projectGhIssueBody(runner, input);
+    if (projected.status === "available") {
+      return Object.freeze({ body: projected.body });
     }
-    if (response.status < 200 || response.status >= 300) return void 0;
-    let parsed;
-    try {
-      parsed = JSON.parse(response.bodyText);
-    } catch (error) {
-      throw new Error("GitHub issue payload is not JSON", { cause: error });
-    }
-    if (typeof parsed !== "object" || parsed === null) {
-      throw new Error("GitHub issue payload must be a JSON object");
-    }
-    if (Object.hasOwn(parsed, "pull_request")) {
+    if (projected.status === "unavailable") {
       return void 0;
     }
-    const bodyRaw = parsed.body;
-    if (bodyRaw !== void 0 && bodyRaw !== null && typeof bodyRaw !== "string") {
-      throw new Error("GitHub issue payload body must be string or null");
+    if (projected.reason === "not-json") {
+      throw new Error("GitHub issue payload is not JSON", {
+        cause: projected.cause
+      });
     }
-    const body = typeof bodyRaw === "string" ? bodyRaw : "";
-    return Object.freeze({ body });
+    if (projected.reason === "not-object") {
+      throw new Error("GitHub issue payload must be a JSON object");
+    }
+    throw new Error("GitHub issue payload body must be string or null");
   };
 }
 function createGhCollectorGitHubTransport(runner = createGhApiRunner()) {
@@ -2426,6 +2444,13 @@ var NOTARY_SOURCE_RUN_FLAG = {
     type: "string"
   }
 };
+var NOTARY_TICKET_FLAG = {
+  name: "ak-notary-ticket-number",
+  definition: {
+    description: "Optional ticket number for Notary court-diary lookup",
+    type: "string"
+  }
+};
 var notaryOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type5.Object({
@@ -3285,7 +3310,21 @@ var JUDGE_OPTIONS = [
 ];
 var COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
-  bindOwner("countersign", SHARED_ATTACH_SEMANTICS)
+  bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
+  {
+    id: "ticket",
+    owner: "countersign",
+    canonical: "--ticket",
+    aliases: [],
+    valueMetavar: "number",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Ticket/issue number for court diary (diarist) and ticket-keyed provenance. Overrides attachment frontmatter when both present.",
+      zh: "\u7968\u53F7\uFF1A\u8D77\u5C45\u90CE\u6D41\u6C34\u7EBF\u4E0E\u8D77\u5C45\u5F55\u7968\u952E\u3002\u4E0E\u9644\u4EF6 frontmatter \u5E76\u5B58\u65F6\u4EE5\u672C\u65D7\u4E3A\u51C6\u3002"
+    }
+  }
 ];
 var CODER_OPTIONS = [
   {
@@ -3466,6 +3505,20 @@ var NOTARY_OPTIONS = [
       en: "Required source run locator (runId@role under the book home, or path to that run directory). Zero prompt/attachment projection.",
       zh: "\u5FC5\u586B\u6E90 run \u5B9A\u4F4D\u7B26\uFF08\u7C3F\u5185 runId@role\uFF0C\u6216\u8BE5 run \u76EE\u5F55\u8DEF\u5F84\uFF09\u3002\u96F6 prompt/\u9644\u4EF6\u6295\u5F71\u3002"
     }
+  },
+  {
+    id: "ticket",
+    owner: "notary",
+    canonical: "--ticket",
+    aliases: [],
+    valueMetavar: "number",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Optional ticket/issue number when Notary reads the court diary (ticket-provenance) for a ticket.",
+      zh: "\u53EF\u9009\u7968\u53F7\uFF1A\u7B26\u5B9D\u90CE\u6309\u7968\u952E\u8C03\u53D6\u8D77\u5C45\u5F55\u65F6\u4F7F\u7528\u3002"
+    }
   }
 ];
 var MERGER_OPTIONS = [
@@ -3513,7 +3566,7 @@ var ROLE_COMMAND_HELP = {
     summary: "Ticket-court review before work starts; five questions, \u7F72/\u5C01\u9A73/\u4E0A\u5448.",
     usage: ["ak-role countersign [options] [instruction]"],
     examples: [
-      'ak-role countersign --attach ./ticket.md "\u88C1\uFF1A\u672C\u7968\u662F\u5426\u8DB3\u4EE5\u5F00\u5DE5\u3002"',
+      'ak-role countersign --ticket 582 --attach ./ticket.md "\u88C1\uFF1A\u672C\u7968\u662F\u5426\u8DB3\u4EE5\u5F00\u5DE5\u3002"',
       'ak-role countersign --attach ./plan.md --attach ./adr.md "\u88C1\uFF1A\u65B9\u6848\u4E94\u95EE\u3002"'
     ]
   },
@@ -3573,7 +3626,8 @@ var ROLE_COMMAND_HELP = {
     summary: "Direct Notary document check (quote fidelity + ticket alignment); zero prompt/attachment.",
     usage: ["ak-role notary --source-run <runId@role|path> [options]"],
     examples: [
-      "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge"
+      "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+      "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@countersign --ticket 582"
     ]
   },
   analyst: {
@@ -4418,18 +4472,19 @@ function loadGatekeeperSessionMaterials(role) {
 
 // src/grok/role-envelope.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { mkdir as mkdir3, readFile as readFile10, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile10, writeFile as writeFile6 } from "node:fs/promises";
 import { createServer } from "node:net";
-import { basename as basename7, dirname as dirname14, join as join17 } from "node:path";
+import { appendFileSync as appendFileSync2 } from "node:fs";
+import { basename as basename7, dirname as dirname14, join as join18 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/gatekeeper-role.ts
 import { Type as Type11 } from "typebox";
 
 // src/evidence-child-executor.ts
-import { mkdtemp as mkdtemp2, rm as rm2 } from "node:fs/promises";
-import { tmpdir as tmpdir2 } from "node:os";
-import { join as join12 } from "node:path";
+import { mkdtemp as mkdtemp3, rm as rm3 } from "node:fs/promises";
+import { tmpdir as tmpdir3 } from "node:os";
+import { join as join13 } from "node:path";
 import "@earendil-works/pi-ai";
 
 // src/compliance-transport.ts
@@ -4655,8 +4710,12 @@ import { Type as Type10 } from "typebox";
 
 // src/engine-detour.ts
 import { spawn as spawn2 } from "node:child_process";
+import { mkdtemp, rm, writeFile as writeFile4 } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join as join10 } from "node:path";
 var ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
 var AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
+var ENGINE_DETOUR_STAGED_PROMPT_TOKEN = "<<ak-engine-staged-prompt>>";
 var ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC = "\u52B3\u52A1\u5F15\u64CE stdout \u4E3A\u7A7A";
 var ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC = "\u672C\u6FC0\u6D3B\u5185\u52B3\u52A1\u5F15\u64CE\u5DF2\u4F7F\u7528";
 function abortReasonError(signal) {
@@ -4669,7 +4728,21 @@ function abortReasonError(signal) {
   error.name = "AbortError";
   return error;
 }
-async function runEngineDetourOnce(input) {
+function resolveArgvWithStagedPrompt(argv, stagedPath) {
+  let replaced = 0;
+  const out = argv.map((part) => {
+    if (part !== ENGINE_DETOUR_STAGED_PROMPT_TOKEN) return part;
+    replaced += 1;
+    return stagedPath;
+  });
+  if (replaced !== 1) {
+    throw new Error(
+      `\u52B3\u52A1\u5F15\u64CE stagedPrompt \u9700\u8981 argv \u4E2D\u6070\u597D\u4E00\u4E2A ${ENGINE_DETOUR_STAGED_PROMPT_TOKEN}\uFF08\u5B9E\u9645 ${replaced}\uFF09`
+    );
+  }
+  return out;
+}
+async function spawnEngineDetourOnce(input) {
   if (input.argv.length === 0) {
     throw new Error("\u52B3\u52A1\u5F15\u64CE argv \u4E0D\u5F97\u4E3A\u7A7A");
   }
@@ -4726,6 +4799,42 @@ async function runEngineDetourOnce(input) {
       succeed({ code: code ?? 1, stdout, stderr });
     });
   });
+}
+async function runEngineDetourOnce(input) {
+  if (input.stagedPrompt === void 0) {
+    return spawnEngineDetourOnce(input);
+  }
+  const stagingDir = await mkdtemp(join10(tmpdir(), "ak-engine-detour-"));
+  const stagedPath = join10(stagingDir, "prompt.txt");
+  let result2;
+  let runError;
+  try {
+    await writeFile4(stagedPath, input.stagedPrompt, "utf8");
+    const argv = resolveArgvWithStagedPrompt(input.argv, stagedPath);
+    result2 = await spawnEngineDetourOnce({
+      argv,
+      cwd: input.cwd,
+      ...input.env === void 0 ? {} : { env: input.env },
+      ...input.signal === void 0 ? {} : { signal: input.signal }
+    });
+  } catch (error) {
+    runError = error;
+  }
+  try {
+    await rm(stagingDir, { recursive: true, force: true });
+  } catch (cleanupError) {
+    if (runError !== void 0) {
+      throw new Error(
+        `\u52B3\u52A1\u5F15\u64CE stagedPrompt \u6E05\u7406\u5931\u8D25\uFF08\u539F\u8FD0\u884C\u9519\u8BEF\u4FDD\u7559\u4E3A cause\uFF09: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        { cause: runError }
+      );
+    }
+    throw cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
+  }
+  if (runError !== void 0) {
+    throw runError instanceof Error ? runError : new Error(String(runError));
+  }
+  return result2;
 }
 function isEngineDetourFailure(result2) {
   return result2.code !== 0 || result2.stdout.trim() === "";
@@ -4918,7 +5027,7 @@ var AuditorTurnLimitError = class extends Error {
   lastResponse;
 };
 async function withInProcessScratch(options, run) {
-  const scratch = await mkdtemp2(join12(options.parentDirectory ?? tmpdir2(), options.prefix));
+  const scratch = await mkdtemp3(join13(options.parentDirectory ?? tmpdir3(), options.prefix));
   let failure2;
   try {
     return await run(scratch);
@@ -4927,7 +5036,7 @@ async function withInProcessScratch(options, run) {
     throw error;
   } finally {
     try {
-      await rm2(scratch, { recursive: true, force: true });
+      await rm3(scratch, { recursive: true, force: true });
     } catch (cleanupFailure) {
       if (failure2 !== void 0) {
         throw new AggregateError([failure2, cleanupFailure], "in-process child scratch cleanup failed", { cause: failure2 });
@@ -5610,7 +5719,8 @@ async function requireGatekeeperPass(options) {
 }
 
 // src/role-runtime.ts
-import { writeSync as writeSync4 } from "node:fs";
+import { readFileSync as readFileSync4, writeSync as writeSync4 } from "node:fs";
+import { join as pathJoin } from "node:path";
 
 // src/host-contracts.ts
 import { Type as Type12 } from "typebox";
@@ -5635,7 +5745,21 @@ function stringEnum(values, options = {}) {
 
 // src/public-cli/reviewer-dispatch-rejection.ts
 import { writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
+
+// src/adr-path-refs.ts
+var ADR_PATH_IN_BODY = /docs\/adr\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md/g;
+function extractReferencedAdrPaths(text) {
+  const seen = /* @__PURE__ */ new Set();
+  const paths = [];
+  for (const match of text.matchAll(ADR_PATH_IN_BODY)) {
+    const path = match[0];
+    if (seen.has(path)) continue;
+    seen.add(path);
+    paths.push(path);
+  }
+  return Object.freeze(paths);
+}
 
 // src/reviewer-prompt-identity.ts
 function isReviewerPromptText(value) {
@@ -5764,7 +5888,6 @@ var GENERIC_FEATURE_TOKENS = /* @__PURE__ */ new Set(["", "head", "main", "maste
 var BRANCH_SHELL_PREFIX = /^(?:feat|feature|fix|bugfix|hotfix|chore|docs|refactor)-/;
 var BRANCH_ISSUE_TOKEN = /(?:^|\/)((?:fix|feat|docs|audit|test)\/issue-(\d+)-)/;
 var COMMIT_TICKET_TOKEN = /#([1-9]\d*)/;
-var ADR_PATH_IN_BODY = /docs\/adr\/[A-Za-z0-9][A-Za-z0-9._/-]*\.md/g;
 function normalizeFeatureToken(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -5811,17 +5934,6 @@ function resolveReviewerTicketNumber(input) {
     return Object.freeze({ adopted: commit, abandoned: Object.freeze([]) });
   }
   return void 0;
-}
-function extractReferencedAdrPaths(issueBody) {
-  const seen = /* @__PURE__ */ new Set();
-  const paths = [];
-  for (const match of issueBody.matchAll(ADR_PATH_IN_BODY)) {
-    const path = match[0];
-    if (seen.has(path)) continue;
-    seen.add(path);
-    paths.push(path);
-  }
-  return Object.freeze(paths);
 }
 function optionalInvocationSignal(invocation) {
   if (typeof invocation !== "object" || invocation === null) return void 0;
@@ -5982,7 +6094,7 @@ function createReviewerDispatcher(d) {
 // src/public-cli/reviewer-dispatch-rejection.ts
 var REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
 function reviewerDispatchRejectionPath(runDirectory) {
-  return join13(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+  return join14(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 function recordReviewerDispatchRejectionSync(runDirectory, rejection) {
   writeFileSync2(
@@ -6000,7 +6112,7 @@ import { Value as Value5 } from "typebox/value";
 init_activation_ledger_topology();
 
 // src/run-terminal-artifacts.ts
-import { basename as basename5, dirname as dirname11, join as join14 } from "node:path";
+import { basename as basename5, dirname as dirname11, join as join15 } from "node:path";
 function runIdFromRunDirectory(runDirectory) {
   const name = basename5(runDirectory);
   const at = name.lastIndexOf("@");
@@ -8062,6 +8174,45 @@ ${JSON.stringify(catalog)}
 }
 
 // src/notary-role.ts
+function readNotaryTicketFlag(flag) {
+  if (flag === void 0) return void 0;
+  if (typeof flag !== "string") {
+    throw new Error(
+      "Notary ak-notary-ticket-number is present but not a safe positive integer string"
+    );
+  }
+  if (flag.trim() === "") return void 0;
+  const n = Number(flag);
+  if (!Number.isSafeInteger(n) || n < 1) {
+    throw new Error(
+      "Notary ak-notary-ticket-number is present but not a safe positive integer string"
+    );
+  }
+  return n;
+}
+function projectNotarySessionBound(input) {
+  return {
+    sourceRun: input.sourceRun,
+    ...input.ticketNumber === void 0 ? {} : { ticketNumber: input.ticketNumber }
+  };
+}
+var NOTARY_SESSION_BOUND_ENTRY = "notary-session-bound";
+function projectNotaryBoundFromFlags(getFlag) {
+  const path = getFlag(NOTARY_SOURCE_RUN_FLAG.name);
+  if (typeof path !== "string" || path.trim() === "") return void 0;
+  const ticketNumber = readNotaryTicketFlag(getFlag(NOTARY_TICKET_FLAG.name));
+  return {
+    sourceRunPath: path,
+    ...ticketNumber === void 0 ? {} : { ticketNumber }
+  };
+}
+function assembleNotaryAgentStartPrompt(input) {
+  return `${input.baseSystemPrompt}
+
+<notary_soul>
+${input.soul}
+</notary_soul>`;
+}
 function createNotaryRoleRuntime(pi, dependencies, host) {
   let activation;
   let registered = false;
@@ -8070,7 +8221,11 @@ function createNotaryRoleRuntime(pi, dependencies, host) {
     NOTARY_SOURCE_RUN_FLAG.definition
   );
   return {
-    async activate() {
+    /**
+     * @param admitted Optional ticket from envelope flag decode (ADR 0018).
+     * Role module never getFlag's the ticket — envelope owns that read.
+     */
+    async activate(admitted) {
       const path = pi.getFlag(NOTARY_SOURCE_RUN_FLAG.name);
       if (typeof path !== "string" || path.trim() === "") {
         throw new Error("Notary requires --ak-notary-source-run");
@@ -8078,7 +8233,11 @@ function createNotaryRoleRuntime(pi, dependencies, host) {
       const soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Notary soul is empty");
       const sourceRun = await dependencies.loadSourceRunLocator(path);
-      activation = { soul, sourceRun };
+      activation = {
+        soul,
+        sourceRun,
+        ...admitted?.ticketNumber === void 0 ? {} : { ticketNumber: admitted.ticketNumber }
+      };
       if (!registered) {
         registered = true;
         pi.registerTool({
@@ -8104,19 +8263,15 @@ function createNotaryRoleRuntime(pi, dependencies, host) {
           if (activation === void 0) {
             throw new Error("\u7B26\u5B9D\u90CE\u672A\u6FC0\u6D3B");
           }
-          const bound = {
-            sourceRun: activation.sourceRun
-          };
           return {
-            systemPrompt: `${event.systemPrompt}
-
-<notary_soul>
-${activation.soul}
-</notary_soul>
-
-<notary_source_run>
-${JSON.stringify(bound)}
-</notary_source_run>`
+            systemPrompt: assembleNotaryAgentStartPrompt({
+              baseSystemPrompt: event.systemPrompt,
+              soul: activation.soul
+            }),
+            readingMaterial: projectNotarySessionBound({
+              sourceRun: activation.sourceRun,
+              ...activation.ticketNumber === void 0 ? {} : { ticketNumber: activation.ticketNumber }
+            })
           };
         });
       }
@@ -9709,6 +9864,21 @@ var REVIEWER_TRANSPORT_FLAGS = Object.freeze([
     })
   })
 ]);
+var COUNTERSIGN_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: "ak-countersign-ticket-number",
+    definition: Object.freeze({
+      description: "Admitted ticketNumber for countersign Notary inner-gate material",
+      type: "string"
+    })
+  })
+]);
+var NOTARY_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: NOTARY_TICKET_FLAG.name,
+    definition: NOTARY_TICKET_FLAG.definition
+  })
+]);
 function decodeReviewerAdmittedInputs(getFlag) {
   let reviewScopeKeys;
   const rawScopeKeys = getFlag("ak-review-scope-keys");
@@ -9810,7 +9980,12 @@ function activationStage(role, runtime) {
     case "doctor":
       return { id: "load-and-install", run: async () => runtime.doctor.activate() };
     case "notary":
-      return { id: "load-and-install", run: async () => runtime.notary.activate() };
+      return {
+        id: "load-and-install",
+        run: async () => {
+          await runtime.notary.activate(runtime.decodeNotaryAdmitted());
+        }
+      };
     case "countersign":
       return { id: "load-and-install", run: async () => runtime.countersign.activate() };
     case "merger":
@@ -9925,6 +10100,84 @@ async function projectClosedSubmissionLifecycle(projection, context, phase, reco
   context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
+var CountersignInvocationBindingError = class extends Error {
+  code = "countersign-invocation-binding";
+  reason;
+  constructor(reason, message, options) {
+    super(message, options);
+    this.name = "CountersignInvocationBindingError";
+    this.reason = reason;
+  }
+};
+function readBoundTicketNumberForNotaryGate(roleHost) {
+  const fromFlag = roleHost.getFlag("ak-countersign-ticket-number");
+  if (fromFlag !== void 0) {
+    if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
+      const n = Number(fromFlag);
+      if (Number.isSafeInteger(n) && n >= 1) return n;
+    }
+    throw new CountersignInvocationBindingError(
+      "flag-invalid",
+      "countersign Notary gate: ak-countersign-ticket-number is present but not a safe positive integer string"
+    );
+  }
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") return void 0;
+  const invocationPath = pathJoin(runDir, "invocation.json");
+  let rawText;
+  try {
+    rawText = readFileSync4(invocationPath, "utf8");
+  } catch (error) {
+    const err = error;
+    if (err && err.code === "ENOENT") return void 0;
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      `countersign Notary gate: invocation.json unreadable (${invocationPath})`,
+      { cause: error }
+    );
+  }
+  let raw;
+  try {
+    raw = JSON.parse(rawText);
+  } catch (error) {
+    throw new CountersignInvocationBindingError(
+      "unparseable",
+      `countersign Notary gate: invocation.json unparseable (${invocationPath})`,
+      { cause: error }
+    );
+  }
+  if (typeof raw === "object" && raw !== null && typeof raw.ticketNumber === "number" && Number.isSafeInteger(raw.ticketNumber) && raw.ticketNumber >= 1) {
+    return raw.ticketNumber;
+  }
+  return void 0;
+}
+async function buildCountersignNotaryGateMaterial(input) {
+  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
+  if (ticketNumber !== void 0) {
+    return JSON.stringify({ verdict: input.parameters, ticketNumber });
+  }
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") {
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      "countersign Notary gate: true-unbound material requires AK_ROLE_RUN_DIR source-run locator"
+    );
+  }
+  let sourceRun;
+  try {
+    sourceRun = await loadNotarySourceRunLocator(runDir);
+  } catch (error) {
+    if (error instanceof NotarySourceRunError) {
+      throw new CountersignInvocationBindingError(
+        "unreadable",
+        `countersign Notary gate: source-run locator unusable (${error.message})`,
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+  return JSON.stringify({ verdict: input.parameters, sourceRun });
+}
 function createFiledOfficerRuntime(roleHost, spec, dependencies) {
   let soul;
   let registered = false;
@@ -9941,8 +10194,11 @@ function createFiledOfficerRuntime(roleHost, spec, dependencies) {
           description: spec.tool.description,
           promptSnippet: spec.tool.promptSnippet,
           parameters: spec.tool.parameters,
-          async execute(_toolCallId, parameters, _signal, _onUpdate, _ctx) {
+          async execute(toolCallId, parameters, signal, _onUpdate, ctx) {
             if (soul === void 0) throw new Error(`${spec.role} \u804C\u5206\u672A\u88C5\u8F7D`);
+            if (spec.beforeAccept !== void 0) {
+              await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
+            }
             return {
               content: [{ type: "text", text: spec.acceptedText }],
               details: parameters,
@@ -9967,14 +10223,28 @@ ${soul}
     }
   };
 }
-function createCountersignRoleRuntime(roleHost, dependencies) {
+function createCountersignRoleRuntime(roleHost, dependencies, hostActions) {
+  const beforeAccept = hostActions !== void 0 && roleHost.requireGatekeeperPass !== void 0 ? async ({ toolCallId, parameters, signal, ctx }) => {
+    const material = await buildCountersignNotaryGateMaterial({
+      roleHost,
+      parameters
+    });
+    await roleHost.requireGatekeeperPass({
+      context: ctx,
+      subject: { kind: "countersign_verdict", material },
+      ...signal === void 0 ? {} : { signal },
+      hostActions,
+      toolCallId
+    });
+  } : void 0;
   return createFiledOfficerRuntime(
     roleHost,
     {
       role: "countersign",
       tool: COUNTERSIGN_TOOL_SPEC,
       acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
-      soulTag: "countersign"
+      soulTag: "countersign",
+      ...beforeAccept === void 0 ? {} : { beforeAccept }
     },
     dependencies
   );
@@ -9992,6 +10262,12 @@ function createRoleRuntimeExtension(dependencies) {
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of COUNTERSIGN_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of NOTARY_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
     let admitted = false;
@@ -10074,6 +10350,12 @@ function createRoleRuntimeExtension(dependencies) {
       if (role === void 0) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
+      }
+      if (role === "notary") {
+        const bound = projectNotaryBoundFromFlags((name) => roleHost.getFlag(name));
+        if (bound !== void 0) {
+          ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
+        }
       }
       if (navigatorAttendance !== void 0 && navigatorWorkContext !== void 0 && navigatorWorkContext.contextError === void 0) {
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
@@ -10347,7 +10629,7 @@ function createRoleRuntimeExtension(dependencies) {
         if (!dependencies.loadCountersignSoul) throw new Error("Countersign runtime dependencies are not configured");
         return dependencies.loadCountersignSoul();
       }
-    });
+    }, hostActions);
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() {
@@ -10473,6 +10755,12 @@ function createRoleRuntimeExtension(dependencies) {
         bindReviewerParent(activation) {
           activeReviewerParent = activation;
         },
+        decodeNotaryAdmitted() {
+          const ticketNumber = readNotaryTicketFlag(
+            roleHost.getFlag(NOTARY_TICKET_FLAG.name)
+          );
+          return ticketNumber === void 0 ? void 0 : { ticketNumber };
+        },
         collector,
         doctor,
         notary,
@@ -10586,13 +10874,19 @@ function createRoleRuntimeExtension(dependencies) {
 // src/grok/role-turn-host.ts
 import { execFile as execFile3, spawn as spawn3 } from "node:child_process";
 import { copyFile, mkdir as mkdir2, open as open2, realpath as realpath6 } from "node:fs/promises";
-import { basename as basename6, dirname as dirname13, isAbsolute as isAbsolute6, join as join16, relative as pathRelative } from "node:path";
+import { basename as basename6, dirname as dirname13, isAbsolute as isAbsolute6, join as join17, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify as promisify3 } from "node:util";
 
+// src/agent-start-materials.ts
+function renderAgentStartMaterials(body, materials) {
+  if (materials.length === 0) return body;
+  return [body, ...materials.map((material) => JSON.stringify(material))].join("\n\n");
+}
+
 // src/grok/bash-seatbelt.ts
-import { mkdir, writeFile as writeFile4 } from "node:fs/promises";
-import { join as join15 } from "node:path";
+import { mkdir, writeFile as writeFile5 } from "node:fs/promises";
+import { join as join16 } from "node:path";
 function renderGrokBashSeatbeltHookScript() {
   const reasons = Object.fromEntries(
     FIXER_BASH_FORBIDDEN_LITERALS.map((literal) => [literal, fixerBashSeatbeltDenyReason(literal)])
@@ -10620,12 +10914,12 @@ process.stdin.on("end", () => {
 `;
 }
 async function installGrokPreToolUseDeny(controlledHome) {
-  const hooksDir = join15(controlledHome, "hooks");
+  const hooksDir = join16(controlledHome, "hooks");
   await mkdir(hooksDir, { recursive: true });
   const scriptName = "ak-bash-seatbelt.mjs";
-  const scriptPath = join15(hooksDir, scriptName);
-  await writeFile4(scriptPath, renderGrokBashSeatbeltHookScript(), { mode: 493 });
-  await writeFile4(join15(hooksDir, "ak-bash-seatbelt.json"), `${JSON.stringify({
+  const scriptPath = join16(hooksDir, scriptName);
+  await writeFile5(scriptPath, renderGrokBashSeatbeltHookScript(), { mode: 493 });
+  await writeFile5(join16(hooksDir, "ak-bash-seatbelt.json"), `${JSON.stringify({
     hooks: {
       PreToolUse: [
         {
@@ -10645,6 +10939,9 @@ async function installGrokPreToolUseDeny(controlledHome) {
 }
 
 // src/grok/role-turn-host.ts
+function renderGrokSystemPromptOverride(authority) {
+  return renderAgentStartMaterials(authority.body, authority.materials);
+}
 function failure(cause, name, code, details) {
   return {
     code: null,
@@ -10815,7 +11112,7 @@ function createGrokRoleTurnHost(config) {
               ...resumedSessionId === void 0 ? {} : { sessionId: resumedSessionId },
               cwd: request.cwd,
               mcpServers: prepared.mcpServers,
-              _meta: { systemPromptOverride: prepared.systemPrompt, yoloMode: false }
+              _meta: { systemPromptOverride: renderGrokSystemPromptOverride(prepared.systemPrompt), yoloMode: false }
             }
           );
           sessionId = resumedSessionId ?? (typeof session.sessionId === "string" ? session.sessionId : void 0);
@@ -10922,7 +11219,7 @@ async function resolveHeadTreePath(topLevel, relativePath) {
     encoding: "utf8"
   });
   const needle = leaf.toLowerCase();
-  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename6(name).toLowerCase() === needle).map((name) => parent === "." ? basename6(name) : join16(parent, basename6(name)));
+  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename6(name).toLowerCase() === needle).map((name) => parent === "." ? basename6(name) : join17(parent, basename6(name)));
   return hits.length === 1 ? hits[0] : void 0;
 }
 async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
@@ -10940,14 +11237,14 @@ async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
   if (parent === void 0) return false;
   const leaf = basename6(absolutePath);
   if (leaf === "" || leaf === "." || leaf === "..") return false;
-  const candidate = join16(parent, leaf);
+  const candidate = join17(parent, leaf);
   const relative3 = pathRelative(topLevel, candidate);
   if (relative3 === "" || relative3.startsWith("..") || isAbsolute6(relative3) || relative3.includes("\0")) {
     return false;
   }
   const headRel = await resolveHeadTreePath(topLevel, relative3);
   if (headRel === void 0) return false;
-  const headFile = join16(topLevel, headRel);
+  const headFile = join17(topLevel, headRel);
   const { stdout: headBlobOut } = await execFileAsync3(
     "git",
     ["rev-parse", "--verify", `HEAD:${headRel}`],
@@ -11016,7 +11313,7 @@ function classifyGrokInspection(document, packageRoot, options = {}) {
 }
 async function prepareControlledGrokHome(sourceHome, controlledHome) {
   await mkdir2(controlledHome, { recursive: true, mode: 448 });
-  await copyFile(join16(sourceHome, ".grok", "auth.json"), join16(controlledHome, "auth.json"));
+  await copyFile(join17(sourceHome, ".grok", "auth.json"), join17(controlledHome, "auth.json"));
 }
 async function inspectControlledGrok(options) {
   const { stdout } = await execFileAsync3(options.binary, ["inspect", "--json"], {
@@ -11085,6 +11382,12 @@ function projectGrokActivationFlags(request) {
     flags.set("ak-review-authority-refs", JSON.stringify(activation.authorityRefs));
     if (activation.ticketNumber !== void 0) flags.set("ak-review-ticket-number", String(activation.ticketNumber));
   }
+  if (activation.role === "countersign" && activation.ticketNumber !== void 0) {
+    flags.set("ak-countersign-ticket-number", String(activation.ticketNumber));
+  }
+  if (activation.role === "notary" && activation.ticketNumber !== void 0) {
+    flags.set("ak-notary-ticket-number", String(activation.ticketNumber));
+  }
   if (activation.role === "collector") {
     flags.set("ak-collector-repo", activation.repo);
     flags.set("ak-collector-pr", activation.pr);
@@ -11129,10 +11432,10 @@ async function prepareGrokRoleEnvelope(options) {
     const raw = await readFile10(method.path, "utf8");
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
-  let sessionFile = join17(request.runDirectory, "session", "session.jsonl");
+  let sessionFile = join18(request.runDirectory, "session", "session.jsonl");
   await mkdir3(dirname14(sessionFile), { recursive: true });
   try {
-    await writeFile5(
+    await writeFile6(
       sessionFile,
       `${JSON.stringify({
         type: "session",
@@ -11163,6 +11466,12 @@ async function prepareGrokRoleEnvelope(options) {
       },
       appendCustomEntry(customType, data) {
         customEntries.push({ customType, data });
+        appendFileSync2(
+          sessionFile,
+          `${JSON.stringify({ type: "custom", customType, data })}
+`,
+          "utf8"
+        );
       }
     },
     abort() {
@@ -11395,7 +11704,14 @@ async function prepareGrokRoleEnvelope(options) {
     systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
     systemPromptOptions: {}
   });
-  const systemPrompt = [...promptResults].reverse().find((value) => typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+  const systemPromptBody = [...promptResults].reverse().find((value) => typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+  const readingMaterials = [];
+  for (const value of promptResults) {
+    if (typeof value !== "object" || value === null) continue;
+    if (!("readingMaterial" in value)) continue;
+    const material = value.readingMaterial;
+    if (material !== void 0) readingMaterials.push(material);
+  }
   priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
   process.env.AK_ROLE_RUN_DIR = request.runDirectory;
   runDirInjected = true;
@@ -11409,7 +11725,7 @@ async function prepareGrokRoleEnvelope(options) {
         { name: "AK_GROK_MCP_TOKEN", value: token }
       ]
     }],
-    systemPrompt,
+    systemPrompt: { body: systemPromptBody, materials: readingMaterials },
     prompt,
     closeRound,
     dispose
@@ -11417,10 +11733,10 @@ async function prepareGrokRoleEnvelope(options) {
 }
 
 // src/grok/session-identity.ts
-import { mkdir as mkdir4, readFile as readFile11, rename, writeFile as writeFile6 } from "node:fs/promises";
-import { dirname as dirname15, join as join18 } from "node:path";
+import { mkdir as mkdir4, readFile as readFile11, rename, writeFile as writeFile7 } from "node:fs/promises";
+import { dirname as dirname15, join as join19 } from "node:path";
 function createGrokSessionIdentityAuthority(authority) {
-  const bindingPath = (principal) => join18(authority.decode(principal).sessionDirectory, "grok-acp-session.json");
+  const bindingPath = (principal) => join19(authority.decode(principal).sessionDirectory, "grok-acp-session.json");
   return {
     async load(principal) {
       try {
@@ -11438,7 +11754,7 @@ function createGrokSessionIdentityAuthority(authority) {
       const target = bindingPath(principal);
       await mkdir4(dirname15(target), { recursive: true });
       const temporary = `${target}.${process.pid}.tmp`;
-      await writeFile6(temporary, `${JSON.stringify({ sessionId })}
+      await writeFile7(temporary, `${JSON.stringify({ sessionId })}
 `, { encoding: "utf8", mode: 384 });
       await rename(temporary, target);
     }
@@ -11447,14 +11763,14 @@ function createGrokSessionIdentityAuthority(authority) {
 
 // src/grok/production-host.ts
 function resolveGrokBinary(operatorHome) {
-  return join19(operatorHome, ".grok", "bin", "grok");
+  return join20(operatorHome, ".grok", "bin", "grok");
 }
 var NO_PRODUCTION_GROK_PRIMARY_FAILURE = {
   present: false
 };
 async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, concurrentMessage) {
   try {
-    await rm3(controlledHome, { recursive: true, force: true });
+    await rm4(controlledHome, { recursive: true, force: true });
   } catch (cleanupFailure) {
     if (primaryFailure.present) {
       throw new AggregateError([primaryFailure.value, cleanupFailure], concurrentMessage, {
@@ -11468,7 +11784,7 @@ async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, c
   }
 }
 async function openProductionGrokHome(operatorHome) {
-  const controlledHome = await mkdtemp3(join19(tmpdir3(), "ak-grok-home-"));
+  const controlledHome = await mkdtemp4(join20(tmpdir4(), "ak-grok-home-"));
   try {
     await prepareControlledGrokHome(operatorHome, controlledHome);
     return controlledHome;
@@ -11556,8 +11872,8 @@ function createGrokRoleRuntimeDependencies(packageRoot) {
   };
 }
 async function recordGrokCapabilities(request, declaration) {
-  await writeFile7(
-    join19(request.runDirectory, "grok-capabilities.json"),
+  await writeFile8(
+    join20(request.runDirectory, "grok-capabilities.json"),
     `${JSON.stringify(declaration)}
 `,
     "utf8"

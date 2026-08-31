@@ -36,7 +36,6 @@ import {
   buildNotaryTransportPrompt,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
-
 import {
   readRoleRunState,
   writeRoleRunState,

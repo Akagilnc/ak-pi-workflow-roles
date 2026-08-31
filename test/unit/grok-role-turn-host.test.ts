@@ -35,10 +35,11 @@ const request = {
 function prepared(
   closeRound: GrokPreparedTurn["closeRound"],
   mcpServers: Readonly<Record<string, unknown>>[] = [{}],
+  materials: readonly unknown[] = [],
 ): GrokPreparedTurn {
   return {
     mcpServers,
-    systemPrompt: "law",
+    systemPrompt: { body: "law", materials },
     prompt: "decide",
     closeRound,
   };

@@ -16,10 +16,12 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function loadBuildPackage(): Promise<{
   buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
+  buildGrokProductionHost: (outfile?: string) => Promise<void>;
 }> {
   const url = pathToFileURL(resolve(packageRoot, "scripts/build-package.mjs")).href;
   return (await import(url)) as {
     buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
+    buildGrokProductionHost: (outfile?: string) => Promise<void>;
   };
 }
 
@@ -53,6 +55,33 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
     // Byte equality with a fresh source build is the sole artifact oracle
     // (#420: committedText marker array deleted — behavioral coverage lives in
     // the real-install tracers; prose staring violates ADR 0052).
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("committed grok production-host matches fresh bundle from source", async () => {
+  const { buildGrokProductionHost } = await loadBuildPackage();
+  const committedPath = resolve(packageRoot, "dist/grok/production-host.js");
+  const committed = await readFile(committedPath);
+
+  const dir = await mkdtemp(join(tmpdir(), "ak-grok-host-"));
+  const freshPath = join(dir, "production-host.js");
+  try {
+    const previousCwd = process.cwd();
+    process.chdir(packageRoot);
+    try {
+      await buildGrokProductionHost(freshPath);
+    } finally {
+      process.chdir(previousCwd);
+    }
+
+    const fresh = await readFile(freshPath);
+    assert.equal(
+      sha256(fresh),
+      sha256(committed),
+      "dist/grok/production-host.js drifted from source — run: node scripts/build-package.mjs",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
