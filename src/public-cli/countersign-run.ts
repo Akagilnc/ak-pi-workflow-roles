@@ -66,11 +66,8 @@ export type CountersignRunEnv = PostAdmissionEnv & {
    * (no soft empty-face continue when ticket is bound).
    */
   diaristIssueFaceFetcher?: DiaristIssueFaceFetcher;
-  /**
-   * Test seam: inject pre-court ticket resolver.
-   * undefined → production hermes resolver; null → skip resolution (leave unbound).
-   */
-  diaristTicketResolver?: DiaristTicketResolver | null;
+  /** Test seam: inject pre-court ticket resolver (undefined → production hermes). */
+  diaristTicketResolver?: DiaristTicketResolver;
   /** Test seam: observe ticket-resolution outcome. */
   onTicketResolution?: (result: DiaristTicketResolution) => void;
   /** Test seam: inject live-ticket existence check. */
@@ -198,7 +195,6 @@ export async function resolveCountersignTicketBinding(
   >,
 ): Promise<DiaristTicketResolution | undefined> {
   if (admitted.ticketNumber !== undefined) return undefined;
-  if (env.diaristTicketResolver === null) return undefined;
 
   const resolver =
     env.diaristTicketResolver ??

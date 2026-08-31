@@ -1,11 +1,8 @@
 /**
- * 起居郎 pre-court ticket resolution — #582 / decision key
- * `diarist-resolves-ticket-llm-layer`.
- *
- * Unbound countersign: LLM typed assertion over accepted instruction only,
- * then two mechanical checks on asserted N (decimal digits verbatim in
- * instruction; live GitHub ticket exists). Verification failure is controlled
- * failure — never washed into true-unbound. Explicit admitted ticket skips.
+ * 起居郎 pre-court ticket resolution (#582 / diarist-resolves-ticket-llm-layer).
+ * Unbound countersign: LLM typed assertion over accepted instruction, then two
+ * mechanical checks on N (decimal digits in instruction; live GitHub issue).
+ * Verification failure is controlled failure — never washed to true-unbound.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,25 +18,13 @@ import {
   runEngineDetourOnce,
 } from "./engine-detour.ts";
 
-/** Owner-domain method material for ticket-resolution judgment. */
 export const DIARIST_RESOLVE_TICKET_METHOD_RELATIVE =
   "resources/diarist-resolve-ticket.md" as const;
 
-const packageRootUrl = new URL("..", import.meta.url);
-
-/** Absolute path to packaged diarist-resolve-ticket method material. */
-export function resolveDiaristResolveTicketMethodPath(
-  packageRoot: string = fileURLToPath(packageRootUrl),
-): string {
-  return join(packageRoot, DIARIST_RESOLVE_TICKET_METHOD_RELATIVE);
-}
-
-/** LLM typed assertion before mechanical verification. */
 export type DiaristTicketAssertion =
   | { readonly kind: "ticket"; readonly ticketNumber: number }
   | { readonly kind: "true-unbound" };
 
-/** Final resolution after mechanical verification (or true-unbound). */
 export type DiaristTicketResolution = DiaristTicketAssertion;
 
 export type DiaristTicketResolver = (input: {
@@ -47,7 +32,6 @@ export type DiaristTicketResolver = (input: {
   readonly signal?: AbortSignal;
 }) => Promise<DiaristTicketAssertion>;
 
-/** Live existence check for an asserted ticket number. */
 export type TicketExistenceChecker = (input: {
   readonly owner: string;
   readonly repo: string;
@@ -66,10 +50,6 @@ export type DiaristTicketResolutionReason =
   | "origin-unresolved"
   | "engine-failed";
 
-/**
- * Honest failure of ticket resolution / mechanical verification.
- * Must settle as controlled failure — never degrade to true-unbound.
- */
 export class DiaristTicketResolutionError extends Error {
   readonly code = "diarist-ticket-resolution" as const;
   readonly reason: DiaristTicketResolutionReason;
@@ -84,27 +64,25 @@ export class DiaristTicketResolutionError extends Error {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export function resolveDiaristResolveTicketMethodPath(
+  packageRoot: string = fileURLToPath(new URL("..", import.meta.url)),
+): string {
+  return join(packageRoot, DIARIST_RESOLVE_TICKET_METHOD_RELATIVE);
 }
 
-/**
- * Decision-key narrow identity check: decimal digits of N appear verbatim
- * in the accepted instruction. Not a prose/relevance gate.
- */
+/** Decision-key narrow identity check: decimal digits of N appear in instruction. */
 export function instructionContainsTicketNumber(
   instruction: string,
   ticketNumber: number,
 ): boolean {
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) return false;
-  return instruction.includes(String(ticketNumber));
+  return (
+    Number.isSafeInteger(ticketNumber) &&
+    ticketNumber >= 1 &&
+    instruction.includes(String(ticketNumber))
+  );
 }
 
-/**
- * Consumer-driven parse of resolver stdout.
- * Sole shapes: {assertion:"ticket",ticketNumber:N} | {assertion:"true-unbound"}.
- * No fence/substring recovery.
- */
+/** Sole stdout shapes: {assertion:"ticket",ticketNumber:N} | {assertion:"true-unbound"}. */
 export function parseDiaristTicketResolverStdout(
   stdout: string,
 ): DiaristTicketAssertion {
@@ -125,30 +103,28 @@ export function parseDiaristTicketResolverStdout(
       { cause: error },
     );
   }
-  if (!isRecord(parsed)) {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new DiaristTicketResolutionError(
       "not-object",
       "diarist ticket resolver stdout must be one JSON object",
     );
   }
-  if (!Object.prototype.hasOwnProperty.call(parsed, "assertion")) {
+  const record = parsed as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(record, "assertion")) {
     throw new DiaristTicketResolutionError(
       "assertion-missing",
       "diarist ticket resolver stdout missing assertion",
     );
   }
-  if (parsed.assertion === "true-unbound") {
-    return { kind: "true-unbound" };
-  }
-  if (parsed.assertion === "ticket") {
-    const raw = parsed.ticketNumber;
-    if (
-      typeof raw === "number" &&
-      Number.isSafeInteger(raw) &&
-      raw >= 1
-    ) {
-      return { kind: "ticket", ticketNumber: raw };
-    }
+  if (record.assertion === "true-unbound") return { kind: "true-unbound" };
+  const n = record.ticketNumber;
+  if (
+    record.assertion === "ticket" &&
+    typeof n === "number" &&
+    Number.isSafeInteger(n) &&
+    n >= 1
+  ) {
+    return { kind: "ticket", ticketNumber: n };
   }
   throw new DiaristTicketResolutionError(
     "assertion-uninterpretable",
@@ -156,51 +132,16 @@ export function parseDiaristTicketResolverStdout(
   );
 }
 
-/** Structured engine payload for hermes staged prompt. */
-export type DiaristTicketResolverEnginePayload = {
-  readonly method: string;
-  readonly instruction: string;
-};
+const HERMES_RESOLVER_TOOLSET = "context_engine" as const;
 
-export function buildDiaristTicketResolverEnginePayload(input: {
-  readonly method: string;
-  readonly instruction: string;
-}): DiaristTicketResolverEnginePayload {
-  return {
-    method: input.method,
-    instruction: input.instruction,
-  };
-}
-
-export function serializeDiaristTicketResolverEnginePayload(
-  payload: DiaristTicketResolverEnginePayload,
-): string {
-  return JSON.stringify(payload);
-}
-
-/**
- * Hermes built-in toolset that resolves to zero tools.
- * Resolver labor is pure JSON assertion — never a tools-capable agent surface.
- */
-const HERMES_DIARIST_RESOLVER_TOOLSET = "context_engine" as const;
-
-export type HermesDiaristTicketResolverOptions = {
+/** Hermes resolver: method bytes + instruction only; empty toolset; staged prompt. */
+export function createHermesDiaristTicketResolver(options: {
   readonly executable?: string;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
-  readonly extraArgv?: readonly string[];
   readonly packageRoot?: string;
   readonly runDetour?: typeof runEngineDetourOnce;
-};
-
-/**
- * Default cheap-engine ticket resolver via hermes (ADR 0069 detour seam).
- * Method bytes + accepted instruction only; staged via shared engine seam.
- */
-export function createHermesDiaristTicketResolver(
-  options: HermesDiaristTicketResolverOptions = {},
-): DiaristTicketResolver {
-  const executable = options.executable ?? "hermes";
+} = {}): DiaristTicketResolver {
   const methodPath = resolveDiaristResolveTicketMethodPath(options.packageRoot);
   if (!existsSync(methodPath)) {
     throw new Error(`diarist resolve-ticket method material missing (${methodPath})`);
@@ -210,15 +151,10 @@ export function createHermesDiaristTicketResolver(
     throw new Error(`diarist resolve-ticket method material is empty (${methodPath})`);
   }
   const runDetour = options.runDetour ?? runEngineDetourOnce;
+  const executable = options.executable ?? "hermes";
   return async (input) => {
-    const payload = buildDiaristTicketResolverEnginePayload({
-      method,
-      instruction: input.instruction,
-    });
-    const prompt = serializeDiaristTicketResolverEnginePayload(payload);
     const argv = [
       executable,
-      ...(options.extraArgv ?? []),
       "chat",
       "--query-file",
       ENGINE_DETOUR_STAGED_PROMPT_TOKEN,
@@ -226,13 +162,13 @@ export function createHermesDiaristTicketResolver(
       "--no-restore-cwd",
       "--ignore-rules",
       "-t",
-      HERMES_DIARIST_RESOLVER_TOOLSET,
+      HERMES_RESOLVER_TOOLSET,
     ];
     let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
     try {
       result = await runDetour({
         argv,
-        stagedPrompt: prompt,
+        stagedPrompt: JSON.stringify({ method, instruction: input.instruction }),
         cwd: options.cwd ?? process.cwd(),
         ...(options.env === undefined ? {} : { env: options.env }),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
@@ -254,7 +190,7 @@ export function createHermesDiaristTicketResolver(
   };
 }
 
-/** Test/scripted resolver — pure function over fixed assertion. */
+/** Test seam: fixed or function-backed assertion (same pattern as collector). */
 export function createScriptedDiaristTicketResolver(
   script:
     | DiaristTicketAssertion
@@ -262,18 +198,11 @@ export function createScriptedDiaristTicketResolver(
         readonly instruction: string;
       }) => DiaristTicketAssertion | Promise<DiaristTicketAssertion>),
 ): DiaristTicketResolver {
-  return async (input) => {
-    if (typeof script === "function") {
-      return await script(input);
-    }
-    return script;
-  };
+  return async (input) =>
+    typeof script === "function" ? await script(input) : script;
 }
 
-/**
- * Production live-ticket check over shared gh issue-body projection.
- * Available issue face → exists; unavailable/invalid → missing.
- */
+/** Live ticket check over shared gh issue-body projection. */
 export function createGhTicketExistenceChecker(options?: {
   readonly runner?: GhApiRunner;
 }): TicketExistenceChecker {
@@ -289,10 +218,7 @@ export function createGhTicketExistenceChecker(options?: {
   };
 }
 
-/**
- * Apply mechanical verification to an LLM ticket assertion.
- * true-unbound passes through. ticket N requires both checks.
- */
+/** Mechanical verify after LLM assertion. true-unbound passes; ticket needs both checks. */
 export async function verifyDiaristTicketAssertion(input: {
   readonly assertion: DiaristTicketAssertion;
   readonly instruction: string;
@@ -300,9 +226,7 @@ export async function verifyDiaristTicketAssertion(input: {
   readonly checkExistence: TicketExistenceChecker;
   readonly signal?: AbortSignal;
 }): Promise<DiaristTicketResolution> {
-  if (input.assertion.kind === "true-unbound") {
-    return input.assertion;
-  }
+  if (input.assertion.kind === "true-unbound") return input.assertion;
   const n = input.assertion.ticketNumber;
   if (!instructionContainsTicketNumber(input.instruction, n)) {
     throw new DiaristTicketResolutionError(
@@ -313,7 +237,7 @@ export async function verifyDiaristTicketAssertion(input: {
   if (input.origin === undefined) {
     throw new DiaristTicketResolutionError(
       "origin-unresolved",
-      `diarist ticket assertion #${n} requires a resolvable github.com origin remote for live verification`,
+      `diarist ticket assertion #${n} requires a resolvable github.com origin remote`,
     );
   }
   let exists: boolean;
@@ -340,10 +264,6 @@ export async function verifyDiaristTicketAssertion(input: {
   return input.assertion;
 }
 
-/**
- * Full unbound resolution: LLM assert → mechanical verify.
- * Caller supplies origin from project root; missing origin fails when N asserted.
- */
 export async function resolveDiaristTicketFromInstruction(input: {
   readonly instruction: string;
   readonly origin: { readonly owner: string; readonly repo: string } | undefined;

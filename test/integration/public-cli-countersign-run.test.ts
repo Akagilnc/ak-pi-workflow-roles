@@ -284,9 +284,11 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
           cwd: project,
           io,
           createRunId: () => runId,
-          // Unbound instruction: skip LLM resolver so this terminal-settlement
-          // trunk stays hermetic (true-unbound path covered by path4).
-          diaristTicketResolver: null,
+          // Unbound instruction: production would run hermes; inject deterministic
+          // true-unbound so the same pre-court stage executes without a live engine.
+          diaristTicketResolver: createScriptedDiaristTicketResolver({
+            kind: "true-unbound",
+          }),
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
@@ -573,7 +575,9 @@ test("countersign runs are one-shot — resume is refused", async () => {
         cwd: project,
         io: captureIo().io,
         createRunId: () => runId,
-        diaristTicketResolver: null,
+        diaristTicketResolver: createScriptedDiaristTicketResolver({
+          kind: "true-unbound",
+        }),
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -778,7 +782,7 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
 
 /**
  * #582 four-path ticket binding from real public countersign entry.
- * Shared project fixture; one trunk per path; typed fields only.
+ * Shared project fixture; four independent path tests; typed fields only.
  */
 
 async function withCountersignProject(
@@ -869,8 +873,7 @@ function countersignPathEnv(input: {
   };
 }
 
-test("public countersign ticket paths: explicit / resolve+bind / verify-fail / true-unbound", async () => {
-  // path1: explicit --ticket, resolver never called
+test("public countersign path: explicit --ticket binds without re-resolution", async () => {
   await withCountersignProject(async ({ home, project }) => {
     let resolverCalled = false;
     let turnTicket: number | undefined;
@@ -897,8 +900,9 @@ test("public countersign ticket paths: explicit / resolve+bind / verify-fail / t
     assert.equal(result.admitted?.ticketNumber, 582);
     assert.equal(turnTicket, 582);
   });
+});
 
-  // path2: unbound LLM ticket + verify → durable bind + diary
+test("public countersign path: unbound resolve+verify binds ticket and runs diary", async () => {
   await withCountersignProject(async ({ home, project }) => {
     let resolutionKind: string | undefined;
     let diaristTicket: number | undefined;
@@ -938,8 +942,9 @@ test("public countersign ticket paths: explicit / resolve+bind / verify-fail / t
     ) as { ticketNumber?: number };
     assert.equal(inv.ticketNumber, 582);
   });
+});
 
-  // path3: asserted N fails live verify → controlled failure, no wash
+test("public countersign path: asserted N fails verify → controlled failure, no wash", async () => {
   await withCountersignProject(async ({ home, project }) => {
     const runId = "01a0sign00-0000-7000-8000-000000000p03";
     const result = await runPublicCountersign(
@@ -977,8 +982,9 @@ test("public countersign ticket paths: explicit / resolve+bind / verify-fail / t
     ) as { ticketNumber?: number };
     assert.equal(inv.ticketNumber, undefined);
   });
+});
 
-  // path4: true-unbound → no diary; durable pages stay unbound (gate sourceRun in notary-gate test)
+test("public countersign path: true-unbound skips diary; run page stays unbound", async () => {
   await withCountersignProject(async ({ home, project }) => {
     let diaristCalled = false;
     let resolutionKind: string | undefined;
