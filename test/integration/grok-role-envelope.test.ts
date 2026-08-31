@@ -251,7 +251,6 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
       agentDir: join(root, "agent"), runDirectory,
     } as RoleTurnRequest;
 
-    const sealedFlag = { value: false };
     let settleCount = 0;
 
     const prepared = await prepareGrokRoleEnvelope({
@@ -289,8 +288,6 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
       assert.equal(sessionHeader.type, "session");
       assert.equal(sessionHeader.id, `${runId}@notary`);
 
-      prepared.whenSealed().then(() => { sealedFlag.value = true; });
-
       const server = prepared.mcpServers[0] as McpServer;
       const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(reply.error, undefined);
@@ -298,17 +295,14 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
       const disposition = (reply.result as { structuredContent?: { submissionDisposition?: unknown } })?.structuredContent?.submissionDisposition;
       assert.equal(disposition, "pending-round-closure");
 
-      // Candidate after tool path must not seal: no settle, no whenSealed, no ledger accept.
+      // Candidate after tool path must not seal: no settle, no ledger accept.
       await Promise.resolve();
       await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(sealedFlag.value, false);
       assert.equal(settleCount, 0);
       assert.equal(await readSealedSubmission(process.cwd(), runId, root), undefined);
 
       const closure = await prepared.closeRound();
       assert.deepEqual(closure, { accepted: true });
-      await prepared.whenSealed();
-      assert.equal(sealedFlag.value, true);
       assert.equal(settleCount, 1);
 
       // Settlement seam: bare runId must resolve the sealed projection written under

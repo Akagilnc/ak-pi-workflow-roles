@@ -125,8 +125,6 @@ export async function prepareGrokRoleEnvelope(options: {
   const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
   let rejection: { readonly code: string; readonly toolCallIds: readonly string[] } | undefined;
-  let sealedNotify: (() => void) | undefined;
-  const sealed = new Promise<void>((resolve) => { sealedNotify = resolve; });
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID();
   await mkdir(request.runDirectory, { recursive: true });
 
@@ -376,7 +374,6 @@ export async function prepareGrokRoleEnvelope(options: {
       if (customEntries[index]?.customType === "ak-role-submission-closure") { closure = customEntries[index]; break; }
     }
     if (closure !== undefined) {
-      sealedNotify?.();
       return { accepted: true as const };
     }
     if (rejection !== undefined) {
@@ -429,7 +426,6 @@ export async function prepareGrokRoleEnvelope(options: {
     systemPrompt,
     prompt,
     closeRound,
-    whenSealed: () => sealed,
     dispose,
   };
 }

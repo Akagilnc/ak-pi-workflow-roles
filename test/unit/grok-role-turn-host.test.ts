@@ -35,14 +35,12 @@ const request = {
 function prepared(
   closeRound: GrokPreparedTurn["closeRound"],
   mcpServers: Readonly<Record<string, unknown>>[] = [{}],
-  whenSealed: GrokPreparedTurn["whenSealed"] = () => new Promise(() => {}),
 ): GrokPreparedTurn {
   return {
     mcpServers,
     systemPrompt: "law",
     prompt: "decide",
     closeRound,
-    whenSealed,
   };
 }
 
