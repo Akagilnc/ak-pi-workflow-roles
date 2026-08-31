@@ -28,6 +28,7 @@ import {
 import { accessSync, constants as fsConstants } from "node:fs";
 import { runDiarist } from "../../src/diarist.ts";
 import {
+  appendTicketProvenanceEntry,
   readTicketProvenance,
   resolveTicketProvenanceVolume,
   TicketProvenanceWatermarkError,
@@ -364,6 +365,27 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
     assert.equal(read1.entries.length, 1);
     assert.equal(read1.entries[0]!.basis.method, "llm-semantic");
     assert.equal(read1.entries[0]!.transcript, good);
+    // Splice residue stays on the volume but is not a diary body row.
+    assert.ok(read1.skipped >= 1);
+    assert.equal(
+      read1.records.some(
+        (r) =>
+          (r.payload as { basis?: { method?: string } } | undefined)?.basis
+            ?.method === "quote-verify-failed",
+      ),
+      true,
+    );
+
+    // Direct append of the same body entry is identity-idempotent (no second row).
+    const beforeRecords = read1.records.length;
+    appendTicketProvenanceEntry({
+      ticketNumber: 582,
+      cwd: project,
+      entry: read1.entries[0]!,
+    });
+    const afterIdem = await readTicketProvenance(582, project);
+    assert.equal(afterIdem.records.length, beforeRecords);
+    assert.equal(afterIdem.entries.length, 1);
 
     const second = await runDiarist({
       ticketNumber: 582,
