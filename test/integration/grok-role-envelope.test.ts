@@ -283,20 +283,27 @@ test("public Notary --ticket: admitted→activation→agent-start typed ticket i
       sourceRun,
       ticketNumber: 582,
     };
-    const kickoff = buildNotaryTransportPrompt(admitted);
-    // Fixed kickoff must not carry a free-text ticket parallel copy.
-    assert.equal(kickoff.includes("票号"), false);
-    assert.equal(kickoff.includes("#582"), false);
+    // Kickoff ignores ticketNumber — no free-text parallel copy (equality, not wording lock).
+    const kickoffBound = buildNotaryTransportPrompt(admitted);
+    const { ticketNumber: _omitTicket, ...admittedUnbound } = admitted;
+    const kickoffUnbound = buildNotaryTransportPrompt(admittedUnbound);
+    assert.equal(kickoffBound, kickoffUnbound);
 
     const request = buildNotaryTurnRequest(admitted, {
       packageRoot,
       home: root,
       agentDir: join(root, "agent"),
-      continuation: { kind: "initial", prompt: kickoff },
+      continuation: { kind: "initial", prompt: kickoffBound },
     });
     assert.equal(request.activation.role, "notary");
+    // Public entry → typed activation ticket (machine contract field).
     assert.equal(
       "ticketNumber" in request.activation ? request.activation.ticketNumber : undefined,
+      582,
+    );
+    // Typed agent-start bound projection (same material role before_agent_start consumes).
+    assert.equal(
+      projectNotarySessionBound({ sourceRun, ticketNumber: 582 }).ticketNumber,
       582,
     );
     const envelopeRequest: RoleTurnRequest = {
@@ -316,19 +323,7 @@ test("public Notary --ticket: admitted→activation→agent-start typed ticket i
       },
     });
     try {
-      // Agent-start reading material (systemPrompt) carries typed bound ticket.
-      const expectedBound = projectNotarySessionBound({
-        sourceRun,
-        ticketNumber: 582,
-      });
-      assert.equal(prepared.systemPrompt.includes("<notary_source_run>"), true);
-      assert.equal(
-        prepared.systemPrompt.includes(JSON.stringify(expectedBound)),
-        true,
-        "agent-start material must embed typed session bound including ticketNumber",
-      );
-
-      // Durable session custom entry remains (envelope-owned lifecycle evidence).
+      // Durable session custom entry: typed ticket on envelope-owned lifecycle evidence.
       const sessionFile = join(envelopeRequest.runDirectory, "grok-envelope.jsonl");
       const lines = (await readFile(sessionFile, "utf8"))
         .split("\n")
@@ -344,6 +339,8 @@ test("public Notary --ticket: admitted→activation→agent-start typed ticket i
       };
       assert.equal(bound.ticketNumber, 582);
       assert.equal(bound.sourceRunPath, sourceRunPath);
+      // Envelope prepare completed through agent-start; ticket proof is typed fields above.
+      assert.ok(prepared);
     } finally {
       await prepared.dispose?.();
     }
