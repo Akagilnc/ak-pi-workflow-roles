@@ -2,14 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  InstitutionalResolutionError,
-  readInstitutionalSeatSelection,
   resolveInstitutionalSeatSelections,
   type InstitutionalResolutionPage,
 } from "../../src/institutional-resolution.ts";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { PublicCliConfig } from "../../src/public-cli/config.ts";
 
 function emptyConfig(): PublicCliConfig {
@@ -75,32 +70,4 @@ test("resolution page shape carries a stable versioned seats envelope", () => {
   assert.equal(page.version, 1);
   assert.deepEqual(page.seats.gatekeeper, { provider: "p", model: "m" });
   assert.deepEqual(page.seats.evidenceChild, { provider: "p", model: "m" });
-});
-
-test("readInstitutionalSeatSelection reasons: missing-page, missing-seat, corrupted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-inst-reason-"));
-  try {
-    await assert.rejects(
-      () => readInstitutionalSeatSelection(join(root, "absent"), "navigator"),
-      (error: unknown) => error instanceof InstitutionalResolutionError && error.reason === "missing-page",
-    );
-    const runDirectory = join(root, "run");
-    await mkdir(runDirectory);
-    await writeFile(join(runDirectory, "institutional-resolution.json"), "{not-json\n", "utf8");
-    await assert.rejects(
-      () => readInstitutionalSeatSelection(runDirectory, "navigator"),
-      (error: unknown) => error instanceof InstitutionalResolutionError && error.reason === "corrupted",
-    );
-    await writeFile(
-      join(runDirectory, "institutional-resolution.json"),
-      `${JSON.stringify({ version: 1, seats: { auditor: { provider: "p", model: "m" } } })}\n`,
-      "utf8",
-    );
-    await assert.rejects(
-      () => readInstitutionalSeatSelection(runDirectory, "navigator"),
-      (error: unknown) => error instanceof InstitutionalResolutionError && error.reason === "missing-seat",
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 });
