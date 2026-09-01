@@ -62,7 +62,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes. All public callable roles and their institutional sub-legs (soul audit, doctor audit, navigator, reviewer evidence children) are host-neutral on the shared in-process institutional session seam. `grok-build` remains constrained to the grok-4.5 model domain.
+**Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes. All public callable roles and their institutional sub-legs (soul audit, doctor audit, navigator, reviewer evidence children) are host-neutral on the shared in-process institutional session seam.
 
 For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. Configuration usage and refusal text are owned by `ak-role config` / `ak-role help config`.
 

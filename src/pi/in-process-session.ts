@@ -338,13 +338,22 @@ export async function openPiInstitutionalSession(
       maxTokens: 16384,
     };
 
+    const withTypedReason = (error: Error, reason: "auth" | "model"): Error =>
+      Object.assign(error, { reason });
+
     let resolution: { auth: { baseUrl?: string; apiKey?: string; headers?: Record<string, string | null> }; env?: Record<string, string> } | undefined;
     if (typeof childRegistry.getProviderAuth === "function") {
       resolution = await childRegistry.getProviderAuth(selection.provider).catch((error: unknown) => {
-        throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        throw withTypedReason(
+          new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }),
+          "auth",
+        );
       });
       if (resolution === undefined) {
-        throw new Error(`${label} authentication failed: provider is not configured: ${selection.provider}`);
+        throw withTypedReason(
+          new Error(`${label} authentication failed: provider is not configured: ${selection.provider}`),
+          "auth",
+        );
       }
     }
 
@@ -352,7 +361,10 @@ export async function openPiInstitutionalSession(
     if (typeof childRegistry.getApiKeyAndHeaders === "function") {
       authResult = await childRegistry.getApiKeyAndHeaders(modelToUse as any);
       if (authResult && !authResult.ok) {
-        throw new Error(`${label} authentication failed: ${authResult.error}`);
+        throw withTypedReason(
+          new Error(`${label} authentication failed: ${authResult.error}`),
+          "auth",
+        );
       }
     }
 
@@ -458,7 +470,10 @@ export async function openPiInstitutionalSession(
             };
 
             if (childProvider === undefined) {
-              throw new Error(`${label} provider not found: ${model.provider}`);
+              throw withTypedReason(
+                new Error(`${label} provider not found: ${model.provider}`),
+                "model",
+              );
             }
 
             const source = simple

@@ -97,3 +97,28 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
     shutdown: () => workspaceOwner.shutdown(),
   };
 }
+
+/**
+ * Host-level Reviewer binding: each accepted dispatch gets a fresh one-shot runner.
+ * Auto-resume turns must not reuse the inner one-shot slot.
+ */
+export function createPerDispatchReviewerAgent(dependencies: Dependencies = {}): ReviewerAgentRunner {
+  const active = new Set<ReviewerAgentRunner>();
+  return {
+    async run(dispatch, options) {
+      const runner = createReviewerAgentRunner(dependencies);
+      active.add(runner);
+      try {
+        return await runner.run(dispatch, options);
+      } finally {
+        active.delete(runner);
+        await runner.shutdown();
+      }
+    },
+    async shutdown() {
+      const runners = [...active];
+      active.clear();
+      await Promise.all(runners.map((runner) => runner.shutdown()));
+    },
+  };
+}

@@ -21,8 +21,7 @@ import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dis
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
-import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
-import { createNativeNavigatorSessionFactory } from "../../src/navigator-child-executor.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { packageRoot, withHermeticHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";

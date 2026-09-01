@@ -1,6 +1,6 @@
 /**
- * Navigator session contracts — pure types, model setting, failure classification.
- * No lifecycle. Shared by attendance (consumer) and navigator-child-executor (seam).
+ * Navigator session contracts — pure types, model setting, seat resolution, failure classification.
+ * No lifecycle. Shared by attendance (consumer) and the unique institutional-child seam.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -10,13 +10,28 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
-import type { HostContext } from "./host-contracts.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
+import type { HostContext, HostInstitutionalModelSelection } from "./host-contracts.ts";
+import {
+  InstitutionalResolutionError,
+  readInstitutionalSeatSelection,
+} from "./institutional-resolution.ts";
 
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
 export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
 
 export type NavigatorUnavailableKey =
   | "context" | "session" | "model" | "thinking" | "auth" | "quota" | "transport" | "unknown";
+
+const NAVIGATOR_UNAVAILABLE_KEYS = new Set<NavigatorUnavailableKey>([
+  "context", "session", "model", "thinking", "auth", "quota", "transport", "unknown",
+]);
+
+function navigatorUnavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
+  return typeof value === "string" && NAVIGATOR_UNAVAILABLE_KEYS.has(value as NavigatorUnavailableKey)
+    ? value as NavigatorUnavailableKey
+    : undefined;
+}
 
 export class NavigatorUnavailableError extends Error {
   readonly unavailableSource: NavigatorUnavailableKey;
@@ -68,13 +83,33 @@ function navigatorProviderFailureFromCode(code: unknown): NavigatorProviderFailu
 }
 
 export function navigatorProviderFailureFromError(error: unknown): NavigatorProviderFailureFact | undefined {
-  if (!exactRecord(error)) return undefined;
-  const statusCode = typeof error.statusCode === "number"
-    ? error.statusCode
-    : typeof error.status === "number"
-      ? error.status
-      : undefined;
-  return navigatorProviderFailureFromStatus(statusCode) ?? navigatorProviderFailureFromCode(error.code);
+  let cursor: unknown = error;
+  const seen = new Set<unknown>();
+  while (typeof cursor === "object" && cursor !== null && !seen.has(cursor)) {
+    seen.add(cursor);
+    if (cursor instanceof NavigatorUnavailableError) {
+      return { source: cursor.unavailableSource, cause: cursor.unavailableCause };
+    }
+    if (!exactRecord(cursor)) {
+      cursor = cursor instanceof Error ? cursor.cause : undefined;
+      continue;
+    }
+    const fromReason = navigatorUnavailableKey(cursor.reason);
+    if (fromReason !== undefined) return { source: fromReason, cause: fromReason };
+    const statusCode = typeof cursor.statusCode === "number"
+      ? cursor.statusCode
+      : typeof cursor.status === "number"
+        ? cursor.status
+        : typeof cursor.httpStatus === "number"
+          ? cursor.httpStatus
+          : undefined;
+    const fromStatus = navigatorProviderFailureFromStatus(statusCode);
+    if (fromStatus !== undefined) return fromStatus;
+    const fromCode = navigatorProviderFailureFromCode(cursor.code);
+    if (fromCode !== undefined) return fromCode;
+    cursor = cursor.cause;
+  }
+  return undefined;
 }
 
 export function navigatorProviderFailureFromDiagnostics(diagnostics: unknown): NavigatorProviderFailureFact | undefined {
@@ -185,4 +220,63 @@ export function parseNavigatorModelSetting(value: string): {
   const model = colon < 0 ? modelWithThinking : modelWithThinking.slice(0, colon);
   if (model === "") throw new Error("Navigator model setting must include a model");
   return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
+}
+
+/**
+ * Prefer institutional-resolution navigator seat; fall back to model file only when
+ * the page is missing or lacks the seat (typed reasons). Corrupted pages fail loud.
+ */
+export async function resolveNavigatorSeatSelection(
+  context: HostContext,
+  modelSettingPath: string | undefined,
+  defaultModelSettingPath: string,
+): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel: "off" | "max" }> {
+  const runDirectory = auditorRunDirectory(context);
+  if (runDirectory !== undefined) {
+    try {
+      const selection = await readInstitutionalSeatSelection(runDirectory, "navigator");
+      const thinkingLevel = selection.thinking === "max" ? "max" : "off";
+      return {
+        selection: {
+          provider: selection.provider,
+          model: selection.model,
+          ...(selection.thinking === undefined ? {} : { thinking: selection.thinking }),
+        },
+        configuredLabel: `${selection.provider}/${selection.model}${thinkingLevel === "max" ? ":max" : ""}`,
+        thinkingLevel,
+      };
+    } catch (error) {
+      if (
+        error instanceof InstitutionalResolutionError
+        && (error.reason === "missing-page" || error.reason === "missing-seat")
+      ) {
+        // documented bare-seam fallback
+      } else {
+        throw error instanceof NavigatorUnavailableError
+          ? error
+          : navigatorUnavailableError("model", error);
+      }
+    }
+  }
+  let configured: string;
+  try {
+    configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
+  } catch (error) {
+    throw navigatorUnavailableError("model", error);
+  }
+  let parsed: ReturnType<typeof parseNavigatorModelSetting>;
+  try {
+    parsed = parseNavigatorModelSetting(configured);
+  } catch (error) {
+    throw navigatorUnavailableError("model", error);
+  }
+  return {
+    selection: {
+      provider: parsed.provider,
+      model: parsed.model,
+      thinking: parsed.thinkingLevel,
+    },
+    configuredLabel: configured,
+    thinkingLevel: parsed.thinkingLevel,
+  };
 }

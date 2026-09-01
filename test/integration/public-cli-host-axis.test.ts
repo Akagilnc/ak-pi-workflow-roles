@@ -138,16 +138,10 @@ test("production adapter table registers grok-build and keeps pi selectable", as
   assert.equal(explicitPi.hostFailure, undefined);
   assert.equal(piTurns, 2);
 
-  // Non-xai model on grok-build: registered, rejected by the selected adapter (not unregistered).
-  const mismatch = await runAkRole(["judge", "--host", "grok-build", "x"], productionBase(home, countingPi));
-  assert.equal(mismatch.exitCode, 1);
-  assert.deepEqual(mismatch.hostFailure, {
-    kind: "host-model-mismatch",
-    host: "grok-build",
-    seat: "judge",
-    model: "openai-codex/gpt-5.6-sol",
-  });
-  assert.equal(piTurns, 2, "host-model-mismatch must stop before any turn");
+  // Non-xai model on grok-build: registered and selected (OWNER #590: no grok-build model restriction).
+  const grokNonXai = await runAkRole(["judge", "--host", "grok-build", "x"], productionBase(home, countingPi));
+  assert.equal(grokNonXai.hostFailure, undefined);
+  assert.equal(piTurns, 2, "grok-build selection must not fall back to pi");
 
   // Unregistered name still fails without fallback; production table lists both hosts in the diagnostic path.
   const missing = await runAkRole(["judge", "--host", "missing", "x"], productionBase(home, countingPi));

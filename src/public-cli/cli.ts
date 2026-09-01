@@ -276,10 +276,7 @@ function resolveRoleTurnHost(
     { name: "pi", create: () => ({ ok: true as const, host: piHost }) },
     {
       name: "grok-build",
-      create: ({ model }) => {
-        // Selection-time model×host rejection is owned by the selected adapter (S7 C2).
-        // S6 executeTurn also guards provider !== "xai"; create mirrors that before turn.
-        if (model !== undefined && model.provider !== "xai") return { ok: false as const };
+      create: () => {
         // Factory loads outside the public bin static graph (ADR 0052 peer-free discovery).
         let hostPromise: Promise<RoleTurnHost> | undefined;
         return {

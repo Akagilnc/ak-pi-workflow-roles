@@ -19,15 +19,12 @@ import { loadDoctorCase } from "../doctor-evidence.ts";
 import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
 import { createPiJudgeAuditor } from "../judge-auditor.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
-import { createNavigatorAttendance, type NavigatorTargetRole } from "../navigator-attendance.ts";
-import { createNativeNavigatorSessionFactory } from "../navigator-child-executor.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "../navigator-attendance.ts";
 import { loadNavigatorWorkContext } from "../navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "../notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "../package-resources/method-skill-binding.ts";
-import { packagedRoleMetadata } from "../packaged-role-registry.ts";
-import { createReviewerAgentRunner } from "../reviewer-agent.ts";
-import type { RoleRuntimeDependencies } from "../role-runtime.ts";
-import { ROLE_FLAG } from "../role-runtime.ts";
+import { createPerDispatchReviewerAgent } from "../reviewer-agent.ts";
+import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
 import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import { createComposedGrokRoleTurnHost } from "./role-envelope.ts";
@@ -182,30 +179,11 @@ const navigatorRoutePlaybookPath = fileURLToPath(
   new URL("../../resources/navigator-route-playbook.md", import.meta.url),
 );
 
-/** In-process role help for Navigator prepare — same surface as the Pi host path. */
-function formatGrokNavigatorRoleHelp(role: NavigatorTargetRole): string {
-  const metadata = packagedRoleMetadata(role);
-  const lines = [
-    `Usage: ak-role ${role}`,
-    ROLE_FLAG.definition.description,
-  ];
-  if (metadata?.inputFlag !== undefined) {
-    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
-  }
-  if (metadata?.phaseFlag !== undefined) {
-    lines.push(
-      `  --${metadata.phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
-    );
-  }
-  lines.push(`Public next-command form: ak-role ${role}`);
-  return lines.join("\n");
-}
-
 /** Host-neutral packaged role runtime deps for the Grok parent-process envelope. */
 export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
   const judgeAuditor = createPiJudgeAuditor();
   const doctorAuditor = createPiDoctorAuditor();
-  const reviewerAgent = createReviewerAgentRunner({ packageRoot });
+  const reviewerAgent = createPerDispatchReviewerAgent({ packageRoot });
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
@@ -256,7 +234,7 @@ export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRunt
       invocationId: options.invocationId,
       loadSoul: () => loadMainRoleSessionMaterials("navigator"),
       loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
-      loadRoleHelp: async (role) => formatGrokNavigatorRoleHelp(role),
+      loadRoleHelp: async (role) => formatNavigatorRoleHelp(role),
       createSession: navigatorSessionFactory,
       ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
       onEvent: options.onEvent,
@@ -277,7 +255,6 @@ async function recordGrokCapabilities(
 
 /**
  * Assemble the production grok-build RoleTurnHost from the S6 true adapter.
- * Model×host rejection at selection time is owned by the named adapter create wrapper.
  */
 export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOptions): RoleTurnHost {
   const { packageRoot, principalAuthority } = options;
