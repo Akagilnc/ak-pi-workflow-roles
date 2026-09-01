@@ -249,7 +249,7 @@ test("production Grok deps: navigator prepare opens institutional child and acce
         assert.equal(recommendation.next?.role, "coder");
         assert.equal(recommendation.next?.phase, "apply");
       } finally {
-        nav.dispose();
+        await nav.dispose();
       }
     });
   });

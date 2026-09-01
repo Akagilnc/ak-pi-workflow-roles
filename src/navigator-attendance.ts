@@ -642,7 +642,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             throw navigatorUnavailableError("session", error);
           }
           if (disposed) {
-            created.dispose();
+            await created.dispose();
             throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
           }
           try {
@@ -656,7 +656,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             session = created;
             return created;
           } catch (error) {
-            if (session !== created) created.dispose();
+            if (session !== created) await created.dispose();
             throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
           }
         })();
@@ -781,16 +781,19 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   };
 
   return {
-    setWorkContext(next: NavigatorWorkContext): void {
+    setWorkContext(next: NavigatorWorkContext): void | Promise<void> {
+      let closing: void | Promise<void> | undefined;
       if (next.subjectKey !== subjectKey && session !== undefined) {
-        session.dispose();
+        const previous = session;
         session = undefined;
         previousRoute = undefined;
+        closing = previous.dispose();
       }
       subjectKey = next.subjectKey;
       subject = next.subject;
       authority = next.authority;
       contextError = next.contextError;
+      return closing;
     },
     /**
      * Start live-help subprocesses during activation without beginning full
@@ -822,13 +825,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       settlementTail = next.catch((error) => { settlementFailure = error; });
       return next;
     },
-    dispose(): void {
+    dispose(): void | Promise<void> {
       disposed = true;
       // Leave sessionReady so an in-flight createSession observes disposed and drains exactly once.
       // Late settleOnce completion observes disposed and skips onEvent.
-      session?.dispose();
+      const current = session;
       session = undefined;
       activeInvocationId = undefined;
+      return current?.dispose();
     },
   };
 

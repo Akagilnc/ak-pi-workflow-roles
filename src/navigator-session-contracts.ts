@@ -165,7 +165,7 @@ export type NavigatorPreparationSession = {
   setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
   getThinkingLevel?(): string;
   recordPointer(): string;
-  dispose(): void;
+  dispose(): void | Promise<void>;
 };
 
 export type NavigatorSessionFactory = (options: {

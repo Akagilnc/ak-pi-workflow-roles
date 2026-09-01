@@ -757,7 +757,7 @@ test("#307 navigator institutional: durable archivist session + typed transport 
           );
           assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
         } finally {
-          session.dispose();
+          await session.dispose();
         }
         const diskFile = createRecordSession({
           cwd: project,

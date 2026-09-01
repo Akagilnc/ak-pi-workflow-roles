@@ -1062,11 +1062,16 @@ export function createNativeNavigatorSessionFactory(
       }
     });
 
-    let disposed = false;
-    const dispose = (): void => {
-      if (disposed) return;
-      disposed = true;
-      void runChildCleanup([() => unsubscribe(), () => opened.handle.close()], undefined, "Navigator");
+    let disposal: Promise<void> | undefined;
+    const dispose = (): Promise<void> => {
+      if (disposal === undefined) {
+        disposal = runChildCleanup(
+          [() => unsubscribe(), () => opened.handle.close()],
+          undefined,
+          "Navigator",
+        );
+      }
+      return disposal;
     };
 
     return {
