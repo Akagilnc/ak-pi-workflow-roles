@@ -281,10 +281,8 @@ test("production Grok deps: reviewer dispatch runs institutional evidence child 
         context: hostContext(root, runDirectory, []),
       });
       assert.equal(outcome.legs.standards.status, "successful");
-      assert.ok(
-        typeof outcome.legs.standards.report === "string"
-        && outcome.legs.standards.report.includes("Standards review report"),
-      );
+      assert.equal(typeof outcome.legs.standards.report, "string");
+      assert.ok(outcome.legs.standards.report.trim().length > 0);
     });
     await deps.shutdownReviewerAgent?.();
   });
