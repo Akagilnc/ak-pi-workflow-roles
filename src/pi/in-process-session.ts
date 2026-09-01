@@ -480,16 +480,11 @@ export async function openPiInstitutionalSession(
                 continue;
               }
               const failure = idleFailure ?? new Error(errorMessage, { cause: response });
-              // OpenAI-completions encodes non-success HTTP as "NNN: …" in errorMessage
-              // when onResponse status was not retained on the assistant message. Lift the
-              // leading status onto the failure object so host-neutral consumers classify
-              // auth/quota from a typed field (not free-text oracles).
-              const statusMatch = /^([1-5]\d{2}):\s/.exec(errorMessage);
-              const fromMessage = statusMatch !== null ? Number(statusMatch[1]) : undefined;
+              // Only structured status: onResponse observation or fields already on the
+              // assistant message. Never parse errorMessage prose for HTTP status.
               const httpStatus = numericHttpStatus(observedHttpStatus)
                 ?? numericHttpStatus((response as { statusCode?: unknown }).statusCode)
-                ?? numericHttpStatus((response as { status?: unknown }).status)
-                ?? numericHttpStatus(fromMessage);
+                ?? numericHttpStatus((response as { status?: unknown }).status);
               if (httpStatus !== undefined) {
                 Object.assign(failure, { statusCode: httpStatus, status: httpStatus });
                 Object.assign(response, { statusCode: httpStatus, status: httpStatus });

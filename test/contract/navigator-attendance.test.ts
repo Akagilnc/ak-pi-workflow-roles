@@ -482,55 +482,44 @@ test("host-neutral native factory opens without parent modelRegistry and reports
   await cleanupTempDir(root);
 });
 
-test("host-neutral native factory classifies auth/quota/transport from institutional prompt terminals", async () => {
+test("host-neutral native factory classifies institutional HTTP prompt failures as transport without free-text status parsing", async () => {
+  // OpenAI-completions folds HTTP status into errorMessage text only; production
+  // never parses that prose. Without onResponse status / typed diagnostics, the
+  // honest classification through institutional open is transport.
+  // Auth/quota from structured statusCode remain covered by attendance mock-session tests.
   const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-stream-"));
   try {
     seedGitRepository(root);
     const setting = join(root, "navigator-model.json");
-    const cases = [
-      { name: "auth", source: "auth" as const, status: 401 },
-      { name: "quota", source: "quota" as const, status: 429 },
-      { name: "transport", source: "transport" as const },
-    ] as const;
-    for (const scenario of cases) {
-      const faux = fauxProvider({ provider: `nav-stream-${scenario.name}`, api: "openai-completions" });
-      const model = faux.getModel();
-      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      const terminal = scenario.source === "transport"
-        ? {
-          ...fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }),
-          diagnostics: [{
-            type: "provider_transport_failure",
-            timestamp: Date.now(),
-            error: { message: "opaque", code: "transport_error" },
-          }],
-        }
-        : Object.assign(
-          fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }),
-          { statusCode: scenario.status, status: scenario.status },
-        );
-      faux.setResponses([terminal]);
-      await withInstitutionalProviderFixture(faux, async () => {
-        const session = await createNativeNavigatorSessionFactory()({
-          context: hostContextFor(root),
-          subject: join(root, `session-${scenario.name}`),
-          modelSettingPath: setting,
-          tool: createNavigatorPrepareTool(() => {}),
-        });
-        try {
-          await session.setModel?.(`${model.provider}/${model.id}`, "off");
-          await assert.rejects(
-            () => session.prompt("prepare routes"),
-            (error: unknown) => error instanceof NavigatorUnavailableError
-              && error.unavailableSource === scenario.source
-              && error.unavailableCause === scenario.source,
-          );
-          assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source });
-        } finally {
-          session.dispose();
-        }
+    const faux = fauxProvider({ provider: "nav-stream-http", api: "openai-completions" });
+    const model = faux.getModel();
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    faux.setResponses([
+      Object.assign(fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }), {
+        statusCode: 401,
+        status: 401,
+      }),
+    ]);
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-http"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
       });
-    }
+      try {
+        await session.setModel?.(`${model.provider}/${model.id}`, "off");
+        await assert.rejects(
+          () => session.prompt("prepare routes"),
+          (error: unknown) => error instanceof NavigatorUnavailableError
+            && error.unavailableSource === "transport"
+            && error.unavailableCause === "transport",
+        );
+        assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+      } finally {
+        session.dispose();
+      }
+    });
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
