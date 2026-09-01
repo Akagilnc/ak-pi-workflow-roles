@@ -1,5 +1,3 @@
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
@@ -18,7 +16,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
+import {
+  issuePiDurablePrincipalCoordinates,
+  piDurablePrincipalAuthority,
+} from "../../src/pi/durable-principal.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
   activationBookDirectory,
@@ -41,6 +42,11 @@ import {
   writeRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
+import {
+  argvFlagValue,
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -80,52 +86,6 @@ function seedGitProject(root: string): void {
   });
   execFileSync("git", ["config", "user.name", "Notary Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
-
-function sessionRows(toolArgs: unknown, options: { isError?: boolean } = {}) {
-  const toolCallId = "call_notary_1";
-  return [
-    {
-      type: "message",
-      id: "user-1",
-      parentId: null,
-      timestamp: "2026-08-25T00:00:00.000Z",
-      message: { role: "user", content: "kickoff", timestamp: 1 },
-    },
-    {
-      type: "message",
-      id: "assistant-1",
-      parentId: "user-1",
-      timestamp: "2026-08-25T00:00:01.000Z",
-      message: {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: toolCallId,
-            name: NOTARY_OUTPUT_TOOL_NAME,
-            arguments: toolArgs,
-          },
-        ],
-        timestamp: 2,
-      },
-    },
-    {
-      type: "message",
-      id: "result-1",
-      parentId: "assistant-1",
-      timestamp: "2026-08-25T00:00:02.000Z",
-      message: {
-        role: "toolResult",
-        toolCallId,
-        toolName: NOTARY_OUTPUT_TOOL_NAME,
-        content: [{ type: "text", text: "Notary output accepted" }],
-        details: toolArgs,
-        isError: options.isError === true,
-        timestamp: 3,
-      },
-    },
-  ];
 }
 
 const CANONICAL_SOURCE_RUN_ID = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
@@ -183,43 +143,28 @@ async function seedProjectProjection(project: string): Promise<string> {
   return await realpath(sourceDir);
 }
 
-function flagValue(args: readonly string[], flag: string): string | undefined {
-  const index = args.indexOf(flag);
-  if (index < 0) return undefined;
-  return args[index + 1];
+function scriptedNotarySession(
+  details: unknown,
+  options: { isError?: boolean; seal?: boolean } = {},
+) {
+  const isError = options.isError === true;
+  const lawful =
+    !isError &&
+    typeof details === "object" &&
+    details !== null &&
+    "status" in details &&
+    ((details as { status?: unknown }).status === "pass" ||
+      (details as { status?: unknown }).status === "bounce");
+  return scriptedTerminatingToolSession({
+    role: "notary",
+    toolName: NOTARY_OUTPUT_TOOL_NAME,
+    details,
+    isError,
+    seal: options.seal ?? lawful,
+  });
 }
 
-function scriptedNotarySession(
-  toolArgs: unknown,
-  options: { isError?: boolean } = {},
-) {
-  return async (extraArgs: readonly string[]) => {
-    const sessionFile = flagValue(extraArgs, "--session");
-    assert.ok(sessionFile);
-    await mkdir(join(sessionFile, ".."), { recursive: true });
-    await writeFile(
-      sessionFile,
-      `${sessionRows(toolArgs, options).map((row) => JSON.stringify(row)).join("\n")}\n`,
-      "utf8",
-    );
-    const lawful =
-      options.isError !== true &&
-      typeof toolArgs === "object" &&
-      toolArgs !== null &&
-      ("status" in toolArgs) &&
-      ((toolArgs as { status?: unknown }).status === "pass" ||
-        (toolArgs as { status?: unknown }).status === "bounce");
-    return {
-      code: 0,
-      timedOut: false,
-      stderr: "",
-      args: [...extraArgs],
-      ...(lawful
-        ? { sealedAcceptance: { role: "notary" as const, details: toolArgs } }
-        : {}),
-    };
-  };
-}
+const flagValue = argvFlagValue;
 
 test("notary argv rejects caller prompt and attachment projection", async () => {
   assert.throws(
