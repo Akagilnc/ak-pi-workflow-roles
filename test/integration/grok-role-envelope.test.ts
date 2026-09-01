@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import test from "node:test";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -31,49 +30,10 @@ import {
 import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { callThroughMcp, listThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
-
-async function listThroughMcp(server: McpServer): Promise<Record<string, unknown>> {
-  const child = spawn(server.command, server.args, {
-    env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
-    stdio: ["pipe", "pipe", "inherit"],
-  });
-  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-  try {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
-    await replies.next();
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
-    const line = await replies.next();
-    assert.equal(line.done, false);
-    const response = JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
-    assert.equal(response.error, undefined);
-    return response.result ?? {};
-  } finally {
-    child.stdin.end();
-    child.kill("SIGTERM");
-  }
-}
-
-async function callThroughMcp(server: McpServer, name: string, args: unknown): Promise<{ result?: Record<string, unknown>; error?: unknown }> {
-  const child = spawn(server.command, server.args, {
-    env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
-    stdio: ["pipe", "pipe", "inherit"],
-  });
-  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-  try {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
-    await replies.next();
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })}\n`);
-    const line = await replies.next();
-    assert.equal(line.done, false);
-    return JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
-  } finally {
-    child.stdin.end();
-    child.kill("SIGTERM");
-  }
-}
+type McpServer = GrokMcpServer;
 
 test("Grok projection maps public activations onto the shared envelope", () => {
   const activations: RoleTurnRequest["activation"][] = [
