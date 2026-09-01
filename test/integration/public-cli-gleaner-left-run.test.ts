@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -20,7 +20,10 @@ import {
 import { buildGleanerLeftTurnRequest } from "../../src/public-cli/gleaner-left-run.ts";
 import { markRunAdmitted, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -62,83 +65,12 @@ function captureIo() {
   };
 }
 
-function gleanerLeftSessionRows(toolArgs: unknown) {
-  const toolCallId = "call_gleaner_left_1";
-  return [
-    {
-      type: "message",
-      id: "user-1",
-      parentId: null,
-      timestamp: "2026-08-30T00:00:00.000Z",
-      message: { role: "user", content: "kickoff", timestamp: 1 },
-    },
-    {
-      type: "message",
-      id: "assistant-1",
-      parentId: "user-1",
-      timestamp: "2026-08-30T00:00:01.000Z",
-      message: {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: toolCallId,
-            name: GLEANER_LEFT_OUTPUT_TOOL_NAME,
-            arguments: toolArgs,
-          },
-        ],
-        timestamp: 2,
-      },
-    },
-    {
-      type: "message",
-      id: "result-1",
-      parentId: "assistant-1",
-      timestamp: "2026-08-30T00:00:02.000Z",
-      message: {
-        role: "toolResult",
-        toolCallId,
-        toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
-        content: [{ type: "text", text: "Gleaner-Left output accepted" }],
-        details: toolArgs,
-        isError: false,
-        timestamp: 3,
-      },
-    },
-  ];
-}
-
-function flagValue(args: readonly string[], flag: string): string | undefined {
-  const index = args.indexOf(flag);
-  if (index < 0) return undefined;
-  return args[index + 1];
-}
-
-function scriptedGleanerLeftSession(toolArgs: unknown) {
-  return async (extraArgs: readonly string[]) => {
-    const sessionFile = flagValue(extraArgs, "--session");
-    assert.ok(sessionFile);
-    await mkdir(join(sessionFile, ".."), { recursive: true });
-    await writeFile(
-      sessionFile,
-      `${gleanerLeftSessionRows(toolArgs).map((row) => JSON.stringify(row)).join("\n")}\n`,
-      "utf8",
-    );
-    const lawful =
-      typeof toolArgs === "object" &&
-      toolArgs !== null &&
-      "status" in toolArgs &&
-      (toolArgs as { status?: unknown }).status === "completed";
-    return {
-      code: 0,
-      timedOut: false,
-      stderr: "",
-      args: [...extraArgs],
-      ...(lawful
-        ? { sealedAcceptance: { role: "gleaner-left" as const, details: toolArgs } }
-        : {}),
-    };
-  };
+function scriptedGleanerLeftSession(details: unknown) {
+  return scriptedTerminatingToolSession({
+    role: "gleaner-left",
+    toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    details,
+  });
 }
 
 test("gleaner-left requires --base and admits empty instruction", async () => {

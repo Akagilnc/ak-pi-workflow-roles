@@ -28,7 +28,10 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   installGhFixture,
@@ -84,85 +87,12 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-function countersignSessionRows(toolArgs: unknown) {
-  const toolCallId = "call_countersign_1";
-  return [
-    {
-      type: "message",
-      id: "user-1",
-      parentId: null,
-      timestamp: "2026-08-30T00:00:00.000Z",
-      message: { role: "user", content: "kickoff", timestamp: 1 },
-    },
-    {
-      type: "message",
-      id: "assistant-1",
-      parentId: "user-1",
-      timestamp: "2026-08-30T00:00:01.000Z",
-      message: {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: toolCallId,
-            name: COUNTERSIGN_OUTPUT_TOOL_NAME,
-            arguments: toolArgs,
-          },
-        ],
-        timestamp: 2,
-      },
-    },
-    {
-      type: "message",
-      id: "result-1",
-      parentId: "assistant-1",
-      timestamp: "2026-08-30T00:00:02.000Z",
-      message: {
-        role: "toolResult",
-        toolCallId,
-        toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-        content: [{ type: "text", text: "Countersign output accepted" }],
-        details: toolArgs,
-        isError: false,
-        timestamp: 3,
-      },
-    },
-  ];
-}
-
-function flagValue(args: readonly string[], flag: string): string | undefined {
-  const index = args.indexOf(flag);
-  if (index < 0) return undefined;
-  return args[index + 1];
-}
-
-function scriptedCountersignSession(toolArgs: unknown) {
-  return async (extraArgs: readonly string[]) => {
-    const sessionFile = flagValue(extraArgs, "--session");
-    assert.ok(sessionFile);
-    await mkdir(join(sessionFile, ".."), { recursive: true });
-    await writeFile(
-      sessionFile,
-      `${countersignSessionRows(toolArgs).map((row) => JSON.stringify(row)).join("\n")}\n`,
-      "utf8",
-    );
-    const lawful =
-      typeof toolArgs === "object" &&
-      toolArgs !== null &&
-      "countersignStatus" in toolArgs &&
-      ["converged", "continue", "escalate"].includes(
-        String((toolArgs as { countersignStatus?: unknown }).countersignStatus),
-      );
-    return {
-      code: 0,
-      timedOut: false,
-      stderr: "",
-      args: [...extraArgs],
-      ...(lawful
-        ? { sealedAcceptance: { role: "countersign" as const, details: toolArgs } }
-        : {}),
-    };
-  };
+function scriptedCountersignSession(details: unknown) {
+  return scriptedTerminatingToolSession({
+    role: "countersign",
+    toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+    details,
+  });
 }
 
 test("countersign admission freezes attachments and binds the countersign role", async () => {

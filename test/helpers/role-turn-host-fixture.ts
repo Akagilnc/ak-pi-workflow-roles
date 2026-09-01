@@ -1,7 +1,12 @@
 /**
  * Shared test injection seam (#526): adapt legacy faux Pi-runner shape to RoleTurnHost.
  * Single helper — no dual-track piRunner on CliEnv.
+ * Also owns the one scripted terminating-tool session writer (#502 DRY).
  */
+import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import type {
   DurablePrincipalAuthority,
   RoleTurnHost,
@@ -15,6 +20,104 @@ import {
 } from "../../src/pi/role-turn-host.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { sealAcceptedSubmissionForSpawn } from "./submission-ledger-fixture.ts";
+
+/** Read a dashed flag value from argv (shared by public-CLI tracers). */
+export function argvFlagValue(
+  args: readonly string[],
+  flag: string,
+): string | undefined {
+  const index = args.indexOf(flag);
+  if (index < 0) return undefined;
+  return args[index + 1];
+}
+
+/**
+ * One authority: write a terminating-tool session JSONL and optionally return
+ * sealedAcceptance. Seats pass role / toolName / details only — no per-seat
+ * session-row or flagValue copies (#502).
+ */
+export function scriptedTerminatingToolSession(input: {
+  readonly role: TerminalRoleName;
+  readonly toolName: string;
+  readonly details: unknown;
+  readonly isError?: boolean;
+  /** Default true when !isError. Pass false for accepted-once non-usable residual paths. */
+  readonly seal?: boolean;
+  readonly toolCallId?: string;
+  readonly acceptedText?: string;
+}): LegacyFauxPiRunner {
+  const isError = input.isError === true;
+  const seal = input.seal ?? !isError;
+  const toolCallId = input.toolCallId ?? `call_${input.role}_1`;
+  const acceptedText = input.acceptedText ?? `${input.role} output accepted`;
+  const rows = [
+    {
+      type: "message",
+      id: "user-1",
+      parentId: null,
+      timestamp: "2026-08-30T00:00:00.000Z",
+      message: { role: "user", content: "kickoff", timestamp: 1 },
+    },
+    {
+      type: "message",
+      id: "assistant-1",
+      parentId: "user-1",
+      timestamp: "2026-08-30T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: toolCallId,
+            name: input.toolName,
+            arguments: input.details,
+          },
+        ],
+        timestamp: 2,
+      },
+    },
+    {
+      type: "message",
+      id: "result-1",
+      parentId: "assistant-1",
+      timestamp: "2026-08-30T00:00:02.000Z",
+      message: {
+        role: "toolResult",
+        toolCallId,
+        toolName: input.toolName,
+        content: [{ type: "text", text: acceptedText }],
+        details: input.details,
+        isError,
+        timestamp: 3,
+      },
+    },
+  ];
+  return async (extraArgs) => {
+    const sessionFile = argvFlagValue(extraArgs, "--session");
+    assert.ok(sessionFile);
+    await mkdir(join(sessionFile, ".."), { recursive: true });
+    await writeFile(
+      sessionFile,
+      `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+      "utf8",
+    );
+    return {
+      code: 0,
+      timedOut: false,
+      stderr: "",
+      args: [...extraArgs],
+      ...(seal
+        ? {
+            sealedAcceptance: {
+              role: input.role,
+              details: input.details,
+              toolCallId,
+            },
+          }
+        : {}),
+    };
+  };
+}
 
 /** Minimal alternative host: controls typed results without entering the Pi adapter. */
 export function createMinimalHost(
