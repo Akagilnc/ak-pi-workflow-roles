@@ -48,7 +48,7 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
       await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
       faux.setResponses([
         Object.assign(fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }), { statusCode: 429, status: 429 }),
-        Object.assign(fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque-2" }), {}),
+        Object.assign(fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque-2" }), { statusCode: 503, status: 503 }),
       ]);
       await withInstitutionalProviderFixture(faux, async () => {
         const session = await createNativeNavigatorSessionFactory()({
@@ -62,10 +62,10 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
           await assert.rejects(
             () => session.prompt("first"),
             (error: unknown) => error instanceof NavigatorUnavailableError
-              && error.unavailableSource === "transport"
-              && error.unavailableCause === "transport",
+              && error.unavailableSource === "quota"
+              && error.unavailableCause === "quota",
           );
-          assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+          assert.deepEqual(session.providerFailure?.(), { source: "quota", cause: "quota" });
           await assert.rejects(
             () => session.prompt("second"),
             (error: unknown) => error instanceof NavigatorUnavailableError

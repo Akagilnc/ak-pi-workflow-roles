@@ -428,11 +428,21 @@ export async function openPiInstitutionalSession(
               ? idle.signal
               : AbortSignal.any([idle.signal, requestSignal]);
             const priorOnResponse = request?.onResponse;
+            const priorFetch = request?.fetch;
+            const baseFetch = priorFetch ?? globalThis.fetch.bind(globalThis);
+            // Capture HTTP status from the real Response before the provider SDK
+            // folds non-2xx into errorMessage-only assistant stops (no free-text parse).
+            const statusAwareFetch: typeof fetch = async (input, init) => {
+              const response = await baseFetch(input, init);
+              if (typeof response?.status === "number") observedHttpStatus = response.status;
+              return response;
+            };
             const retriedRequest: ProviderStreamOptions = {
               ...(request ?? {}),
               ...(resolvedEnv === undefined ? {} : { env: resolvedEnv }),
               signal: streamSignal,
               maxRetries: 0,
+              fetch: statusAwareFetch,
               onResponse: async (
                 response: { status: number; headers: Record<string, string> },
                 resModel: Model<Api>,
