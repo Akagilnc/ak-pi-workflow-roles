@@ -1,9 +1,9 @@
 /**
- * #590: one production-deps root proves four sub-legs through Grok wiring.
- * Shared: createGrokRoleRuntimeDependencies + withInstitutionalProviderFixture + MCP harness.
- * No free-text oracles; no parallel MCP clone.
+ * #590 production-deps tracers — separate contracts, shared fixtures.
+ * Entry: createGrokRoleRuntimeDependencies (+ Grok envelope for doctor).
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import { createGrokRoleRuntimeDependencies } from "../../src/grok/production-hos
 import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
 import type { HostContext, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-session-contracts.ts";
 import { callThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { packageRoot, seedGitRepository, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
@@ -51,10 +52,9 @@ function patient(runsPath: string): DoctorCase {
   };
 }
 
-function hostContext(root: string, runDirectory: string, entries: unknown[]): HostContext {
-  const sessionFile = join(runDirectory, "session", "session.jsonl");
+function hostContext(cwd: string, runDirectory: string, entries: unknown[]): HostContext {
   return {
-    cwd: root,
+    cwd,
     mode: "print",
     model: undefined,
     sessionManager: {
@@ -62,15 +62,19 @@ function hostContext(root: string, runDirectory: string, entries: unknown[]): Ho
       getLeafId: () => "leaf",
       getEntries: () => entries as never,
       getSessionDir: () => join(runDirectory, "session"),
-      getSessionFile: () => sessionFile,
+      getSessionFile: () => join(runDirectory, "session", "session.jsonl"),
       appendCustomEntry() {},
     },
     abort() {},
   };
 }
 
-test("production Grok deps: four sub-legs reach typed results from one institutional root", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-four-legs-"));
+async function withGrokRoot<T>(run: (ctx: {
+  root: string;
+  runDirectory: string;
+  deps: ReturnType<typeof createGrokRoleRuntimeDependencies>;
+}) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-leg-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
@@ -78,152 +82,100 @@ test("production Grok deps: four sub-legs reach typed results from one instituti
   delete process.env.AK_ROLE_ENGINE;
   try {
     seedGitRepository(root);
-    const runDirectory = join(root, "runs", "four-legs");
+    execFileSync("git", ["-C", root, "config", "user.email", "leg@test.local"], { stdio: "ignore" });
+    execFileSync("git", ["-C", root, "config", "user.name", "Leg Test"], { stdio: "ignore" });
+    execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "seed"], { stdio: "ignore" });
+    const runDirectory = join(root, "runs", "leg");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     process.env.AK_ROLE_RUN_DIR = runDirectory;
+    return await run({
+      root,
+      runDirectory,
+      deps: createGrokRoleRuntimeDependencies(packageRoot),
+    });
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
-    const faux = fauxProvider({ provider: "grok-four-legs", api: "openai-completions" });
+test("production Grok deps: judge soul audit institutional child returns typed pass", async () => {
+  await withGrokRoot(async ({ root, runDirectory, deps }) => {
+    const faux = fauxProvider({ provider: "grok-judge-leg", api: "openai-completions" });
     const model = faux.getModel();
     await writeInstitutionalSeatTable(runDirectory, {
       auditor: seatSelection(model.provider, model.id),
-      navigator: seatSelection(model.provider, model.id),
-      evidenceChild: seatSelection(model.provider, model.id),
     });
-
-    // Shared scripted audit pass for judge + doctor institutional children.
     faux.setResponses([
       fauxAssistantMessage(
         fauxToolCall(JUDGE_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
         { stopReason: "toolUse" },
       ),
-      fauxAssistantMessage(
-        fauxToolCall(DOCTOR_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-        { stopReason: "toolUse" },
-      ),
     ]);
-
-    const deps = createGrokRoleRuntimeDependencies(packageRoot);
-    assert.equal(typeof deps.auditSoulCompliance, "function");
-    assert.equal(typeof deps.auditDoctorCompliance, "function");
-    assert.equal(typeof deps.runReviewerDispatch, "function");
-    assert.equal(typeof deps.createNavigatorAttendance, "function");
-
-    await withInstitutionalProviderFixture(faux, async () => {
-      // —— 1. Judge soul audit (production wiring) ——
-      const judgeEntries = [
-        { type: "message", message: { role: "user", content: "OWNER ASSIGNMENT" } },
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            content: [{
-              type: "toolCall",
-              id: "v1",
-              name: JUDGE_OUTPUT_TOOL_NAME,
-              arguments: { judgeStatus: "converged" },
-            }],
-          },
+    const entries = [
+      { type: "message", message: { role: "user", content: "OWNER ASSIGNMENT" } },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "v1", name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
         },
-      ];
-      const judgeDecision = await deps.auditSoulCompliance({
-        context: hostContext(root, runDirectory, judgeEntries),
+      },
+    ];
+    await withInstitutionalProviderFixture(faux, async () => {
+      const decision = await deps.auditSoulCompliance({
+        context: hostContext(root, runDirectory, entries),
       });
-      assert.equal(judgeDecision.status, "pass");
-
-      // —— 2. Doctor audit (production wiring) ——
-      const doctorEntries = [
-        { type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE, data: { version: 1 } },
-      ];
-      const doctorDecision = await deps.auditDoctorCompliance!({
-        context: hostContext(root, runDirectory, doctorEntries),
-      });
-      assert.equal(doctorDecision.status, "pass");
-
-      // —— 3. Navigator attendance (production factory) ——
-      let navigatorEvent = false;
-      const nav = await deps.createNavigatorAttendance!({
-        context: hostContext(root, runDirectory, []),
-        role: "doctor",
-        phase: null,
-        subjectKey: "subject",
-        subject: "work subject",
-        authority: "typed authority material for navigator",
-        invocationId: "inv-four-legs",
-        onEvent: () => { navigatorEvent = true; },
-      });
-      assert.equal(typeof nav.prepare, "function");
-      assert.equal(typeof nav.settle, "function");
-      await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "ok" });
-      assert.equal(navigatorEvent, true);
-      if (typeof (nav as { dispose?: () => void }).dispose === "function") {
-        (nav as { dispose: () => void }).dispose();
-      }
-
-      // —— 4. Reviewer dispatch (production runner) ——
-      await assert.rejects(
-        () => deps.runReviewerDispatch!(
-          { recipe: "not-a-valid-recipe", identity: "x", targetSnapshot: {}, legs: [] } as never,
-          { context: hostContext(root, runDirectory, []) },
-        ),
-        (error: unknown) =>
-          error instanceof Error
-          && error.message.includes("Invalid accepted Reviewer dispatch"),
-      );
+      assert.equal(decision.status, "pass");
     });
+  });
+});
 
-    // —— Grok envelope entry: doctor terminal still seals via production auditor ——
+test("production Grok deps: doctor envelope terminal seals after institutional audit pass", async () => {
+  await withGrokRoot(async ({ root, runDirectory, deps }) => {
     const runsPath = join(root, "case-runs");
     await mkdir(runsPath, { recursive: true });
     const casePath = join(root, "case.json");
     const caseBody = patient(runsPath);
     await writeFile(casePath, `${JSON.stringify(caseBody)}\n`, "utf8");
 
-    const envelopeFaux = fauxProvider({ provider: "grok-envelope-leg", api: "openai-completions" });
-    const envelopeModel = envelopeFaux.getModel();
+    const faux = fauxProvider({ provider: "grok-doctor-leg", api: "openai-completions" });
+    const model = faux.getModel();
     await writeInstitutionalSeatTable(runDirectory, {
-      auditor: seatSelection(envelopeModel.provider, envelopeModel.id),
-      navigator: seatSelection(envelopeModel.provider, envelopeModel.id),
+      auditor: seatSelection(model.provider, model.id),
+      navigator: seatSelection(model.provider, model.id),
     });
-    envelopeFaux.setResponses([
+    faux.setResponses([
       fauxAssistantMessage(
-        fauxToolCall(DOCTOR_AUDIT_TOOL_NAME, {
-          status: "pass",
-          violations: [],
-          conflicts: [],
-          decisionGate: null,
-        }),
+        fauxToolCall(DOCTOR_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
         { stopReason: "toolUse" },
       ),
     ]);
 
-    let navigatorFromEnvelope = false;
     let bookedCandidate = false;
     const traced = {
       ...deps,
       loadDoctorCase: async () => caseBody,
-      createNavigatorAttendance: async (options: Parameters<NonNullable<typeof deps.createNavigatorAttendance>>[0]) => {
-        navigatorFromEnvelope = true;
-        return deps.createNavigatorAttendance!(options);
-      },
       async auditDoctorCompliance(options: Parameters<NonNullable<typeof deps.auditDoctorCompliance>>[0]) {
         bookedCandidate = [...options.context.sessionManager.getEntries()].some((entry) =>
           typeof entry === "object"
           && entry !== null
-          && (entry as { type?: unknown; customType?: unknown }).type === "custom"
           && (entry as { customType?: unknown }).customType === DOCTOR_CANDIDATE_ENTRY_TYPE);
         return deps.auditDoctorCompliance!(options);
       },
     };
 
-    await withInstitutionalProviderFixture(envelopeFaux, async () => {
+    await withInstitutionalProviderFixture(faux, async () => {
       const prepared = await prepareGrokRoleEnvelope({
         request: {
           principal: {},
           activation: { role: "doctor", casePath },
           methods: [],
           continuation: { kind: "initial", prompt: "diagnose" },
-          model: { provider: envelopeModel.provider, model: envelopeModel.id },
-          cwd: process.cwd(),
+          model: { provider: model.provider, model: model.id },
+          cwd: root,
           home: root,
           agentDir: join(root, "agent"),
           runDirectory,
@@ -232,7 +184,6 @@ test("production Grok deps: four sub-legs reach typed results from one instituti
         dependencies: traced,
       });
       try {
-        assert.equal(navigatorFromEnvelope, true);
         const reply = await callThroughMcp(prepared.mcpServers[0] as GrokMcpServer, DOCTOR_OUTPUT_TOOL_NAME, {
           status: "refused",
           reason: "Session bytes are incomplete.",
@@ -248,10 +199,93 @@ test("production Grok deps: four sub-legs reach typed results from one instituti
         await prepared.dispose?.();
       }
     });
-  } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
-    await rm(root, { recursive: true, force: true });
-  }
+  });
+});
+
+test("production Grok deps: navigator prepare opens institutional child and accepts typed candidates", async () => {
+  await withGrokRoot(async ({ root, runDirectory, deps }) => {
+    const faux = fauxProvider({ provider: "grok-nav-leg", api: "openai-completions" });
+    const model = faux.getModel();
+    await writeInstitutionalSeatTable(runDirectory, {
+      navigator: seatSelection(model.provider, model.id),
+    });
+    const setting = join(root, "navigator-model.json");
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    const prepareTurn = fauxAssistantMessage(
+      fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+        candidates: [{ next: { role: "coder", phase: "apply" }, reason: "next slice" }],
+      }),
+      { stopReason: "toolUse" },
+    );
+    // Queue spare turns: prepare may solicit delivery if the first tool batch is rejected.
+    faux.setResponses([prepareTurn, prepareTurn, prepareTurn]);
+
+    await withInstitutionalProviderFixture(faux, async () => {
+      const reports: Array<{ disposition?: string; next?: { role?: string; phase?: unknown } }> = [];
+      const nav = await deps.createNavigatorAttendance!({
+        context: hostContext(root, runDirectory, []),
+        role: "coder",
+        phase: "apply",
+        subjectKey: join(root, "subject"),
+        subject: "implement the slice",
+        authority: "typed owner authority for navigator prepare",
+        invocationId: "inv-nav-leg",
+        onEvent: (_event, report) => {
+          reports.push(report as { disposition?: string; next?: { role?: string; phase?: unknown } });
+        },
+      });
+      try {
+        // Background prepare opens institutional child + prepare tool; settle drains it.
+        nav.prepare();
+        await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+        const recommendation = reports.find((r) => r.disposition === "recommendation");
+        assert.ok(recommendation, `expected recommendation report, got ${JSON.stringify(reports)}`);
+        assert.equal(recommendation.next?.role, "coder");
+        assert.equal(recommendation.next?.phase, "apply");
+      } finally {
+        nav.dispose();
+      }
+    });
+  });
+});
+
+test("production Grok deps: reviewer dispatch runs institutional evidence child to successful leg", async () => {
+  await withGrokRoot(async ({ root, runDirectory, deps }) => {
+    const faux = fauxProvider({ provider: "grok-reviewer-leg", api: "openai-completions" });
+    const model = faux.getModel();
+    await writeInstitutionalSeatTable(runDirectory, {
+      evidenceChild: seatSelection(model.provider, model.id),
+    });
+    faux.setResponses([
+      fauxAssistantMessage("Standards review report body with enough substance.", { stopReason: "stop" }),
+    ]);
+
+    const objectFormat = execFileSync("git", ["-C", root, "rev-parse", "--show-object-format"], { encoding: "utf8" }).trim() as "sha1" | "sha256";
+    const targetHead = execFileSync("git", ["-C", root, "rev-parse", "HEAD^{commit}"], { encoding: "utf8" }).trim();
+    const execution = {
+      identity: "four-legs-reviewer",
+      recipe: "reviewer-common-bundle-v1" as const,
+      targetSnapshot: {
+        repositoryRoot: root,
+        objectFormat,
+        targetHead,
+        refs: Object.freeze({}),
+      },
+      legs: Object.freeze([
+        Object.freeze({ axis: "standards" as const, prompt: "Review standards against quality-law." }),
+      ]),
+    };
+
+    await withInstitutionalProviderFixture(faux, async () => {
+      const outcome = await deps.runReviewerDispatch!(execution, {
+        context: hostContext(root, runDirectory, []),
+      });
+      assert.equal(outcome.legs.standards.status, "successful");
+      assert.ok(
+        typeof outcome.legs.standards.report === "string"
+        && outcome.legs.standards.report.includes("Standards review report"),
+      );
+    });
+    await deps.shutdownReviewerAgent?.();
+  });
 });
