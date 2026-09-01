@@ -392,7 +392,13 @@ export async function prepareGrokRoleEnvelope(options: {
     disposed = true;
     try {
       await emit("session_shutdown", {});
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      // Drop keep-alive / residual MCP relay sockets so test processes exit promptly.
+      if (typeof (server as { closeAllConnections?: () => void }).closeAllConnections === "function") {
+        (server as { closeAllConnections: () => void }).closeAllConnections();
+      }
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
     } finally {
       restoreAkRoleRunDir();
     }

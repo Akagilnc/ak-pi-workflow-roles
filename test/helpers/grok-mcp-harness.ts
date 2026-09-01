@@ -12,24 +12,49 @@ export type GrokMcpServer = {
   env: Array<{ name: string; value: string }>;
 };
 
+async function settleMcpChild(
+  child: ReturnType<typeof spawn>,
+  lines: ReturnType<typeof createInterface>,
+): Promise<void> {
+  lines.close();
+  try {
+    child.stdin?.end();
+  } catch {
+    // already closed
+  }
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  if (child.exitCode === null && child.signalCode === null && !child.killed) {
+    child.kill("SIGKILL");
+  }
+  await new Promise<void>((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    child.once("exit", () => resolve());
+    child.once("error", () => resolve());
+  });
+}
+
 export async function listThroughMcp(server: GrokMcpServer): Promise<Record<string, unknown>> {
   const child = spawn(server.command, server.args, {
     env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
-    stdio: ["pipe", "pipe", "inherit"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
-  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const lines = createInterface({ input: child.stdout! });
+  const replies = lines[Symbol.asyncIterator]();
   try {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
     await replies.next();
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
     const line = await replies.next();
     assert.equal(line.done, false);
     const response = JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
     assert.equal(response.error, undefined);
     return response.result ?? {};
   } finally {
-    child.stdin.end();
-    child.kill("SIGTERM");
+    await settleMcpChild(child, lines);
   }
 }
 
@@ -40,18 +65,18 @@ export async function callThroughMcp(
 ): Promise<{ result?: Record<string, unknown>; error?: unknown }> {
   const child = spawn(server.command, server.args, {
     env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
-    stdio: ["pipe", "pipe", "inherit"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
-  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const lines = createInterface({ input: child.stdout! });
+  const replies = lines[Symbol.asyncIterator]();
   try {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
     await replies.next();
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })}\n`);
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })}\n`);
     const line = await replies.next();
     assert.equal(line.done, false);
     return JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
   } finally {
-    child.stdin.end();
-    child.kill("SIGTERM");
+    await settleMcpChild(child, lines);
   }
 }
