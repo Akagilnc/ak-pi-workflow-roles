@@ -6,8 +6,6 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
 import test from "node:test";
 
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
@@ -18,6 +16,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createGrokRoleRuntimeDependencies } from "../../src/grok/production-host.ts";
 import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { callThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { packageRoot, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
@@ -47,32 +46,6 @@ function patient(runsPath: string): DoctorCase {
       outputBytes: { ...zero, payload: "raw JSONL bytes", providerWireBytes: "unavailable" },
     },
   };
-}
-
-type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
-
-/** Same MCP JSON-line face used by grok-role-envelope tests. */
-async function callThroughMcp(
-  server: McpServer,
-  name: string,
-  args: unknown,
-): Promise<{ result?: Record<string, unknown>; error?: unknown }> {
-  const child = spawn(server.command, server.args, {
-    env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
-    stdio: ["pipe", "pipe", "inherit"],
-  });
-  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-  try {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
-    await replies.next();
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })}\n`);
-    const line = await replies.next();
-    assert.equal(line.done, false);
-    return JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
-  } finally {
-    child.stdin.end();
-    child.kill("SIGTERM");
-  }
 }
 
 test("Grok envelope doctor terminal drives production auditor to typed pass with booked candidate", async () => {
@@ -146,7 +119,7 @@ test("Grok envelope doctor terminal drives production auditor to typed pass with
         dependencies: traced,
       });
       try {
-        const server = prepared.mcpServers[0] as McpServer;
+        const server = prepared.mcpServers[0] as GrokMcpServer;
         const refusal = {
           status: "refused",
           reason: "Session bytes are incomplete.",
