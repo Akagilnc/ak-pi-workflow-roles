@@ -75,6 +75,27 @@ test("MCP relay drains an in-flight tools/call after stdin EOF", { timeout: 8000
   assert.equal(result.exitCode, 0);
 });
 
+test("MCP relay delivers a reply larger than the OS pipe buffer before exiting 0", { timeout: 15000 }, async () => {
+  // 8 MiB of upstream result — comfortably beyond any local OS pipe buffer —
+  // so the relay must wait for stdout drain, not process.exit immediately.
+  const big = "x".repeat(8 * 1024 * 1024);
+  const result = await withRelay((message, socket) => {
+    if (message.method === "tools/call") {
+      socket.write(`${JSON.stringify({ id: message.id, result: { ok: true, data: big } })}\n`);
+    }
+  }, async (child, replies) => {
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    await replies.next();
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "ak_big" } })}\n`);
+    child.stdin!.end();
+    const line = await replies.next();
+    assert.equal(line.done, false);
+    const body = JSON.parse(line.value) as { jsonrpc: string; id: number; result?: { ok: boolean; data: string } };
+    assert.deepEqual(body.result, { ok: true, data: big });
+  });
+  assert.equal(result.exitCode, 0);
+});
+
 test("MCP relay exits nonzero when upstream dies before stdin EOF", { timeout: 8000 }, async () => {
   const result = await withRelay((message, socket) => {
     if (message.method === "tools/call") socket.destroy();

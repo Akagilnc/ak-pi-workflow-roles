@@ -13,6 +13,7 @@ let terminalError;
 let shutdownRequested = false;
 let exiting = false;
 let inFlight = 0;
+let pendingStdout = 0;
 
 function exitStatus() {
   return terminalError === undefined ? 0 : 1;
@@ -20,7 +21,7 @@ function exitStatus() {
 
 function maybeExit() {
   if (!shutdownRequested || exiting) return;
-  if (inFlight > 0 || waiters.size > 0) return;
+  if (inFlight > 0 || waiters.size > 0 || pendingStdout > 0) return;
   exiting = true;
   stdinLines.close();
   if (!upstream.destroyed) upstream.end();
@@ -77,7 +78,15 @@ function request(method, params = {}) {
     });
   });
 }
-function send(message) { process.stdout.write(`${JSON.stringify(message)}\n`); }
+function send(message) {
+  const payload = `${JSON.stringify(message)}\n`;
+  pendingStdout += 1;
+  process.stdout.write(payload, (error) => {
+    pendingStdout -= 1;
+    if (error) settle(error);
+    maybeExit();
+  });
+}
 function ok(id, result) { if (id !== undefined) send({ jsonrpc: "2.0", id, result }); }
 function fail(id, error) { if (id !== undefined) send({ jsonrpc: "2.0", id, error: { code: -32000, message: error instanceof Error ? error.message : String(error) } }); }
 
