@@ -17,15 +17,11 @@ async function settleMcpChild(
   lines: ReturnType<typeof createInterface>,
 ): Promise<void> {
   lines.close();
+  // Protocol close: end stdin so the relay sees EOF and exits; no SIGKILL.
   try {
     child.stdin?.end();
   } catch {
     // already closed
-  }
-  child.stdout?.destroy();
-  child.stderr?.destroy();
-  if (child.exitCode === null && child.signalCode === null && !child.killed) {
-    child.kill("SIGKILL");
   }
   await new Promise<void>((resolve) => {
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -35,6 +31,8 @@ async function settleMcpChild(
     child.once("exit", () => resolve());
     child.once("error", () => resolve());
   });
+  child.stdout?.destroy();
+  child.stderr?.destroy();
 }
 
 export async function listThroughMcp(server: GrokMcpServer): Promise<Record<string, unknown>> {
