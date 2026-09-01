@@ -90,3 +90,25 @@ test("MCP relay exits nonzero when upstream dies before stdin EOF", { timeout: 8
   });
   assert.equal(result.exitCode, 1);
 });
+
+test("MCP relay exits nonzero when stdin EOF precedes upstream death of an in-flight RPC", { timeout: 8000 }, async () => {
+  let release!: (socket: Socket) => void;
+  const held = new Promise<Socket>((resolve) => {
+    release = resolve;
+  });
+  const result = await withRelay((message, socket) => {
+    if (message.method === "tools/call") release(socket);
+  }, async (child, replies) => {
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    await replies.next();
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "ak_ping" } })}\n`);
+    child.stdin!.end();
+    const socket = await held;
+    socket.destroy();
+    const line = await replies.next();
+    assert.equal(line.done, false);
+    const body = JSON.parse(line.value) as { error?: { message?: string } };
+    assert.equal(typeof body.error?.message, "string");
+  });
+  assert.equal(result.exitCode, 1);
+});
