@@ -73,7 +73,7 @@ The examples below are usage sketches; option identity, aliases, requiredness, a
 # countersign — ticket-court review before work starts; one-shot
 ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"
 
-# gleaner-left — unanchored pre-merge memorials; one-shot; --base required; instruction may be empty
+# gleaner-left — unanchored pre-merge memorials; one-shot; --base required; instruction may be empty; callers must not pass directional instruction
 ak-role gleaner-left --base main
 
 # judge — adjudicate the supplied materials
@@ -211,6 +211,8 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | `--ticket` | — | `number` | no | no | option | — | Ticket/issue number for court diary (diarist) and ticket-keyed provenance. Overrides attachment frontmatter when both present. |
 
 ### `gleaner-left`
+
+Optional free positional `instruction` may be empty. Callers must not pass directional instruction; the seat self-fetches the merge-candidate diff against `--base`.
 
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |

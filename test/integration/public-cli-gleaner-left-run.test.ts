@@ -1,23 +1,26 @@
 /**
  * #502 public Gleaner-Left seat — required --base, empty instruction admitted,
- * one-shot (no resume). Does not fake a session for the terminal path.
+ * one-shot (no resume), empty/nonempty 弹章 through real runAkRole → typed Terminal.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   admitGleanerLeftInvocation,
   parseGleanerLeftArgv,
 } from "../../src/public-cli/invocation.ts";
 import { buildGleanerLeftTurnRequest } from "../../src/public-cli/gleaner-left-run.ts";
-import { markRunAdmitted } from "../../src/public-cli/run-lifecycle.ts";
+import { markRunAdmitted, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -59,6 +62,85 @@ function captureIo() {
   };
 }
 
+function gleanerLeftSessionRows(toolArgs: unknown) {
+  const toolCallId = "call_gleaner_left_1";
+  return [
+    {
+      type: "message",
+      id: "user-1",
+      parentId: null,
+      timestamp: "2026-08-30T00:00:00.000Z",
+      message: { role: "user", content: "kickoff", timestamp: 1 },
+    },
+    {
+      type: "message",
+      id: "assistant-1",
+      parentId: "user-1",
+      timestamp: "2026-08-30T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: toolCallId,
+            name: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+            arguments: toolArgs,
+          },
+        ],
+        timestamp: 2,
+      },
+    },
+    {
+      type: "message",
+      id: "result-1",
+      parentId: "assistant-1",
+      timestamp: "2026-08-30T00:00:02.000Z",
+      message: {
+        role: "toolResult",
+        toolCallId,
+        toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+        content: [{ type: "text", text: "Gleaner-Left output accepted" }],
+        details: toolArgs,
+        isError: false,
+        timestamp: 3,
+      },
+    },
+  ];
+}
+
+function flagValue(args: readonly string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index < 0) return undefined;
+  return args[index + 1];
+}
+
+function scriptedGleanerLeftSession(toolArgs: unknown) {
+  return async (extraArgs: readonly string[]) => {
+    const sessionFile = flagValue(extraArgs, "--session");
+    assert.ok(sessionFile);
+    await mkdir(join(sessionFile, ".."), { recursive: true });
+    await writeFile(
+      sessionFile,
+      `${gleanerLeftSessionRows(toolArgs).map((row) => JSON.stringify(row)).join("\n")}\n`,
+      "utf8",
+    );
+    const lawful =
+      typeof toolArgs === "object" &&
+      toolArgs !== null &&
+      "status" in toolArgs &&
+      (toolArgs as { status?: unknown }).status === "completed";
+    return {
+      code: 0,
+      timedOut: false,
+      stderr: "",
+      args: [...extraArgs],
+      ...(lawful
+        ? { sealedAcceptance: { role: "gleaner-left" as const, details: toolArgs } }
+        : {}),
+    };
+  };
+}
+
 test("gleaner-left requires --base and admits empty instruction", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -81,7 +163,6 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
       instruction: "",
-      attachmentPaths: [],
       baseRevision: parsed.baseRevision,
       createRunId: () => "01a0glean00-0000-7000-8000-000000000001",
     });
@@ -90,6 +171,7 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     assert.equal(admitted.instructionEmpty, true);
     assert.equal(admitted.baseRevision, "HEAD");
     assert.equal(admitted.attachments.length, 0);
+    assert.equal(admitted.ticketNumber, undefined);
 
     const turn = buildGleanerLeftTurnRequest(admitted, {
       packageRoot,
@@ -100,6 +182,100 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     assert.equal(turn.activation.role, "gleaner-left");
     assert.ok(turn.activation.role === "gleaner-left");
     assert.equal(turn.activation.baseRevision, "HEAD");
+  });
+});
+
+test("public gleaner-left settles empty 弹章 as typed Terminal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const runId = "01a0glean00-0000-7000-8000-000000000010";
+    const receipt = { status: "completed" as const, findings: [] as const };
+    const { io } = captureIo();
+    const result = await runAkRole(
+      ["gleaner-left", "--project", project, "--base", "HEAD"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedGleanerLeftSession(receipt),
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal.roleOutcome.role, "gleaner-left");
+    assert.equal(result.terminal.roleOutcome.status, "completed");
+    const facts = result.terminal.roleOutcome.decisiveFacts as Record<string, unknown>;
+    assert.equal(facts.status, "completed");
+    assert.deepEqual(facts.findings, []);
+
+    const coords = issuePiDurablePrincipalCoordinates({
+      cwd: project,
+      runId,
+      role: "gleaner-left",
+      home,
+    });
+    const state = await readRoleRunState(
+      coords.runDirectory,
+      piDurablePrincipalAuthority,
+    );
+    assert.equal(state?.role, "gleaner-left");
+    assert.equal(state?.state, "terminal");
+  });
+});
+
+test("public gleaner-left settles nonempty 弹章 pointer/statement as typed Terminal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const runId = "01a0glean00-0000-7000-8000-000000000020";
+    const receipt = {
+      status: "completed" as const,
+      findings: [
+        {
+          pointer: "src/packaged-role-registry.ts:22",
+          statement: "公开角色表未收编左拾遗",
+        },
+      ],
+    };
+    const { io } = captureIo();
+    const result = await runAkRole(
+      ["gleaner-left", "--project", project, "--base", "HEAD"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedGleanerLeftSession(receipt),
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal.roleOutcome.status, "completed");
+    const facts = result.terminal.roleOutcome.decisiveFacts as Record<string, unknown>;
+    const findings = facts.findings as readonly {
+      pointer: string;
+      statement: string;
+    }[];
+    assert.equal(findings[0]?.pointer, "src/packaged-role-registry.ts:22");
+    assert.equal(findings[0]?.statement, "公开角色表未收编左拾遗");
   });
 });
 
@@ -115,7 +291,6 @@ test("gleaner-left runs are one-shot — resume is refused", async () => {
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
       instruction: "",
-      attachmentPaths: [],
       baseRevision: "HEAD",
       createRunId: () => runId,
     });

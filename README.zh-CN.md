@@ -99,7 +99,7 @@ ak-role notary --source-run <runId@role|path> --ticket 582
 # 给事中——票庭五问；可选 --ticket（起居郎流水线前序工序按票刷新起居录）
 ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
 
-# 左拾遗——合并前无锚定风闻；一次性；--base 必填；instruction 可空
+# 左拾遗——合并前无锚定风闻；一次性；--base 必填；instruction 可空；调用者不得传方向性 instruction
 ak-role gleaner-left --base main
 
 # 太史——确定性指标；裸调＝整簿
@@ -245,6 +245,8 @@ ak-role resume <runId> "<裁定>"
 | `--ticket` | — | `number` | 否 | 否 | option | — | 票号：起居郎流水线与起居录票键。与附件 frontmatter 并存时以本旗为准。 |
 
 ### `gleaner-left`
+
+可选自由 positional `instruction` 可空。调用者不得传方向性 instruction；本席按 `--base` 自取合并候选 diff。
 
 | 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
