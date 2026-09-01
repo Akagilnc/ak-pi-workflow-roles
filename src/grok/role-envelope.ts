@@ -193,6 +193,18 @@ export async function prepareGrokRoleEnvelope(options: {
     },
     abort() {},
   };
+  const bookCustomMessage = (customType: string, message: { content?: string; details?: unknown }): void => {
+    const payload = {
+      ...(message.content === undefined ? {} : { content: message.content }),
+      ...(message.details === undefined ? {} : { details: message.details }),
+    };
+    const entry = { type: "custom_message", customType, ...payload, message: payload };
+    sessionEntries.push(entry);
+    customEntries.push({ customType, data: message.details ?? message.content });
+    // Pi custom_message face: type/customType/message.details JSONL so
+    // extractNavigatorFact can read grok-build parent-session books.
+    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
+  };
 
   const emit = async (event: string, value: unknown): Promise<unknown[]> => {
     const results: unknown[] = [];
@@ -245,9 +257,13 @@ export async function prepareGrokRoleEnvelope(options: {
       context.sessionManager.appendCustomEntry?.(customType, data);
     },
     async sendMessage(message) {
-      if (typeof message === "object" && message !== null && "content" in message && typeof message.content === "string") {
-        customEntries.push({ customType: "message", data: message.content });
-      }
+      if (typeof message !== "object" || message === null) return;
+      const customType = typeof message.customType === "string" ? message.customType : undefined;
+      if (customType === undefined) return;
+      bookCustomMessage(customType, {
+        ...(typeof message.content === "string" ? { content: message.content } : {}),
+        ...(message.details === undefined ? {} : { details: message.details }),
+      });
     },
     startKeepalive() {},
     stopKeepalive() {},
@@ -415,6 +431,9 @@ export async function prepareGrokRoleEnvelope(options: {
       if (customEntries[index]?.customType === "ak-role-submission-closure") { closure = customEntries[index]; break; }
     }
     if (closure !== undefined) {
+      // Pi flushes navigator attendance on agent_settled; session/prompt
+      // resolution is grok-build's equivalent round boundary.
+      await emit("agent_settled", {});
       return { accepted: true as const };
     }
     if (rejection !== undefined) {
