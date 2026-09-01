@@ -116,6 +116,11 @@ export type RoleTurnActivation =
       readonly role: "countersign";
       /** Admitted ticket binding for Notary inner-gate material (ADR 0075). */
       readonly ticketNumber?: number;
+    }
+  | {
+      readonly role: "gleaner-left";
+      /** Required comparison-base revision for the unanchored merge-candidate diff. */
+      readonly baseRevision: string;
     };
 
 export type RoleTurnContinuation =

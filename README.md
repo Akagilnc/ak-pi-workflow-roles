@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `gleaner-left`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
 
 ## Install
 
@@ -39,7 +39,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId> [message]` reopens that run's exact Pi session. Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same session continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, Notary, and Countersign remain one-shot. The model resolves from the **current seat configuration**; pass `--model` explicitly when identity matters (#552 ruling).
+`ak-role resume <runId> [message]` reopens that run's exact Pi session. Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same session continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, Notary, Countersign, and Gleaner-Left remain one-shot. The model resolves from the **current seat configuration**; pass `--model` explicitly when identity matters (#552 ruling).
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
@@ -72,6 +72,9 @@ The examples below are usage sketches; option identity, aliases, requiredness, a
 ```bash
 # countersign — ticket-court review before work starts; one-shot
 ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"
+
+# gleaner-left — unanchored pre-merge memorials; one-shot; --base required; instruction may be empty; callers must not pass directional instruction
+ak-role gleaner-left --base main
 
 # judge — adjudicate the supplied materials
 ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."
@@ -206,6 +209,15 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
 | `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
 | `--ticket` | — | `number` | no | no | option | — | Ticket/issue number for court diary (diarist) and ticket-keyed provenance. Overrides attachment frontmatter when both present. |
+
+### `gleaner-left`
+
+Optional free positional `instruction` may be empty. Callers must not pass directional instruction; the seat self-fetches the merge-candidate diff against `--base`.
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
+| `--base` | — | `revision` | yes | no | option | — | Required comparison-base revision for the unanchored merge-candidate diff. |
 
 ### `analyst`
 

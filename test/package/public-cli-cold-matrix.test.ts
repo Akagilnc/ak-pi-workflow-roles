@@ -439,6 +439,25 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
     }
 
+    // gleaner-left — unanchored seat; required --base; empty instruction is the lawful path.
+    {
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["gleaner-left", "--project", project, "--base", "HEAD"],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("gleaner-left", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "gleaner-left");
+      assert.equal(flagValue(args, "--ak-gleaner-left-base"), "HEAD");
+      assert.equal(args.includes("--no-skills"), true);
+      assert.equal(args.includes("-e"), true);
+      const entry = flagValue(args, "-e");
+      assert.ok(entry);
+      assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
+    }
+
     // coder apply — package tdd method forced; home skills excluded.
     {
       const result = await runAkRoleBin(

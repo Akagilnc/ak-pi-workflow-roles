@@ -2524,6 +2524,32 @@ function validateRecordedCountersignOutput(verdict) {
   throw new Error("Countersign verdict has no execution discriminator");
 }
 
+// src/gleaner-left-contracts.ts
+var GLEANER_LEFT_OUTPUT_TOOL_NAME = "ak_gleaner_left_output";
+var GLEANER_LEFT_ACCEPTED_TEXT = "\u5DE6\u62FE\u9057\u56DE\u6267\u5DF2\u63A5\u53D7";
+var GLEANER_LEFT_BASE_FLAG = {
+  name: "ak-gleaner-left-base",
+  definition: {
+    description: "Fixed comparison-base revision for the unanchored merge-candidate diff",
+    type: "string"
+  }
+};
+function validateRecordedGleanerLeftOutput(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Gleaner-left output has no execution discriminator");
+  }
+  let status;
+  try {
+    status = value.status;
+  } catch {
+    throw new Error("Gleaner-left output has no execution discriminator");
+  }
+  if (status === "completed") {
+    return value;
+  }
+  throw new Error("Gleaner-left output has no execution discriminator");
+}
+
 // src/package-contracts/fixer-output.ts
 import { Type as Type7 } from "typebox";
 
@@ -2687,7 +2713,8 @@ var TERMINATING_TOOL_NAMES = [
   DOCTOR_OUTPUT_TOOL_NAME,
   MERGER_OUTPUT_TOOL_NAME,
   NOTARY_OUTPUT_TOOL_NAME,
-  COUNTERSIGN_OUTPUT_TOOL_NAME
+  COUNTERSIGN_OUTPUT_TOOL_NAME,
+  GLEANER_LEFT_OUTPUT_TOOL_NAME
 ];
 function isTerminatingToolName(name) {
   return TERMINATING_TOOL_NAMES.includes(name);
@@ -2729,7 +2756,8 @@ function validateAcceptedDetails(toolName, details) {
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
     [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
-    [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"]
+    [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
+    [GLEANER_LEFT_OUTPUT_TOOL_NAME]: ["completed"]
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;
@@ -2757,6 +2785,8 @@ function validateAcceptedDetails(toolName, details) {
         return validateRecordedNotaryOutput(details);
       case COUNTERSIGN_OUTPUT_TOOL_NAME:
         return validateRecordedCountersignOutput(details);
+      case GLEANER_LEFT_OUTPUT_TOOL_NAME:
+        return validateRecordedGleanerLeftOutput(details);
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -2770,6 +2800,7 @@ function acceptedFacts(toolName, details) {
     case REVIEWER_OUTPUT_TOOL_NAME:
     case DOCTOR_OUTPUT_TOOL_NAME:
     case NOTARY_OUTPUT_TOOL_NAME:
+    case GLEANER_LEFT_OUTPUT_TOOL_NAME:
       return { status: details.status };
     case JUDGE_OUTPUT_TOOL_NAME:
       return { status: details.judgeStatus };
@@ -3144,6 +3175,19 @@ var PUBLIC_ROLE_RECORDS = [
     phaseFlag: void 0,
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/countersign.md"]
+  },
+  {
+    role: "gleaner-left",
+    phases: [null],
+    outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    inputFlag: void 0,
+    phaseFlag: void 0,
+    activationStage: "load-and-install",
+    sessionMaterials: [
+      "CLAUDE.md",
+      "souls/gleaner-left.md",
+      "souls/quality-law.md"
+    ]
   }
 ];
 var PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
@@ -3307,6 +3351,24 @@ function bindOwner(owner, semantics) {
 var JUDGE_OPTIONS = [
   bindOwner("judge", SHARED_PROJECT_SEMANTICS),
   bindOwner("judge", SHARED_ATTACH_SEMANTICS)
+];
+var GLEANER_LEFT_OPTIONS = [
+  bindOwner("gleaner-left", SHARED_PROJECT_SEMANTICS),
+  // Unanchored seat: no --attach face (self-fetches the merge-candidate diff).
+  {
+    id: "base",
+    owner: "gleaner-left",
+    canonical: "--base",
+    aliases: [],
+    valueMetavar: "revision",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required comparison-base revision for the unanchored merge-candidate diff.",
+      zh: "\u5FC5\u586B\uFF1B\u65E0\u951A\u5B9A\u5408\u5E76\u5019\u9009 diff \u7684\u6BD4\u8F83\u57FA\u7EBF revision\u3002"
+    }
+  }
 ];
 var COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
@@ -3570,6 +3632,15 @@ var ROLE_COMMAND_HELP = {
       'ak-role countersign --attach ./plan.md --attach ./adr.md "\u88C1\uFF1A\u65B9\u6848\u4E94\u95EE\u3002"'
     ]
   },
+  "gleaner-left": {
+    command: "gleaner-left",
+    summary: "Unanchored pre-merge memorials; findings only, no bounce. Instruction may be empty; callers must not pass directional instruction.",
+    usage: ["ak-role gleaner-left --base <revision> [options] [instruction]"],
+    examples: [
+      "ak-role gleaner-left --base main",
+      "ak-role gleaner-left --base origin/main --project ./worktree"
+    ]
+  },
   coder: {
     command: "coder",
     summary: "First implementation; phase defaults to apply.",
@@ -3772,7 +3843,7 @@ async function readRoleRunStateDisk(runDirectory) {
   if (typeof record4.runId !== "string" || record4.runId.trim() === "") {
     return void 0;
   }
-  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger" && record4.role !== "notary" && record4.role !== "countersign") {
+  if (record4.role !== "judge" && record4.role !== "coder" && record4.role !== "fixer" && record4.role !== "collector" && record4.role !== "doctor" && record4.role !== "reviewer" && record4.role !== "merger" && record4.role !== "notary" && record4.role !== "countersign" && record4.role !== "gleaner-left") {
     return void 0;
   }
   if (record4.state !== "admitted" && record4.state !== "running" && record4.state !== "resumable" && record4.state !== "terminal") {
@@ -8321,11 +8392,40 @@ var COUNTERSIGN_TOOL_SPEC = {
   parameters: countersignVerdictSchema
 };
 
+// src/gleaner-left-role.ts
+import { Type as Type17 } from "typebox";
+var gleanerLeftOutputSchema = withInfrastructureFailureDeclaration(
+  openToolObject(
+    Type17.Object({
+      status: Type17.Unknown({
+        description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
+      }),
+      findings: Type17.Array(
+        Type17.Object(
+          {
+            pointer: Type17.String({ description: "\u6587\u4EF6/\u884C\u6307\u9488" }),
+            statement: Type17.String({ description: "\u7591\u70B9\u9648\u8FF0" })
+          },
+          { additionalProperties: true, description: "\u4E00\u6761\u5F39\u7AE0" }
+        ),
+        { description: "\u5F39\u7AE0\u5217\u8868\uFF1B\u7A7A\u5217\u8868\u5408\u6CD5\u5B8C\u5C40" }
+      )
+    })
+  )
+);
+var GLEANER_LEFT_TOOL_SPEC = {
+  name: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+  label: "\u5DE6\u62FE\u9057\u8F93\u51FA",
+  description: "\u5DE6\u62FE\u9057\u5F39\u7AE0\u3002",
+  promptSnippet: "\u5DE6\u62FE\u9057\u5F39\u7AE0",
+  parameters: gleanerLeftOutputSchema
+};
+
 // src/navigator-attendance.ts
 import { createHash as createHash8 } from "node:crypto";
 import { ModelRuntime as ModelRuntime2 } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream as createAssistantMessageEventStream2 } from "@earendil-works/pi-ai";
-import { Type as Type17 } from "typebox";
+import { Type as Type18 } from "typebox";
 import { Value as Value4 } from "typebox/value";
 
 // src/work-subject-identity.ts
@@ -8533,16 +8633,16 @@ var NavigatorUnavailableError = class extends Error {
     this.originalCause = originalCause;
   }
 };
-var navigatorProviderFailureSchema = Type17.Object({
-  source: Type17.Union([Type17.Literal("context"), Type17.Literal("session"), Type17.Literal("model"), Type17.Literal("thinking"), Type17.Literal("auth"), Type17.Literal("quota"), Type17.Literal("transport"), Type17.Literal("unknown")]),
-  cause: Type17.Union([Type17.Literal("context"), Type17.Literal("session"), Type17.Literal("model"), Type17.Literal("thinking"), Type17.Literal("auth"), Type17.Literal("quota"), Type17.Literal("transport"), Type17.Literal("unknown")])
+var navigatorProviderFailureSchema = Type18.Object({
+  source: Type18.Union([Type18.Literal("context"), Type18.Literal("session"), Type18.Literal("model"), Type18.Literal("thinking"), Type18.Literal("auth"), Type18.Literal("quota"), Type18.Literal("transport"), Type18.Literal("unknown")]),
+  cause: Type18.Union([Type18.Literal("context"), Type18.Literal("session"), Type18.Literal("model"), Type18.Literal("thinking"), Type18.Literal("auth"), Type18.Literal("quota"), Type18.Literal("transport"), Type18.Literal("unknown")])
 }, { additionalProperties: false });
 function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
 }
-var prepareSchema = Type17.Object({
-  candidates: Type17.Optional(Type17.Unknown({
+var prepareSchema = Type18.Object({
+  candidates: Type18.Optional(Type18.Unknown({
     description: "\u65B9\u5411\u5019\u9009\uFF1Bcandidates[].next.role \u5FC5\u586B\uFF0Cphase \u53EF\u9009\uFF0Croute/matches/reason/command \u53EF\u9009\u4E0A\u4E0B\u6587\uFF0C\u975E\u53D7\u7406\u95F8"
   }))
 }, { additionalProperties: true });
@@ -8656,30 +8756,30 @@ function raceNavigatorGrace(work, graceMs = NAVIGATOR_POST_ROLE_GRACE_MS, sleep 
 }
 
 // src/judge-role.ts
-import { Type as Type18 } from "typebox";
+import { Type as Type19 } from "typebox";
 var judgeVerdictSchema = withInfrastructureFailureDeclaration(
-  Type18.Object(
+  Type19.Object(
     {
       judgeStatus: stringEnum(["converged", "continue", "escalate"], { description: "converged | continue | escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
-      fix: Type18.Optional(
-        Type18.Object(
-          { summary: Type18.String({ minLength: 1, description: "continue \u65F6\u7684\u8865\u6551\u6458\u8981" }) },
+      fix: Type19.Optional(
+        Type19.Object(
+          { summary: Type19.String({ minLength: 1, description: "continue \u65F6\u7684\u8865\u6551\u6458\u8981" }) },
           { additionalProperties: false, description: "continue \u65F6\u7684\u8865\u6551\u8BF4\u660E" }
         )
       ),
-      classes: Type18.Optional(Type18.Array(Type18.Object({
-        name: Type18.String({ minLength: 1 }),
-        owner: Type18.String({ minLength: 1 }),
-        boundary: Type18.String({ minLength: 1 }),
-        disposition: Type18.String({ minLength: 1 })
+      classes: Type19.Optional(Type19.Array(Type19.Object({
+        name: Type19.String({ minLength: 1 }),
+        owner: Type19.String({ minLength: 1 }),
+        boundary: Type19.String({ minLength: 1 }),
+        disposition: Type19.String({ minLength: 1 })
       }, { additionalProperties: false }), { minItems: 1, description: "\u5DF2\u88C1\u51B3 finding \u7C7B\u53CA\u5176 owner \u4E0E\u4FEE\u7406\u8FB9\u754C" })),
-      note: Type18.Optional(Type18.String({ minLength: 1, description: "\u53EF\u9009\u88C1\u51B3\u9644\u6CE8" })),
-      evidence: Type18.Optional(Type18.Unknown({ description: "\u7559\u5B58\u7684\u88C1\u51B3\u8BC1\u636E" })),
-      decisionGate: Type18.Optional(
-        Type18.Object(
+      note: Type19.Optional(Type19.String({ minLength: 1, description: "\u53EF\u9009\u88C1\u51B3\u9644\u6CE8" })),
+      evidence: Type19.Optional(Type19.Unknown({ description: "\u7559\u5B58\u7684\u88C1\u51B3\u8BC1\u636E" })),
+      decisionGate: Type19.Optional(
+        Type19.Object(
           {
-            question: Type18.String({ minLength: 1 }),
-            options: Type18.Array(Type18.String({ minLength: 1 }), { minItems: 1 })
+            question: Type19.String({ minLength: 1 }),
+            options: Type19.Array(Type19.String({ minLength: 1 }), { minItems: 1 })
           },
           { additionalProperties: false, description: "\u9700\u4EBA\u6743\u5A01\u5904\u7F6E\u7684\u95EE\u9898\u4E0E\u9009\u9879" }
         )
@@ -8769,7 +8869,7 @@ ${soul}
 }
 
 // src/reviewer-role.ts
-import { Type as Type19 } from "typebox";
+import { Type as Type20 } from "typebox";
 
 // src/reviewer-agent.ts
 function reviewerDispatchFailureMessage(outcome) {
@@ -8992,19 +9092,19 @@ function assembleRuntimeReviewerReceipt(input) {
 }
 
 // src/reviewer-role.ts
-var reviewerAmendmentsSchema = Type19.Object({
-  standards: Type19.Optional(Type19.String({ description: "\u76F8\u5BF9 Standards \u5B50\u62A5\u544A\u7684\u589E\u91CF\uFF1A\u589E finding\u3001\u64A4\u56DE\u6216\u4E8B\u5B9E\u66F4\u6B63" })),
-  spec: Type19.Optional(Type19.String({ description: "\u76F8\u5BF9 Spec \u5B50\u62A5\u544A\u7684\u589E\u91CF\uFF1A\u589E finding\u3001\u64A4\u56DE\u6216\u4E8B\u5B9E\u66F4\u6B63" }))
+var reviewerAmendmentsSchema = Type20.Object({
+  standards: Type20.Optional(Type20.String({ description: "\u76F8\u5BF9 Standards \u5B50\u62A5\u544A\u7684\u589E\u91CF\uFF1A\u589E finding\u3001\u64A4\u56DE\u6216\u4E8B\u5B9E\u66F4\u6B63" })),
+  spec: Type20.Optional(Type20.String({ description: "\u76F8\u5BF9 Spec \u5B50\u62A5\u544A\u7684\u589E\u91CF\uFF1A\u589E finding\u3001\u64A4\u56DE\u6216\u4E8B\u5B9E\u66F4\u6B63" }))
 }, { additionalProperties: true, description: "\u76F8\u5BF9\u5B50\u62A5\u544A\u7684\u53EF\u9009\u8F74\u589E\u91CF\uFF1B\u975E\u66FF\u4EE3\u62A5\u544A\u3002\u65E0\u589E\u91CF\u7684\u8F74\u53EF\u7701\u7565\u3002" });
-var reviewerOutputVariants = Type19.Union([
-  Type19.Object({
-    status: Type19.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
-    amendments: Type19.Optional(reviewerAmendmentsSchema)
+var reviewerOutputVariants = Type20.Union([
+  Type20.Object({
+    status: Type20.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
+    amendments: Type20.Optional(reviewerAmendmentsSchema)
   }, { additionalProperties: false }),
-  Type19.Object({
-    status: Type19.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
-    diagnostic: Type19.String({ minLength: 1, description: "\u62D2\u7EDD\u8BCA\u65AD\u8BF4\u660E" }),
-    amendments: Type19.Optional(reviewerAmendmentsSchema)
+  Type20.Object({
+    status: Type20.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
+    diagnostic: Type20.String({ minLength: 1, description: "\u62D2\u7EDD\u8BCA\u65AD\u8BF4\u660E" }),
+    amendments: Type20.Optional(reviewerAmendmentsSchema)
   }, { additionalProperties: false })
 ]);
 var reviewerOutputSchema = withInfrastructureFailureDeclaration(
@@ -9132,7 +9232,7 @@ function createReviewerRoleRuntime(pi, dependencies, hostActions) {
 }
 
 // src/worker-role.ts
-import { Type as Type20 } from "typebox";
+import { Type as Type21 } from "typebox";
 
 // src/worker-submission-gates.ts
 init_archivist_record_entry();
@@ -9398,24 +9498,24 @@ function fixerBashSeatbeltDenyReason(matched) {
 }
 
 // src/worker-role.ts
-var coderOutputVariants = Type20.Union([
-  Type20.Object({
+var coderOutputVariants = Type21.Union([
+  Type21.Object({
     status: stringEnum(["planned"], { description: "planned \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
-    report: Type20.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" })
+    report: Type21.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" })
   }, { additionalProperties: false }),
-  Type20.Object({
+  Type21.Object({
     status: stringEnum(["completed", "refused"], {
       description: "completed | refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1Bcompleted \u56DE\u6267\u542B TDD\u3001\u540C\u6A21\u5F0F\u3001\u5F15\u5165\u56DE\u5F52\u3001\u884C\u4E3A\u4E8B\u5B9E\u56DB\u9879\u8BC1\u636E"
     }),
-    report: Type20.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" })
+    report: Type21.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" })
   }, { additionalProperties: false }),
-  Type20.Object({
+  Type21.Object({
     status: stringEnum(["unfinished"], {
       description: "unfinished \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u81F4\u672C\u5C40\u672A\u5B8C\u6210\u65F6\u53EF\u7528\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002"
     }),
-    report: Type20.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }),
-    remainingScope: Type20.String({ minLength: 1, description: "\u672C\u5C40\u540E\u5269\u4F59\u5DE5\u4F5C" }),
-    reason: Type20.Optional(Type20.String({
+    report: Type21.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }),
+    remainingScope: Type21.String({ minLength: 1, description: "\u672C\u5C40\u540E\u5269\u4F59\u5DE5\u4F5C" }),
+    reason: Type21.Optional(Type21.String({
       minLength: 1,
       description: "\u963B\u65AD\u539F\u56E0\uFF1A\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002"
     }))
@@ -9879,6 +9979,12 @@ var NOTARY_TRANSPORT_FLAGS = Object.freeze([
     definition: NOTARY_TICKET_FLAG.definition
   })
 ]);
+var GLEANER_LEFT_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: GLEANER_LEFT_BASE_FLAG.name,
+    definition: GLEANER_LEFT_BASE_FLAG.definition
+  })
+]);
 function decodeReviewerAdmittedInputs(getFlag) {
   let reviewScopeKeys;
   const rawScopeKeys = getFlag("ak-review-scope-keys");
@@ -9988,6 +10094,8 @@ function activationStage(role, runtime) {
       };
     case "countersign":
       return { id: "load-and-install", run: async () => runtime.countersign.activate() };
+    case "gleaner-left":
+      return { id: "load-and-install", run: async () => runtime.gleanerLeft.activate() };
     case "merger":
       return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
@@ -10223,6 +10331,25 @@ ${soul}
     }
   };
 }
+function createGleanerLeftRoleRuntime(roleHost, dependencies) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "gleaner-left",
+      tool: GLEANER_LEFT_TOOL_SPEC,
+      acceptedText: GLEANER_LEFT_ACCEPTED_TEXT,
+      soulTag: "gleaner-left"
+    },
+    dependencies
+  );
+}
+function decodeGleanerLeftBase(getFlag) {
+  const baseRevision = getFlag(GLEANER_LEFT_BASE_FLAG.name);
+  if (typeof baseRevision !== "string" || !baseRevision.trim()) {
+    throw new Error("Gleaner-left role requires --ak-gleaner-left-base");
+  }
+  return baseRevision;
+}
 function createCountersignRoleRuntime(roleHost, dependencies, hostActions) {
   const beforeAccept = hostActions !== void 0 && roleHost.requireGatekeeperPass !== void 0 ? async ({ toolCallId, parameters, signal, ctx }) => {
     const material = await buildCountersignNotaryGateMaterial({
@@ -10268,6 +10395,9 @@ function createRoleRuntimeExtension(dependencies) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
     for (const flag of NOTARY_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of GLEANER_LEFT_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
     let admitted = false;
@@ -10630,6 +10760,18 @@ function createRoleRuntimeExtension(dependencies) {
         return dependencies.loadCountersignSoul();
       }
     }, hostActions);
+    const gleanerLeftRuntime = createGleanerLeftRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadGleanerLeftSoul) throw new Error("Gleaner-left runtime dependencies are not configured");
+        return dependencies.loadGleanerLeftSoul();
+      }
+    });
+    const gleanerLeft = {
+      async activate() {
+        decodeGleanerLeftBase((name) => envelopeHost.host.getFlag(name));
+        return gleanerLeftRuntime.activate();
+      }
+    };
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() {
@@ -10765,6 +10907,7 @@ function createRoleRuntimeExtension(dependencies) {
         doctor,
         notary,
         countersign,
+        gleanerLeft,
         merger: async () => {
           if (dependencies.mergerGitState === void 0) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);
@@ -11388,6 +11531,9 @@ function projectGrokActivationFlags(request) {
   if (activation.role === "notary" && activation.ticketNumber !== void 0) {
     flags.set("ak-notary-ticket-number", String(activation.ticketNumber));
   }
+  if (activation.role === "gleaner-left") {
+    flags.set("ak-gleaner-left-base", activation.baseRevision);
+  }
   if (activation.role === "collector") {
     flags.set("ak-collector-repo", activation.repo);
     flags.set("ak-collector-pr", activation.pr);
@@ -11848,6 +11994,7 @@ function createGrokRoleRuntimeDependencies(packageRoot) {
     loadDoctorCase,
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
+    loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile12(path, "utf8")),

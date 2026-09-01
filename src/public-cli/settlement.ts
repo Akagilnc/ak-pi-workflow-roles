@@ -92,6 +92,11 @@ import {
   validateRecordedCountersignOutput,
 } from "../countersign-contracts.ts";
 import {
+  GLEANER_LEFT_OUTPUT_TOOL_NAME,
+  gleanerLeftDecisiveFacts,
+  validateRecordedGleanerLeftOutput,
+} from "../gleaner-left-contracts.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -122,6 +127,7 @@ import {
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
   type AdmittedCountersignInvocation,
+  type AdmittedGleanerLeftInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -3061,23 +3067,32 @@ export async function trySettleDoctorTerminalResult(
   return settleLawfulDoctorTerminalResult(admitted, authority);
 }
 
-/** Lawful Notary accepted outcome (pass/bounce). */
-export type LawfulNotaryRoleOutcome = {
-  kind: "accepted";
-  role: "notary";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
+/**
+ * Shared accepted-settlement skeleton for one-shot seats that scan residual
+ * tool candidates then project sealed ledger outcome (#502 DRY).
+ * Role-specific validator / decisiveFacts / diagnostics stay on the seat.
+ */
+type OneShotAcceptedSettlementSpec = {
+  readonly role: "notary" | "countersign" | "gleaner-left";
+  readonly toolName: string;
+  readonly nonUsableDiagnostic: string;
+  readonly projectAccepted: (
+    sealed: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
+  ) => Extract<TerminalRoleOutcome, { kind: "accepted" }>;
+  readonly tryAcceptDetails: (details: unknown) => boolean;
 };
-async function settleLawfulNotaryTerminalResult(
-  admitted: AdmittedNotaryInvocation,
+
+async function settleLawfulOneShotAcceptedTerminalResult(
+  admitted: AdmittedNotaryInvocation | AdmittedCountersignInvocation | AdmittedGleanerLeftInvocation,
   authority: DurablePrincipalAuthority,
+  spec: OneShotAcceptedSettlementSpec,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted);
-  if (roleOutcome?.role !== "notary") {
-    // No usable Notary release → existing non-zero failure channel with candidate (#475 / ADR 0055).
+  if (roleOutcome?.role !== spec.role) {
+    // No usable release → existing non-zero failure channel with candidate (#475 / ADR 0055).
     // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
     let acceptedNonUsable: unknown | undefined;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -3087,7 +3102,7 @@ async function settleLawfulNotaryTerminalResult(
         entries,
         index,
         message,
-        NOTARY_OUTPUT_TOOL_NAME,
+        spec.toolName,
       );
       if (residual !== undefined) {
         return settleFailureTerminalResult(admitted, {
@@ -3098,13 +3113,11 @@ async function settleLawfulNotaryTerminalResult(
       }
       if (
         acceptedNonUsable === undefined &&
-        message.toolName === NOTARY_OUTPUT_TOOL_NAME &&
+        message.toolName === spec.toolName &&
         isAcceptedPackagedRoleTerminalResult(message)
       ) {
-        // Accepted once but not a lawful pass/bounce — hold as fallback.
-        try {
-          validateRecordedNotaryOutput(message.details);
-        } catch {
+        // Accepted once but not a lawful seat release — hold as fallback.
+        if (!spec.tryAcceptDetails(message.details)) {
           acceptedNonUsable = message.details;
         }
       }
@@ -3112,29 +3125,63 @@ async function settleLawfulNotaryTerminalResult(
     if (acceptedNonUsable !== undefined) {
       return settleFailureTerminalResult(admitted, {
         cause: "output",
-        diagnostic: "符宝郎回执无显式 pass/bounce",
+        diagnostic: spec.nonUsableDiagnostic,
         details: { candidate: acceptedNonUsable, acceptedReceipt: false },
       }, authority);
     }
     return undefined;
   }
-  const output = validateRecordedNotaryOutput(roleOutcome.decisiveFacts);
-  const accepted: LawfulNotaryRoleOutcome = {
-    kind: "accepted",
-    role: "notary",
-    status: roleOutcome.status,
-    decisiveFacts: notaryDecisiveFacts(output),
-  };
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
     {
-      roleOutcome: accepted,
+      roleOutcome: spec.projectAccepted(roleOutcome),
       navigator,
       artifacts: [],
       runId: admitted.runId,
     },
     sessionDirectory,
   );
+}
+
+function tryAcceptWithValidator(validate: (details: unknown) => unknown): (details: unknown) => boolean {
+  return (details) => {
+    try {
+      validate(details);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+/** Lawful Notary accepted outcome (pass/bounce). */
+export type LawfulNotaryRoleOutcome = {
+  kind: "accepted";
+  role: "notary";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulNotaryTerminalResult(
+  admitted: AdmittedNotaryInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "notary",
+    toolName: NOTARY_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "符宝郎回执无显式 pass/bounce",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedNotaryOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedNotaryOutput(sealed.decisiveFacts);
+      const accepted: LawfulNotaryRoleOutcome = {
+        kind: "accepted",
+        role: "notary",
+        status: sealed.status,
+        decisiveFacts: notaryDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
 }
 
 /** Settle a lawful Notary Terminal from the admitted session. */
@@ -3171,67 +3218,22 @@ async function settleLawfulCountersignTerminalResult(
   admitted: AdmittedCountersignInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted);
-  if (roleOutcome?.role !== "countersign") {
-    // No usable Countersign verdict → existing non-zero failure channel with candidate (#475 / ADR 0055).
-    let acceptedNonUsable: unknown | undefined;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(
-        entries,
-        index,
-        message,
-        COUNTERSIGN_OUTPUT_TOOL_NAME,
-      );
-      if (residual !== undefined) {
-        return settleFailureTerminalResult(admitted, {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details: { candidate: residual.candidate, acceptedReceipt: false },
-        }, authority);
-      }
-      if (
-        acceptedNonUsable === undefined &&
-        message.toolName === COUNTERSIGN_OUTPUT_TOOL_NAME &&
-        isAcceptedPackagedRoleTerminalResult(message)
-      ) {
-        try {
-          validateRecordedCountersignOutput(message.details);
-        } catch {
-          acceptedNonUsable = message.details;
-        }
-      }
-    }
-    if (acceptedNonUsable !== undefined) {
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: "给事中回执无显式 署/封驳/上呈",
-        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
-      }, authority);
-    }
-    return undefined;
-  }
-  const verdict = validateRecordedCountersignOutput(roleOutcome.decisiveFacts);
-  const accepted: LawfulCountersignRoleOutcome = {
-    kind: "accepted",
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
     role: "countersign",
-    status: roleOutcome.status,
-    decisiveFacts: countersignDecisiveFacts(verdict as object, roleOutcome.status),
-  };
-  const navigator = extractNavigatorFact(entries);
-  return withOptionalGateProjection(
-    {
-      roleOutcome: accepted,
-      navigator,
-      artifacts: [],
-      runId: admitted.runId,
+    toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "给事中回执无显式 署/封驳/上呈",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedCountersignOutput),
+    projectAccepted: (sealed) => {
+      const verdict = validateRecordedCountersignOutput(sealed.decisiveFacts);
+      const accepted: LawfulCountersignRoleOutcome = {
+        kind: "accepted",
+        role: "countersign",
+        status: sealed.status,
+        decisiveFacts: countersignDecisiveFacts(verdict as object, sealed.status),
+      };
+      return accepted;
     },
-    sessionDirectory,
-  );
+  });
 }
 
 /** Settle a lawful Countersign Terminal from the admitted session. */
@@ -3254,6 +3256,58 @@ export async function trySettleCountersignTerminalResult(
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulCountersignTerminalResult(admitted, authority);
+}
+
+/** Lawful Gleaner-Left accepted outcome (completed 弹章, #502). */
+export type LawfulGleanerLeftRoleOutcome = {
+  kind: "accepted";
+  role: "gleaner-left";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "gleaner-left",
+    toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "左拾遗回执无显式 completed",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedGleanerLeftOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedGleanerLeftOutput(sealed.decisiveFacts);
+      const accepted: LawfulGleanerLeftRoleOutcome = {
+        kind: "accepted",
+        role: "gleaner-left",
+        status: sealed.status,
+        decisiveFacts: gleanerLeftDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
+}
+
+/** Settle a lawful Gleaner-Left Terminal from the admitted session. */
+export async function settleGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulGleanerLeftTerminalResult(admitted, authority);
+  if (settled === undefined) {
+    throw new Error(
+      "Gleaner-Left Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Gleaner-Left Terminal; undefined only for genuine absence. */
+export async function trySettleGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulGleanerLeftTerminalResult(admitted, authority);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */
