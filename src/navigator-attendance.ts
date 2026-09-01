@@ -1204,12 +1204,11 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       prompt: async (text) => {
         providerFailure = undefined;
         const failFrom = (error: unknown): never => {
-          const fact = providerFailure;
-          throw navigatorUnavailableError(
-            fact?.source ?? "transport",
-            error,
-            fact?.cause ?? "transport",
-          );
+          if (providerFailure === undefined) {
+            assignProviderFailure({ source: "transport", cause: "transport" });
+          }
+          const fact = providerFailure!;
+          throw navigatorUnavailableError(fact.source, error, fact.cause);
         };
         try {
           const turn = await opened.handle.prompt(text);

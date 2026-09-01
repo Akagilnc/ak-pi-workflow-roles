@@ -39,7 +39,8 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
     };
     assert.equal("modelRegistry" in hostContext, false);
 
-    // Sequential: quota then unknown — each prompt resets classification.
+    // Sequential HTTP failures: each prompt resets then reclassifies as transport
+    // (institutional path has no free-text HTTP-status parse; see navigator-attendance.test).
     {
       const faux = fauxProvider({ provider: "nav-reset-sync", api: "openai-completions" });
       const model = faux.getModel();
@@ -61,17 +62,16 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
           await assert.rejects(
             () => session.prompt("first"),
             (error: unknown) => error instanceof NavigatorUnavailableError
-              && error.unavailableSource === "quota"
-              && error.unavailableCause === "quota",
+              && error.unavailableSource === "transport"
+              && error.unavailableCause === "transport",
           );
-          assert.deepEqual(session.providerFailure?.(), { source: "quota", cause: "quota" });
+          assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
           await assert.rejects(
             () => session.prompt("second"),
             (error: unknown) => error instanceof NavigatorUnavailableError
               && error.unavailableSource === "transport"
               && error.unavailableCause === "transport",
           );
-          // Second prompt cleared prior quota; bare error-stop lifts as transport via HTTP status.
           assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
         } finally {
           session.dispose();
