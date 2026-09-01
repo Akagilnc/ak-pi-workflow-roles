@@ -24,6 +24,7 @@ import {
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
 import { sitianReport } from "./sitian-facade.ts";
+import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 
 function exactRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -131,6 +132,13 @@ export function createNativeNavigatorSessionFactory(
         assignProviderFailure(navigatorProviderFailureFromStatus(status));
         if (providerFailure === undefined && status >= 400 && status < 600) {
           assignProviderFailure({ source: "transport", cause: "transport" });
+        }
+        const runDir = process.env.AK_ROLE_RUN_DIR;
+        const provider = typeof message.provider === "string" && message.provider.trim() !== ""
+          ? message.provider
+          : selection.provider;
+        if (typeof runDir === "string" && runDir.trim() !== "" && provider.trim() !== "") {
+          void recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
         }
       }
     };

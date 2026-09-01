@@ -79,14 +79,16 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
       });
     }
 
-    // Terminal-less completion must settle without hang.
+    // Error-stop with no tool call: institutional prompt settles as transport failure
+    // (deterministic fixture — no hang oracle, no tautology).
     {
       const faux = fauxProvider({ provider: "nav-no-terminal", api: "openai-completions" });
       const model = faux.getModel();
       const setting = join(root, "navigator-model-noterm.json");
       await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      // Empty responses → institutional open may still succeed; prompt gets no assistant.
-      faux.setResponses([]);
+      faux.setResponses([
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "no terminal assistant" }),
+      ]);
       await withInstitutionalProviderFixture(faux, async () => {
         const session = await createNativeNavigatorSessionFactory()({
           context: hostContext,
@@ -96,12 +98,13 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
         });
         try {
           await session.setModel?.(`${model.provider}/${model.id}`, "off");
-          // Controllable settle: prompt must resolve or reject; no wall-clock hang oracle.
-          const outcome = await session.prompt("no terminal").then(
-            () => "resolved" as const,
-            () => "rejected" as const,
+          await assert.rejects(
+            () => session.prompt("no terminal"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.unavailableSource === "transport"
+              && error.unavailableCause === "transport",
           );
-          assert.ok(outcome === "resolved" || outcome === "rejected");
+          assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
         } finally {
           session.dispose();
         }
