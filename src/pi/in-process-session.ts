@@ -434,7 +434,12 @@ export async function openPiInstitutionalSession(
             // folds non-2xx into errorMessage-only assistant stops (no free-text parse).
             const statusAwareFetch: typeof fetch = async (input, init) => {
               const response = await baseFetch(input, init);
-              if (typeof response?.status === "number") observedHttpStatus = response.status;
+              // Only lift auth/quota HTTP statuses from the wire. Mock servers map
+              // unstructured error-stop to synthetic 500; treating those as provider
+              // testimony would wash local/unrecognized failures (失败诚实).
+              if (response?.status === 401 || response?.status === 403 || response?.status === 429) {
+                observedHttpStatus = response.status;
+              }
               return response;
             };
             const retriedRequest: ProviderStreamOptions = {
