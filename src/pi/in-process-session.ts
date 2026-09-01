@@ -479,7 +479,22 @@ export async function openPiInstitutionalSession(
               ) {
                 continue;
               }
-              streamFailureValue = idleFailure ?? new Error(errorMessage, { cause: response });
+              const failure = idleFailure ?? new Error(errorMessage, { cause: response });
+              // OpenAI-completions encodes non-success HTTP as "NNN: …" in errorMessage
+              // when onResponse status was not retained on the assistant message. Lift the
+              // leading status onto the failure object so host-neutral consumers classify
+              // auth/quota from a typed field (not free-text oracles).
+              const statusMatch = /^([1-5]\d{2}):\s/.exec(errorMessage);
+              const fromMessage = statusMatch !== null ? Number(statusMatch[1]) : undefined;
+              const httpStatus = numericHttpStatus(observedHttpStatus)
+                ?? numericHttpStatus((response as { statusCode?: unknown }).statusCode)
+                ?? numericHttpStatus((response as { status?: unknown }).status)
+                ?? numericHttpStatus(fromMessage);
+              if (httpStatus !== undefined) {
+                Object.assign(failure, { statusCode: httpStatus, status: httpStatus });
+                Object.assign(response, { statusCode: httpStatus, status: httpStatus });
+              }
+              streamFailureValue = failure;
             }
             for (const ev of attemptEvents) {
               wrapped.push(ev as any);
@@ -514,13 +529,20 @@ export async function openPiInstitutionalSession(
               continue;
             }
             const typedFailure = idleFailure ?? failure;
-            // Hold the primary provider failure at the adapter boundary (ADR
-            // 0018 / 失败诚实宪法). Consumers that surface transport failures
-            // read this so the real cause is never masked by a projected
-            // step-machine "error" response.
-            streamFailureValue = typedFailure;
             const projected = projectStructuredRemote(failure);
             const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
+            // Hold the primary provider failure at the adapter boundary (ADR
+            // 0018 / 失败诚实宪法). Attach observed HTTP status when held so
+            // host-neutral consumers (navigator/auditor) can classify auth/quota
+            // without reading free-text errorMessage.
+            if (
+              httpStatus !== undefined
+              && typeof typedFailure === "object"
+              && typedFailure !== null
+            ) {
+              Object.assign(typedFailure, { statusCode: httpStatus, status: httpStatus });
+            }
+            streamFailureValue = typedFailure;
             const response = {
               role: "assistant" as const,
               content: [] as [],

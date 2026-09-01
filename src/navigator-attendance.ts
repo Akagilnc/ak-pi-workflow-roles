@@ -1153,7 +1153,13 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
           : typeof message.httpStatus === "number"
             ? message.httpStatus
             : undefined;
-      if (typeof status === "number") assignProviderFailure(navigatorProviderFailureFromStatus(status));
+      if (typeof status === "number") {
+        assignProviderFailure(navigatorProviderFailureFromStatus(status));
+        // Institutional HTTP path: non-auth/quota 4xx/5xx remains transport (diagnostics may be stripped).
+        if (providerFailure === undefined && status >= 400 && status < 600) {
+          assignProviderFailure({ source: "transport", cause: "transport" });
+        }
+      }
     };
 
     const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
@@ -1207,20 +1213,27 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         };
         try {
           const turn = await opened.handle.prompt(text);
-          if (opened.streamFailure !== undefined) {
-            classifyTerminalMessage(opened.streamFailure);
-            failFrom(opened.streamFailure);
-          }
+          // Prefer terminal-message classification (holds statusCode/diagnostics).
+          // streamFailure is a secondary cause carrier and must not wipe a typed fact.
           if (turn.stopReason === "error" || turn.stopReason === "aborted") {
-            const cause = turn.errorMessage ?? "Navigator provider failure";
+            const cause = turn.errorMessage ?? opened.streamFailure ?? "Navigator provider failure";
+            if (providerFailure === undefined && opened.streamFailure !== undefined) {
+              classifyTerminalMessage(opened.streamFailure);
+            }
             if (providerFailure === undefined) {
-              assignProviderFailure(navigatorProviderFailureFromError(new Error(cause)));
+              assignProviderFailure(navigatorProviderFailureFromError(
+                typeof cause === "object" && cause !== null ? cause : new Error(String(cause)),
+              ));
             }
             failFrom(cause);
           }
+          if (opened.streamFailure !== undefined) {
+            if (providerFailure === undefined) classifyTerminalMessage(opened.streamFailure);
+            failFrom(opened.streamFailure);
+          }
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
-          classifyTerminalMessage(error);
+          if (providerFailure === undefined) classifyTerminalMessage(error);
           failFrom(error);
         }
       },

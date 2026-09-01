@@ -1171,7 +1171,17 @@ export async function createMockProviderServer(
         // stream path records a transport failure (streamFailure) instead of a
         // flattened normal completion — preserving typed transport_failure
         // classification through the OpenAI-completions round-trip.
-        res.writeHead(500, { "content-type": "application/json" });
+        // When the scripted assistant message holds a direct statusCode/status,
+        // mirror it as the HTTP status so auth/quota classification stays typed
+        // through institutional open (host-neutral navigator/auditor children).
+        const messageRecord = message as unknown as { statusCode?: unknown; status?: unknown };
+        const heldStatus = typeof messageRecord.statusCode === "number"
+          ? messageRecord.statusCode
+          : typeof messageRecord.status === "number"
+            ? messageRecord.status
+            : 500;
+        const httpStatus = heldStatus >= 400 && heldStatus < 600 ? heldStatus : 500;
+        res.writeHead(httpStatus, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: { message: message.errorMessage ?? message.stopReason } }));
         return;
       }
