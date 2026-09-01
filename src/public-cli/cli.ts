@@ -720,6 +720,8 @@ function renderHelp(): string {
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
+    "Host resolution: --host → persistent seat host → pi; after set-host the role command face is unchanged",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;

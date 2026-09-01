@@ -347,7 +347,7 @@ export type EvidenceChildExecuteOptions = Readonly<{
 export async function executeEvidenceChild(
   workspace: string,
   prompt: ReviewerPromptText,
-  context: ExtensionContext,
+  context: ExtensionContext | HostContext,
   options: EvidenceChildExecuteOptions = {},
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
   const signal = options.signal;

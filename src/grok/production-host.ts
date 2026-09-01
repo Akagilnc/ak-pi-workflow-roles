@@ -10,15 +10,27 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../canonical-skill-binding.ts";
 import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../collector-github.ts";
+import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 import { loadDoctorCase } from "../doctor-evidence.ts";
 import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import { createPiJudgeAuditor } from "../judge-auditor.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
+import {
+  createNativeNavigatorSessionFactory,
+  createNavigatorAttendance,
+  type NavigatorTargetRole,
+} from "../navigator-attendance.ts";
+import { loadNavigatorWorkContext } from "../navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "../notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "../package-resources/method-skill-binding.ts";
+import { packagedRoleMetadata } from "../packaged-role-registry.ts";
+import { createReviewerAgentRunner } from "../reviewer-agent.ts";
 import type { RoleRuntimeDependencies } from "../role-runtime.ts";
+import { ROLE_FLAG } from "../role-runtime.ts";
 import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
 import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import { createComposedGrokRoleTurnHost } from "./role-envelope.ts";
@@ -169,8 +181,35 @@ export async function withProductionGrokIsolation<T>(
   return value;
 }
 
+const navigatorRoutePlaybookPath = fileURLToPath(
+  new URL("../../resources/navigator-route-playbook.md", import.meta.url),
+);
+
+/** In-process role help for Navigator prepare — same surface as the Pi host path. */
+function formatGrokNavigatorRoleHelp(role: NavigatorTargetRole): string {
+  const metadata = packagedRoleMetadata(role);
+  const lines = [
+    `Usage: ak-role ${role}`,
+    ROLE_FLAG.definition.description,
+  ];
+  if (metadata?.inputFlag !== undefined) {
+    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
+  }
+  if (metadata?.phaseFlag !== undefined) {
+    lines.push(
+      `  --${metadata.phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
+    );
+  }
+  lines.push(`Public next-command form: ak-role ${role}`);
+  return lines.join("\n");
+}
+
 /** Host-neutral packaged role runtime deps for the Grok parent-process envelope. */
 export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
+  const judgeAuditor = createPiJudgeAuditor();
+  const doctorAuditor = createPiDoctorAuditor();
+  const reviewerAgent = createReviewerAgentRunner({ packageRoot });
+  const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
@@ -200,14 +239,31 @@ export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRunt
       }
       return loadHomeCanonicalSkillBinding(name);
     },
-    // Pi-session auditors / navigator / reviewer-agent remain on the Pi host path.
-    // Live grok-build completion of those branches is #511.
-    async auditSoulCompliance() {
-      throw new Error("grok-build host-neutral soul audit is not wired");
-    },
-    async auditDoctorCompliance() {
-      throw new Error("grok-build host-neutral doctor audit is not wired");
-    },
+    // #590: four sub-legs on the shared institutional child seam (host-neutral).
+    auditSoulCompliance: (options) => judgeAuditor(options),
+    auditDoctorCompliance: (options) => doctorAuditor(options),
+    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
+    shutdownReviewerAgent: () => reviewerAgent.shutdown(),
+    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({
+      context: options.context,
+      role: options.role,
+      ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
+    }),
+    createNavigatorAttendance: (options) => createNavigatorAttendance({
+      context: options.context,
+      role: options.role,
+      phase: options.phase,
+      subjectKey: options.subjectKey,
+      subject: options.subject,
+      authority: options.authority,
+      invocationId: options.invocationId,
+      loadSoul: () => loadMainRoleSessionMaterials("navigator"),
+      loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
+      loadRoleHelp: async (role) => formatGrokNavigatorRoleHelp(role),
+      createSession: navigatorSessionFactory,
+      ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
+      onEvent: options.onEvent,
+    }),
   };
 }
 

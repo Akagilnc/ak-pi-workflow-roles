@@ -572,7 +572,7 @@ export type RoleRuntimeDependencies = {
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
+  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -1568,7 +1568,12 @@ export function createRoleRuntimeExtension(
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           } else {
             try {
-              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(roleHost, entry.role) });
+              work = await dependencies.loadNavigatorWorkContext({
+                context: ctx,
+                role: entry.role,
+                phase: navigatorPhase(roleHost, entry.role),
+                getFlag: (name) => roleHost.getFlag(name),
+              });
               contextError = work.contextError;
             } catch (error) {
               // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.

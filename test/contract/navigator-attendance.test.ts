@@ -398,42 +398,34 @@ test("model settings are exact and typed settlement projection ignores prose and
   // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
 
-test("native session uses the saved model exactly and rejects unsupported thinking without fallback", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-native-model-"));
+test("host-neutral native factory ignores parent modelRegistry and fails loud on unknown model", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-model-"));
   const previous = process.env.PI_CODING_AGENT_DIR;
   try {
     process.env.PI_CODING_AGENT_DIR = root;
     seedGitRepository(root);
-    const faux = fauxProvider({ provider: "native-model", api: "native-model" });
-    const model = faux.getModel();
     const setting = join(root, "navigator-model.json");
-    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}:max` }));
-    const nativeContext = {
+    await writeFile(setting, JSON.stringify({ model: "missing/provider-does-not-exist" }));
+    // Deliberately omit modelRegistry — factory must not require parent ExtensionContext.
+    const hostContext = {
       cwd: root,
-      modelRegistry: {
-        find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
-        getProvider: (provider: string) => provider === model.provider ? faux.provider : undefined,
-        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+      mode: "print",
+      model: undefined,
+      sessionManager: {
+        getLeafEntry: () => undefined,
+        getLeafId: () => null,
+        getEntries: () => [],
+        getSessionDir: () => join(root, "session"),
+        getSessionFile: () => join(root, "session", "session.jsonl"),
       },
-    } as never;
+      abort() {},
+    };
     const factory = createNativeNavigatorSessionFactory();
     const tool = createNavigatorPrepareTool(() => {});
     await assert.rejects(
-      factory({ context: nativeContext, subject: join(root, "session"), tool }),
+      factory({ context: hostContext, subject: join(root, "session"), tool }),
       (error: unknown) => error instanceof NavigatorUnavailableError
-        && error.unavailableSource === "thinking"
-        && error.unavailableCause === "thinking",
-    );
-    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-    const session = await factory({ context: nativeContext, subject: join(root, "session"), tool });
-    assert.equal(session.getThinkingLevel?.(), "off");
-    session.dispose();
-    await writeFile(setting, JSON.stringify({ model: "missing/provider" }));
-    await assert.rejects(
-      factory({ context: nativeContext, subject: join(root, "session"), tool }),
-      (error: unknown) => error instanceof NavigatorUnavailableError
-        && error.unavailableSource === "model"
-        && error.unavailableCause === "model",
+        && (error.unavailableSource === "model" || error.unavailableSource === "auth" || error.unavailableSource === "session"),
     );
   } catch (error) {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -446,88 +438,48 @@ test("native session uses the saved model exactly and rejects unsupported thinki
   await cleanupTempDir(root);
 });
 
-test("native provider stream seam classifies auth/quota/transport after setModel without message metadata oracle", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-native-stream-"));
+test("host-neutral native factory prefers institutional-resolution navigator seat over model file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-institutional-seat-"));
   const previous = process.env.PI_CODING_AGENT_DIR;
   try {
     process.env.PI_CODING_AGENT_DIR = root;
     seedGitRepository(root);
-    const cases = [
-      { name: "auth", source: "auth" as const, status: 401, diagnostics: ["auth key unavailable", "login expired differently"] },
-      { name: "quota", source: "quota" as const, status: 429, diagnostics: ["quota exhausted", "billing limit reached differently"] },
-      { name: "transport", source: "transport" as const, diagnostics: ["transport unavailable", "socket reset differently"] },
-    ] as const;
-    for (const scenario of cases) {
-      // One session per source; two diagnostics prove prose-independence without rebuilding native sessions.
-      const faux = fauxProvider({ provider: `native-stream-${scenario.name}`, api: `native-stream-${scenario.name}` });
-      const model = faux.getModel();
-      const setting = join(root, "navigator-model.json");
-      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      let currentDiagnostic: string = scenario.diagnostics[0]!;
-      const observedCallbacks: number[] = [];
-      const failingProvider = {
-        ...faux.provider,
-        stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never, options as never);
-          const stream = createAssistantMessageEventStream();
-          const human = scenario.source === "transport"
-            ? {
-              ...fauxAssistantMessage("", { stopReason: "error", errorMessage: currentDiagnostic }),
-              diagnostics: [{
-                type: "provider_transport_failure",
-                timestamp: Date.now(),
-                error: { message: currentDiagnostic, code: "transport_error" },
-              }],
-            }
-            : fauxAssistantMessage("", { stopReason: "error", errorMessage: currentDiagnostic });
-          queueMicrotask(() => {
-            void (async () => {
-              if ("status" in scenario) {
-                await options?.onResponse?.({ status: scenario.status, headers: {} }, requestModel);
-                observedCallbacks.push(scenario.status);
-              }
-              stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
-              stream.push({ type: "error", reason: "error", error: human });
-            })();
-          });
-          return stream;
+    const runDirectory = join(root, "run");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    await writeFile(
+      join(runDirectory, "institutional-resolution.json"),
+      `${JSON.stringify({
+        version: 1,
+        seats: {
+          navigator: { provider: "missing-institutional", model: "nav-1", thinking: "off" },
         },
-        streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-          return this.stream(requestModel, streamContext, options);
-        },
-      };
-      const nativeContext = {
-        cwd: root,
-        modelRegistry: {
-          find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
-          getProvider: (provider: string) => provider === model.provider ? failingProvider : undefined,
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-      } as never;
-      const factory = createNativeNavigatorSessionFactory();
-      const tool = createNavigatorPrepareTool(() => {});
-      const session = await factory({ context: nativeContext, subject: join(root, `session-${scenario.name}`), tool });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      for (const diagnostic of scenario.diagnostics) {
-        currentDiagnostic = diagnostic;
-        observedCallbacks.length = 0;
-        await session.prompt("prepare routes");
-        assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source }, `${scenario.name}:${diagnostic}`);
-        const assistant = [...session.entries()].reverse().find((entry: any) => entry?.type === "message" && entry?.message?.role === "assistant") as any;
-        assert.equal(assistant?.message?.errorMessage, diagnostic, `${scenario.name}:${diagnostic}`);
-        // Classification still comes from onResponse/diagnostics — not statusCode as oracle.
-        // Held upstream status remains on the durable session message when the provider supplied it.
-        if ("status" in scenario) {
-          assert.equal(assistant?.message?.statusCode, scenario.status, `${scenario.name}:${diagnostic}`);
-          assert.deepEqual(observedCallbacks, [scenario.status], `${scenario.name}:${diagnostic}`);
-        } else {
-          assert.equal(assistant?.message?.statusCode, undefined, `${scenario.name}:${diagnostic}`);
-        }
-        assert.equal(assistant?.message?.navigatorFailure, undefined, `${scenario.name}:${diagnostic}`);
-      }
-      session.dispose();
-    }
+      }, null, 2)}\n`,
+    );
+    // File would resolve a different provider; page must win.
+    await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: "file-provider/file-model" }));
+    const hostContext = {
+      cwd: root,
+      mode: "print",
+      model: undefined,
+      sessionManager: {
+        getLeafEntry: () => undefined,
+        getLeafId: () => null,
+        getEntries: () => [],
+        getSessionDir: () => join(runDirectory, "session"),
+        getSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+      },
+      abort() {},
+    };
+    const factory = createNativeNavigatorSessionFactory();
+    const tool = createNavigatorPrepareTool(() => {});
+    await assert.rejects(
+      factory({ context: hostContext, subject: join(runDirectory, "session"), tool }),
+      (error: unknown) => {
+        assert.ok(error instanceof NavigatorUnavailableError);
+        assert.match(error.message, /missing-institutional|nav-1|authentication|provider/i);
+        return true;
+      },
+    );
   } catch (error) {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;

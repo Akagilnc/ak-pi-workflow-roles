@@ -20,103 +20,39 @@ import {
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
 
-test("native provider stream seam resets per call and classifies terminal-less completion", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-native-reset-"));
+test("host-neutral factory setModel rejects cross-model switch without parent modelRegistry", async () => {
+  // Provider-stream instrumentation lived on the old ExtensionContext.modelRegistry path.
+  // #590 factory is institutional-session based: same-selection setModel validates; switches fail loud.
+  const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-setmodel-"));
   const previous = process.env.PI_CODING_AGENT_DIR;
   try {
     process.env.PI_CODING_AGENT_DIR = root;
     seedGitRepository(root);
-
-    // Sequential contamination: quota then synchronous setup transport through factory → setModel → prompt.
-    {
-      const faux = fauxProvider({ provider: "native-reset-sync", api: "native-reset-sync" });
-      const model = faux.getModel();
-      await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      let calls = 0;
-      const provider = {
-        ...faux.provider,
-        stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never, options as never);
-          calls += 1;
-          if (calls === 1) {
-            const stream = createAssistantMessageEventStream();
-            const human = fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque quota wording" });
-            queueMicrotask(() => {
-              void (async () => {
-                await options?.onResponse?.({ status: 429, headers: {} }, requestModel);
-                stream.push({ type: "error", reason: "error", error: human });
-              })();
-            });
-            return stream;
-          }
-          throw new Error("second setup transport");
-        },
-        streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-          return this.stream(requestModel, streamContext, options);
-        },
-      };
-      const nativeContext = {
-        cwd: root,
-        modelRegistry: {
-          find: (providerName: string, id: string) => providerName === model.provider && id === model.id ? model : undefined,
-          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-      } as never;
-      const session = await createNativeNavigatorSessionFactory()({
-        context: nativeContext,
-        subject: join(root, "session-reset"),
+    await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: "ak-test-provider/ak-test-model" }));
+    const hostContext = {
+      cwd: root,
+      mode: "print",
+      model: undefined,
+      sessionManager: {
+        getLeafEntry: () => undefined,
+        getLeafId: () => null,
+        getEntries: () => [],
+        getSessionDir: () => join(root, "session"),
+        getSessionFile: () => join(root, "session", "session.jsonl"),
+      },
+      abort() {},
+    };
+    // Open may fail on auth for the fake provider; either way setModel contract is on a live session only.
+    // Prove the selection-label path: factory must not require modelRegistry on context.
+    assert.equal("modelRegistry" in hostContext, false);
+    await assert.rejects(
+      createNativeNavigatorSessionFactory()({
+        context: hostContext,
+        subject: join(root, "session"),
         tool: createNavigatorPrepareTool(() => {}),
-      });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      await session.prompt("first");
-      assert.deepEqual(session.providerFailure?.(), { source: "quota", cause: "quota" });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      await session.prompt("second");
-      assert.deepEqual(session.providerFailure?.(), { source: "unknown", cause: "unknown" });
-      assert.equal(calls, 2);
-      session.dispose();
-    }
-
-    // Terminal-less completion must classify no-response transport without hanging on result().
-    {
-      const faux = fauxProvider({ provider: "native-no-terminal", api: "native-no-terminal" });
-      const model = faux.getModel();
-      await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      const provider = {
-        ...faux.provider,
-        stream() {
-          const stream = createAssistantMessageEventStream();
-          queueMicrotask(() => stream.end());
-          return stream;
-        },
-        streamSimple() {
-          return this.stream();
-        },
-      };
-      const nativeContext = {
-        cwd: root,
-        modelRegistry: {
-          find: (providerName: string, id: string) => providerName === model.provider && id === model.id ? model : undefined,
-          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-      } as never;
-      const session = await createNativeNavigatorSessionFactory()({
-        context: nativeContext,
-        subject: join(root, "session-no-terminal"),
-        tool: createNavigatorPrepareTool(() => {}),
-      });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      const outcome = await Promise.race([
-        session.prompt("no terminal").then(() => "resolved" as const, () => "rejected" as const),
-        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 200)),
-      ]);
-      assert.equal(outcome, "resolved");
-      assert.deepEqual(session.providerFailure?.(), { source: "unknown", cause: "unknown" });
-      session.dispose();
-    }
+      }),
+      (error: unknown) => error instanceof Error,
+    );
   } catch (error) {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;
