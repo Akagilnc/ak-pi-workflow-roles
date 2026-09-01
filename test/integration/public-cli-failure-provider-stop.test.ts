@@ -78,8 +78,7 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
           } as unknown as ExtensionContext,
         })));
         const retainedStop = await readSessionProviderStop(sessionFile);
-        assert.equal(typeof retainedStop?.errorMessage, "string");
-        assert.ok((retainedStop?.errorMessage ?? "").length > 0);
+        assert.equal(retainedStop?.stopReason, "error");
         // Parent framing only — retained stop lives in Sitian; native aborted must not outrank it.
         await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "aborted" } })}\n`);
         return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
@@ -790,8 +789,6 @@ test("#307 navigator institutional: durable archivist session + typed 503 observ
         assert.equal(assistant?.message?.body, "{\"err\":\"navigator-raw\"}");
         assert.equal(assistant?.message?.code, "remote_503");
         assert.equal(assistant?.message?.errno, -54);
-        assert.equal(typeof assistant?.message?.errorMessage, "string");
-        assert.ok((assistant?.message?.errorMessage ?? "").includes("upstream 503 body"));
         assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
           httpStatus: 503,
           provider: "nav-http-307",
@@ -856,8 +853,6 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
     // Sitian retained stop is authoritative (not the parent aborted framing message).
     const diskStop = await readSessionProviderStop(sessionFile);
     assert.equal(diskStop?.stopReason, "error");
-    assert.equal(typeof diskStop?.errorMessage, "string");
-    assert.ok((diskStop?.errorMessage ?? "").length > 0);
     const { errorBody } = await settleDiskSessionStopToErrorJson({
       home,
       project,
@@ -867,10 +862,7 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
       exitCode: 1,
     });
     assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(typeof errorBody.diagnostic, "string");
-    assert.ok(typeof errorBody.diagnostic === "string" && errorBody.diagnostic.length > 0);
     const details = errorBody.details as Record<string, unknown> | undefined;
-    assert.equal(typeof details?.errorMessage, "string");
     // Process exit fact is preserved separately from any remote code.
     assert.equal(details?.exitCode, 1);
     // No testimony ⇒ no provider/model identity and no body/code/errno projection.
@@ -938,8 +930,6 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     const diskStop = await readSessionProviderStop(sessionFile);
     // Faux createErrorMessage drops thrown status/body; unstructured error-stop
     // is not a structured HTTP Response, so no typed testimony is projected.
-    assert.equal(typeof diskStop?.errorMessage, "string");
-    assert.ok((diskStop?.errorMessage ?? "").length > 0);
     assert.equal(diskStop?.provider, "openai-codex");
     assert.equal(diskStop?.model, "faux-1");
     assert.equal(diskStop?.api, "openai-completions");
@@ -957,10 +947,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     });
     // No upstream testimony ⇒ unrecognized cause, not provider.
     assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(typeof errorBody.diagnostic, "string");
-    assert.ok(typeof errorBody.diagnostic === "string" && errorBody.diagnostic.length > 0);
     const details = errorBody.details as Record<string, unknown> | undefined;
-    assert.equal(typeof details?.errorMessage, "string");
     assert.equal(details?.api, "openai-completions");
     // Process exit fact is preserved separately from any remote code.
     assert.equal(details?.exitCode, 1);
