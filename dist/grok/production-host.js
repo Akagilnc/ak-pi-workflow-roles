@@ -13370,6 +13370,17 @@ async function prepareGrokRoleEnvelope(options) {
     abort() {
     }
   };
+  const bookCustomMessage = (customType, message) => {
+    const payload = {
+      ...message.content === void 0 ? {} : { content: message.content },
+      ...message.details === void 0 ? {} : { details: message.details }
+    };
+    const entry = { type: "custom_message", customType, ...payload, message: payload };
+    sessionEntries.push(entry);
+    customEntries.push({ customType, data: message.details ?? message.content });
+    appendFileSync2(sessionFile, `${JSON.stringify(entry)}
+`, "utf8");
+  };
   const emit = async (event, value) => {
     const results = [];
     for (const handler of handlers.get(event) ?? []) {
@@ -13433,9 +13444,13 @@ async function prepareGrokRoleEnvelope(options) {
       context.sessionManager.appendCustomEntry?.(customType, data);
     },
     async sendMessage(message) {
-      if (typeof message === "object" && message !== null && "content" in message && typeof message.content === "string") {
-        customEntries.push({ customType: "message", data: message.content });
-      }
+      if (typeof message !== "object" || message === null) return;
+      const customType = typeof message.customType === "string" ? message.customType : void 0;
+      if (customType === void 0) return;
+      bookCustomMessage(customType, {
+        ...typeof message.content === "string" ? { content: message.content } : {},
+        ...message.details === void 0 ? {} : { details: message.details }
+      });
     },
     startKeepalive() {
     },
@@ -13585,6 +13600,7 @@ async function prepareGrokRoleEnvelope(options) {
       }
     }
     if (closure !== void 0) {
+      await emit("agent_settled", {});
       return { accepted: true };
     }
     if (rejection !== void 0) {

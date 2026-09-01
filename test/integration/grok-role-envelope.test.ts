@@ -29,6 +29,7 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { callThroughMcp, listThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -519,6 +520,88 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
       assert.equal(sealed?.kind, "accepted");
       assert.equal(sealed?.role, "notary");
       assert.equal(sealed?.status, "pass");
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok accepted closeRound books navigator attendance onto parent session for extractNavigatorFact", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-nav-books-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ae";
+    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const subjectKey = join(root, "work");
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
+        continuation: { kind: "initial", prompt: "attest" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory,
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadNotarySoul: async () => "NOTARY SOUL",
+        loadNotarySourceRun: async () => ({ runDirectory: root, runId: "run-1", role: "notary" }),
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey,
+          subject: "navigator book regression",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: (options) => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => {
+            const event = {
+              version: 1 as const,
+              disposition: "no-advice" as const,
+              invocationId: options.invocationId,
+              role: options.role,
+              phase: options.phase,
+              subjectKey: options.subjectKey,
+            };
+            await options.onEvent(event, { disposition: "no-advice" });
+          },
+          dispose() {},
+        }),
+      },
+    });
+    try {
+      const server = prepared.mcpServers[0] as McpServer;
+      const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      assert.equal(reply.error, undefined);
+      const closure = await prepared.closeRound();
+      assert.deepEqual(closure, { accepted: true });
+
+      const sessionPath = join(runDirectory, "session", "session.jsonl");
+      const entries = (await readFile(sessionPath, "utf8"))
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          customType?: string;
+          message?: { details?: unknown };
+        });
+      const attendance = entries.find(
+        (row) => row.type === "custom_message" && row.customType === "ak-navigator-attendance",
+      );
+      assert.ok(attendance, "accepted grok-build round must book navigator attendance on parent session");
+      const fact = extractNavigatorFact(entries as never);
+      assert.equal(fact.disposition, "no-advice");
     } finally {
       await prepared.dispose?.();
     }
