@@ -17996,8 +17996,8 @@ var init_option_definitions = __esm({
         repeatable: false,
         form: "option",
         description: {
-          en: "Select the named main-session host adapter for this invocation.",
-          zh: "\u4E3A\u672C\u8C03\u7528\u9009\u62E9\u5177\u540D\u4E3B\u4F1A\u8BDD\u5BBF\u4E3B\u9002\u914D\u5668\u3002"
+          en: "Select the named main-session host adapter for this invocation (overrides persistent seat host; after config set-host the role command face is unchanged).",
+          zh: "\u4E3A\u672C\u8C03\u7528\u9009\u62E9\u5177\u540D\u4E3B\u4F1A\u8BDD\u5BBF\u4E3B\u9002\u914D\u5668\uFF08\u8986\u76D6\u5E2D\u4F4D\u6301\u4E45 host\uFF1Bconfig set-host \u540E\u89D2\u8272\u547D\u4EE4\u9762\u4E0D\u53D8\uFF09\u3002"
         }
       },
       {
@@ -18564,7 +18564,7 @@ var init_option_definitions = __esm({
       },
       config: {
         command: "config",
-        summary: "Persistent seat model, labor-engine, and auto-resume defaults.",
+        summary: "Persistent seat model, labor-engine, host, and auto-resume defaults.",
         usage: [
           "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
           "ak-role config unset <gatekeeper|inspector|notary>",
@@ -18578,6 +18578,7 @@ var init_option_definitions = __esm({
           "ak-role config set judge openai-codex/gpt-5.6-sol:high",
           "ak-role config unset gatekeeper",
           "ak-role config set-engine judge opus",
+          "ak-role config set-host judge grok-build",
           "ak-role config set-auto-resume-limit 3"
         ]
       },
@@ -18622,11 +18623,13 @@ function resolveInstitutionalSeatSelections(config, parentEffectiveModel) {
   const ownInspector = cleanSelection(seatModelOnly(config.seats?.inspector));
   const ownNotary = cleanSelection(seatModelOnly(config.seats?.notary));
   const ownGatekeeper = cleanSelection(seatModelOnly(config.seats?.gatekeeper));
+  const ownNavigator = cleanSelection(seatModelOnly(config.seats?.navigator));
   const gatekeeper = ownGatekeeper ?? parentSelection;
   const inspector = ownInspector ?? ownGatekeeper ?? parentSelection;
   const notary = ownNotary ?? ownGatekeeper ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
+  const navigator = ownNavigator ?? parentSelection;
   return {
     version: 1,
     seats: {
@@ -18634,7 +18637,8 @@ function resolveInstitutionalSeatSelections(config, parentEffectiveModel) {
       ...inspector === void 0 ? {} : { inspector },
       ...notary === void 0 ? {} : { notary },
       ...auditor === void 0 ? {} : { auditor },
-      ...evidenceChild === void 0 ? {} : { evidenceChild }
+      ...evidenceChild === void 0 ? {} : { evidenceChild },
+      ...navigator === void 0 ? {} : { navigator }
     }
   };
 }
@@ -21658,6 +21662,40 @@ var init_engine_detour_tool = __esm({
   }
 });
 
+// src/navigator-session-contracts.ts
+var navigatorProviderFailureSchema;
+var init_navigator_session_contracts = __esm({
+  "src/navigator-session-contracts.ts"() {
+    "use strict";
+    init_build();
+    init_value2();
+    init_auditor_dossier_tool();
+    init_institutional_resolution();
+    navigatorProviderFailureSchema = typebox_exports.Object({
+      source: typebox_exports.Union([
+        typebox_exports.Literal("context"),
+        typebox_exports.Literal("session"),
+        typebox_exports.Literal("model"),
+        typebox_exports.Literal("thinking"),
+        typebox_exports.Literal("auth"),
+        typebox_exports.Literal("quota"),
+        typebox_exports.Literal("transport"),
+        typebox_exports.Literal("unknown")
+      ]),
+      cause: typebox_exports.Union([
+        typebox_exports.Literal("context"),
+        typebox_exports.Literal("session"),
+        typebox_exports.Literal("model"),
+        typebox_exports.Literal("thinking"),
+        typebox_exports.Literal("auth"),
+        typebox_exports.Literal("quota"),
+        typebox_exports.Literal("transport"),
+        typebox_exports.Literal("unknown")
+      ])
+    }, { additionalProperties: false });
+  }
+});
+
 // src/receipt-delivery-policy.ts
 function isRecord10(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -21722,7 +21760,9 @@ var init_evidence_child_executor = __esm({
     init_session_opening_materials();
     init_config2();
     init_institutional_resolution();
+    init_navigator_session_contracts();
     init_receipt_delivery_policy();
+    init_typed_provider_http();
     init_upstream_error_testimony();
   }
 });
@@ -30929,8 +30969,7 @@ function resolveRoleTurnHost(env, options) {
     { name: "pi", create: () => ({ ok: true, host: piHost }) },
     {
       name: "grok-build",
-      create: ({ model: model2 }) => {
-        if (model2 !== void 0 && model2.provider !== "xai") return { ok: false };
+      create: () => {
         let hostPromise;
         return {
           ok: true,
@@ -30955,15 +30994,13 @@ function resolveRoleTurnHost(env, options) {
   const registeredHosts = adapters.map(({ name }) => name);
   if (adapter === void 0) {
     throw new HostSelectionError(
-      { kind: "host-unregistered", host: hostName, seat: options.role, model },
-      registeredHosts
+      { kind: "host-unregistered", host: hostName, seat: options.role, model, registeredHosts }
     );
   }
   const selected = adapter.create({ role: options.role, model: options.seat.selection });
   if (!selected.ok) {
     throw new HostSelectionError(
-      { kind: "host-model-mismatch", host: hostName, seat: options.role, model },
-      registeredHosts
+      { kind: "host-model-mismatch", host: hostName, seat: options.role, model, registeredHosts }
     );
   }
   return selected.host;
@@ -31219,6 +31256,8 @@ function renderHelp() {
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
+    "Host resolution: --host \u2192 persistent seat host \u2192 pi; after set-host the role command face is unchanged",
     "Effective seats: ak-role roles"
   );
   return `${lines.join("\n")}
@@ -31843,7 +31882,7 @@ async function runAkRole(argv, env) {
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof HostSelectionError) {
-      const registered = error.registeredHosts.join(", ");
+      const registered = error.failure.registeredHosts.join(", ");
       io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}; registered: ${registered}`));
       return { exitCode: 1, hostFailure: error.failure };
     }
@@ -31905,13 +31944,11 @@ var init_cli = __esm({
     };
     PUBLIC_GLOBAL_OPTIONS = optionsForOwner("global");
     HostSelectionError = class extends Error {
-      constructor(failure, registeredHosts) {
+      constructor(failure) {
         super(failure.kind);
         this.failure = failure;
-        this.registeredHosts = registeredHosts;
       }
       failure;
-      registeredHosts;
     };
     THINKING_LEVELS2 = /* @__PURE__ */ new Set([
       "off",

@@ -10,6 +10,8 @@ const entries = [
   "navigator-invocation-identity",
   "navigator-attendance",
   // Navigator package-graph dependencies used by attendance settlement.
+  "evidence-child-executor",
+  "pi/in-process-session",
   "activation-ledger-git",
   "activation-ledger-topology",
   "activation-reconciliation",

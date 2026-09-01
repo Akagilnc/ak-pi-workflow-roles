@@ -2,10 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import {} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
   NAVIGATOR_INVOCATION_ENTRY,
   mintNavigatorInvocationId
@@ -15,86 +13,34 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome
 } from "./activation-ledger-topology.js";
+import { createNativeNavigatorSessionFactory } from "./evidence-child-executor.js";
+import {
+  NAVIGATOR_DEFAULT_MODEL,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  NavigatorUnavailableError,
+  navigatorModelSettingPath,
+  navigatorProviderFailure,
+  navigatorProviderFailureFromDiagnostics,
+  navigatorProviderFailureFromError,
+  navigatorProviderFailureFromStatus,
+  navigatorUnavailableError,
+  parseNavigatorModelSetting,
+  readNavigatorModelSetting,
+  resolveNavigatorSeatSelection,
+  writeNavigatorModelSetting
+} from "./navigator-session-contracts.js";
 import { sitianReport } from "./sitian-facade.js";
-import { openInProcessAgentSession } from "./in-process-session.js";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.js";
 import { issueRoot, subjectPath } from "./work-subject-identity.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
-import { recordTypedProviderHttpStatus } from "./typed-provider-http.js";
-import {
-  hasUpstreamErrorTestimony,
-  isNonSuccessHttpStatus,
-  projectConfirmedRemotePayload
-} from "./upstream-error-testimony.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
-const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
 const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "\u6E38\u5955\u4F7F\u51C6\u5907\u5DF2\u63A5\u53D7";
-const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
+function resolveNavigatorAuthorityMaterial(roleInput, fileAuthority) {
+  if (roleInput !== void 0 && roleInput.trim() !== "") return roleInput;
+  if (fileAuthority !== void 0 && fileAuthority.trim() !== "") return fileAuthority;
+  return void 0;
+}
 const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
-class NavigatorUnavailableError extends Error {
-  unavailableSource;
-  unavailableCause;
-  originalCause;
-  constructor(source, message, cause = source, originalCause) {
-    super(message);
-    this.name = "NavigatorUnavailableError";
-    this.unavailableSource = source;
-    this.unavailableCause = cause;
-    this.originalCause = originalCause;
-  }
-}
-function navigatorProviderFailureFromStatus(status) {
-  if (status === 401 || status === 403) return { source: "auth", cause: "auth" };
-  if (status === 429) return { source: "quota", cause: "quota" };
-  return void 0;
-}
-function navigatorProviderFailureFromCode(code) {
-  if (typeof code === "number") {
-    return navigatorProviderFailureFromStatus(code);
-  }
-  if (typeof code !== "string") return void 0;
-  if (code === "unauthorized" || code === "authentication_failed") return { source: "auth", cause: "auth" };
-  if (code === "insufficient_quota" || code === "quota_exhausted") return { source: "quota", cause: "quota" };
-  if (code === "transport_error") return { source: "transport", cause: "transport" };
-  return void 0;
-}
-function navigatorProviderFailureFromError(error) {
-  if (!exactRecord(error)) return void 0;
-  const statusCode = typeof error.statusCode === "number" ? error.statusCode : typeof error.status === "number" ? error.status : void 0;
-  return navigatorProviderFailureFromStatus(statusCode) ?? navigatorProviderFailureFromCode(error.code);
-}
-function navigatorProviderFailureFromDiagnostics(diagnostics) {
-  if (!Array.isArray(diagnostics)) return void 0;
-  for (const diagnostic of diagnostics) {
-    if (!exactRecord(diagnostic)) continue;
-    if (diagnostic.type === "provider_transport_failure") return { source: "transport", cause: "transport" };
-    if (exactRecord(diagnostic.error)) {
-      const fromCode = navigatorProviderFailureFromCode(diagnostic.error.code);
-      if (fromCode !== void 0) return fromCode;
-    }
-    if (exactRecord(diagnostic.details)) {
-      const status = typeof diagnostic.details.status === "number" ? diagnostic.details.status : typeof diagnostic.details.statusCode === "number" ? diagnostic.details.statusCode : void 0;
-      const fromStatus = navigatorProviderFailureFromStatus(status);
-      if (fromStatus !== void 0) return fromStatus;
-      const fromCode = navigatorProviderFailureFromCode(diagnostic.details.code);
-      if (fromCode !== void 0) return fromCode;
-    }
-  }
-  return void 0;
-}
-const navigatorProviderFailureSchema = Type.Object({
-  source: Type.Union([Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"), Type.Literal("auth"), Type.Literal("quota"), Type.Literal("transport"), Type.Literal("unknown")]),
-  cause: Type.Union([Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"), Type.Literal("auth"), Type.Literal("quota"), Type.Literal("transport"), Type.Literal("unknown")])
-}, { additionalProperties: false });
-function navigatorProviderFailure(message, source, cause = source) {
-  const fact = { source, cause };
-  if (!Value.Check(navigatorProviderFailureSchema, fact)) throw new TypeError("Navigator provider failure fact is not typed");
-  return Object.assign(message, { navigatorFailure: fact });
-}
-function navigatorUnavailableError(source, error, cause = source) {
-  const message = error instanceof Error ? error.message : String(error);
-  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
-}
 const prepareSchema = Type.Object({
   candidates: Type.Optional(Type.Unknown({
     description: "\u65B9\u5411\u5019\u9009\uFF1Bcandidates[].next.role \u5FC5\u586B\uFF0Cphase \u53EF\u9009\uFF0Croute/matches/reason/command \u53EF\u9009\u4E0A\u4E0B\u6587\uFF0C\u975E\u53D7\u7406\u95F8"
@@ -223,37 +169,6 @@ function navigatorSubjectKeyForInput(subjectRoot, reference, cwd = process.cwd()
     return subjectRoot;
   }
   return navigatorSubjectKey(subjectRoot, resolvedReference);
-}
-function navigatorModelSettingPath() {
-  return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "navigator-model.json");
-}
-async function readNavigatorModelSetting(path = navigatorModelSettingPath()) {
-  try {
-    const raw = JSON.parse(await readFile(path, "utf8"));
-    if (!exactRecord(raw) || typeof raw.model !== "string" || raw.model.trim() === "") throw new Error("Navigator model setting is malformed");
-    return raw.model;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return NAVIGATOR_DEFAULT_MODEL;
-    throw error;
-  }
-}
-async function writeNavigatorModelSetting(model, path = navigatorModelSettingPath()) {
-  const normalized = model.trim();
-  parseNavigatorModelSetting(normalized);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify({ model: normalized }) + "\n", "utf8");
-}
-function parseNavigatorModelSetting(value) {
-  const slash = value.indexOf("/");
-  if (slash <= 0 || slash === value.length - 1) throw new Error("Navigator model setting must be provider/model[:max]");
-  const provider = value.slice(0, slash);
-  const modelWithThinking = value.slice(slash + 1);
-  const colon = modelWithThinking.lastIndexOf(":");
-  const suffix = colon < 0 ? void 0 : modelWithThinking.slice(colon + 1);
-  if (suffix !== void 0 && suffix !== "max") throw new Error("Navigator model setting must use :max or omit the thinking suffix");
-  const model = colon < 0 ? modelWithThinking : modelWithThinking.slice(0, colon);
-  if (model === "") throw new Error("Navigator model setting must include a model");
-  return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
 }
 function createNavigatorPrepareTool(onOutput) {
   return {
@@ -425,8 +340,14 @@ function createNavigatorAttendance(options) {
     routePlaybookSettlement = routePlaybookPromise.then(() => void 0);
     const modelPromise = (async () => {
       try {
-        return await readNavigatorModelSetting(options.modelSettingPath);
+        const resolved = await resolveNavigatorSeatSelection(
+          options.context,
+          options.modelSettingPath,
+          options.modelSettingPath ?? navigatorModelSettingPath()
+        );
+        return resolved.configuredLabel;
       } catch (error) {
+        if (error instanceof NavigatorUnavailableError) throw error;
         throw navigatorUnavailableError("model", error);
       }
     })();
@@ -469,7 +390,7 @@ ${text}
           throw navigatorUnavailableError("session", error);
         }
         if (disposed) {
-          created.dispose();
+          await created.dispose();
           throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
         }
         try {
@@ -483,7 +404,7 @@ ${text}
           session = created;
           return created;
         } catch (error) {
-          if (session !== created) created.dispose();
+          if (session !== created) await created.dispose();
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
         }
       })();
@@ -610,15 +531,18 @@ ${helpContext}
   };
   return {
     setWorkContext(next) {
+      let closing;
       if (next.subjectKey !== subjectKey && session !== void 0) {
-        session.dispose();
+        const previous = session;
         session = void 0;
         previousRoute = void 0;
+        closing = previous.dispose();
       }
       subjectKey = next.subjectKey;
       subject = next.subject;
       authority = next.authority;
       contextError = next.contextError;
+      return closing;
     },
     /**
      * Start live-help subprocesses during activation without beginning full
@@ -653,9 +577,10 @@ ${helpContext}
     },
     dispose() {
       disposed = true;
-      session?.dispose();
+      const current = session;
       session = void 0;
       activeInvocationId = void 0;
+      return current?.dispose();
     }
   };
   async function settleOnce(settlement) {
@@ -769,285 +694,6 @@ ${helpContext}
     routePlaybookReadFailure = void 0;
   }
 }
-function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
-  const sharedModelRuntime = ModelRuntime.create({ allowModelNetwork: false });
-  return async ({ context, subject, modelSettingPath, tool }) => {
-    let configured;
-    try {
-      configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
-    } catch (error) {
-      throw navigatorUnavailableError("model", error);
-    }
-    let parsed;
-    try {
-      parsed = parseNavigatorModelSetting(configured);
-    } catch (error) {
-      throw navigatorUnavailableError("model", error);
-    }
-    const model = context.modelRegistry.find(parsed.provider, parsed.model);
-    const provider = context.modelRegistry.getProvider(parsed.provider);
-    if (model === void 0 || provider === void 0) throw new NavigatorUnavailableError("model", `Navigator model is unavailable: ${configured}`);
-    let auth;
-    try {
-      auth = await context.modelRegistry.getApiKeyAndHeaders(model);
-    } catch (error) {
-      throw navigatorUnavailableError("auth", error);
-    }
-    if (!auth.ok) throw new NavigatorUnavailableError("auth", auth.error);
-    let providerFailure;
-    const assignProviderFailure = (fact) => {
-      if (fact !== void 0) providerFailure = fact;
-    };
-    const classifyProviderStreamError = (error) => {
-      if (!exactRecord(error)) {
-        assignProviderFailure(navigatorProviderFailureFromError(error));
-        return;
-      }
-      assignProviderFailure(navigatorProviderFailureFromDiagnostics(error.diagnostics));
-      if (providerFailure !== void 0) return;
-      if (error.role !== "assistant") assignProviderFailure(navigatorProviderFailureFromError(error));
-    };
-    const classifyProviderResponseStatus = (status) => {
-      if (status >= 200 && status < 300) {
-        if (providerFailure?.source === "auth" || providerFailure?.source === "quota") {
-          providerFailure = void 0;
-        }
-        return;
-      }
-      assignProviderFailure(navigatorProviderFailureFromStatus(status));
-    };
-    const projectHeldUpstream = (error) => {
-      if (!exactRecord(error)) return {};
-      const status = typeof error.statusCode === "number" ? error.statusCode : typeof error.status === "number" ? error.status : typeof error.httpStatus === "number" ? error.httpStatus : void 0;
-      const httpStatus = isNonSuccessHttpStatus(status) ? status : void 0;
-      const diagnostics = Array.isArray(error.diagnostics) && error.diagnostics.length > 0 ? error.diagnostics : void 0;
-      const testimony = hasUpstreamErrorTestimony({
-        ...httpStatus === void 0 ? {} : { httpStatus },
-        ...diagnostics === void 0 ? {} : { diagnostics }
-      });
-      return {
-        ...httpStatus === void 0 ? {} : { statusCode: httpStatus, status: httpStatus },
-        ...diagnostics === void 0 ? {} : { diagnostics },
-        ...testimony ? projectConfirmedRemotePayload(error) : {}
-      };
-    };
-    const retainUpstreamMessage = (error) => {
-      if (!("navigatorFailure" in error)) return error;
-      const copy = { ...error };
-      delete copy.navigatorFailure;
-      return copy;
-    };
-    const setupFailureMessage = (error) => ({
-      role: "assistant",
-      content: [],
-      api: "unknown",
-      provider: "unknown",
-      model: "unknown",
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-      stopReason: "error",
-      errorMessage: error instanceof Error ? error.message : String(error),
-      timestamp: Date.now(),
-      ...projectHeldUpstream(error)
-    });
-    const persistNavigatorHttpObservation = async (status, model2) => {
-      const runDir = process.env.AK_ROLE_RUN_DIR;
-      if (typeof runDir !== "string" || runDir.trim() === "") return;
-      const provider2 = exactRecord(model2) && typeof model2.provider === "string" && model2.provider.trim() !== "" ? model2.provider : void 0;
-      if (provider2 === void 0) return;
-      await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider: provider2 });
-    };
-    const instrumentProvider = (sourceProvider) => {
-      const instrumentStreamOptions = (options, observedStatus) => {
-        const record = exactRecord(options) ? options : {};
-        const previous = typeof record.onResponse === "function" ? record.onResponse : void 0;
-        return {
-          ...record,
-          onResponse: async (response, model2) => {
-            observedStatus.value = response.status;
-            classifyProviderResponseStatus(response.status);
-            await persistNavigatorHttpObservation(response.status, model2);
-            await previous?.(response, model2);
-          }
-        };
-      };
-      const withObservedStatus = (message, observedStatus) => {
-        if (observedStatus === void 0 || observedStatus >= 200 && observedStatus < 300) return message;
-        if (typeof message.statusCode === "number" || typeof message.status === "number" || typeof message.httpStatus === "number") {
-          return message;
-        }
-        return { ...message, statusCode: observedStatus, status: observedStatus };
-      };
-      const wrapProviderStream = (source, observedStatus) => {
-        const wrapped = createAssistantMessageEventStream();
-        void (async () => {
-          let result;
-          let sawTerminal = false;
-          try {
-            for await (const event of source) {
-              if (event.type === "done" || event.type === "error") {
-                sawTerminal = true;
-                if (event.type === "done" && exactRecord(event.message)) {
-                  assignProviderFailure(navigatorProviderFailureFromDiagnostics(event.message.diagnostics));
-                  result = withObservedStatus(retainUpstreamMessage(event.message), observedStatus.value);
-                  wrapped.push({ ...event, message: result });
-                  continue;
-                }
-                if (event.type === "error" && exactRecord(event.error)) {
-                  classifyProviderStreamError(event.error);
-                  result = withObservedStatus(retainUpstreamMessage(event.error), observedStatus.value);
-                  wrapped.push({ ...event, error: result });
-                  continue;
-                }
-              }
-              wrapped.push(event);
-            }
-            if (sawTerminal) {
-              const terminal = await source.result();
-              if (result === void 0 && exactRecord(terminal)) {
-                result = withObservedStatus(retainUpstreamMessage(terminal), observedStatus.value);
-              } else if (result === void 0) result = terminal;
-            }
-          } catch (error) {
-            classifyProviderStreamError(error);
-            if (providerFailure === void 0) providerFailure = { source: "unknown", cause: "unknown" };
-            if (!sawTerminal) {
-              const message = withObservedStatus(setupFailureMessage(error), observedStatus.value);
-              wrapped.push({ type: "error", reason: "error", error: message });
-              result = message;
-              sawTerminal = true;
-            }
-          } finally {
-            if (!sawTerminal) {
-              if (providerFailure === void 0) providerFailure = { source: "unknown", cause: "unknown" };
-              const message = setupFailureMessage(new Error("Navigator provider produced no response"));
-              wrapped.push({ type: "error", reason: "error", error: message });
-              result = message;
-              sawTerminal = true;
-            }
-            wrapped.end(result);
-          }
-        })();
-        return wrapped;
-      };
-      const invokeInstrumentedStream = (invoke) => {
-        providerFailure = void 0;
-        const observedStatus = {};
-        try {
-          return wrapProviderStream(invoke(observedStatus), observedStatus);
-        } catch (error) {
-          classifyProviderStreamError(error);
-          if (providerFailure === void 0) providerFailure = { source: "unknown", cause: "unknown" };
-          const wrapped = createAssistantMessageEventStream();
-          const message = setupFailureMessage(error);
-          queueMicrotask(() => {
-            wrapped.push({ type: "error", reason: "error", error: message });
-            wrapped.end(message);
-          });
-          return wrapped;
-        }
-      };
-      return {
-        ...sourceProvider,
-        stream(model2, streamContext, options) {
-          return invokeInstrumentedStream((observedStatus) => {
-            const instrumented = instrumentStreamOptions(options, observedStatus);
-            return sourceProvider.stream(model2, streamContext, instrumented);
-          });
-        },
-        streamSimple(model2, streamContext, options) {
-          return invokeInstrumentedStream((observedStatus) => {
-            const instrumented = instrumentStreamOptions(options, observedStatus);
-            return sourceProvider.streamSimple(model2, streamContext, instrumented);
-          });
-        }
-      };
-    };
-    let modelRuntime;
-    try {
-      modelRuntime = await sharedModelRuntime;
-      modelRuntime.registerNativeProvider(instrumentProvider(provider));
-    } catch (error) {
-      throw navigatorUnavailableError("session", error);
-    }
-    let opened;
-    try {
-      opened = await openInProcessAgentSession({
-        cwd: context.cwd,
-        kind: "navigator",
-        subject,
-        parent: context.sessionManager,
-        model,
-        modelRuntime,
-        thinkingLevel: parsed.thinkingLevel,
-        noTools: "all",
-        tools: [NAVIGATOR_PREPARE_TOOL_NAME],
-        customTools: [tool]
-      });
-    } catch (error) {
-      throw navigatorUnavailableError("session", error);
-    }
-    if (opened.session.thinkingLevel !== parsed.thinkingLevel) {
-      opened.dispose();
-      throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
-    }
-    return {
-      prompt: async (text) => {
-        try {
-          await opened.session.prompt(text);
-        } catch (error) {
-          throw navigatorUnavailableError("transport", error);
-        }
-      },
-      providerFailure: () => providerFailure,
-      appendEntry: (customType, data) => {
-        opened.session.sessionManager.appendCustomEntry(customType, data);
-        try {
-          sitianReport({
-            level: "event",
-            kind: "attendance",
-            cwd: context.cwd,
-            sessionParent: opened.session.sessionManager.getSessionFile(),
-            payload: { customType, data },
-            source: "navigator-attendance"
-          });
-        } catch {
-        }
-      },
-      entries: () => opened.session.sessionManager.getEntries(),
-      setModel: async (next, thinkingLevel) => {
-        let nextParsed;
-        try {
-          nextParsed = parseNavigatorModelSetting(next);
-        } catch (error) {
-          throw navigatorUnavailableError("model", error);
-        }
-        const nextModel = context.modelRegistry.find(nextParsed.provider, nextParsed.model);
-        const nextProvider = context.modelRegistry.getProvider(nextParsed.provider);
-        if (nextModel === void 0 || nextProvider === void 0) throw new NavigatorUnavailableError("model", `Navigator model is unavailable: ${next}`);
-        let nextAuth;
-        try {
-          nextAuth = await context.modelRegistry.getApiKeyAndHeaders(nextModel);
-        } catch (error) {
-          throw navigatorUnavailableError("auth", error);
-        }
-        if (!nextAuth.ok) throw new NavigatorUnavailableError("auth", nextAuth.error);
-        try {
-          modelRuntime.registerNativeProvider(instrumentProvider(nextProvider));
-          await opened.session.setModel(nextModel);
-          opened.session.setThinkingLevel(thinkingLevel);
-        } catch (error) {
-          throw navigatorUnavailableError("session", error);
-        }
-        if (opened.session.thinkingLevel !== nextParsed.thinkingLevel || opened.session.thinkingLevel !== thinkingLevel) {
-          throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
-        }
-      },
-      getThinkingLevel: () => opened.session.thinkingLevel,
-      recordPointer: () => opened.session.sessionManager.getSessionDir(),
-      dispose: () => opened.dispose()
-    };
-  };
-}
 function registerNavigatorModelCommand(pi, path = navigatorModelSettingPath()) {
   pi.registerCommand("navigator-model", {
     description: "Set the persistent Navigator model (provider/model[:max]).",
@@ -1070,13 +716,17 @@ export {
   formatNavigatorReport,
   navigatorModelSettingPath,
   navigatorProviderFailure,
+  navigatorProviderFailureFromDiagnostics,
   navigatorProviderFailureFromError,
+  navigatorProviderFailureFromStatus,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
   navigatorUnavailableError,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
   registerNavigatorModelCommand,
+  resolveNavigatorAuthorityMaterial,
+  resolveNavigatorSeatSelection,
   selectNavigatorCandidate,
   settlementNavigationFromEvent,
   subjectPath,

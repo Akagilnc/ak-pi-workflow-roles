@@ -1176,15 +1176,42 @@ export async function createMockProviderServer(
         // When the scripted assistant message holds a direct statusCode/status,
         // mirror it as the HTTP status so auth/quota classification stays typed
         // through institutional open (host-neutral navigator/auditor children).
-        const messageRecord = message as unknown as { statusCode?: unknown; status?: unknown };
+        const messageRecord = message as unknown as {
+          statusCode?: unknown;
+          status?: unknown;
+          body?: unknown;
+          code?: unknown;
+          errno?: unknown;
+        };
         const heldStatus = typeof messageRecord.statusCode === "number"
           ? messageRecord.statusCode
           : typeof messageRecord.status === "number"
             ? messageRecord.status
-            : 500;
-        const httpStatus = heldStatus >= 400 && heldStatus < 600 ? heldStatus : 500;
-        res.writeHead(httpStatus, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: { message: message.errorMessage ?? message.stopReason } }));
+            : undefined;
+        // Only a scripted HTTP status becomes a structured Response. Defaulting
+        // unstructured error-stop to synthetic 500 would wash local/unrecognized
+        // failures as provider 5xx testimony (失败诚实).
+        if (heldStatus !== undefined && heldStatus >= 400 && heldStatus < 600) {
+          res.writeHead(heldStatus, { "content-type": "application/json" });
+          res.end(JSON.stringify({
+            error: { message: message.errorMessage ?? message.stopReason },
+            ...(messageRecord.body === undefined ? {} : { body: messageRecord.body }),
+            ...(messageRecord.code === undefined ? {} : { code: messageRecord.code }),
+            ...(messageRecord.errno === undefined ? {} : { errno: messageRecord.errno }),
+          }));
+          return;
+        }
+        // 2xx SSE with an error object: SDK folds the original message into
+        // error-stop without a non-success HTTP status (no synthetic 5xx testimony).
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        res.write(`data: ${JSON.stringify({
+          error: { message: message.errorMessage ?? message.stopReason },
+        })}\n\ndata: [DONE]\n\n`);
+        res.end();
         return;
       }
       const toolCalls = message.content
