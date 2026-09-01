@@ -74,7 +74,7 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
           );
           assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
         } finally {
-          session.dispose();
+          await session.dispose();
         }
       });
     }
@@ -106,7 +106,7 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
           );
           assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
         } finally {
-          session.dispose();
+          await session.dispose();
         }
       });
     }
@@ -321,7 +321,7 @@ test("dispose during pending createSession drains the created session without pr
     });
     nav.prepare();
     while (!nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
-    nav.dispose();
+    await nav.dispose();
     releaseCreate();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     // Allow the in-flight initializer to observe disposed and drain.
@@ -336,6 +336,56 @@ test("dispose during pending createSession drains the created session without pr
   }
   await cleanupTempDir(root);
 });
+
+test("attendance dispose settles session close rejection on the caller", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-attendance-close-"));
+  let releasePrompt: (() => void) | undefined;
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const closeBoom = new Error("session close failed");
+    let promptStarted!: () => void;
+    const prompted = new Promise<void>((resolve) => { promptStarted = resolve; });
+    const heldPrompt = new Promise<void>((resolve) => { releasePrompt = resolve; });
+    const nav = createNavigatorAttendance({
+      context: context(),
+      role: "coder",
+      phase: "apply",
+      subjectKey: "/repo/.ak/work/issues/28",
+      subject: "Fix issue 28",
+      authority: "owner decision",
+      loadSoul: async () => "route judgment",
+      loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+      modelSettingPath: setting,
+      createSession: async () => ({
+        async prompt() {
+          promptStarted();
+          await heldPrompt;
+        },
+        appendEntry() {},
+        entries: () => [],
+        async setModel() {},
+        getThinkingLevel: () => "off" as const,
+        recordPointer: () => "/fixture/navigator-record",
+        dispose() { return Promise.reject(closeBoom); },
+      }),
+      onEvent: async () => {},
+    });
+    nav.prepare();
+    await prompted;
+    await assert.rejects(
+      () => Promise.resolve(nav.dispose()),
+      (error: unknown) => error === closeBoom,
+    );
+  } catch (error) {
+    releasePrompt?.();
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  releasePrompt?.();
+  await cleanupTempDir(root);
+});
+
 
 test("settlement-bound rebind is always reachable and passes divergent advice through as-is", async () => {
   // Real defect under repair: speculative prepare cannot see the just-accepted terminal.

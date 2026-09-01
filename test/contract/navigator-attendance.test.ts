@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   createNativeNavigatorSessionFactory,
@@ -468,7 +469,7 @@ test("host-neutral native factory opens without parent modelRegistry and reports
             && error.unavailableCause === "model",
         );
       } finally {
-        session.dispose();
+        await session.dispose();
       }
     });
     await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
@@ -482,7 +483,7 @@ test("host-neutral native factory opens without parent modelRegistry and reports
       try {
         assert.equal(session.getThinkingLevel?.(), "off");
       } finally {
-        session.dispose();
+        await session.dispose();
       }
     });
     await writeFile(setting, JSON.stringify({ model: "missing/provider-absent" }));
@@ -542,7 +543,7 @@ test("host-neutral native factory classifies auth/quota/transport from instituti
           );
           assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source });
         } finally {
-          session.dispose();
+          await session.dispose();
         }
       });
     }
@@ -582,7 +583,53 @@ test("host-neutral native factory prefers institutional-resolution navigator sea
         assert.equal(session.getThinkingLevel?.(), "max");
         await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
       } finally {
-        session.dispose();
+        await session.dispose();
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("native navigator dispose settles handle.close rejection on the caller", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-close-reject-"));
+  try {
+    seedGitRepository(root);
+    const faux = fauxProvider({ provider: "nav-close-reject", api: "openai-completions" });
+    const model = faux.getModel();
+    const setting = join(root, "navigator-model.json");
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    const closeBoom = new Error("navigator handle.close failed");
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-close"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      const originalDispose = AgentSession.prototype.dispose;
+      AgentSession.prototype.dispose = function (...args) {
+        originalDispose.apply(this, args);
+        throw closeBoom;
+      };
+      try {
+        await assert.rejects(
+          () => Promise.resolve(session.dispose()),
+          (error: unknown) => {
+            assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
+            assert.equal((error as AggregateError).errors[0], closeBoom);
+            assert.equal((error as AggregateError).cause, closeBoom);
+            return true;
+          },
+        );
+        await assert.rejects(
+          () => Promise.resolve(session.dispose()),
+          (error: unknown) => error instanceof AggregateError && error.cause === closeBoom,
+        );
+      } finally {
+        AgentSession.prototype.dispose = originalDispose;
       }
     });
   } catch (error) {

@@ -1035,7 +1035,7 @@ export function createRoleRuntimeExtension(
           };
           pendingNavigatorPresentation = { event, report };
         }
-        attendance.dispose();
+        await attendance.dispose();
         void settlePromise.catch(() => undefined);
       })();
       pendingNavigatorSettlement = pending;
@@ -1067,7 +1067,7 @@ export function createRoleRuntimeExtension(
       }
       return { action: "continue" as const };
     });
-    roleHost.on("before_agent_start", (event, ctx) => {
+    roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
@@ -1103,7 +1103,7 @@ export function createRoleRuntimeExtension(
               authority,
               subjectProvenance,
             };
-            navigatorAttendance.setWorkContext(navigatorWorkContext);
+            await navigatorAttendance.setWorkContext(navigatorWorkContext);
           }
         }
       }
@@ -1279,7 +1279,7 @@ export function createRoleRuntimeExtension(
           // Teardown must not mask the original role failure cause.
         }
       }
-      navigatorAttendance?.dispose();
+      await navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
@@ -1535,7 +1535,7 @@ export function createRoleRuntimeExtension(
         failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
-      navigatorAttendance?.dispose();
+      await navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       const runtime: ActivationRuntime = {
         event,
