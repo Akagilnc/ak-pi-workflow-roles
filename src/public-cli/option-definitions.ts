@@ -30,6 +30,7 @@ export type OptionOwner =
   | "doctor"
   | "merger"
   | "notary"
+  | "gleaner-left"
   | "analyst";
 
 /**
@@ -382,6 +383,25 @@ function bindOwner(
 const JUDGE_OPTIONS = [
   bindOwner("judge", SHARED_PROJECT_SEMANTICS),
   bindOwner("judge", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
+const GLEANER_LEFT_OPTIONS = [
+  bindOwner("gleaner-left", SHARED_PROJECT_SEMANTICS),
+  // Unanchored seat: no --attach face (self-fetches the merge-candidate diff).
+  {
+    id: "base",
+    owner: "gleaner-left" as const,
+    canonical: "--base",
+    aliases: [],
+    valueMetavar: "revision",
+    required: true,
+    repeatable: false,
+    form: "option" as const,
+    description: {
+      en: "Required comparison-base revision for the unanchored merge-candidate diff.",
+      zh: "必填；无锚定合并候选 diff 的比较基线 revision。",
+    },
+  },
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const COUNTERSIGN_OPTIONS = [
@@ -763,6 +783,7 @@ export const PUBLIC_OPTION_TABLE = {
   global: GLOBAL_OPTIONS,
   judge: JUDGE_OPTIONS,
   countersign: COUNTERSIGN_OPTIONS,
+  "gleaner-left": GLEANER_LEFT_OPTIONS,
   coder: CODER_OPTIONS,
   fixer: FIXER_OPTIONS,
   reviewer: REVIEWER_OPTIONS,
@@ -779,6 +800,7 @@ export type PublicRoleOptionOwner = Exclude<OptionOwner, "global">;
 export const PUBLIC_ROLE_OPTION_OWNERS = [
   "judge",
   "countersign",
+  "gleaner-left",
   "coder",
   "fixer",
   "reviewer",
@@ -1095,6 +1117,16 @@ const ROLE_COMMAND_HELP = {
     examples: [
       'ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"',
       'ak-role countersign --attach ./plan.md --attach ./adr.md "裁：方案五问。"',
+    ],
+  },
+  "gleaner-left": {
+    command: "gleaner-left",
+    summary:
+      "Unanchored pre-merge memorials; findings only, no bounce. Instruction may be empty; callers must not pass directional instruction.",
+    usage: ["ak-role gleaner-left --base <revision> [options] [instruction]"],
+    examples: [
+      "ak-role gleaner-left --base main",
+      "ak-role gleaner-left --base origin/main --project ./worktree",
     ],
   },
   coder: {

@@ -11,8 +11,9 @@ import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmission
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput } from "../notary-contracts.js";
 import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput } from "../countersign-contracts.js";
+import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_OUTPUT_TOOL_NAME, validateRecordedGleanerLeftOutput } from "../gleaner-left-contracts.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
-export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, validateDoctorSubmissionShape, validateRecordedDoctorOutput, validateMergerOutput, validateRecordedNotaryOutput, validateRecordedCountersignOutput, };
+export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, validateDoctorSubmissionShape, validateRecordedDoctorOutput, validateMergerOutput, validateRecordedNotaryOutput, validateRecordedCountersignOutput, validateRecordedGleanerLeftOutput, };
 export const TERMINATING_TOOL_NAMES = [
     CODER_OUTPUT_TOOL_NAME,
     FIXER_OUTPUT_TOOL_NAME,
@@ -23,6 +24,7 @@ export const TERMINATING_TOOL_NAMES = [
     MERGER_OUTPUT_TOOL_NAME,
     NOTARY_OUTPUT_TOOL_NAME,
     COUNTERSIGN_OUTPUT_TOOL_NAME,
+    GLEANER_LEFT_OUTPUT_TOOL_NAME,
 ];
 export function isTerminatingToolName(name) {
     return TERMINATING_TOOL_NAMES.includes(name);
@@ -47,6 +49,8 @@ export function acceptedTextFor(toolName) {
             return NOTARY_ACCEPTED_TEXT;
         case COUNTERSIGN_OUTPUT_TOOL_NAME:
             return COUNTERSIGN_ACCEPTED_TEXT;
+        case GLEANER_LEFT_OUTPUT_TOOL_NAME:
+            return GLEANER_LEFT_ACCEPTED_TEXT;
     }
 }
 export class AcceptedDetailsContractError extends CorrectableSubmissionError {
@@ -94,6 +98,7 @@ export function validateAcceptedDetails(toolName, details) {
         [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
         [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
         [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
+        [GLEANER_LEFT_OUTPUT_TOOL_NAME]: ["completed"],
     };
     const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
     const baseDiscriminator = discriminator;
@@ -123,6 +128,8 @@ export function validateAcceptedDetails(toolName, details) {
                 return validateRecordedNotaryOutput(details);
             case COUNTERSIGN_OUTPUT_TOOL_NAME:
                 return validateRecordedCountersignOutput(details);
+            case GLEANER_LEFT_OUTPUT_TOOL_NAME:
+                return validateRecordedGleanerLeftOutput(details);
         }
     }
     catch (error) {
@@ -160,7 +167,8 @@ export function acceptedFacts(toolName, details) {
         case FIXER_OUTPUT_TOOL_NAME:
         case REVIEWER_OUTPUT_TOOL_NAME:
         case DOCTOR_OUTPUT_TOOL_NAME:
-        case NOTARY_OUTPUT_TOOL_NAME: return { status: details.status };
+        case NOTARY_OUTPUT_TOOL_NAME:
+        case GLEANER_LEFT_OUTPUT_TOOL_NAME: return { status: details.status };
         case JUDGE_OUTPUT_TOOL_NAME: return { status: details.judgeStatus };
         case COUNTERSIGN_OUTPUT_TOOL_NAME: return { status: details.countersignStatus };
         case MERGER_OUTPUT_TOOL_NAME: {

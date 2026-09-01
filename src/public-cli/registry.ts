@@ -86,6 +86,10 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
     { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ],
+  "gleaner-left": [
+    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
+    { provider: "xai", model: "grok-4.5", thinking: "high" },
+  ],
   reviewer: [
     { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },

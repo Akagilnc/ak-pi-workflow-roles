@@ -86,6 +86,7 @@ test("Grok projection maps public activations onto the shared envelope", () => {
     { role: "merger", inputPath: "/merge" },
     { role: "notary", sourceRun: "/source" },
     { role: "countersign", ticketNumber: 582 },
+    { role: "gleaner-left", baseRevision: "HEAD" },
   ];
   for (const activation of activations) {
     const flags = projectGrokActivationFlags({ activation } as RoleTurnRequest);
@@ -105,6 +106,12 @@ test("Grok projection maps public activations onto the shared envelope", () => {
       activation: { role: "countersign" },
     } as RoleTurnRequest).has("ak-countersign-ticket-number"),
     false,
+  );
+  assert.equal(
+    projectGrokActivationFlags({
+      activation: { role: "gleaner-left", baseRevision: "HEAD" },
+    } as RoleTurnRequest).get("ak-gleaner-left-base"),
+    "HEAD",
   );
 });
 

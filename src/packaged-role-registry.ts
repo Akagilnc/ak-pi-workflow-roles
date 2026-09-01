@@ -7,6 +7,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
+import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.ts";
 
 /** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
@@ -123,6 +124,19 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/countersign.md"],
   },
+  {
+    role: "gleaner-left",
+    phases: [null],
+    outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: [
+      "CLAUDE.md",
+      "souls/gleaner-left.md",
+      "souls/quality-law.md",
+    ],
+  },
 ] as const;
 
 export type PublicRoleRecord = (typeof PUBLIC_ROLE_RECORDS)[number];
@@ -134,6 +148,7 @@ export const ONE_SHOT_ROLES: readonly PackagedRole[] = [
   "doctor",
   "notary",
   "countersign",
+  "gleaner-left",
 ];
 
 /**
