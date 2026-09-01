@@ -15,16 +15,16 @@ import {
 import type { Message } from "@earendil-works/pi-ai";
 
 import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../src/collector-github.ts";
-import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
+import { createPerDispatchReviewerAgent } from "../src/reviewer-agent.ts";
 import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
+  createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   registerNavigatorModelCommand,
   resolveNavigatorAuthorityMaterial,
   type NavigatorTargetRole,
 } from "../src/navigator-attendance.ts";
-import { createNativeNavigatorSessionFactory } from "../src/navigator-child-executor.ts";
 import { loadNavigatorWorkContext as loadHostNeutralNavigatorWorkContext } from "../src/navigator-work-context.ts";
 export { resolveNavigatorAuthorityMaterial };
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
@@ -33,11 +33,8 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
   createProductionMergerGitState,
-  ROLE_FLAG,
+  formatNavigatorRoleHelp,
 } from "../src/role-runtime.ts";
-import {
-  packagedRoleMetadata,
-} from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
 import { loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
 const extensionPath = fileURLToPath(import.meta.url);
@@ -67,27 +64,7 @@ export async function loadNavigatorRoleHelp(
   return result.stdout || result.stderr;
 }
 
-/**
- * In-process role help for Navigator prepare. Same loaded package/module the role
- * is already running — no child pi. Public command surface is ak-role (ADR 0052).
- */
-export function formatInProcessNavigatorRoleHelp(role: NavigatorTargetRole): string {
-  const metadata = packagedRoleMetadata(role);
-  const lines = [
-    `Usage: ak-role ${role}`,
-    ROLE_FLAG.definition.description,
-  ];
-  if (metadata?.inputFlag !== undefined) {
-    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
-  }
-  if (metadata?.phaseFlag !== undefined) {
-    lines.push(
-      `  --${metadata.phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
-    );
-  }
-  lines.push(`Public next-command form: ak-role ${role}`);
-  return lines.join("\n");
-}
+export { formatNavigatorRoleHelp as formatInProcessNavigatorRoleHelp };
 
 function projectJudgeTranscriptForAudit(messages: Message[]): Message[] {
   return messages.map((message) => {
@@ -127,7 +104,7 @@ export async function loadNavigatorWorkContext(
 }
 
 export default function roleRuntime(pi: ExtensionAPI): void {
-  const reviewerAgent = createReviewerAgentRunner({ packageRoot });
+  const reviewerAgent = createPerDispatchReviewerAgent({ packageRoot });
   const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
@@ -165,7 +142,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
         // In-process help: subprocess pi --help is reserved for cold-install proofs.
         // N child pi processes cannot fit the accepted 3s post-role grace under CI load.
-        loadRoleHelp: async (role) => formatInProcessNavigatorRoleHelp(role),
+        loadRoleHelp: async (role) => formatNavigatorRoleHelp(role),
         createSession: navigatorSessionFactory,
         contextError: options.contextError,
         onEvent: options.onEvent,

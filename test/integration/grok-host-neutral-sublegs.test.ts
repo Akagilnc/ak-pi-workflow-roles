@@ -17,7 +17,12 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE, JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 import { createGrokRoleRuntimeDependencies } from "../../src/grok/production-host.ts";
 import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
-import type { HostContext, RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { HostContext, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
+import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-session-contracts.ts";
 import { callThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
@@ -283,6 +288,91 @@ test("production Grok deps: reviewer dispatch runs institutional evidence child 
           context: hostContext(root, runDirectory, []),
         });
         assert.equal(outcome.legs.standards.status, "successful");
+      });
+    } finally {
+      await deps.shutdownReviewerAgent?.();
+    }
+  });
+});
+
+test("production Grok reviewer one-shot runner is recreated across executeTurn auto-resume", async () => {
+  await withGrokRoot(async ({ root, runDirectory, deps }) => {
+    const faux = fauxProvider({ provider: "grok-reviewer-resume", api: "openai-completions" });
+    const model = faux.getModel();
+    await writeInstitutionalSeatTable(runDirectory, {
+      evidenceChild: seatSelection(model.provider, model.id),
+    });
+    faux.setResponses([
+      fauxAssistantMessage("Standards review report body with enough substance.", { stopReason: "stop" }),
+      fauxAssistantMessage("Second-turn standards review report body with enough substance.", { stopReason: "stop" }),
+    ]);
+
+    const objectFormat = execFileSync("git", ["-C", root, "rev-parse", "--show-object-format"], { encoding: "utf8" }).trim() as "sha1" | "sha256";
+    const targetHead = execFileSync("git", ["-C", root, "rev-parse", "HEAD^{commit}"], { encoding: "utf8" }).trim();
+    const execution = {
+      identity: "auto-resume-reviewer",
+      recipe: "reviewer-common-bundle-v1" as const,
+      targetSnapshot: {
+        repositoryRoot: root,
+        objectFormat,
+        targetHead,
+        refs: Object.freeze({}),
+      },
+      legs: Object.freeze([
+        Object.freeze({ axis: "standards" as const, prompt: "Review standards against quality-law." }),
+      ]),
+    };
+
+    let turns = 0;
+    const host: RoleTurnHost = {
+      async executeTurn() {
+        turns += 1;
+        const outcome = await deps.runReviewerDispatch!(execution, {
+          context: hostContext(root, runDirectory, []),
+        });
+        assert.equal(outcome.legs.standards.status, "successful");
+        if (turns === 1) return { code: 1, stderr: "non-lawful", timedOut: false };
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+
+    const sessionFile = join(runDirectory, "session", "session.jsonl");
+    await writeFile(sessionFile, "{}\n", "utf8");
+    const accepted: TerminalResult = {
+      roleOutcome: { kind: "accepted", role: "reviewer", status: "completed", decisiveFacts: {} },
+      navigator: { disposition: "no-advice" },
+      artifacts: [],
+      runId: "auto-resume-reviewer",
+    } as unknown as TerminalResult;
+
+    try {
+      await withInstitutionalProviderFixture(faux, async () => {
+        const result = await runWithAutoResumeLoop({
+          principalAuthority: piDurablePrincipalAuthority,
+          sessionAppender: appendPiSessionCustomEntry,
+          admitted: {
+            principal: fixturePrincipal(join(runDirectory, "session"), sessionFile),
+            runDirectory,
+            role: "reviewer",
+            runId: "auto-resume-reviewer",
+          },
+          io: { stdout() {}, stderr() {} },
+          autoResumeLimit: 1,
+          buildInitialPayload: () => ["--initial"],
+          buildResumePayload: () => ["--resume"],
+          dispatch: async (_payload, lease) => {
+            try {
+              const turn = await host.executeTurn({} as RoleTurnRequest);
+              if (turn.code === 0) return { exitCode: 0, terminal: accepted };
+              return { exitCode: 1 };
+            } finally {
+              await lease.release();
+            }
+          },
+        });
+        assert.equal(turns, 2);
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.terminal?.autoResumeCount, 1);
       });
     } finally {
       await deps.shutdownReviewerAgent?.();

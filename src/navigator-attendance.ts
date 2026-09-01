@@ -16,7 +16,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { HostContext } from "./host-contracts.ts";
-import { resolveNavigatorSeatSelection } from "./navigator-child-executor.ts";
+import { createNativeNavigatorSessionFactory } from "./evidence-child-executor.ts";
 import {
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
@@ -29,6 +29,7 @@ import {
   navigatorUnavailableError,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
+  resolveNavigatorSeatSelection,
   writeNavigatorModelSetting,
   type NavigatorPreparationSession,
   type NavigatorProviderFailureFact,
@@ -55,10 +56,8 @@ export {
   type NavigatorSessionFactory,
   type NavigatorUnavailableKey,
 };
-export {
-  createNativeNavigatorSessionFactory,
-  resolveNavigatorSeatSelection,
-} from "./navigator-child-executor.ts";
+export { createNativeNavigatorSessionFactory };
+export { resolveNavigatorSeatSelection };
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";

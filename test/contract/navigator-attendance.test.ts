@@ -21,6 +21,7 @@ import {
   type NavigatorPreparationSession,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
+  navigatorProviderFailureFromError,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
   selectNavigatorCandidate,
@@ -384,6 +385,27 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
       );
     }
   }
+});
+
+test("navigator open failures classify typed reason/status/code, not Error.message prose", () => {
+  assert.equal(navigatorProviderFailureFromError(new Error("authentication failed")), undefined);
+  assert.equal(navigatorProviderFailureFromError(new Error("provider not found: missing")), undefined);
+  assert.deepEqual(
+    navigatorProviderFailureFromError(Object.assign(new Error("opaque"), { reason: "auth" })),
+    { source: "auth", cause: "auth" },
+  );
+  assert.deepEqual(
+    navigatorProviderFailureFromError(Object.assign(new Error("opaque"), { reason: "model" })),
+    { source: "model", cause: "model" },
+  );
+  assert.deepEqual(
+    navigatorProviderFailureFromError(Object.assign(new Error("opaque"), { statusCode: 401 })),
+    { source: "auth", cause: "auth" },
+  );
+  assert.deepEqual(
+    navigatorProviderFailureFromError({ cause: Object.assign(new Error("nested"), { reason: "quota" }) }),
+    { source: "quota", cause: "quota" },
+  );
 });
 
 test("model settings are exact and typed settlement projection ignores prose and correctable errors", () => {

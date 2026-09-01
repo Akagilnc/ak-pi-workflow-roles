@@ -243,6 +243,32 @@ test("grok session identity is bound by its authority and decoded for resume", a
   }]);
 });
 
+test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method) {
+        if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "gpt-5.6-sol" }] } } };
+        if (method === "session/new") return { sessionId: "s-non-xai" };
+        if (method === "session/prompt") return { stopReason: "end_turn" };
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(async () => ({ accepted: true })),
+  });
+
+  const result = await host.executeTurn({
+    ...request,
+    model: { provider: "openai-codex", model: "gpt-5.6-sol" },
+  });
+  assert.equal(result.knownFailure, undefined);
+  assert.equal(result.code, 0);
+});
+
 test("grok host rejects a model absent from typed ACP capabilities", async () => {
   let prompted = false;
   const host = createGrokRoleTurnHost({

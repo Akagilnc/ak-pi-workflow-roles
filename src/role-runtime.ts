@@ -67,7 +67,7 @@ import {
   type GleanerLeftRuntimeDependencies,
 } from "./gleaner-left-role.ts";
 import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_BASE_FLAG } from "./gleaner-left-contracts.ts";
-import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -542,6 +542,25 @@ export const ROLE_FLAG = {
     type: "string" as const,
   },
 } as const;
+
+/** Host-neutral in-process role help for Navigator prepare (Pi and Grok share this). */
+export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
+  const metadata = packagedRoleMetadata(role);
+  const lines = [
+    `Usage: ak-role ${role}`,
+    ROLE_FLAG.definition.description,
+  ];
+  if (metadata?.inputFlag !== undefined) {
+    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
+  }
+  if (metadata?.phaseFlag !== undefined) {
+    lines.push(
+      `  --${metadata.phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
+    );
+  }
+  lines.push(`Public next-command form: ak-role ${role}`);
+  return lines.join("\n");
+}
 
 type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybookReadFailure"> &
   Partial<Pick<NavigatorAttendance, "knownRoutePlaybookReadFailure">>;
