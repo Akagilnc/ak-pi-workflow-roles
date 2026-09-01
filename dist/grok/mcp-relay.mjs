@@ -42,11 +42,10 @@ function settle(error) {
 
 upstream.on("error", (error) => settle(error));
 upstream.on("close", () => {
-  if (shutdownRequested) {
-    maybeExit();
-    return;
-  }
-  settle(new Error("AK Grok MCP upstream closed"));
+  // Shutdown may already be requested (stdin EOF) while an RPC is still
+  // in flight. Outstanding waiters must still settle, or drain never ends.
+  if (!exiting) settle(new Error("AK Grok MCP upstream closed"));
+  maybeExit();
 });
 createInterface({ input: upstream }).on("line", (line) => {
   let message;
