@@ -1001,6 +1001,7 @@ export function createNativeNavigatorSessionFactory(
     });
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
+    let observationWrite: Promise<void> = Promise.resolve();
     const assignProviderFailure = (fact: NavigatorProviderFailureFact | undefined): void => {
       if (fact !== undefined) providerFailure = fact;
     };
@@ -1030,7 +1031,9 @@ export function createNativeNavigatorSessionFactory(
           ? message.provider
           : selection.provider;
         if (typeof runDir === "string" && runDir.trim() !== "" && provider.trim() !== "") {
-          void recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
+          observationWrite = observationWrite.then(() =>
+            recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider }),
+          );
         }
       }
     };
@@ -1077,6 +1080,7 @@ export function createNativeNavigatorSessionFactory(
     return {
       prompt: async (text) => {
         providerFailure = undefined;
+        observationWrite = Promise.resolve();
         const failFrom = (error: unknown): never => {
           if (providerFailure === undefined) {
             assignProviderFailure({ source: "transport", cause: "transport" });
@@ -1084,6 +1088,7 @@ export function createNativeNavigatorSessionFactory(
           const fact = providerFailure!;
           throw navigatorUnavailableError(fact.source, error, fact.cause);
         };
+        let terminal: unknown;
         try {
           const turn = await opened.handle.prompt(text);
           if (turn.stopReason === "error" || turn.stopReason === "aborted") {
@@ -1096,17 +1101,18 @@ export function createNativeNavigatorSessionFactory(
                 typeof cause === "object" && cause !== null ? cause : new Error(String(cause)),
               ));
             }
-            failFrom(cause);
-          }
-          if (opened.streamFailure !== undefined) {
+            terminal = cause;
+          } else if (opened.streamFailure !== undefined) {
             if (providerFailure === undefined) classifyTerminalMessage(opened.streamFailure);
-            failFrom(opened.streamFailure);
+            terminal = opened.streamFailure;
           }
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
           if (providerFailure === undefined) classifyTerminalMessage(error);
-          failFrom(error);
+          terminal = error;
         }
+        await observationWrite;
+        if (terminal !== undefined) failFrom(terminal);
       },
       providerFailure: () => providerFailure,
       appendEntry: (customType, data) => {

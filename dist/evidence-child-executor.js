@@ -1,858 +1,859 @@
-/**
- * Unique in-process child lifecycle helper (#236 established; #233 sinks auditor + navigator).
- * Owns scratch, inherited provider runtime, AgentSession, abort/dispose.
- * Not a subprocess RPC.
- */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {} from "@earendil-works/pi-ai";
-import { AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, } from "./compliance-transport.js";
+import {
+} from "@earendil-works/pi-ai";
+import {
+  AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
+  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE
+} from "./compliance-transport.js";
 import { auditorRunDirectory } from "./auditor-dossier-tool.js";
 import { sitianReport } from "./sitian-facade.js";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.js";
 import { engineNameFromEnv } from "./engine-detour.js";
-import { appendEngineSessionMaterial, engineSessionMaterialFromOptions, } from "./package-resources/engine-material.js";
+import {
+  appendEngineSessionMaterial,
+  engineSessionMaterialFromOptions
+} from "./package-resources/engine-material.js";
 import { readPackageMaterial } from "./session-opening-materials.js";
-import {} from "./public-cli/config.js";
+import {
+} from "./public-cli/config.js";
 import { readInstitutionalSeatSelection } from "./institutional-resolution.js";
+import {
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  NavigatorUnavailableError,
+  navigatorModelSettingPath,
+  navigatorProviderFailureFromDiagnostics,
+  navigatorProviderFailureFromError,
+  navigatorProviderFailureFromStatus,
+  navigatorUnavailableError,
+  parseNavigatorModelSetting,
+  resolveNavigatorSeatSelection
+} from "./navigator-session-contracts.js";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.js";
-import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus, projectConfirmedRemotePayload, } from "./upstream-error-testimony.js";
-/**
- * Shared Standards/Spec evidence-child system materials — path roster only.
- * Builder consumes this unique roster; cadence prose stays in owner material (ADR 0073).
- * Not exported — tests must not mirror internal roster structure.
- */
+import { recordTypedProviderHttpStatus } from "./typed-provider-http.js";
+import {
+  hasUpstreamErrorTestimony,
+  isNonSuccessHttpStatus,
+  projectConfirmedRemotePayload
+} from "./upstream-error-testimony.js";
 const EVIDENCE_CHILD_SESSION_MATERIALS = [
-    "souls/quality-law.md",
+  "souls/quality-law.md"
 ];
-/** Package-owned system prompt for Reviewer Standards/Spec evidence children (private carrier). */
 async function buildEvidenceChildSystemPrompt(engineMaterial) {
-    // ADR 0073: verification cadence lives in owner material only; no machine prose copy.
-    const materials = [];
-    for (const relativePath of EVIDENCE_CHILD_SESSION_MATERIALS) {
-        materials.push(await readPackageMaterial(relativePath));
-    }
-    return appendEngineSessionMaterial(materials, engineMaterial).join("\n");
+  const materials = [];
+  for (const relativePath of EVIDENCE_CHILD_SESSION_MATERIALS) {
+    materials.push(await readPackageMaterial(relativePath));
+  }
+  return appendEngineSessionMaterial(materials, engineMaterial).join("\n");
 }
-// ── shared constants / types ──────────────────────────────────────────────
-export const AUDITOR_TURN_LIMIT = 32;
-export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
-export class AuditorTurnLimitError extends Error {
-    limit;
-    observedTurns;
-    lastResponse;
-    constructor(limit, observedTurns, lastResponse) {
-        super(observedTurns === undefined
-            ? `Auditor exceeded ${limit} turns`
-            : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
-        this.limit = limit;
-        this.observedTurns = observedTurns;
-        this.lastResponse = lastResponse;
-        this.name = "AuditorTurnLimitError";
-    }
+const AUDITOR_TURN_LIMIT = 32;
+const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
+class AuditorTurnLimitError extends Error {
+  constructor(limit, observedTurns, lastResponse) {
+    super(observedTurns === void 0 ? `Auditor exceeded ${limit} turns` : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
+    this.limit = limit;
+    this.observedTurns = observedTurns;
+    this.lastResponse = lastResponse;
+    this.name = "AuditorTurnLimitError";
+  }
+  limit;
+  observedTurns;
+  lastResponse;
 }
-/** Shared scratch directory with guaranteed cleanup. */
-export async function withInProcessScratch(options, run) {
-    const scratch = await mkdtemp(join(options.parentDirectory ?? tmpdir(), options.prefix));
-    let failure;
+async function withInProcessScratch(options, run) {
+  const scratch = await mkdtemp(join(options.parentDirectory ?? tmpdir(), options.prefix));
+  let failure;
+  try {
+    return await run(scratch);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
     try {
-        return await run(scratch);
+      await rm(scratch, { recursive: true, force: true });
+    } catch (cleanupFailure) {
+      if (failure !== void 0) {
+        throw new AggregateError([failure, cleanupFailure], "in-process child scratch cleanup failed", { cause: failure });
+      }
+      throw cleanupFailure;
     }
-    catch (error) {
-        failure = error;
-        throw error;
-    }
-    finally {
-        try {
-            await rm(scratch, { recursive: true, force: true });
-        }
-        catch (cleanupFailure) {
-            if (failure !== undefined) {
-                throw new AggregateError([failure, cleanupFailure], "in-process child scratch cleanup failed", { cause: failure });
-            }
-            throw cleanupFailure;
-        }
-    }
+  }
 }
-/**
- * Run every child cleanup, aggregating failures so one throwing cleanup never
- * skips the rest (e.g. handle.close must still run when unsubscribe throws).
- * If a primary failure is supplied and cleanup also failed, the two are combined
- * into an AggregateError; otherwise only the failing branch is surfaced.
- */
 async function runChildCleanup(cleanups, primaryFailure, label) {
-    let cleanupFailure;
-    for (const cleanup of cleanups) {
-        try {
-            await cleanup();
-        }
-        catch (failure) {
-            cleanupFailure = cleanupFailure === undefined
-                ? failure
-                : new AggregateError([cleanupFailure, failure], `${label} cleanup failed`, {
-                    cause: cleanupFailure,
-                });
-        }
+  let cleanupFailure;
+  for (const cleanup of cleanups) {
+    try {
+      await cleanup();
+    } catch (failure) {
+      cleanupFailure = cleanupFailure === void 0 ? failure : new AggregateError([cleanupFailure, failure], `${label} cleanup failed`, {
+        cause: cleanupFailure
+      });
     }
-    if (cleanupFailure === undefined)
-        return;
-    if (primaryFailure !== undefined) {
-        throw new AggregateError([primaryFailure, cleanupFailure], `${label} execution and cleanup failed`, { cause: primaryFailure });
-    }
-    throw new AggregateError([cleanupFailure], `${label} cleanup failed`, {
-        cause: cleanupFailure,
-    });
+  }
+  if (cleanupFailure === void 0) return;
+  if (primaryFailure !== void 0) {
+    throw new AggregateError(
+      [primaryFailure, cleanupFailure],
+      `${label} execution and cleanup failed`,
+      { cause: primaryFailure }
+    );
+  }
+  throw new AggregateError([cleanupFailure], `${label} cleanup failed`, {
+    cause: cleanupFailure
+  });
 }
 function numericHttpStatus(value) {
-    return isNonSuccessHttpStatus(value) ? value : undefined;
+  return isNonSuccessHttpStatus(value) ? value : void 0;
 }
-/**
- * Cause-chain reader over the shared upstream-testimony authority.
- * Shape walking stays here; testimony + confirmed-remote payload rules are shared.
- */
 function projectStructuredRemote(error) {
-    let httpStatus;
-    let diagnostics;
-    let body;
-    let code;
-    let errno;
-    let cursor = error;
-    const seen = new Set();
-    while (typeof cursor === "object" && cursor !== null && !seen.has(cursor)) {
-        seen.add(cursor);
-        const record = cursor;
-        const nodeStatus = numericHttpStatus(record.statusCode)
-            ?? numericHttpStatus(record.status)
-            ?? numericHttpStatus(record.httpStatus);
-        const nodeDiagnostics = Array.isArray(record.diagnostics) && record.diagnostics.length > 0
-            ? record.diagnostics
-            : undefined;
-        const nodeHasTestimony = hasUpstreamErrorTestimony({
-            ...(nodeStatus === undefined ? {} : { httpStatus: nodeStatus }),
-            ...(nodeDiagnostics === undefined ? {} : { diagnostics: nodeDiagnostics }),
-        });
-        if (httpStatus === undefined && nodeStatus !== undefined)
-            httpStatus = nodeStatus;
-        if (diagnostics === undefined && nodeDiagnostics !== undefined)
-            diagnostics = nodeDiagnostics;
-        // Payload only from confirmed-remote nodes — never arbitrary local Error.code.
-        if (nodeHasTestimony) {
-            const payload = projectConfirmedRemotePayload(record);
-            if (body === undefined && payload.body !== undefined)
-                body = payload.body;
-            if (code === undefined && payload.code !== undefined)
-                code = payload.code;
-            if (errno === undefined && payload.errno !== undefined)
-                errno = payload.errno;
-        }
-        cursor = record.cause;
-    }
-    return {
-        hasTestimony: hasUpstreamErrorTestimony({
-            ...(httpStatus === undefined ? {} : { httpStatus }),
-            ...(diagnostics === undefined ? {} : { diagnostics }),
-        }),
-        ...(httpStatus === undefined ? {} : { httpStatus }),
-        ...(diagnostics === undefined ? {} : { diagnostics }),
-        ...(body === undefined ? {} : { body }),
-        ...(code === undefined ? {} : { code }),
-        ...(errno === undefined ? {} : { errno }),
-    };
-}
-/**
- * Attach a directly observed HTTP status onto an error/aborted assistant message.
- * Does not invent status from errorMessage prose; skips when already held.
- */
-function attachObservedHttpStatus(message, observedHttpStatus) {
-    if (observedHttpStatus === undefined)
-        return message;
-    if (message.stopReason !== "error" && message.stopReason !== "aborted")
-        return message;
-    if (numericHttpStatus(observedHttpStatus) === undefined)
-        return message;
-    if (projectStructuredRemote(message).httpStatus !== undefined)
-        return message;
-    return Object.assign(message, {
-        status: observedHttpStatus,
-        statusCode: observedHttpStatus,
+  let httpStatus;
+  let diagnostics;
+  let body;
+  let code;
+  let errno;
+  let cursor = error;
+  const seen = /* @__PURE__ */ new Set();
+  while (typeof cursor === "object" && cursor !== null && !seen.has(cursor)) {
+    seen.add(cursor);
+    const record = cursor;
+    const nodeStatus = numericHttpStatus(record.statusCode) ?? numericHttpStatus(record.status) ?? numericHttpStatus(record.httpStatus);
+    const nodeDiagnostics = Array.isArray(record.diagnostics) && record.diagnostics.length > 0 ? record.diagnostics : void 0;
+    const nodeHasTestimony = hasUpstreamErrorTestimony({
+      ...nodeStatus === void 0 ? {} : { httpStatus: nodeStatus },
+      ...nodeDiagnostics === void 0 ? {} : { diagnostics: nodeDiagnostics }
     });
+    if (httpStatus === void 0 && nodeStatus !== void 0) httpStatus = nodeStatus;
+    if (diagnostics === void 0 && nodeDiagnostics !== void 0) diagnostics = nodeDiagnostics;
+    if (nodeHasTestimony) {
+      const payload = projectConfirmedRemotePayload(record);
+      if (body === void 0 && payload.body !== void 0) body = payload.body;
+      if (code === void 0 && payload.code !== void 0) code = payload.code;
+      if (errno === void 0 && payload.errno !== void 0) errno = payload.errno;
+    }
+    cursor = record.cause;
+  }
+  return {
+    hasTestimony: hasUpstreamErrorTestimony({
+      ...httpStatus === void 0 ? {} : { httpStatus },
+      ...diagnostics === void 0 ? {} : { diagnostics }
+    }),
+    ...httpStatus === void 0 ? {} : { httpStatus },
+    ...diagnostics === void 0 ? {} : { diagnostics },
+    ...body === void 0 ? {} : { body },
+    ...code === void 0 ? {} : { code },
+    ...errno === void 0 ? {} : { errno }
+  };
+}
+function attachObservedHttpStatus(message, observedHttpStatus) {
+  if (observedHttpStatus === void 0) return message;
+  if (message.stopReason !== "error" && message.stopReason !== "aborted") return message;
+  if (numericHttpStatus(observedHttpStatus) === void 0) return message;
+  if (projectStructuredRemote(message).httpStatus !== void 0) return message;
+  return Object.assign(message, {
+    status: observedHttpStatus,
+    statusCode: observedHttpStatus
+  });
 }
 function enrichStreamEvent(event, observedHttpStatus) {
-    if (observedHttpStatus === undefined || event === null || typeof event !== "object")
-        return event;
-    const record = event;
-    if (record.type === "error" && record.error !== null && typeof record.error === "object") {
-        return {
-            ...record,
-            error: attachObservedHttpStatus(record.error, observedHttpStatus),
-        };
-    }
-    if (record.type === "done" && record.message !== null && typeof record.message === "object") {
-        return {
-            ...record,
-            message: attachObservedHttpStatus(record.message, observedHttpStatus),
-        };
-    }
-    if (record.partial !== null && typeof record.partial === "object") {
-        return {
-            ...record,
-            partial: attachObservedHttpStatus(record.partial, observedHttpStatus),
-        };
-    }
-    return event;
+  if (observedHttpStatus === void 0 || event === null || typeof event !== "object") return event;
+  const record = event;
+  if (record.type === "error" && record.error !== null && typeof record.error === "object") {
+    return {
+      ...record,
+      error: attachObservedHttpStatus(record.error, observedHttpStatus)
+    };
+  }
+  if (record.type === "done" && record.message !== null && typeof record.message === "object") {
+    return {
+      ...record,
+      message: attachObservedHttpStatus(record.message, observedHttpStatus)
+    };
+  }
+  if (record.partial !== null && typeof record.partial === "object") {
+    return {
+      ...record,
+      partial: attachObservedHttpStatus(record.partial, observedHttpStatus)
+    };
+  }
+  return event;
 }
 function classifiedError(error, evidenceChildFailure) {
-    const diagnostic = typeof error === "object" && error !== null && typeof error.errorMessage === "string"
-        ? error.errorMessage
-        : error === undefined ? "" : String(error);
-    const wrapped = error instanceof Error
-        ? error
-        : Object.assign(new Error(diagnostic, { cause: error }), { evidenceChildOriginal: error });
-    const classification = "evidenceChildFailure" in wrapped
-        ? wrapped.evidenceChildFailure
-        : evidenceChildFailure === "provider" && !projectStructuredRemote(error).hasTestimony
-            ? "unknown"
-            : evidenceChildFailure;
-    return Object.assign(wrapped, { evidenceChildFailure: classification });
+  const diagnostic = typeof error === "object" && error !== null && typeof error.errorMessage === "string" ? error.errorMessage : error === void 0 ? "" : String(error);
+  const wrapped = error instanceof Error ? error : Object.assign(new Error(diagnostic, { cause: error }), { evidenceChildOriginal: error });
+  const classification = "evidenceChildFailure" in wrapped ? wrapped.evidenceChildFailure : evidenceChildFailure === "provider" && !projectStructuredRemote(error).hasTestimony ? "unknown" : evidenceChildFailure;
+  return Object.assign(wrapped, { evidenceChildFailure: classification });
 }
-/** Extract the first text diagnostic from a flattened toolResult error `details`. */
 function extractToolResultText(details) {
-    if (typeof details !== "object" || details === null)
-        return undefined;
-    const record = details;
-    const content = record.content;
-    if (Array.isArray(content)) {
-        for (const part of content) {
-            if (typeof part === "object" && part !== null) {
-                const text = part.text;
-                if (typeof text === "string" && text.trim() !== "")
-                    return text;
-            }
-        }
+  if (typeof details !== "object" || details === null) return void 0;
+  const record = details;
+  const content = record.content;
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === "object" && part !== null) {
+        const text = part.text;
+        if (typeof text === "string" && text.trim() !== "") return text;
+      }
     }
-    return undefined;
+  }
+  return void 0;
 }
 function emptyUsage() {
-    return {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    };
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+  };
 }
 function addUsage(total, next) {
-    total.input += next.input;
-    total.output += next.output;
-    total.cacheRead += next.cacheRead;
-    total.cacheWrite += next.cacheWrite;
-    total.totalTokens += next.totalTokens;
-    total.cost.input += next.cost.input;
-    total.cost.output += next.cost.output;
-    total.cost.cacheRead += next.cost.cacheRead;
-    total.cost.cacheWrite += next.cost.cacheWrite;
-    total.cost.total += next.cost.total;
+  total.input += next.input;
+  total.output += next.output;
+  total.cacheRead += next.cacheRead;
+  total.cacheWrite += next.cacheWrite;
+  total.totalTokens += next.totalTokens;
+  total.cost.input += next.cost.input;
+  total.cost.output += next.cost.output;
+  total.cost.cacheRead += next.cost.cacheRead;
+  total.cost.cacheWrite += next.cost.cacheWrite;
+  total.cost.total += next.cost.total;
 }
-export async function executeEvidenceChild(workspace, prompt, context, options = {}) {
-    const signal = options.signal;
-    const runDirectory = options.runDirectory ?? auditorRunDirectory(context);
-    if (runDirectory === undefined) {
-        throw new Error("Evidence child requires a run directory carrying the institutional resolution page");
-    }
-    const selection = await readInstitutionalSeatSelection(runDirectory, "evidenceChild");
-    return withInProcessScratch({
-        prefix: "ak-evidence-child-",
-        ...(options.credentialScratchParent === undefined
-            ? {}
-            : { parentDirectory: options.credentialScratchParent }),
-    }, async (childConfigDir) => {
-        const { openPiInstitutionalSession } = await import("./pi/in-process-session.js");
-        const { createRecordSession } = await import("./archivist-record-entry.js");
-        // #378: when labor engine is configured, legs get the same detour tool + material
-        // dual-path as the parent seat (ADR 0069 detour-rejoins-main-road).
-        const engineName = engineNameFromEnv();
-        const engineMaterial = engineName === undefined
-            ? undefined
-            : options.packageRoot === undefined || options.packageRoot.trim() === ""
-                // Name-only when package root is unavailable (still a valid #376 path).
-                ? Object.freeze({ name: engineName })
-                : engineSessionMaterialFromOptions({
-                    engine: engineName,
-                    packageRoot: options.packageRoot,
-                });
-        // Evidence legs use the parent detour tool; retain any engine process cause
-        // so the enclosing child boundary, rather than a tool-error result, terminates.
-        let engineDetourFailure;
-        const engineDetourTool = engineName === undefined
-            ? undefined
-            : createEngineDetourToolDefinition({
-                engineName,
-                fail(error) {
-                    engineDetourFailure ??= error instanceof Error ? error : new Error(String(error));
-                    throw engineDetourFailure;
-                },
-            });
-        // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
-        // Single open seam owner: pi/in-process-session.ts.
-        let opened;
-        try {
-            opened = await openPiInstitutionalSession({
-                cwd: workspace,
-                agentDir: childConfigDir,
-                selection,
-                systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
-                ...(engineDetourTool === undefined
-                    ? {}
-                    : { customTools: [engineDetourTool] }),
-                sessionManager: createRecordSession({
-                    cwd: workspace,
-                    kind: "evidence-children",
-                    ...(context.sessionManager === undefined ? {} : { parent: context.sessionManager }),
-                }),
-                ...(signal === undefined ? {} : { signal }),
-                label: "Evidence child",
-            });
+async function executeEvidenceChild(workspace, prompt, context, options = {}) {
+  const signal = options.signal;
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(context);
+  if (runDirectory === void 0) {
+    throw new Error("Evidence child requires a run directory carrying the institutional resolution page");
+  }
+  const selection = await readInstitutionalSeatSelection(runDirectory, "evidenceChild");
+  return withInProcessScratch(
+    {
+      prefix: "ak-evidence-child-",
+      ...options.credentialScratchParent === void 0 ? {} : { parentDirectory: options.credentialScratchParent }
+    },
+    async (childConfigDir) => {
+      const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+      const { createRecordSession } = await import("./archivist-record-entry.ts");
+      const engineName = engineNameFromEnv();
+      const engineMaterial = engineName === void 0 ? void 0 : options.packageRoot === void 0 || options.packageRoot.trim() === "" ? Object.freeze({ name: engineName }) : engineSessionMaterialFromOptions({
+        engine: engineName,
+        packageRoot: options.packageRoot
+      });
+      let engineDetourFailure;
+      const engineDetourTool = engineName === void 0 ? void 0 : createEngineDetourToolDefinition({
+        engineName,
+        fail(error) {
+          engineDetourFailure ??= error instanceof Error ? error : new Error(String(error));
+          throw engineDetourFailure;
         }
-        catch (error) {
-            throw classifiedError(error, "provider");
-        }
-        const { handle } = opened;
-        const usage = emptyUsage();
-        const unsubscribe = handle.subscribe((event) => {
-            if (event.type === "message_end" && event.role === "assistant") {
-                if (event.usage)
-                    addUsage(usage, event.usage);
-            }
+      });
+      let opened;
+      try {
+        opened = await openPiInstitutionalSession({
+          cwd: workspace,
+          agentDir: childConfigDir,
+          selection,
+          systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
+          ...engineDetourTool === void 0 ? {} : { customTools: [engineDetourTool] },
+          sessionManager: createRecordSession({
+            cwd: workspace,
+            kind: "evidence-children",
+            ...context.sessionManager === void 0 ? {} : { parent: context.sessionManager }
+          }),
+          ...signal === void 0 ? {} : { signal },
+          label: "Evidence child"
         });
-        const abortChild = () => { handle.abort(); };
-        if (signal?.aborted)
-            abortChild();
-        else
-            signal?.addEventListener("abort", abortChild, { once: true });
-        let primaryFailure;
+      } catch (error) {
+        throw classifiedError(error, "provider");
+      }
+      const { handle } = opened;
+      const usage = emptyUsage();
+      const unsubscribe = handle.subscribe((event) => {
+        if (event.type === "message_end" && event.role === "assistant") {
+          if (event.usage) addUsage(usage, event.usage);
+        }
+      });
+      const abortChild = () => {
+        handle.abort();
+      };
+      if (signal?.aborted) abortChild();
+      else signal?.addEventListener("abort", abortChild, { once: true });
+      let primaryFailure;
+      try {
+        const delivered = prompt;
+        let turnResult;
         try {
-            const delivered = prompt;
-            let turnResult;
-            try {
-                turnResult = await handle.prompt(delivered);
-            }
-            catch (error) {
-                if (engineDetourFailure !== undefined) {
-                    throw classifiedError(engineDetourFailure, "child");
-                }
-                throw classifiedError(error, "provider");
-            }
-            if (engineDetourFailure !== undefined) {
-                throw classifiedError(engineDetourFailure, "child");
-            }
-            if (signal?.aborted)
-                throw new Error("Evidence child was cancelled");
-            const lastAssistant = turnResult.messages !== undefined
-                ? [...turnResult.messages].reverse().find((message) => message?.role === "assistant")
-                : undefined;
-            // error|aborted assistant stops share the upstream-testimony rule: provider only
-            // with direct HTTP/SDK testimony, otherwise existing unknown. child is reserved
-            // for real local child/report failures (no assistant / blank report / cleanup).
-            if (turnResult.stopReason === "error" || turnResult.stopReason === "aborted"
-                || (lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted"))) {
-                const errMsg = turnResult.errorMessage ?? lastAssistant?.errorMessage ?? "";
-                throw classifiedError(new Error(errMsg, { cause: lastAssistant }), lastAssistant && projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown");
-            }
-            if (lastAssistant !== undefined && lastAssistant.role !== "assistant") {
-                throw classifiedError(new Error("Evidence child child terminated without a report", {
-                    cause: lastAssistant ?? turnResult.messages,
-                }), "child");
-            }
-            const report = turnResult.text;
-            if (report.trim().length === 0) {
-                throw new Error("Evidence child returned a blank child report");
-            }
-            return { report, usage, prompt: delivered };
+          turnResult = await handle.prompt(delivered);
+        } catch (error) {
+          if (engineDetourFailure !== void 0) {
+            throw classifiedError(engineDetourFailure, "child");
+          }
+          throw classifiedError(error, "provider");
         }
-        catch (error) {
-            primaryFailure = classifiedError(error, "child");
-            throw primaryFailure;
+        if (engineDetourFailure !== void 0) {
+          throw classifiedError(engineDetourFailure, "child");
         }
-        finally {
-            signal?.removeEventListener("abort", abortChild);
-            await runChildCleanup([() => unsubscribe(), () => handle.close()], primaryFailure, "Reviewer child");
+        if (signal?.aborted) throw new Error("Evidence child was cancelled");
+        const lastAssistant = turnResult.messages !== void 0 ? [...turnResult.messages].reverse().find((message) => message?.role === "assistant") : void 0;
+        if (turnResult.stopReason === "error" || turnResult.stopReason === "aborted" || lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")) {
+          const errMsg = turnResult.errorMessage ?? lastAssistant?.errorMessage ?? "";
+          throw classifiedError(
+            new Error(errMsg, { cause: lastAssistant }),
+            lastAssistant && projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown"
+          );
         }
-    });
+        if (lastAssistant !== void 0 && lastAssistant.role !== "assistant") {
+          throw classifiedError(
+            new Error("Evidence child child terminated without a report", {
+              cause: lastAssistant ?? turnResult.messages
+            }),
+            "child"
+          );
+        }
+        const report = turnResult.text;
+        if (report.trim().length === 0) {
+          throw new Error("Evidence child returned a blank child report");
+        }
+        return { report, usage, prompt: delivered };
+      } catch (error) {
+        primaryFailure = classifiedError(error, "child");
+        throw primaryFailure;
+      } finally {
+        signal?.removeEventListener("abort", abortChild);
+        await runChildCleanup([() => unsubscribe(), () => handle.close()], primaryFailure, "Reviewer child");
+      }
+    }
+  );
 }
-/** Resolution-page seat key for an auditor invocation: province gate seats map
- * to their own page seats; doctor/judge compliance audits use the auditor seat. */
 function auditorSeatKey(gateSeat) {
-    return gateSeat ?? "auditor";
+  return gateSeat ?? "auditor";
 }
-/**
- * Auditor lifecycle via the shared institutional sub-session adapter.
- * Adapter keeps role label / soul / decision tool / result projection only.
- * No tools allowlist (ADR 0064). Provider-stream idle-only retry (ADR 0059).
- * Durable child session via ADR 0065 archivist entry.
- */
-export async function executeAuditorChild(options) {
-    const { createRecordSession } = await import("./archivist-record-entry.js");
-    const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
-    if (runDirectory === undefined) {
-        throw new Error(`${options.roleLabel} requires a run directory carrying the institutional resolution page`);
-    }
-    const seat = auditorSeatKey(options.gateSeat);
-    const selection = await readInstitutionalSeatSelection(runDirectory, seat);
-    return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
-        const cwd = options.context.cwd ?? process.cwd();
-        let decision;
-        let noReceiptLifecycle;
-        let decisionSubmitted = false;
-        let decisionCallId;
-        let decisionToolFailure;
-        const decisionToolFailures = new Map();
-        const delivery = createReceiptDeliveryPolicy();
-        const tool = {
-            ...options.tool,
-            label: options.roleLabel,
-            async execute(...args) {
-                if (decisionSubmitted && decisionCallId !== args[0]) {
-                    throw new Error("Auditor decision was submitted more than once");
-                }
-                // Pi may already have issued several decision calls in one assistant
-                // response. Execute every issued call: the budget limits future
-                // solicitations, not terminal calls already in flight.
-                try {
-                    const result = await options.tool.execute(...args);
-                    delivery.recordAccepted();
-                    const rawDecision = args[1];
-                    const isMissingArgs = rawDecision === undefined
-                        || (typeof rawDecision === "object" && rawDecision !== null && !Array.isArray(rawDecision) && Object.keys(rawDecision).length === 0);
-                    decision = isMissingArgs ? undefined : rawDecision;
-                    decisionCallId = args[0];
-                    decisionToolFailure = undefined;
-                    decisionToolFailures.delete(args[0]);
-                    decisionSubmitted = true;
-                    return { ...result, terminate: true };
-                }
-                catch (error) {
-                    decisionToolFailure = error;
-                    decisionToolFailures.set(args[0], error);
-                    throw error;
-                }
-            },
-        };
-        const parentSessionManager = options.context.sessionManager;
-        const parentHeader = parentSessionManager?.getHeader?.();
-        const parentSessionFile = parentSessionManager?.getSessionFile?.();
-        const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
-        const auditorSessionManager = createRecordSession({
-            cwd,
-            kind: "auditor-roles",
-            ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
-        });
-        // Shared session open — no tools allowlist (ADR 0064). Auth resolved
-        // child-locally from the explicit seat selection; adapter owns runtime/provider.
-        const { openPiInstitutionalSession } = await import("./pi/in-process-session.js");
-        const evidenceToolFailures = new Map();
-        const wrappedDossierTool = {
-            ...options.dossierTool,
-            label: options.roleLabel,
-            async execute(...args) {
-                try {
-                    return await options.dossierTool.execute(...args);
-                }
-                catch (error) {
-                    evidenceToolFailures.set(args[0], error);
-                    throw error;
-                }
-            },
-        };
-        const opened = await openPiInstitutionalSession({
-            cwd,
-            agentDir: scratch,
-            selection,
-            systemPrompt: options.systemPrompt,
-            customTools: [wrappedDossierTool, tool],
-            sessionManager: auditorSessionManager,
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-            idleRetry: true,
-            label: options.roleLabel,
-        });
-        const { handle } = opened;
-        const binding = {
-            version: 1,
-            parent: {
-                ...(parentHeader?.id === undefined ? {} : { sessionId: parentHeader.id }),
-                ...(parentSessionFile === undefined ? {} : { sessionFile: parentSessionFile }),
-                ...(parentAttemptEntryId === null || parentAttemptEntryId === undefined
-                    ? {}
-                    : { attemptEntryId: parentAttemptEntryId }),
-            },
-        };
-        // Durable binding is a prerequisite: never observe the provider when its
-        // response could not later be tied to the current parent attempt.
-        auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
+async function executeAuditorChild(options) {
+  const { createRecordSession } = await import("./archivist-record-entry.ts");
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  if (runDirectory === void 0) {
+    throw new Error(`${options.roleLabel} requires a run directory carrying the institutional resolution page`);
+  }
+  const seat = auditorSeatKey(options.gateSeat);
+  const selection = await readInstitutionalSeatSelection(runDirectory, seat);
+  return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
+    const cwd = options.context.cwd ?? process.cwd();
+    let decision;
+    let noReceiptLifecycle;
+    let decisionSubmitted = false;
+    let decisionCallId;
+    let decisionToolFailure;
+    const decisionToolFailures = /* @__PURE__ */ new Map();
+    const delivery = createReceiptDeliveryPolicy();
+    const tool = {
+      ...options.tool,
+      label: options.roleLabel,
+      async execute(...args) {
+        if (decisionSubmitted && decisionCallId !== args[0]) {
+          throw new Error("Auditor decision was submitted more than once");
+        }
         try {
-            sitianReport({
-                level: "event",
-                kind: "auditor",
-                cwd,
-                sessionParent: parentSessionFile,
-                payload: { type: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, ...binding },
-                source: "evidence-child-executor",
-            });
+          const result = await options.tool.execute(...args);
+          delivery.recordAccepted();
+          const rawDecision = args[1];
+          const isMissingArgs = rawDecision === void 0 || typeof rawDecision === "object" && rawDecision !== null && !Array.isArray(rawDecision) && Object.keys(rawDecision).length === 0;
+          decision = isMissingArgs ? void 0 : rawDecision;
+          decisionCallId = args[0];
+          decisionToolFailure = void 0;
+          decisionToolFailures.delete(args[0]);
+          decisionSubmitted = true;
+          return { ...result, terminate: true };
+        } catch (error) {
+          decisionToolFailure = error;
+          decisionToolFailures.set(args[0], error);
+          throw error;
         }
-        catch { }
-        let turns = 0;
-        const sessionUsage = emptyUsage();
-        let boundaryResponse;
-        let retentionFailure;
-        let retainedResponse;
-        let rejectedDecisionResponse;
-        let promptNeighboringFailure;
-        let promptDecisionFailures = [];
-        const findToolFailure = (response) => {
-            const callIds = response.content.flatMap((part) => part.type === "toolCall" && part.name !== tool.name ? [part.id] : []);
-            for (const callId of callIds) {
-                if (evidenceToolFailures.has(callId))
-                    return evidenceToolFailures.get(callId);
-            }
-            return undefined;
-        };
-        const drainRejectedDecisionFailures = (response) => {
-            for (const part of response.content) {
-                if (part.type !== "toolCall" || part.name !== tool.name || !decisionToolFailures.has(part.id))
-                    continue;
-                decisionToolFailure = decisionToolFailures.get(part.id);
-                promptDecisionFailures.push(decisionToolFailure);
-                decisionToolFailures.delete(part.id);
-            }
-        };
-        const retainedAssistants = [];
-        const unsubscribe = handle.subscribe((event) => {
-            // Capture evidence-tool (non-decision) failures from the handle's real
-            // tool_result events. The old runCompletion path wrapped every child tool's
-            // execute to observe failures; through the real handle the adapter forwards
-            // tool_execution_end isError. Record the errored tool call id so an adjacent
-            // evidence failure can outrank a settled/correctable decision feedback.
-            if (event.type === "tool_result" && event.isError === true && event.toolName !== tool.name) {
-                // Through the real handle the child flattens a throwing evidence tool
-                // into a toolResult error whose content text carries the diagnostic
-                // (e.g. "ENOENT: no such file or directory..."). Recover that text so
-                // the adjacent evidence failure outranks a settled decision feedback
-                // with its original diagnostic, mirroring the pre-migration wrapped
-                // execute capture (which held the raw error object).
-                const detailText = extractToolResultText(event.details);
-                // A native unknown-tool receipt ("Tool <name> not found") is not an
-                // evidence-tool failure: the child session has no such tool registered,
-                // so its errored toolResult must not short-circuit the auditor (it keeps
-                // prompting to the turn limit, mirroring the pre-migration
-                // registeredToolNames exclusion in findToolFailure).
-                if (detailText !== undefined && /^Tool\s+.+ not found$/.test(detailText.trim()))
-                    return;
-                const failure = detailText === undefined
-                    ? new Error(event.toolName ?? "evidence tool failed")
-                    : new Error(detailText);
-                // Recover the errno code from the flattened diagnostic so an evidence
-                // failure's identity (e.g. code "ENOENT") is preserved across the real
-                // HTTP round-trip, mirroring the pre-migration raw error object.
-                const errno = /^([A-Z_]+):/.exec(detailText ?? "");
-                if (errno !== null && errno[1] !== undefined)
-                    failure.code = errno[1];
-                evidenceToolFailures.set(event.toolCallId, failure);
-            }
-            if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === undefined) {
-                turns += 1;
-                if (event.usage)
-                    addUsage(sessionUsage, event.usage);
-                const msg = event.message;
-                retainedResponse = msg;
-                if (msg) {
-                    retainedAssistants.push(msg);
-                    try {
-                        options.retainResponse?.(msg);
-                    }
-                    catch (error) {
-                        retentionFailure = error;
-                    }
-                    // A tool call in assistant output is only an observation. Preserve its
-                    // candidate for typed malformed-decision settlement, but the wrapped
-                    // execute path above is the sole owner of accepted-receipt state; a
-                    // rejected execution must remain retryable in this same session.
-                    for (const part of msg.content) {
-                        if (part.type === "toolCall" && part.name === tool.name) {
-                            rejectedDecisionResponse = msg;
-                            if (decision === undefined) {
-                                decision = (part.arguments === undefined
-                                    || (typeof part.arguments === "object" && part.arguments !== null
-                                        && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0))
-                                    ? undefined
-                                    : part.arguments;
-                                decisionCallId = part.id;
-                                // Pi can reject malformed root arguments before invoking execute;
-                                // that remains the existing unreadable-candidate failure path.
-                                // A missing root argument reaches the real provider adapter as an
-                                // empty object after serialization — treat it as missing too so a
-                                // one-shot typed missing-args settlement does not solicit another turn.
-                                if (part.arguments === undefined
-                                    || (typeof part.arguments === "object" && part.arguments !== null
-                                        && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0)) {
-                                    decisionSubmitted = true;
-                                }
-                            }
-                        }
-                    }
-                    if (turns >= AUDITOR_TURN_LIMIT || msg.stopReason === "error")
-                        boundaryResponse = msg;
-                }
-            }
-            if (event.type === "turn_end") {
-                if (rejectedDecisionResponse !== undefined) {
-                    promptNeighboringFailure = findToolFailure(rejectedDecisionResponse);
-                    drainRejectedDecisionFailures(rejectedDecisionResponse);
-                }
-                if (decisionSubmitted || promptNeighboringFailure !== undefined
-                    || (boundaryResponse !== undefined && rejectedDecisionResponse === undefined)
-                    || retentionFailure !== undefined) {
-                    handle.abort();
-                }
-            }
-        });
-        const abort = () => { handle.abort(); };
-        if (options.signal?.aborted)
-            abort();
-        else
-            options.signal?.addEventListener("abort", abort, { once: true });
-        let auditorFailure;
-        try {
-            try {
-                const promptAllowingRejectedDecision = async (prompt) => {
-                    rejectedDecisionResponse = undefined;
-                    promptNeighboringFailure = undefined;
-                    decisionToolFailure = undefined;
-                    promptDecisionFailures = [];
-                    let promptFailure;
-                    try {
-                        await handle.prompt(prompt);
-                    }
-                    catch (error) {
-                        promptFailure = error;
-                    }
-                    // Prefer turn_end correlation, but Pi may reject prompt() before that
-                    // event. In that case correlate against this prompt's captured decision
-                    // response and call-id maps at the catch boundary.
-                    const correlatedResponse = rejectedDecisionResponse;
-                    if (correlatedResponse !== undefined) {
-                        promptNeighboringFailure ??= findToolFailure(correlatedResponse);
-                        drainRejectedDecisionFailures(correlatedResponse);
-                    }
-                    // An adjacent failure outranks correctable decision feedback.
-                    if (promptNeighboringFailure !== undefined)
-                        throw promptNeighboringFailure;
-                    // An accepted correction in the same response owns the terminal
-                    // outcome; correlated rejected siblings remain observations, not a
-                    // stale failure capable of replacing that accepted receipt.
-                    if (decisionSubmitted) {
-                        decisionToolFailure = undefined;
-                        return;
-                    }
-                    if (decisionToolFailure !== undefined)
-                        return;
-                    if (retentionFailure !== undefined)
-                        return;
-                    if (opened.streamFailure !== undefined)
-                        throw opened.streamFailure;
-                    if (promptFailure !== undefined)
-                        throw promptFailure;
-                };
-                const chargeAndClearRejectedDecisionFailures = (failures) => {
-                    for (const failure of failures) {
-                        delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
-                    }
-                    decisionToolFailure = undefined;
-                    promptDecisionFailures = [];
-                };
-                await promptAllowingRejectedDecision(options.prompt);
-                while (!decisionSubmitted && retentionFailure === undefined && (boundaryResponse === undefined || decisionToolFailure !== undefined)
-                    && opened.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
-                    if (decisionToolFailure !== undefined) {
-                        const failures = promptDecisionFailures.length === 0
-                            ? [decisionToolFailure]
-                            : promptDecisionFailures;
-                        chargeAndClearRejectedDecisionFailures(failures);
-                        if (delivery.nextAction() === "no-receipt")
-                            boundaryResponse = undefined;
-                        if (delivery.nextAction() === "request-delivery") {
-                            // A rejection and its correction solicitation are one budget unit;
-                            // recordRejected already charged it.
-                            if (retainedResponse === rejectedDecisionResponse) {
-                                await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
-                                chargeAndClearRejectedDecisionFailures(promptDecisionFailures);
-                            }
-                        }
-                    }
-                    else {
-                        delivery.recordDeliveryRequest();
-                        await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
-                    }
-                }
-                if (!decisionSubmitted && retentionFailure === undefined && opened.streamFailure === undefined
-                    && delivery.nextAction() === "no-receipt") {
-                    const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
-                    const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
-                    const facts = delivery.facts({ runPointer, attemptPointer });
-                    decision = facts;
-                    // Late turn_end feedback cannot overturn a lifecycle that has already
-                    // charged this prompt to the exhausted shared budget.
-                    decisionToolFailure = undefined;
-                    auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-                    try {
-                        sitianReport({
-                            level: "event",
-                            kind: "auditor",
-                            cwd,
-                            sessionParent: parentSessionFile,
-                            payload: { type: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, ...facts },
-                            source: "evidence-child-executor",
-                        });
-                    }
-                    catch { }
-                    // Provenance is granted only after the lifecycle owner persisted the
-                    // current child record; accepted model arguments can never set it.
-                    noReceiptLifecycle = facts;
-                }
-            }
-            catch (error) {
-                if (options.signal?.aborted)
-                    throw options.signal.reason;
-                if (retentionFailure === undefined && opened.streamFailure !== undefined)
-                    throw opened.streamFailure;
-                if (retentionFailure === undefined)
-                    throw error;
-            }
-            if (options.signal?.aborted)
-                throw options.signal.reason;
-            if (retentionFailure === undefined && opened.streamFailure !== undefined)
-                throw opened.streamFailure;
-            if (!decisionSubmitted && decisionToolFailure !== undefined)
-                throw decisionToolFailure;
-            const relevantResponse = !decisionSubmitted
-                ? boundaryResponse
-                : (retainedResponse && retainedResponse.role === "assistant" && retainedResponse.content.some((part) => part.type === "toolCall" && part.name === tool.name)
-                    ? retainedResponse
-                    : undefined);
-            if (relevantResponse !== undefined) {
-                const toolFailure = findToolFailure(relevantResponse);
-                if (toolFailure !== undefined)
-                    throw toolFailure;
-            }
-            const assistants = [...retainedAssistants].reverse();
-            const response = !decisionSubmitted
-                ? assistants[0]
-                : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
-            if (boundaryResponse !== undefined && boundaryResponse.stopReason !== "error" && !decisionSubmitted && noReceiptLifecycle === undefined) {
-                const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
-                throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
-                    stopReason: boundaryResponse.stopReason,
-                    toolNames,
-                });
-            }
-            if (response !== undefined) {
-                try {
-                    if (retentionFailure !== undefined)
-                        throw retentionFailure;
-                    if (retainedResponse === undefined)
-                        options.retainResponse?.(response);
-                }
-                catch (retentionFailure) {
-                    if (response.stopReason !== "error")
-                        throw retentionFailure;
-                    // Do not trim/rewrite the held errorMessage bytes.
-                    const diagnostic = typeof response.errorMessage === "string" && response.errorMessage.trim() !== ""
-                        ? response.errorMessage
-                        : undefined;
-                    const projected = projectStructuredRemote(response);
-                    const failure = new Error(diagnostic ?? "", { cause: retentionFailure });
-                    if (projected.hasTestimony && (response.model || response.provider)) {
-                        failure.name = response.model || response.provider || "Error";
-                        failure.failureCode = response.provider || response.model;
-                    }
-                    failure.knownCause = projected.hasTestimony ? "provider" : "unrecognized";
-                    const retentionError = retentionFailure instanceof Error ? retentionFailure : undefined;
-                    const retentionCause = retentionError?.cause;
-                    failure.details = {
-                        ...(diagnostic === undefined ? {} : { errorMessage: diagnostic }),
-                        ...(projected.hasTestimony && response.provider ? { provider: response.provider } : {}),
-                        ...(projected.hasTestimony && response.model ? { model: response.model } : {}),
-                        ...(response.api ? { api: response.api } : {}),
-                        ...(response.rawStopReason ? { rawStopReason: response.rawStopReason } : {}),
-                        ...(projected.httpStatus === undefined ? {} : { httpStatus: projected.httpStatus }),
-                        ...(projected.diagnostics === undefined ? {} : { diagnostics: projected.diagnostics }),
-                        ...(projected.body === undefined ? {} : { body: projected.body }),
-                        ...(projected.code === undefined ? {} : { code: projected.code }),
-                        ...(projected.errno === undefined ? {} : { errno: projected.errno }),
-                        retentionFailure: {
-                            name: retentionError?.name ?? typeof retentionFailure,
-                            message: retentionError?.message ?? String(retentionFailure),
-                            ...(retentionError?.code !== undefined
-                                ? { code: retentionError.code }
-                                : {}),
-                            ...(retentionCause === undefined
-                                ? {}
-                                : {
-                                    cause: retentionCause instanceof Error
-                                        ? {
-                                            name: retentionCause.name,
-                                            message: retentionCause.message,
-                                            ...(retentionCause.code === undefined
-                                                ? {}
-                                                : { code: retentionCause.code }),
-                                        }
-                                        : retentionCause,
-                                }),
-                        },
-                    };
-                    const failureData = {
-                        version: 1,
-                        parent: binding.parent,
-                        failure: {
-                            cause: failure.knownCause,
-                            ...(failure.failureCode === undefined ? {} : { identity: { name: failure.name, code: failure.failureCode } }),
-                            ...(failure.message === "" ? {} : { diagnostic: failure.message }),
-                            details: failure.details,
-                        },
-                    };
-                    auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, failureData);
-                    try {
-                        sitianReport({
-                            level: "event",
-                            kind: "auditor",
-                            cwd,
-                            sessionParent: parentSessionFile,
-                            payload: { type: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, ...failureData },
-                            source: "evidence-child-executor",
-                        });
-                    }
-                    catch { }
-                    throw failure;
-                }
-            }
-            if (response === undefined
-                || response.stopReason === "error"
-                || (!decisionSubmitted && (response.stopReason === "aborted" || decision === undefined))) {
-                throw new Error(response?.errorMessage ?? `${options.roleLabel} exited without a readable decision receipt`);
-            }
-            return {
-                decision,
-                response: { ...response, usage: sessionUsage },
-                ...(noReceiptLifecycle === undefined ? {} : { noReceiptLifecycle }),
-            };
-        }
-        catch (error) {
-            auditorFailure = error;
-            throw error;
-        }
-        finally {
-            options.signal?.removeEventListener("abort", abort);
-            await runChildCleanup([() => unsubscribe(), () => handle.close()], auditorFailure, options.roleLabel);
-        }
+      }
+    };
+    const parentSessionManager = options.context.sessionManager;
+    const parentHeader = parentSessionManager?.getHeader?.();
+    const parentSessionFile = parentSessionManager?.getSessionFile?.();
+    const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
+    const auditorSessionManager = createRecordSession({
+      cwd,
+      kind: "auditor-roles",
+      ...parentSessionManager === void 0 ? {} : { parent: parentSessionManager }
     });
+    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    const evidenceToolFailures = /* @__PURE__ */ new Map();
+    const wrappedDossierTool = {
+      ...options.dossierTool,
+      label: options.roleLabel,
+      async execute(...args) {
+        try {
+          return await options.dossierTool.execute(...args);
+        } catch (error) {
+          evidenceToolFailures.set(args[0], error);
+          throw error;
+        }
+      }
+    };
+    const opened = await openPiInstitutionalSession({
+      cwd,
+      agentDir: scratch,
+      selection,
+      systemPrompt: options.systemPrompt,
+      customTools: [wrappedDossierTool, tool],
+      sessionManager: auditorSessionManager,
+      ...options.signal === void 0 ? {} : { signal: options.signal },
+      idleRetry: true,
+      label: options.roleLabel
+    });
+    const { handle } = opened;
+    const binding = {
+      version: 1,
+      parent: {
+        ...parentHeader?.id === void 0 ? {} : { sessionId: parentHeader.id },
+        ...parentSessionFile === void 0 ? {} : { sessionFile: parentSessionFile },
+        ...parentAttemptEntryId === null || parentAttemptEntryId === void 0 ? {} : { attemptEntryId: parentAttemptEntryId }
+      }
+    };
+    auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
+    try {
+      sitianReport({
+        level: "event",
+        kind: "auditor",
+        cwd,
+        sessionParent: parentSessionFile,
+        payload: { type: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, ...binding },
+        source: "evidence-child-executor"
+      });
+    } catch {
+    }
+    let turns = 0;
+    const sessionUsage = emptyUsage();
+    let boundaryResponse;
+    let retentionFailure;
+    let retainedResponse;
+    let rejectedDecisionResponse;
+    let promptNeighboringFailure;
+    let promptDecisionFailures = [];
+    const findToolFailure = (response) => {
+      const callIds = response.content.flatMap((part) => part.type === "toolCall" && part.name !== tool.name ? [part.id] : []);
+      for (const callId of callIds) {
+        if (evidenceToolFailures.has(callId)) return evidenceToolFailures.get(callId);
+      }
+      return void 0;
+    };
+    const drainRejectedDecisionFailures = (response) => {
+      for (const part of response.content) {
+        if (part.type !== "toolCall" || part.name !== tool.name || !decisionToolFailures.has(part.id)) continue;
+        decisionToolFailure = decisionToolFailures.get(part.id);
+        promptDecisionFailures.push(decisionToolFailure);
+        decisionToolFailures.delete(part.id);
+      }
+    };
+    const retainedAssistants = [];
+    const unsubscribe = handle.subscribe((event) => {
+      if (event.type === "tool_result" && event.isError === true && event.toolName !== tool.name) {
+        const detailText = extractToolResultText(event.details);
+        if (detailText !== void 0 && /^Tool\s+.+ not found$/.test(detailText.trim())) return;
+        const failure = detailText === void 0 ? new Error(event.toolName ?? "evidence tool failed") : new Error(detailText);
+        const errno = /^([A-Z_]+):/.exec(detailText ?? "");
+        if (errno !== null && errno[1] !== void 0) failure.code = errno[1];
+        evidenceToolFailures.set(event.toolCallId, failure);
+      }
+      if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === void 0) {
+        turns += 1;
+        if (event.usage) addUsage(sessionUsage, event.usage);
+        const msg = event.message;
+        retainedResponse = msg;
+        if (msg) {
+          retainedAssistants.push(msg);
+          try {
+            options.retainResponse?.(msg);
+          } catch (error) {
+            retentionFailure = error;
+          }
+          for (const part of msg.content) {
+            if (part.type === "toolCall" && part.name === tool.name) {
+              rejectedDecisionResponse = msg;
+              if (decision === void 0) {
+                decision = part.arguments === void 0 || typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0 ? void 0 : part.arguments;
+                decisionCallId = part.id;
+                if (part.arguments === void 0 || typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0) {
+                  decisionSubmitted = true;
+                }
+              }
+            }
+          }
+          if (turns >= AUDITOR_TURN_LIMIT || msg.stopReason === "error") boundaryResponse = msg;
+        }
+      }
+      if (event.type === "turn_end") {
+        if (rejectedDecisionResponse !== void 0) {
+          promptNeighboringFailure = findToolFailure(rejectedDecisionResponse);
+          drainRejectedDecisionFailures(rejectedDecisionResponse);
+        }
+        if (decisionSubmitted || promptNeighboringFailure !== void 0 || boundaryResponse !== void 0 && rejectedDecisionResponse === void 0 || retentionFailure !== void 0) {
+          handle.abort();
+        }
+      }
+    });
+    const abort = () => {
+      handle.abort();
+    };
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+    let auditorFailure;
+    try {
+      try {
+        const promptAllowingRejectedDecision = async (prompt) => {
+          rejectedDecisionResponse = void 0;
+          promptNeighboringFailure = void 0;
+          decisionToolFailure = void 0;
+          promptDecisionFailures = [];
+          let promptFailure;
+          try {
+            await handle.prompt(prompt);
+          } catch (error) {
+            promptFailure = error;
+          }
+          const correlatedResponse = rejectedDecisionResponse;
+          if (correlatedResponse !== void 0) {
+            promptNeighboringFailure ??= findToolFailure(correlatedResponse);
+            drainRejectedDecisionFailures(correlatedResponse);
+          }
+          if (promptNeighboringFailure !== void 0) throw promptNeighboringFailure;
+          if (decisionSubmitted) {
+            decisionToolFailure = void 0;
+            return;
+          }
+          if (decisionToolFailure !== void 0) return;
+          if (retentionFailure !== void 0) return;
+          if (opened.streamFailure !== void 0) throw opened.streamFailure;
+          if (promptFailure !== void 0) throw promptFailure;
+        };
+        const chargeAndClearRejectedDecisionFailures = (failures) => {
+          for (const failure of failures) {
+            delivery.recordRejected(failure instanceof Error ? failure.message : String(failure));
+          }
+          decisionToolFailure = void 0;
+          promptDecisionFailures = [];
+        };
+        await promptAllowingRejectedDecision(options.prompt);
+        while (!decisionSubmitted && retentionFailure === void 0 && (boundaryResponse === void 0 || decisionToolFailure !== void 0) && opened.streamFailure === void 0 && delivery.nextAction() === "request-delivery") {
+          if (decisionToolFailure !== void 0) {
+            const failures = promptDecisionFailures.length === 0 ? [decisionToolFailure] : promptDecisionFailures;
+            chargeAndClearRejectedDecisionFailures(failures);
+            if (delivery.nextAction() === "no-receipt") boundaryResponse = void 0;
+            if (delivery.nextAction() === "request-delivery") {
+              if (retainedResponse === rejectedDecisionResponse) {
+                await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+                chargeAndClearRejectedDecisionFailures(promptDecisionFailures);
+              }
+            }
+          } else {
+            delivery.recordDeliveryRequest();
+            await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+          }
+        }
+        if (!decisionSubmitted && retentionFailure === void 0 && opened.streamFailure === void 0 && delivery.nextAction() === "no-receipt") {
+          const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
+          const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
+          const facts = delivery.facts({ runPointer, attemptPointer });
+          decision = facts;
+          decisionToolFailure = void 0;
+          auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "auditor",
+              cwd,
+              sessionParent: parentSessionFile,
+              payload: { type: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, ...facts },
+              source: "evidence-child-executor"
+            });
+          } catch {
+          }
+          noReceiptLifecycle = facts;
+        }
+      } catch (error) {
+        if (options.signal?.aborted) throw options.signal.reason;
+        if (retentionFailure === void 0 && opened.streamFailure !== void 0) throw opened.streamFailure;
+        if (retentionFailure === void 0) throw error;
+      }
+      if (options.signal?.aborted) throw options.signal.reason;
+      if (retentionFailure === void 0 && opened.streamFailure !== void 0) throw opened.streamFailure;
+      if (!decisionSubmitted && decisionToolFailure !== void 0) throw decisionToolFailure;
+      const relevantResponse = !decisionSubmitted ? boundaryResponse : retainedResponse && retainedResponse.role === "assistant" && retainedResponse.content.some((part) => part.type === "toolCall" && part.name === tool.name) ? retainedResponse : void 0;
+      if (relevantResponse !== void 0) {
+        const toolFailure = findToolFailure(relevantResponse);
+        if (toolFailure !== void 0) throw toolFailure;
+      }
+      const assistants = [...retainedAssistants].reverse();
+      const response = !decisionSubmitted ? assistants[0] : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
+      if (boundaryResponse !== void 0 && boundaryResponse.stopReason !== "error" && !decisionSubmitted && noReceiptLifecycle === void 0) {
+        const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
+        throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
+          stopReason: boundaryResponse.stopReason,
+          toolNames
+        });
+      }
+      if (response !== void 0) {
+        try {
+          if (retentionFailure !== void 0) throw retentionFailure;
+          if (retainedResponse === void 0) options.retainResponse?.(response);
+        } catch (retentionFailure2) {
+          if (response.stopReason !== "error") throw retentionFailure2;
+          const diagnostic = typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? response.errorMessage : void 0;
+          const projected = projectStructuredRemote(response);
+          const failure = new Error(
+            diagnostic ?? "",
+            { cause: retentionFailure2 }
+          );
+          if (projected.hasTestimony && (response.model || response.provider)) {
+            failure.name = response.model || response.provider || "Error";
+            failure.failureCode = response.provider || response.model;
+          }
+          failure.knownCause = projected.hasTestimony ? "provider" : "unrecognized";
+          const retentionError = retentionFailure2 instanceof Error ? retentionFailure2 : void 0;
+          const retentionCause = retentionError?.cause;
+          failure.details = {
+            ...diagnostic === void 0 ? {} : { errorMessage: diagnostic },
+            ...projected.hasTestimony && response.provider ? { provider: response.provider } : {},
+            ...projected.hasTestimony && response.model ? { model: response.model } : {},
+            ...response.api ? { api: response.api } : {},
+            ...response.rawStopReason ? { rawStopReason: response.rawStopReason } : {},
+            ...projected.httpStatus === void 0 ? {} : { httpStatus: projected.httpStatus },
+            ...projected.diagnostics === void 0 ? {} : { diagnostics: projected.diagnostics },
+            ...projected.body === void 0 ? {} : { body: projected.body },
+            ...projected.code === void 0 ? {} : { code: projected.code },
+            ...projected.errno === void 0 ? {} : { errno: projected.errno },
+            retentionFailure: {
+              name: retentionError?.name ?? typeof retentionFailure2,
+              message: retentionError?.message ?? String(retentionFailure2),
+              ...retentionError?.code !== void 0 ? { code: retentionError.code } : {},
+              ...retentionCause === void 0 ? {} : {
+                cause: retentionCause instanceof Error ? {
+                  name: retentionCause.name,
+                  message: retentionCause.message,
+                  ...retentionCause.code === void 0 ? {} : { code: retentionCause.code }
+                } : retentionCause
+              }
+            }
+          };
+          const failureData = {
+            version: 1,
+            parent: binding.parent,
+            failure: {
+              cause: failure.knownCause,
+              ...failure.failureCode === void 0 ? {} : { identity: { name: failure.name, code: failure.failureCode } },
+              ...failure.message === "" ? {} : { diagnostic: failure.message },
+              details: failure.details
+            }
+          };
+          auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, failureData);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "auditor",
+              cwd,
+              sessionParent: parentSessionFile,
+              payload: { type: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, ...failureData },
+              source: "evidence-child-executor"
+            });
+          } catch {
+          }
+          throw failure;
+        }
+      }
+      if (response === void 0 || response.stopReason === "error" || !decisionSubmitted && (response.stopReason === "aborted" || decision === void 0)) {
+        throw new Error(response?.errorMessage ?? `${options.roleLabel} exited without a readable decision receipt`);
+      }
+      return {
+        decision,
+        response: { ...response, usage: sessionUsage },
+        ...noReceiptLifecycle === void 0 ? {} : { noReceiptLifecycle }
+      };
+    } catch (error) {
+      auditorFailure = error;
+      throw error;
+    } finally {
+      options.signal?.removeEventListener("abort", abort);
+      await runChildCleanup([() => unsubscribe(), () => handle.close()], auditorFailure, options.roleLabel);
+    }
+  });
 }
+function exactRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
+  return async ({ context, subject, modelSettingPath, tool }) => {
+    const resolved = await resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath);
+    let selection = resolved.selection;
+    let thinkingLevel = resolved.thinkingLevel;
+    let configuredLabel = resolved.configuredLabel;
+    const { createRecordSession } = await import("./archivist-record-entry.ts");
+    const sessionManager = createRecordSession({
+      cwd: context.cwd,
+      kind: "navigator",
+      subject,
+      parent: context.sessionManager
+    });
+    let providerFailure;
+    let observationWrite = Promise.resolve();
+    const assignProviderFailure = (fact) => {
+      if (fact !== void 0) providerFailure = fact;
+    };
+    const classifyTerminalMessage = (message) => {
+      if (!exactRecord(message)) {
+        assignProviderFailure(navigatorProviderFailureFromError(message));
+        return;
+      }
+      assignProviderFailure(navigatorProviderFailureFromDiagnostics(message.diagnostics));
+      if (providerFailure !== void 0) return;
+      if (message.role !== "assistant") assignProviderFailure(navigatorProviderFailureFromError(message));
+      if (providerFailure !== void 0) return;
+      const status = typeof message.statusCode === "number" ? message.statusCode : typeof message.status === "number" ? message.status : typeof message.httpStatus === "number" ? message.httpStatus : void 0;
+      if (typeof status === "number") {
+        assignProviderFailure(navigatorProviderFailureFromStatus(status));
+        if (providerFailure === void 0 && status >= 400 && status < 600) {
+          assignProviderFailure({ source: "transport", cause: "transport" });
+        }
+        const runDir = process.env.AK_ROLE_RUN_DIR;
+        const provider = typeof message.provider === "string" && message.provider.trim() !== "" ? message.provider : selection.provider;
+        if (typeof runDir === "string" && runDir.trim() !== "" && provider.trim() !== "") {
+          observationWrite = observationWrite.then(
+            () => recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider })
+          );
+        }
+      }
+    };
+    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    let opened;
+    try {
+      opened = await openPiInstitutionalSession({
+        cwd: context.cwd,
+        selection,
+        systemPrompt: "",
+        noTools: "all",
+        toolsAllowlist: [NAVIGATOR_PREPARE_TOOL_NAME],
+        customTools: [tool],
+        sessionManager,
+        label: "Navigator"
+      });
+    } catch (error) {
+      const fact = navigatorProviderFailureFromError(error);
+      throw navigatorUnavailableError(fact?.source ?? "session", error, fact?.cause ?? "session");
+    }
+    const unsubscribe = opened.handle.subscribe((event) => {
+      if (event.type === "message_end" && event.message !== void 0) {
+        const message = event.message;
+        if (exactRecord(message) && (message.stopReason === "error" || message.stopReason === "aborted")) {
+          classifyTerminalMessage(message);
+        }
+      }
+    });
+    let disposal;
+    const dispose = () => {
+      if (disposal === void 0) {
+        disposal = runChildCleanup(
+          [() => unsubscribe(), () => opened.handle.close()],
+          void 0,
+          "Navigator"
+        );
+      }
+      return disposal;
+    };
+    return {
+      prompt: async (text) => {
+        providerFailure = void 0;
+        observationWrite = Promise.resolve();
+        const failFrom = (error) => {
+          if (providerFailure === void 0) {
+            assignProviderFailure({ source: "transport", cause: "transport" });
+          }
+          const fact = providerFailure;
+          throw navigatorUnavailableError(fact.source, error, fact.cause);
+        };
+        let terminal;
+        try {
+          const turn = await opened.handle.prompt(text);
+          if (turn.stopReason === "error" || turn.stopReason === "aborted") {
+            const cause = turn.errorMessage ?? opened.streamFailure ?? "Navigator provider failure";
+            if (providerFailure === void 0 && opened.streamFailure !== void 0) {
+              classifyTerminalMessage(opened.streamFailure);
+            }
+            if (providerFailure === void 0) {
+              assignProviderFailure(navigatorProviderFailureFromError(
+                typeof cause === "object" && cause !== null ? cause : new Error(String(cause))
+              ));
+            }
+            terminal = cause;
+          } else if (opened.streamFailure !== void 0) {
+            if (providerFailure === void 0) classifyTerminalMessage(opened.streamFailure);
+            terminal = opened.streamFailure;
+          }
+        } catch (error) {
+          if (error instanceof NavigatorUnavailableError) throw error;
+          if (providerFailure === void 0) classifyTerminalMessage(error);
+          terminal = error;
+        }
+        await observationWrite;
+        if (terminal !== void 0) failFrom(terminal);
+      },
+      providerFailure: () => providerFailure,
+      appendEntry: (customType, data) => {
+        sessionManager.appendCustomEntry(customType, data);
+        try {
+          sitianReport({
+            level: "event",
+            kind: "attendance",
+            cwd: context.cwd,
+            sessionParent: sessionManager.getSessionFile(),
+            payload: { customType, data },
+            source: "evidence-child-executor"
+          });
+        } catch {
+        }
+      },
+      entries: () => sessionManager.getEntries(),
+      setModel: async (next, nextThinking) => {
+        let nextParsed;
+        try {
+          nextParsed = parseNavigatorModelSetting(next);
+        } catch (error) {
+          throw navigatorUnavailableError("model", error);
+        }
+        if (nextParsed.provider !== selection.provider || nextParsed.model !== selection.model) {
+          throw new NavigatorUnavailableError(
+            "model",
+            `Navigator model switch requires a new session: ${configuredLabel} \u2192 ${next}`
+          );
+        }
+        if (nextParsed.thinkingLevel !== nextThinking || thinkingLevel !== nextThinking) {
+          throw new NavigatorUnavailableError(
+            "thinking",
+            `Navigator thinking level ${nextThinking} is unavailable for ${next}`
+          );
+        }
+        selection = {
+          provider: nextParsed.provider,
+          model: nextParsed.model,
+          thinking: nextParsed.thinkingLevel
+        };
+        thinkingLevel = nextParsed.thinkingLevel;
+        configuredLabel = next;
+      },
+      getThinkingLevel: () => thinkingLevel,
+      recordPointer: () => sessionManager.getSessionDir(),
+      dispose
+    };
+  };
+}
+export {
+  AUDITOR_TURN_LIMIT,
+  AuditorTurnLimitError,
+  DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
+  createNativeNavigatorSessionFactory,
+  executeAuditorChild,
+  executeEvidenceChild,
+  withInProcessScratch
+};
