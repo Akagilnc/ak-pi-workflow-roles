@@ -19,12 +19,12 @@ import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
 import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
-  createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   registerNavigatorModelCommand,
   resolveNavigatorAuthorityMaterial,
   type NavigatorTargetRole,
 } from "../src/navigator-attendance.ts";
+import { createNativeNavigatorSessionFactory } from "../src/navigator-child-executor.ts";
 import { loadNavigatorWorkContext as loadHostNeutralNavigatorWorkContext } from "../src/navigator-work-context.ts";
 export { resolveNavigatorAuthorityMaterial };
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";

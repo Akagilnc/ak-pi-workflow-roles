@@ -20,10 +20,23 @@ export type InstitutionalResolutionPage = {
   };
 };
 
+/** Why institutional seat read failed — structured, not free-text. */
+export type InstitutionalResolutionFailureReason =
+  | "missing-page"
+  | "missing-seat"
+  | "corrupted"
+  | "invalid-format";
+
 export class InstitutionalResolutionError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly reason: InstitutionalResolutionFailureReason;
+  constructor(
+    message: string,
+    reason: InstitutionalResolutionFailureReason,
+    options?: ErrorOptions,
+  ) {
     super(message, options);
     this.name = "InstitutionalResolutionError";
+    this.reason = reason;
   }
 }
 
@@ -102,6 +115,7 @@ export async function readInstitutionalSeatSelection(
   } catch (error) {
     throw new InstitutionalResolutionError(
       `institutional resolution page is missing at ${filePath}`,
+      "missing-page",
       { cause: error },
     );
   }
@@ -112,6 +126,7 @@ export async function readInstitutionalSeatSelection(
   } catch (error) {
     throw new InstitutionalResolutionError(
       `institutional resolution page is corrupted at ${filePath}`,
+      "corrupted",
       { cause: error },
     );
   }
@@ -119,6 +134,7 @@ export async function readInstitutionalSeatSelection(
   if (typeof page !== "object" || page === null || (page as { version?: unknown }).version !== 1) {
     throw new InstitutionalResolutionError(
       `institutional resolution page format is invalid at ${filePath}`,
+      "invalid-format",
     );
   }
 
@@ -126,6 +142,7 @@ export async function readInstitutionalSeatSelection(
   if (typeof seats !== "object" || seats === null) {
     throw new InstitutionalResolutionError(
       `institutional resolution page missing seats object at ${filePath}`,
+      "invalid-format",
     );
   }
 
@@ -133,6 +150,7 @@ export async function readInstitutionalSeatSelection(
   if (selection === undefined) {
     throw new InstitutionalResolutionError(
       `institutional resolution page has no resolution for seat "${seat}" at ${filePath}`,
+      "missing-seat",
     );
   }
 

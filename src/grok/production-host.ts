@@ -19,11 +19,8 @@ import { loadDoctorCase } from "../doctor-evidence.ts";
 import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
 import { createPiJudgeAuditor } from "../judge-auditor.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
-import {
-  createNativeNavigatorSessionFactory,
-  createNavigatorAttendance,
-  type NavigatorTargetRole,
-} from "../navigator-attendance.ts";
+import { createNavigatorAttendance, type NavigatorTargetRole } from "../navigator-attendance.ts";
+import { createNativeNavigatorSessionFactory } from "../navigator-child-executor.ts";
 import { loadNavigatorWorkContext } from "../navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "../notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "../package-resources/method-skill-binding.ts";
