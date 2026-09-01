@@ -158,6 +158,8 @@ test("production Grok deps: doctor envelope terminal seals after institutional a
     const traced = {
       ...deps,
       loadDoctorCase: async () => caseBody,
+      // Doctor seal path does not need live navigator child; keep envelope light.
+      createNavigatorAttendance: undefined,
       async auditDoctorCompliance(options: Parameters<NonNullable<typeof deps.auditDoctorCompliance>>[0]) {
         bookedCandidate = [...options.context.sessionManager.getEntries()].some((entry) =>
           typeof entry === "object"

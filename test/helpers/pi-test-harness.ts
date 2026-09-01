@@ -1058,6 +1058,8 @@ export async function createMockProviderServer(
 ): Promise<{ server: Server; baseUrl: string; close: () => Promise<void> }> {
   const server = createServer(async (req, res) => {
     try {
+      // Prevent keep-alive sockets from holding the test process ~10s after close.
+      res.setHeader("Connection", "close");
       observers.onRequest?.({ headers: req.headers });
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -1241,6 +1243,10 @@ export async function createMockProviderServer(
       res.end(JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error) } }));
     }
   });
+  // Node defaults keep-alive ~5–10s; force immediate idle close so fixture teardown
+  // does not leave sockets holding the test process after closeAllConnections.
+  server.keepAliveTimeout = 1;
+  server.headersTimeout = 2;
   observers.onServer?.(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
