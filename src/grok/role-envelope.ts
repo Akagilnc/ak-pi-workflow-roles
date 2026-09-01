@@ -393,9 +393,8 @@ export async function prepareGrokRoleEnvelope(options: {
     try {
       await emit("session_shutdown", {});
       // Drop keep-alive / residual MCP relay sockets so test processes exit promptly.
-      if (typeof (server as { closeAllConnections?: () => void }).closeAllConnections === "function") {
-        (server as { closeAllConnections: () => void }).closeAllConnections();
-      }
+      const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
+      if (typeof closeAll === "function") closeAll.call(server);
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
