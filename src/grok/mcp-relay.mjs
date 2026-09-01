@@ -50,7 +50,8 @@ function send(message) { process.stdout.write(`${JSON.stringify(message)}\n`); }
 function ok(id, result) { if (id !== undefined) send({ jsonrpc: "2.0", id, result }); }
 function fail(id, error) { if (id !== undefined) send({ jsonrpc: "2.0", id, error: { code: -32000, message: error instanceof Error ? error.message : String(error) } }); }
 
-createInterface({ input: process.stdin }).on("line", async (line) => {
+const stdinLines = createInterface({ input: process.stdin });
+stdinLines.on("line", async (line) => {
   let message;
   try { message = JSON.parse(line); }
   catch (error) { fail(null, error); return; }
@@ -68,4 +69,12 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     }
   } catch (error) { fail(message.id, error); }
 });
-process.on("SIGTERM", () => { upstream.end(); process.exit(0); });
+function shutdown() {
+  stdinLines.close();
+  upstream.end();
+  process.exit(0);
+}
+// Parent harness ends stdin after the RPC exchange; exit cleanly (no SIGKILL).
+stdinLines.on("close", shutdown);
+process.stdin.on("end", shutdown);
+process.on("SIGTERM", shutdown);
