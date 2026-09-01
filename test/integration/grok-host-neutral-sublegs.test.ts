@@ -276,12 +276,15 @@ test("production Grok deps: reviewer dispatch runs institutional evidence child 
       ]),
     };
 
-    await withInstitutionalProviderFixture(faux, async () => {
-      const outcome = await deps.runReviewerDispatch!(execution, {
-        context: hostContext(root, runDirectory, []),
+    try {
+      await withInstitutionalProviderFixture(faux, async () => {
+        const outcome = await deps.runReviewerDispatch!(execution, {
+          context: hostContext(root, runDirectory, []),
+        });
+        assert.equal(outcome.legs.standards.status, "successful");
       });
-      assert.equal(outcome.legs.standards.status, "successful");
-    });
-    await deps.shutdownReviewerAgent?.();
+    } finally {
+      await deps.shutdownReviewerAgent?.();
+    }
   });
 });
