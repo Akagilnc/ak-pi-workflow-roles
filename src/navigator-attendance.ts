@@ -5,7 +5,6 @@ import { dirname, join, resolve } from "node:path";
 
 import { type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
 
 import {
   NAVIGATOR_INVOCATION_ENTRY,
@@ -18,15 +17,54 @@ import {
 } from "./activation-ledger-topology.ts";
 import type { HostContext } from "./host-contracts.ts";
 import { resolveNavigatorSeatSelection } from "./navigator-child-executor.ts";
+import {
+  NAVIGATOR_DEFAULT_MODEL,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  NavigatorUnavailableError,
+  navigatorModelSettingPath,
+  navigatorProviderFailure,
+  navigatorProviderFailureFromDiagnostics,
+  navigatorProviderFailureFromError,
+  navigatorProviderFailureFromStatus,
+  navigatorUnavailableError,
+  parseNavigatorModelSetting,
+  readNavigatorModelSetting,
+  writeNavigatorModelSetting,
+  type NavigatorPreparationSession,
+  type NavigatorProviderFailureFact,
+  type NavigatorSessionFactory,
+  type NavigatorUnavailableKey,
+} from "./navigator-session-contracts.ts";
 import { sitianReport } from "./sitian-facade.ts";
+
+export {
+  NAVIGATOR_DEFAULT_MODEL,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  NavigatorUnavailableError,
+  navigatorModelSettingPath,
+  navigatorProviderFailure,
+  navigatorProviderFailureFromDiagnostics,
+  navigatorProviderFailureFromError,
+  navigatorProviderFailureFromStatus,
+  navigatorUnavailableError,
+  parseNavigatorModelSetting,
+  readNavigatorModelSetting,
+  writeNavigatorModelSetting,
+  type NavigatorPreparationSession,
+  type NavigatorProviderFailureFact,
+  type NavigatorSessionFactory,
+  type NavigatorUnavailableKey,
+};
+export {
+  createNativeNavigatorSessionFactory,
+  resolveNavigatorSeatSelection,
+} from "./navigator-child-executor.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
-export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
 export const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "游奕使准备已接受";
-export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
 
 /**
  * Role-input document bytes win verbatim over work-root file authority when non-empty.
@@ -45,99 +83,6 @@ export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) =
 
 export type NavigatorTargetRole = PackagedRole;
 export type NavigatorPhase = "plan" | "apply" | null;
-export type NavigatorUnavailableKey = "context" | "session" | "model" | "thinking" | "auth" | "quota" | "transport" | "unknown";
-
-export class NavigatorUnavailableError extends Error {
-  readonly unavailableSource: NavigatorUnavailableKey;
-  readonly unavailableCause: NavigatorUnavailableKey;
-  readonly originalCause: unknown;
-
-  constructor(source: NavigatorUnavailableKey, message: string, cause: NavigatorUnavailableKey = source, originalCause?: unknown) {
-    super(message);
-    this.name = "NavigatorUnavailableError";
-    this.unavailableSource = source;
-    this.unavailableCause = cause;
-    this.originalCause = originalCause;
-  }
-}
-
-export type NavigatorProviderFailureFact = {
-  source: NavigatorUnavailableKey;
-  cause: NavigatorUnavailableKey;
-};
-
-export type NavigatorProviderErrorShape = {
-  statusCode?: number;
-  status?: number;
-  code?: string;
-};
-
-export function navigatorProviderFailureFromStatus(status: number | undefined): NavigatorProviderFailureFact | undefined {
-  if (status === 401 || status === 403) return { source: "auth", cause: "auth" };
-  if (status === 429) return { source: "quota", cause: "quota" };
-  return undefined;
-}
-
-function navigatorProviderFailureFromCode(code: unknown): NavigatorProviderFailureFact | undefined {
-  if (typeof code === "number") {
-    return navigatorProviderFailureFromStatus(code);
-  }
-  if (typeof code !== "string") return undefined;
-  if (code === "unauthorized" || code === "authentication_failed") return { source: "auth", cause: "auth" };
-  if (code === "insufficient_quota" || code === "quota_exhausted") return { source: "quota", cause: "quota" };
-  if (code === "transport_error") return { source: "transport", cause: "transport" };
-  return undefined;
-}
-
-export function navigatorProviderFailureFromError(error: unknown): NavigatorProviderFailureFact | undefined {
-  if (!exactRecord(error)) return undefined;
-  const statusCode = typeof error.statusCode === "number"
-    ? error.statusCode
-    : typeof error.status === "number"
-      ? error.status
-      : undefined;
-  return navigatorProviderFailureFromStatus(statusCode) ?? navigatorProviderFailureFromCode(error.code);
-}
-
-export function navigatorProviderFailureFromDiagnostics(diagnostics: unknown): NavigatorProviderFailureFact | undefined {
-  if (!Array.isArray(diagnostics)) return undefined;
-  for (const diagnostic of diagnostics) {
-    if (!exactRecord(diagnostic)) continue;
-    if (diagnostic.type === "provider_transport_failure") return { source: "transport", cause: "transport" };
-    if (exactRecord(diagnostic.error)) {
-      const fromCode = navigatorProviderFailureFromCode(diagnostic.error.code);
-      if (fromCode !== undefined) return fromCode;
-    }
-    if (exactRecord(diagnostic.details)) {
-      const status = typeof diagnostic.details.status === "number"
-        ? diagnostic.details.status
-        : typeof diagnostic.details.statusCode === "number"
-          ? diagnostic.details.statusCode
-          : undefined;
-      const fromStatus = navigatorProviderFailureFromStatus(status);
-      if (fromStatus !== undefined) return fromStatus;
-      const fromCode = navigatorProviderFailureFromCode(diagnostic.details.code);
-      if (fromCode !== undefined) return fromCode;
-    }
-  }
-  return undefined;
-}
-
-const navigatorProviderFailureSchema = Type.Object({
-  source: Type.Union([Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"), Type.Literal("auth"), Type.Literal("quota"), Type.Literal("transport"), Type.Literal("unknown")]),
-  cause: Type.Union([Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"), Type.Literal("auth"), Type.Literal("quota"), Type.Literal("transport"), Type.Literal("unknown")]),
-}, { additionalProperties: false });
-
-export function navigatorProviderFailure<T extends object>(message: T, source: NavigatorUnavailableKey, cause: NavigatorUnavailableKey = source): T & { navigatorFailure: NavigatorProviderFailureFact } {
-  const fact = { source, cause } satisfies NavigatorProviderFailureFact;
-  if (!Value.Check(navigatorProviderFailureSchema, fact)) throw new TypeError("Navigator provider failure fact is not typed");
-  return Object.assign(message, { navigatorFailure: fact });
-}
-
-export function navigatorUnavailableError(source: NavigatorUnavailableKey, error: unknown, cause: NavigatorUnavailableKey = source): NavigatorUnavailableError {
-  const message = error instanceof Error ? error.message : String(error);
-  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
-}
 export type NavigatorSettlement =
   | { kind: "accepted"; role: string; phase: NavigatorPhase; status?: string }
   | { kind: "human_decision"; role: string; phase: NavigatorPhase; status: string }
@@ -220,25 +165,6 @@ const prepareSchema = Type.Object({
   })),
 }, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
-
-export type NavigatorPreparationSession = {
-  prompt(text: string): Promise<void>;
-  appendEntry(customType: string, data: unknown): void;
-  entries(): readonly unknown[];
-  providerFailure?(): NavigatorProviderFailureFact | undefined;
-  setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
-  getThinkingLevel?(): string;
-  /** Durable record pointer for unchanged no-receipt lifecycle facts. Required — missing pointer fails honestly. */
-  recordPointer(): string;
-  dispose(): void;
-};
-
-export type NavigatorSessionFactory = (options: {
-  context: HostContext;
-  subject: string;
-  modelSettingPath?: string;
-  tool: ToolDefinition;
-}) => Promise<NavigatorPreparationSession>;
 
 export type NavigatorAttendanceOptions = {
   context: HostContext;
@@ -419,39 +345,6 @@ export function navigatorSubjectKeyForInput(subjectRoot: string, reference: stri
     return subjectRoot;
   }
   return navigatorSubjectKey(subjectRoot, resolvedReference);
-}
-
-export function navigatorModelSettingPath(): string {
-  return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "navigator-model.json");
-}
-export async function readNavigatorModelSetting(path = navigatorModelSettingPath()): Promise<string> {
-  try {
-    const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
-    if (!exactRecord(raw) || typeof raw.model !== "string" || raw.model.trim() === "") throw new Error("Navigator model setting is malformed");
-    return raw.model;
-  } catch (error) {
-    // Contract: README.md#Navigator-attendance — the absent optional persistent setting uses the documented default; all other causes propagate.
-    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return NAVIGATOR_DEFAULT_MODEL;
-    throw error;
-  }
-}
-export async function writeNavigatorModelSetting(model: string, path = navigatorModelSettingPath()): Promise<void> {
-  const normalized = model.trim();
-  parseNavigatorModelSetting(normalized);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify({ model: normalized }) + "\n", "utf8");
-}
-export function parseNavigatorModelSetting(value: string): { provider: string; model: string; thinkingLevel: "off" | "max" } {
-  const slash = value.indexOf("/");
-  if (slash <= 0 || slash === value.length - 1) throw new Error("Navigator model setting must be provider/model[:max]");
-  const provider = value.slice(0, slash);
-  const modelWithThinking = value.slice(slash + 1);
-  const colon = modelWithThinking.lastIndexOf(":");
-  const suffix = colon < 0 ? undefined : modelWithThinking.slice(colon + 1);
-  if (suffix !== undefined && suffix !== "max") throw new Error("Navigator model setting must use :max or omit the thinking suffix");
-  const model = colon < 0 ? modelWithThinking : modelWithThinking.slice(0, colon);
-  if (model === "") throw new Error("Navigator model setting must include a model");
-  return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
 }
 
 export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => void): ToolDefinition {
@@ -1059,12 +952,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
 }
 
 export type NavigatorAttendance = ReturnType<typeof createNavigatorAttendance>;
-
-// Institutional child lifecycle lives in navigator-child-executor (ADR 0018).
-export {
-  createNativeNavigatorSessionFactory,
-  resolveNavigatorSeatSelection,
-} from "./navigator-child-executor.ts";
 
 export function registerNavigatorModelCommand(pi: ExtensionAPI, path = navigatorModelSettingPath()): void {
   pi.registerCommand("navigator-model", {

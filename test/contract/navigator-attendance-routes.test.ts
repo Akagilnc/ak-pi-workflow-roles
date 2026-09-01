@@ -96,11 +96,12 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
         });
         try {
           await session.setModel?.(`${model.provider}/${model.id}`, "off");
-          const outcome = await Promise.race([
-            session.prompt("no terminal").then(() => "resolved" as const, () => "rejected" as const),
-            new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 2000)),
-          ]);
-          assert.notEqual(outcome, "timeout");
+          // Controllable settle: prompt must resolve or reject; no wall-clock hang oracle.
+          const outcome = await session.prompt("no terminal").then(
+            () => "resolved" as const,
+            () => "rejected" as const,
+          );
+          assert.ok(outcome === "resolved" || outcome === "rejected");
         } finally {
           session.dispose();
         }

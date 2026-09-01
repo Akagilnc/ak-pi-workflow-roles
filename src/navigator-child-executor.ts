@@ -1,10 +1,8 @@
 /**
  * Shared Navigator institutional-child lifecycle seam (#590 / ADR 0018).
  * Owns scratch sessionManager, openPiInstitutionalSession, subscribe/close.
- * Navigator attendance module only consumes NavigatorPreparationSession handles.
+ * Imports only session contracts (no lifecycle) — never the attendance consumer.
  */
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-
 import { createRecordSession } from "./archivist-record-entry.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext, HostInstitutionalModelSelection } from "./host-contracts.ts";
@@ -22,10 +20,9 @@ import {
   navigatorUnavailableError,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
-  type NavigatorPreparationSession,
   type NavigatorProviderFailureFact,
   type NavigatorSessionFactory,
-} from "./navigator-attendance.ts";
+} from "./navigator-session-contracts.ts";
 import { sitianReport } from "./sitian-facade.ts";
 
 function exactRecord(value: unknown): value is Record<string, unknown> {
@@ -33,9 +30,8 @@ function exactRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Resolve navigator seat selection without ambient parent host context (#590).
- * Prefer the run's institutional-resolution page; fall back to navigator-model.json
- * for bare/developer seams that never wrote a page.
+ * Prefer institutional-resolution navigator seat; fall back to model file only when
+ * the page is missing or lacks the seat (typed reasons). Corrupted pages fail loud.
  */
 export async function resolveNavigatorSeatSelection(
   context: HostContext,
@@ -57,13 +53,11 @@ export async function resolveNavigatorSeatSelection(
         thinkingLevel,
       };
     } catch (error) {
-      // Only documented bare-seam fallback: missing page or missing navigator seat.
-      // Corrupted/invalid pages keep their cause (失败诚实宪法).
       if (
         error instanceof InstitutionalResolutionError
         && (error.reason === "missing-page" || error.reason === "missing-seat")
       ) {
-        // fall through to persistent model setting
+        // documented bare-seam fallback
       } else {
         throw error instanceof NavigatorUnavailableError
           ? error
@@ -95,12 +89,11 @@ export async function resolveNavigatorSeatSelection(
 }
 
 /**
- * Host-neutral navigator session factory (#590 / #233 pattern).
- * Self-held institutional child session via openPiInstitutionalSession; seat from
- * institutional-resolution (or navigator-model.json fallback). Does not consume
- * parent ExtensionContext.modelRegistry.
+ * Host-neutral navigator session factory: institutional child via openPiInstitutionalSession.
  */
-export function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()): NavigatorSessionFactory {
+export function createNativeNavigatorSessionFactory(
+  defaultModelSettingPath = navigatorModelSettingPath(),
+): NavigatorSessionFactory {
   return async ({ context, subject, modelSettingPath, tool }) => {
     const resolved = await resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath);
     let selection = resolved.selection;
@@ -136,7 +129,6 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
             : undefined;
       if (typeof status === "number") {
         assignProviderFailure(navigatorProviderFailureFromStatus(status));
-        // Institutional HTTP path: non-auth/quota 4xx/5xx remains transport (diagnostics may be stripped).
         if (providerFailure === undefined && status >= 400 && status < 600) {
           assignProviderFailure({ source: "transport", cause: "transport" });
         }
@@ -149,7 +141,6 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       opened = await openPiInstitutionalSession({
         cwd: context.cwd,
         selection,
-        // Soul/routebook ride the prepare prompt; system materials stay empty here.
         systemPrompt: "",
         noTools: "all",
         toolsAllowlist: [NAVIGATOR_PREPARE_TOOL_NAME],
@@ -193,8 +184,6 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         };
         try {
           const turn = await opened.handle.prompt(text);
-          // Prefer terminal-message classification (holds statusCode/diagnostics).
-          // streamFailure is a secondary cause carrier and must not wipe a typed fact.
           if (turn.stopReason === "error" || turn.stopReason === "aborted") {
             const cause = turn.errorMessage ?? opened.streamFailure ?? "Navigator provider failure";
             if (providerFailure === undefined && opened.streamFailure !== undefined) {
@@ -227,10 +216,10 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
             cwd: context.cwd,
             sessionParent: sessionManager.getSessionFile(),
             payload: { customType, data },
-            source: "navigator-attendance",
+            source: "navigator-child-executor",
           });
         } catch {
-          // best-effort persistence in attendance adapter
+          // best-effort
         }
       },
       entries: () => sessionManager.getEntries(),
@@ -241,8 +230,6 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         } catch (error) {
           throw navigatorUnavailableError("model", error);
         }
-        // Institutional handle has no live setModel; same-selection validate only.
-        // Model switches require a fresh attendance session (prepare recreates).
         if (
           nextParsed.provider !== selection.provider
           || nextParsed.model !== selection.model
@@ -272,4 +259,3 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     };
   };
 }
-
