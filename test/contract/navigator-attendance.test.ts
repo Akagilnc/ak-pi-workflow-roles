@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   createNativeNavigatorSessionFactory,
@@ -398,96 +399,181 @@ test("model settings are exact and typed settlement projection ignores prose and
   // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
 
-test("host-neutral native factory ignores parent modelRegistry and fails loud on unknown model", async () => {
+function hostContextFor(root: string, sessionFile = join(root, "session", "session.jsonl")) {
+  return {
+    cwd: root,
+    mode: "print" as const,
+    model: undefined,
+    sessionManager: {
+      getLeafEntry: () => undefined,
+      getLeafId: () => null,
+      getEntries: () => [],
+      getSessionDir: () => dirname(sessionFile),
+      getSessionFile: () => sessionFile,
+    },
+    abort() {},
+  };
+}
+
+test("host-neutral native factory opens without parent modelRegistry and reports thinking from setting", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-model-"));
-  const previous = process.env.PI_CODING_AGENT_DIR;
   try {
-    process.env.PI_CODING_AGENT_DIR = root;
     seedGitRepository(root);
+    const faux = fauxProvider({ provider: "nav-host-model", api: "openai-completions" });
+    const model = faux.getModel();
+    // Explicit path: withInstitutionalProviderFixture owns PI_CODING_AGENT_DIR.
     const setting = join(root, "navigator-model.json");
-    await writeFile(setting, JSON.stringify({ model: "missing/provider-does-not-exist" }));
-    // Deliberately omit modelRegistry — factory must not require parent ExtensionContext.
-    const hostContext = {
-      cwd: root,
-      mode: "print",
-      model: undefined,
-      sessionManager: {
-        getLeafEntry: () => undefined,
-        getLeafId: () => null,
-        getEntries: () => [],
-        getSessionDir: () => join(root, "session"),
-        getSessionFile: () => join(root, "session", "session.jsonl"),
-      },
-      abort() {},
-    };
-    const factory = createNativeNavigatorSessionFactory();
-    const tool = createNavigatorPrepareTool(() => {});
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}:max` }));
+    await withInstitutionalProviderFixture(faux, async () => {
+      const factory = createNativeNavigatorSessionFactory();
+      const tool = createNavigatorPrepareTool(() => {});
+      const session = await factory({
+        context: hostContextFor(root),
+        subject: join(root, "session"),
+        modelSettingPath: setting,
+        tool,
+      });
+      try {
+        assert.equal(session.getThinkingLevel?.(), "max");
+        await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
+        assert.equal(session.getThinkingLevel?.(), "max");
+        await assert.rejects(
+          async () => {
+            await session.setModel?.(`${model.provider}/other-model`, "off");
+          },
+          (error: unknown) => error instanceof NavigatorUnavailableError
+            && error.unavailableSource === "model"
+            && error.unavailableCause === "model",
+        );
+      } finally {
+        session.dispose();
+      }
+    });
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-off"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      try {
+        assert.equal(session.getThinkingLevel?.(), "off");
+      } finally {
+        session.dispose();
+      }
+    });
+    await writeFile(setting, JSON.stringify({ model: "missing/provider-absent" }));
     await assert.rejects(
-      factory({ context: hostContext, subject: join(root, "session"), tool }),
+      () => createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-missing"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      }),
       (error: unknown) => error instanceof NavigatorUnavailableError
-        && (error.unavailableSource === "model" || error.unavailableSource === "auth" || error.unavailableSource === "session"),
+        && error.unavailableSource === "auth"
+        && error.unavailableCause === "auth",
     );
   } catch (error) {
-    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previous;
     await cleanupTempDir(root, error);
     throw error;
   }
-  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = previous;
+  await cleanupTempDir(root);
+});
+
+test("host-neutral native factory classifies auth/quota/transport from institutional prompt terminals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-stream-"));
+  try {
+    seedGitRepository(root);
+    const setting = join(root, "navigator-model.json");
+    const cases = [
+      { name: "auth", source: "auth" as const, status: 401 },
+      { name: "quota", source: "quota" as const, status: 429 },
+      { name: "transport", source: "transport" as const },
+    ] as const;
+    for (const scenario of cases) {
+      const faux = fauxProvider({ provider: `nav-stream-${scenario.name}`, api: "openai-completions" });
+      const model = faux.getModel();
+      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      const terminal = scenario.source === "transport"
+        ? {
+          ...fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }),
+          diagnostics: [{
+            type: "provider_transport_failure",
+            timestamp: Date.now(),
+            error: { message: "opaque", code: "transport_error" },
+          }],
+        }
+        : Object.assign(
+          fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }),
+          { statusCode: scenario.status, status: scenario.status },
+        );
+      faux.setResponses([terminal]);
+      await withInstitutionalProviderFixture(faux, async () => {
+        const session = await createNativeNavigatorSessionFactory()({
+          context: hostContextFor(root),
+          subject: join(root, `session-${scenario.name}`),
+          modelSettingPath: setting,
+          tool: createNavigatorPrepareTool(() => {}),
+        });
+        try {
+          await session.setModel?.(`${model.provider}/${model.id}`, "off");
+          await assert.rejects(
+            () => session.prompt("prepare routes"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.unavailableSource === scenario.source
+              && error.unavailableCause === scenario.source,
+          );
+          assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source });
+        } finally {
+          session.dispose();
+        }
+      });
+    }
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
   await cleanupTempDir(root);
 });
 
 test("host-neutral native factory prefers institutional-resolution navigator seat over model file", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-institutional-seat-"));
-  const previous = process.env.PI_CODING_AGENT_DIR;
   try {
-    process.env.PI_CODING_AGENT_DIR = root;
     seedGitRepository(root);
     const runDirectory = join(root, "run");
     await mkdir(join(runDirectory, "session"), { recursive: true });
+    const faux = fauxProvider({ provider: "nav-page-seat", api: "openai-completions" });
+    const model = faux.getModel();
     await writeFile(
       join(runDirectory, "institutional-resolution.json"),
       `${JSON.stringify({
         version: 1,
         seats: {
-          navigator: { provider: "missing-institutional", model: "nav-1", thinking: "off" },
+          navigator: { provider: model.provider, model: model.id, thinking: "max" },
         },
       }, null, 2)}\n`,
     );
-    // File would resolve a different provider; page must win.
+    // File would open a different provider; page must win.
     await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: "file-provider/file-model" }));
-    const hostContext = {
-      cwd: root,
-      mode: "print",
-      model: undefined,
-      sessionManager: {
-        getLeafEntry: () => undefined,
-        getLeafId: () => null,
-        getEntries: () => [],
-        getSessionDir: () => join(runDirectory, "session"),
-        getSessionFile: () => join(runDirectory, "session", "session.jsonl"),
-      },
-      abort() {},
-    };
-    const factory = createNativeNavigatorSessionFactory();
-    const tool = createNavigatorPrepareTool(() => {});
-    await assert.rejects(
-      factory({ context: hostContext, subject: join(runDirectory, "session"), tool }),
-      (error: unknown) => {
-        assert.ok(error instanceof NavigatorUnavailableError);
-        assert.match(error.message, /missing-institutional|nav-1|authentication|provider/i);
-        return true;
-      },
-    );
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root, join(runDirectory, "session", "session.jsonl")),
+        subject: join(runDirectory, "session"),
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      try {
+        assert.equal(session.getThinkingLevel?.(), "max");
+        await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
+      } finally {
+        session.dispose();
+      }
+    });
   } catch (error) {
-    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previous;
     await cleanupTempDir(root, error);
     throw error;
   }
-  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = previous;
   await cleanupTempDir(root);
 });
 

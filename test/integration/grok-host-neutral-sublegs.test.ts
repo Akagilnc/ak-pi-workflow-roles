@@ -1,7 +1,6 @@
 /**
- * #590 tracer: Grok public envelope entry triggers a real institutional audit sub-leg.
- * Doctor is the minimal seat (no gatekeeper before audit). Entry = prepareGrokRoleEnvelope
- * + MCP tools/call; production createGrokRoleRuntimeDependencies supplies the auditor.
+ * #590 tracer: Grok envelope entry → doctor terminal → production-wired doctor
+ * auditor → institutional child → typed pass. No free-text oracles.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -11,13 +10,16 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import test from "node:test";
 
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+
+import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
 import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createGrokRoleRuntimeDependencies } from "../../src/grok/production-host.ts";
 import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
 const zero = { count: 0, sources: [] as string[] };
 function patient(runsPath: string): DoctorCase {
@@ -49,6 +51,7 @@ function patient(runsPath: string): DoctorCase {
 
 type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
 
+/** Same MCP JSON-line face used by grok-role-envelope tests. */
 async function callThroughMcp(
   server: McpServer,
   name: string,
@@ -72,7 +75,7 @@ async function callThroughMcp(
   }
 }
 
-test("Grok envelope doctor terminal drives production auditSoul-wired doctor auditor to institutional open", async () => {
+test("Grok envelope doctor terminal drives production auditor to typed pass with booked candidate", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-audit-tracer-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
@@ -89,74 +92,84 @@ test("Grok envelope doctor terminal drives production auditSoul-wired doctor aud
 
     const runDirectory = join(root, "runs", "doctor-audit");
     await mkdir(join(runDirectory, "session"), { recursive: true });
-    // Seat page so the real auditor reaches institutional open (not missing-page).
+
+    const faux = fauxProvider({ provider: "grok-audit-tracer", api: "openai-completions" });
+    const model = faux.getModel();
     await writeInstitutionalSeatTable(runDirectory, {
-      auditor: seatSelection("ak-test-provider", "ak-test-model"),
+      auditor: seatSelection(model.provider, model.id),
     });
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall(DOCTOR_AUDIT_TOOL_NAME, {
+          status: "pass",
+          violations: [],
+          conflicts: [],
+          decisionGate: null,
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
 
     const deps = createGrokRoleRuntimeDependencies(packageRoot);
-    let auditInvoked = false;
     let bookedCandidate = false;
     const traced = {
       ...deps,
       loadDoctorCase: async () => caseBody,
       async auditDoctorCompliance(options: Parameters<NonNullable<typeof deps.auditDoctorCompliance>>[0]) {
-        auditInvoked = true;
         const entries = [...options.context.sessionManager.getEntries()];
         bookedCandidate = entries.some((entry) =>
           typeof entry === "object"
           && entry !== null
           && (entry as { type?: unknown; customType?: unknown }).type === "custom"
           && (entry as { customType?: unknown }).customType === "ak_doctor_audit_candidate");
-        // Real production auditor (createPiDoctorAuditor) — institutional open, not not-wired stub.
         return deps.auditDoctorCompliance!(options);
       },
     };
 
-    const socketPath = join(root, "mcp.sock");
-    const request = {
-      principal: {},
-      activation: { role: "doctor", casePath },
-      methods: [],
-      continuation: { kind: "initial", prompt: "diagnose the case" },
-      model: { provider: "xai", model: "grok-4.5" },
-      cwd: process.cwd(),
-      home: root,
-      agentDir: join(root, "agent"),
-      runDirectory,
-    } as RoleTurnRequest;
+    await withInstitutionalProviderFixture(faux, async () => {
+      const socketPath = join(root, "mcp.sock");
+      const request = {
+        principal: {},
+        activation: { role: "doctor", casePath },
+        methods: [],
+        continuation: { kind: "initial", prompt: "diagnose the case" },
+        model: { provider: model.provider, model: model.id },
+        cwd: process.cwd(),
+        home: root,
+        agentDir: join(root, "agent"),
+        runDirectory,
+      } as RoleTurnRequest;
 
-    const prepared = await prepareGrokRoleEnvelope({
-      request,
-      socketPath,
-      dependencies: traced,
-    });
-    try {
-      const server = prepared.mcpServers[0] as McpServer;
-      const reply = await callThroughMcp(server, DOCTOR_OUTPUT_TOOL_NAME, {
-        status: "refused",
-        reason: "Session bytes are incomplete.",
-        missingEvidence: [{ need: "session header", targetKeys: ["case"] }],
+      const prepared = await prepareGrokRoleEnvelope({
+        request,
+        socketPath,
+        dependencies: traced,
       });
+      try {
+        const server = prepared.mcpServers[0] as McpServer;
+        const refusal = {
+          status: "refused",
+          reason: "Session bytes are incomplete.",
+          missingEvidence: [{ need: "session header", targetKeys: ["case"] }],
+        };
+        const reply = await callThroughMcp(server, DOCTOR_OUTPUT_TOOL_NAME, refusal);
+        assert.equal(reply.error, undefined);
+        const result = reply.result as {
+          isError?: boolean;
+          structuredContent?: { submissionDisposition?: unknown; status?: unknown };
+        };
+        // Tool face is not infrastructure-error; round seal owns acceptance (envelope contract).
+        assert.equal(result?.isError, undefined);
+        assert.equal(result?.structuredContent?.submissionDisposition, "pending-round-closure");
+        assert.equal(bookedCandidate, true);
 
-      // Production auditor ran: candidate booked on host-neutral books, then institutional open failed loud.
-      assert.equal(auditInvoked, true);
-      assert.equal(bookedCandidate, true);
-      assert.equal(reply.error, undefined);
-      const result = reply.result as { isError?: boolean; content?: Array<{ type?: string; text?: string }>; structuredContent?: unknown };
-      assert.equal(result?.isError, true);
-      const text = (result?.content ?? [])
-        .map((part) => (typeof part?.text === "string" ? part.text : ""))
-        .join("\n");
-      assert.equal(text.includes("not wired"), false, text);
-      // Reached institutional open / auth (real auditor child), not a pre-wire stub.
-      assert.match(text, /authentication failed|provider is not configured|institutional|Compliance|audit/i);
-    } finally {
-      await prepared.dispose?.();
-    }
+        const closure = await prepared.closeRound();
+        assert.equal(closure.accepted, true);
+      } finally {
+        await prepared.dispose?.();
+      }
+    });
   } finally {
-    // failInfrastructure stamps exitCode=1 on print-mode HostContext; clear for the test runner.
-    process.exitCode = 0;
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
