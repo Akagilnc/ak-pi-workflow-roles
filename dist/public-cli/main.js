@@ -18473,7 +18473,7 @@ var init_option_definitions = __esm({
       },
       "gleaner-left": {
         command: "gleaner-left",
-        summary: "Unanchored pre-merge memorials; findings only, no bounce.",
+        summary: "Unanchored pre-merge memorials; findings only, no bounce. Instruction may be empty; callers must not pass directional instruction.",
         usage: ["ak-role gleaner-left --base <revision> [options] [instruction]"],
         examples: [
           "ak-role gleaner-left --base main",
@@ -20080,7 +20080,6 @@ function buildNotaryTransportPrompt(_admitted, engineMaterial) {
   return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
 }
 function parseGleanerLeftArgv(args) {
-  const attachmentPaths = [];
   let project;
   let baseRevision;
   const positional = [];
@@ -20114,7 +20113,6 @@ function parseGleanerLeftArgv(args) {
   options.assertRequired();
   return {
     instruction: positional.join(" "),
-    attachmentPaths,
     baseRevision,
     ...project === void 0 ? {} : { project }
   };
@@ -20141,14 +20139,7 @@ async function admitGleanerLeftInvocation(options) {
     role: "gleaner-left",
     home: options.home
   });
-  const attachmentsDirectory = join14(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
@@ -20158,17 +20149,10 @@ async function admitGleanerLeftInvocation(options) {
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind
-    })),
+    attachments: [],
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId }
   };
   const admittedRequestPath = join14(runDirectory, "admitted-request.json");
@@ -20188,12 +20172,11 @@ async function admitGleanerLeftInvocation(options) {
     projectRoot,
     instruction,
     instructionEmpty,
-    attachments,
+    attachments: [],
     runDirectory,
     principal,
     admittedRequestPath,
     baseRevision: options.baseRevision,
-    ...ticketFields,
     ...options.correlationId === void 0 ? {} : { correlationId: options.correlationId }
   };
 }
@@ -24530,12 +24513,12 @@ async function settleLawfulDoctorTerminalResult(admitted, authority) {
 async function trySettleDoctorTerminalResult(admitted, authority) {
   return settleLawfulDoctorTerminalResult(admitted, authority);
 }
-async function settleLawfulNotaryTerminalResult(admitted, authority) {
+async function settleLawfulOneShotAcceptedTerminalResult(admitted, authority, spec) {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted);
-  if (roleOutcome?.role !== "notary") {
+  if (roleOutcome?.role !== spec.role) {
     let acceptedNonUsable;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
@@ -24544,7 +24527,7 @@ async function settleLawfulNotaryTerminalResult(admitted, authority) {
         entries,
         index,
         message,
-        NOTARY_OUTPUT_TOOL_NAME
+        spec.toolName
       );
       if (residual !== void 0) {
         return settleFailureTerminalResult(admitted, {
@@ -24553,10 +24536,8 @@ async function settleLawfulNotaryTerminalResult(admitted, authority) {
           details: { candidate: residual.candidate, acceptedReceipt: false }
         }, authority);
       }
-      if (acceptedNonUsable === void 0 && message.toolName === NOTARY_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
-        try {
-          validateRecordedNotaryOutput(message.details);
-        } catch {
+      if (acceptedNonUsable === void 0 && message.toolName === spec.toolName && isAcceptedPackagedRoleTerminalResult(message)) {
+        if (!spec.tryAcceptDetails(message.details)) {
           acceptedNonUsable = message.details;
         }
       }
@@ -24564,151 +24545,92 @@ async function settleLawfulNotaryTerminalResult(admitted, authority) {
     if (acceptedNonUsable !== void 0) {
       return settleFailureTerminalResult(admitted, {
         cause: "output",
-        diagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
+        diagnostic: spec.nonUsableDiagnostic,
         details: { candidate: acceptedNonUsable, acceptedReceipt: false }
       }, authority);
     }
     return void 0;
   }
-  const output = validateRecordedNotaryOutput(roleOutcome.decisiveFacts);
-  const accepted = {
-    kind: "accepted",
-    role: "notary",
-    status: roleOutcome.status,
-    decisiveFacts: notaryDecisiveFacts(output)
-  };
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
     {
-      roleOutcome: accepted,
+      roleOutcome: spec.projectAccepted(roleOutcome),
       navigator,
       artifacts: [],
       runId: admitted.runId
     },
     sessionDirectory
   );
+}
+function tryAcceptWithValidator(validate) {
+  return (details) => {
+    try {
+      validate(details);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+async function settleLawfulNotaryTerminalResult(admitted, authority) {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "notary",
+    toolName: NOTARY_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "\u7B26\u5B9D\u90CE\u56DE\u6267\u65E0\u663E\u5F0F pass/bounce",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedNotaryOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedNotaryOutput(sealed.decisiveFacts);
+      const accepted = {
+        kind: "accepted",
+        role: "notary",
+        status: sealed.status,
+        decisiveFacts: notaryDecisiveFacts(output)
+      };
+      return accepted;
+    }
+  });
 }
 async function trySettleNotaryTerminalResult(admitted, authority) {
   return settleLawfulNotaryTerminalResult(admitted, authority);
 }
 async function settleLawfulCountersignTerminalResult(admitted, authority) {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted);
-  if (roleOutcome?.role !== "countersign") {
-    let acceptedNonUsable;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(
-        entries,
-        index,
-        message,
-        COUNTERSIGN_OUTPUT_TOOL_NAME
-      );
-      if (residual !== void 0) {
-        return settleFailureTerminalResult(admitted, {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details: { candidate: residual.candidate, acceptedReceipt: false }
-        }, authority);
-      }
-      if (acceptedNonUsable === void 0 && message.toolName === COUNTERSIGN_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
-        try {
-          validateRecordedCountersignOutput(message.details);
-        } catch {
-          acceptedNonUsable = message.details;
-        }
-      }
-    }
-    if (acceptedNonUsable !== void 0) {
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: "\u7ED9\u4E8B\u4E2D\u56DE\u6267\u65E0\u663E\u5F0F \u7F72/\u5C01\u9A73/\u4E0A\u5448",
-        details: { candidate: acceptedNonUsable, acceptedReceipt: false }
-      }, authority);
-    }
-    return void 0;
-  }
-  const verdict = validateRecordedCountersignOutput(roleOutcome.decisiveFacts);
-  const accepted = {
-    kind: "accepted",
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
     role: "countersign",
-    status: roleOutcome.status,
-    decisiveFacts: countersignDecisiveFacts(verdict, roleOutcome.status)
-  };
-  const navigator = extractNavigatorFact(entries);
-  return withOptionalGateProjection(
-    {
-      roleOutcome: accepted,
-      navigator,
-      artifacts: [],
-      runId: admitted.runId
-    },
-    sessionDirectory
-  );
+    toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "\u7ED9\u4E8B\u4E2D\u56DE\u6267\u65E0\u663E\u5F0F \u7F72/\u5C01\u9A73/\u4E0A\u5448",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedCountersignOutput),
+    projectAccepted: (sealed) => {
+      const verdict = validateRecordedCountersignOutput(sealed.decisiveFacts);
+      const accepted = {
+        kind: "accepted",
+        role: "countersign",
+        status: sealed.status,
+        decisiveFacts: countersignDecisiveFacts(verdict, sealed.status)
+      };
+      return accepted;
+    }
+  });
 }
 async function trySettleCountersignTerminalResult(admitted, authority) {
   return settleLawfulCountersignTerminalResult(admitted, authority);
 }
 async function settleLawfulGleanerLeftTerminalResult(admitted, authority) {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted);
-  if (roleOutcome?.role !== "gleaner-left") {
-    let acceptedNonUsable;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(
-        entries,
-        index,
-        message,
-        GLEANER_LEFT_OUTPUT_TOOL_NAME
-      );
-      if (residual !== void 0) {
-        return settleFailureTerminalResult(admitted, {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details: { candidate: residual.candidate, acceptedReceipt: false }
-        }, authority);
-      }
-      if (acceptedNonUsable === void 0 && message.toolName === GLEANER_LEFT_OUTPUT_TOOL_NAME && isAcceptedPackagedRoleTerminalResult(message)) {
-        try {
-          validateRecordedGleanerLeftOutput(message.details);
-        } catch {
-          acceptedNonUsable = message.details;
-        }
-      }
-    }
-    if (acceptedNonUsable !== void 0) {
-      return settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: "\u5DE6\u62FE\u9057\u56DE\u6267\u65E0\u663E\u5F0F completed",
-        details: { candidate: acceptedNonUsable, acceptedReceipt: false }
-      }, authority);
-    }
-    return void 0;
-  }
-  const output = validateRecordedGleanerLeftOutput(roleOutcome.decisiveFacts);
-  const accepted = {
-    kind: "accepted",
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
     role: "gleaner-left",
-    status: roleOutcome.status,
-    decisiveFacts: gleanerLeftDecisiveFacts(output)
-  };
-  const navigator = extractNavigatorFact(entries);
-  return withOptionalGateProjection(
-    {
-      roleOutcome: accepted,
-      navigator,
-      artifacts: [],
-      runId: admitted.runId
-    },
-    sessionDirectory
-  );
+    toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "\u5DE6\u62FE\u9057\u56DE\u6267\u65E0\u663E\u5F0F completed",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedGleanerLeftOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedGleanerLeftOutput(sealed.decisiveFacts);
+      const accepted = {
+        kind: "accepted",
+        role: "gleaner-left",
+        status: sealed.status,
+        decisiveFacts: gleanerLeftDecisiveFacts(output)
+      };
+      return accepted;
+    }
+  });
 }
 async function trySettleGleanerLeftTerminalResult(admitted, authority) {
   return settleLawfulGleanerLeftTerminalResult(admitted, authority);
@@ -27900,7 +27822,6 @@ async function runPublicGleanerLeft(argv, env, io, parseGleanerLeftArgv2) {
       principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
       baseRevision: parsed.baseRevision,
       ...parsed.project === void 0 ? {} : { project: parsed.project },
       ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },

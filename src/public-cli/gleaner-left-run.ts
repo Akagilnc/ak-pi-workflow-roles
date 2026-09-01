@@ -68,7 +68,6 @@ export async function runPublicGleanerLeft(
       principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
       baseRevision: parsed.baseRevision,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),

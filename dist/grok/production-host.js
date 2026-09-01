@@ -3634,7 +3634,7 @@ var ROLE_COMMAND_HELP = {
   },
   "gleaner-left": {
     command: "gleaner-left",
-    summary: "Unanchored pre-merge memorials; findings only, no bounce.",
+    summary: "Unanchored pre-merge memorials; findings only, no bounce. Instruction may be empty; callers must not pass directional instruction.",
     usage: ["ak-role gleaner-left --base <revision> [options] [instruction]"],
     examples: [
       "ak-role gleaner-left --base main",

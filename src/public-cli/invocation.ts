@@ -659,9 +659,8 @@ export type ParseReviewerArgvResult = {
 };
 
 export type ParseGleanerLeftArgvResult = {
-  /** Optional caller prose; empty is the lawful path (无锚定). */
+  /** Optional caller prose; empty is the lawful path (无锚定). Must not carry direction. */
   instruction: string;
-  attachmentPaths: string[];
   /** Required comparison-base revision for the unanchored merge-candidate diff. */
   baseRevision: string;
   project?: string;
@@ -2329,13 +2328,12 @@ export function buildNotaryTransportPrompt(
  */
 /**
  * Parse Gleaner-Left argv after the `gleaner-left` token.
- * Public flags: --project, required --base. No --attach face (unanchored self-fetch).
- * Instruction may be empty.
+ * Public flags: --project, required --base. No --attach / ticket face (unanchored self-fetch).
+ * Instruction may be empty; callers must not pass directional instruction.
  */
 export function parseGleanerLeftArgv(
   args: readonly string[],
 ): ParseGleanerLeftArgvResult {
-  const attachmentPaths: string[] = [];
   let project: string | undefined;
   let baseRevision: string | undefined;
   const positional: string[] = [];
@@ -2371,7 +2369,6 @@ export function parseGleanerLeftArgv(
   options.assertRequired();
   return {
     instruction: positional.join(" "),
-    attachmentPaths,
     baseRevision: baseRevision!,
     ...(project === undefined ? {} : { project }),
   };
@@ -2382,7 +2379,6 @@ export type AdmitGleanerLeftInvocationOptions = {
   principalAuthority: DurablePrincipalAuthority;
   cwd: string;
   instruction: string;
-  attachmentPaths: readonly string[];
   baseRevision: string;
   project?: string;
   createRunId?: () => string;
@@ -2392,7 +2388,7 @@ export type AdmitGleanerLeftInvocationOptions = {
 
 /**
  * Admit a Gleaner-Left Role run on the fixed comparison base.
- * Empty instruction is the lawful path; attachments are not a public face.
+ * Empty instruction is the lawful path; no attachment/ticket admission face.
  */
 export async function admitGleanerLeftInvocation(
   options: AdmitGleanerLeftInvocationOptions,
@@ -2419,15 +2415,7 @@ export async function admitGleanerLeftInvocation(
     role: "gleaner-left",
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -2438,17 +2426,10 @@ export async function admitGleanerLeftInvocation(
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
+    attachments: [] as const,
     ...(options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId }),
@@ -2471,12 +2452,11 @@ export async function admitGleanerLeftInvocation(
     projectRoot,
     instruction,
     instructionEmpty,
-    attachments,
+    attachments: [],
     runDirectory,
     principal,
     admittedRequestPath,
     baseRevision: options.baseRevision,
-    ...ticketFields,
     ...(options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId }),
