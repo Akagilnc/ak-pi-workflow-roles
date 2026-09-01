@@ -3,8 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { ModelRuntime, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
@@ -17,22 +16,32 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
+import { createRecordSession } from "./archivist-record-entry.ts";
+import type { HostContext, HostInstitutionalModelSelection } from "./host-contracts.ts";
+import { readInstitutionalSeatSelection } from "./institutional-resolution.ts";
 import { sitianReport } from "./sitian-facade.ts";
-import { openInProcessAgentSession } from "./in-process-session.ts";
 import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
-import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
-import {
-  hasUpstreamErrorTestimony,
-  isNonSuccessHttpStatus,
-  projectConfirmedRemotePayload,
-} from "./upstream-error-testimony.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
 export const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "游奕使准备已接受";
 export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
+
+/**
+ * Role-input document bytes win verbatim over work-root file authority when non-empty.
+ * Absent or whitespace-only input yields to fileAuthority; neither remains undefined.
+ */
+export function resolveNavigatorAuthorityMaterial(
+  roleInput: string | undefined,
+  fileAuthority: string | undefined,
+): string | undefined {
+  if (roleInput !== undefined && roleInput.trim() !== "") return roleInput;
+  if (fileAuthority !== undefined && fileAuthority.trim() !== "") return fileAuthority;
+  return undefined;
+}
 
 export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
 
@@ -227,14 +236,14 @@ export type NavigatorPreparationSession = {
 };
 
 export type NavigatorSessionFactory = (options: {
-  context: ExtensionContext;
+  context: HostContext;
   subject: string;
   modelSettingPath?: string;
   tool: ToolDefinition;
 }) => Promise<NavigatorPreparationSession>;
 
 export type NavigatorAttendanceOptions = {
-  context: ExtensionContext;
+  context: HostContext;
   role: string;
   phase: NavigatorPhase;
   subjectKey: string;
@@ -691,8 +700,15 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
       const modelPromise = (async () => {
         try {
-          return await readNavigatorModelSetting(options.modelSettingPath);
+          // Same resolution authority as createNativeNavigatorSessionFactory (#590).
+          const resolved = await resolveNavigatorSeatSelection(
+            options.context,
+            options.modelSettingPath,
+            options.modelSettingPath ?? navigatorModelSettingPath(),
+          );
+          return resolved.configuredLabel;
         } catch (error) {
+          if (error instanceof NavigatorUnavailableError) throw error;
           throw navigatorUnavailableError("model", error);
         }
       })();
@@ -1046,281 +1062,177 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
 
 export type NavigatorAttendance = ReturnType<typeof createNavigatorAttendance>;
 
+/**
+ * Resolve navigator seat selection without ambient parent host context (#590).
+ * Prefer the run's institutional-resolution page; fall back to navigator-model.json
+ * for bare/developer seams that never wrote a page.
+ */
+async function resolveNavigatorSeatSelection(
+  context: HostContext,
+  modelSettingPath: string | undefined,
+  defaultModelSettingPath: string,
+): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel: "off" | "max" }> {
+  const runDirectory = auditorRunDirectory(context);
+  if (runDirectory !== undefined) {
+    try {
+      const selection = await readInstitutionalSeatSelection(runDirectory, "navigator");
+      const thinkingLevel = selection.thinking === "max" ? "max" : "off";
+      return {
+        selection: {
+          provider: selection.provider,
+          model: selection.model,
+          ...(selection.thinking === undefined ? {} : { thinking: selection.thinking }),
+        },
+        configuredLabel: `${selection.provider}/${selection.model}${thinkingLevel === "max" ? ":max" : ""}`,
+        thinkingLevel,
+      };
+    } catch {
+      // Page missing the navigator seat — fall through to persistent model setting.
+    }
+  }
+  let configured: string;
+  try {
+    configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
+  } catch (error) {
+    throw navigatorUnavailableError("model", error);
+  }
+  let parsed: ReturnType<typeof parseNavigatorModelSetting>;
+  try {
+    parsed = parseNavigatorModelSetting(configured);
+  } catch (error) {
+    throw navigatorUnavailableError("model", error);
+  }
+  return {
+    selection: {
+      provider: parsed.provider,
+      model: parsed.model,
+      thinking: parsed.thinkingLevel,
+    },
+    configuredLabel: configured,
+    thinkingLevel: parsed.thinkingLevel,
+  };
+}
+
+/**
+ * Host-neutral navigator session factory (#590 / #233 pattern).
+ * Self-held institutional child session via openPiInstitutionalSession; seat from
+ * institutional-resolution (or navigator-model.json fallback). Does not consume
+ * parent ExtensionContext.modelRegistry.
+ */
 export function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()): NavigatorSessionFactory {
-  // Pre-warm once per factory (per process). Concurrent prepares share the same
-  // runtime construction rather than each paying ModelRuntime.create under load.
-  const sharedModelRuntime = ModelRuntime.create({ allowModelNetwork: false });
   return async ({ context, subject, modelSettingPath, tool }) => {
-    let configured: string;
-    try {
-      configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
-    } catch (error) {
-      throw navigatorUnavailableError("model", error);
-    }
-    let parsed: ReturnType<typeof parseNavigatorModelSetting>;
-    try {
-      parsed = parseNavigatorModelSetting(configured);
-    } catch (error) {
-      throw navigatorUnavailableError("model", error);
-    }
-    const model = context.modelRegistry.find(parsed.provider, parsed.model);
-    const provider = context.modelRegistry.getProvider(parsed.provider);
-    if (model === undefined || provider === undefined) throw new NavigatorUnavailableError("model", `Navigator model is unavailable: ${configured}`);
-    let auth: Awaited<ReturnType<typeof context.modelRegistry.getApiKeyAndHeaders>>;
-    try {
-      auth = await context.modelRegistry.getApiKeyAndHeaders(model);
-    } catch (error) {
-      throw navigatorUnavailableError("auth", error);
-    }
-    if (!auth.ok) throw new NavigatorUnavailableError("auth", auth.error);
+    const resolved = await resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath);
+    let selection = resolved.selection;
+    let thinkingLevel = resolved.thinkingLevel;
+    let configuredLabel = resolved.configuredLabel;
+
+    const sessionManager = createRecordSession({
+      cwd: context.cwd,
+      kind: "navigator",
+      subject,
+      parent: context.sessionManager,
+    });
+
     let providerFailure: NavigatorProviderFailureFact | undefined;
     const assignProviderFailure = (fact: NavigatorProviderFailureFact | undefined): void => {
       if (fact !== undefined) providerFailure = fact;
     };
-    const classifyProviderStreamError = (error: unknown): void => {
-      if (!exactRecord(error)) {
-        assignProviderFailure(navigatorProviderFailureFromError(error));
+    const classifyTerminalMessage = (message: unknown): void => {
+      if (!exactRecord(message)) {
+        assignProviderFailure(navigatorProviderFailureFromError(message));
         return;
       }
-      // Contract-shaped AssistantMessage facts only: diagnostics carry typed transport/auth/quota codes.
-      // Non-contract message metadata (statusCode/code/navigatorFailure) is never an acceptance oracle.
-      assignProviderFailure(navigatorProviderFailureFromDiagnostics(error.diagnostics));
+      assignProviderFailure(navigatorProviderFailureFromDiagnostics(message.diagnostics));
       if (providerFailure !== undefined) return;
-      // Thrown Error-shaped provider failures may still carry SDK status/code fields.
-      if (error.role !== "assistant") assignProviderFailure(navigatorProviderFailureFromError(error));
-    };
-    const classifyProviderResponseStatus = (status: number): void => {
-      if (status >= 200 && status < 300) {
-        // A later successful attempt clears auth/quota facts recorded from earlier retry responses.
-        if (providerFailure?.source === "auth" || providerFailure?.source === "quota") {
-          providerFailure = undefined;
-        }
-        return;
-      }
-      assignProviderFailure(navigatorProviderFailureFromStatus(status));
-    };
-    /** Project only fields actually held on the call surface — never forge upstream payload. */
-    const projectHeldUpstream = (error: unknown): Record<string, unknown> => {
-      if (!exactRecord(error)) return {};
-      // Shape reading stays local; testimony + confirmed-remote payload use shared authority.
-      const status = typeof error.statusCode === "number"
-        ? error.statusCode
-        : typeof error.status === "number"
-          ? error.status
-          : typeof error.httpStatus === "number"
-            ? error.httpStatus
+      if (message.role !== "assistant") assignProviderFailure(navigatorProviderFailureFromError(message));
+      if (providerFailure !== undefined) return;
+      const status = typeof message.statusCode === "number"
+        ? message.statusCode
+        : typeof message.status === "number"
+          ? message.status
+          : typeof message.httpStatus === "number"
+            ? message.httpStatus
             : undefined;
-      const httpStatus = isNonSuccessHttpStatus(status) ? status : undefined;
-      const diagnostics = Array.isArray(error.diagnostics) && error.diagnostics.length > 0
-        ? error.diagnostics
-        : undefined;
-      const testimony = hasUpstreamErrorTestimony({
-        ...(httpStatus === undefined ? {} : { httpStatus }),
-        ...(diagnostics === undefined ? {} : { diagnostics }),
-      });
-      return {
-        ...(httpStatus === undefined ? {} : { statusCode: httpStatus, status: httpStatus }),
-        ...(diagnostics === undefined ? {} : { diagnostics }),
-        ...(testimony ? projectConfirmedRemotePayload(error) : {}),
-      };
+      if (typeof status === "number") assignProviderFailure(navigatorProviderFailureFromStatus(status));
     };
-    /** Keep held upstream fields; strip only the local navigatorFailure classification marker. */
-    const retainUpstreamMessage = <T extends Record<string, unknown>>(error: T): T => {
-      if (!("navigatorFailure" in error)) return error;
-      const copy = { ...error };
-      delete copy.navigatorFailure;
-      return copy;
-    };
-    const setupFailureMessage = (error: unknown) => ({
-      role: "assistant" as const,
-      content: [] as [],
-      api: "unknown" as const,
-      provider: "unknown",
-      model: "unknown",
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-      stopReason: "error" as const,
-      errorMessage: error instanceof Error ? error.message : String(error),
-      timestamp: Date.now(),
-      ...projectHeldUpstream(error),
-    });
-    const persistNavigatorHttpObservation = async (
-      status: number,
-      model: unknown,
-    ): Promise<void> => {
-      const runDir = process.env.AK_ROLE_RUN_DIR;
-      if (typeof runDir !== "string" || runDir.trim() === "") return;
-      const provider = exactRecord(model) && typeof model.provider === "string" && model.provider.trim() !== ""
-        ? model.provider
-        : undefined;
-      if (provider === undefined) return;
-      await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
-    };
-    const instrumentProvider = <TProvider extends NonNullable<typeof provider>>(sourceProvider: TProvider): TProvider => {
-      type StreamFn = TProvider["stream"];
-      type StreamSimpleFn = TProvider["streamSimple"];
-      type StreamOptionsArg = Parameters<StreamFn>[2];
-      type StreamSimpleOptionsArg = Parameters<StreamSimpleFn>[2];
-      const instrumentStreamOptions = <TOptions>(options: TOptions, observedStatus: { value?: number }): TOptions => {
-        const record = (exactRecord(options) ? options : {}) as Record<string, unknown>;
-        const previous = typeof record.onResponse === "function"
-          ? record.onResponse as (response: { status: number; headers: Record<string, string> }, model: unknown) => void | Promise<void>
-          : undefined;
-        return {
-          ...record,
-          onResponse: async (response: { status: number; headers: Record<string, string> }, model: unknown) => {
-            observedStatus.value = response.status;
-            classifyProviderResponseStatus(response.status);
-            // Durable run-dossier sink for typed non-success HTTP (2xx clears).
-            await persistNavigatorHttpObservation(response.status, model);
-            await previous?.(response, model);
-          },
-        } as TOptions;
-      };
-      /** Attach a directly observed non-success HTTP status when the terminal message lacks one. */
-      const withObservedStatus = <T extends Record<string, unknown>>(message: T, observedStatus: number | undefined): T => {
-        if (observedStatus === undefined || observedStatus >= 200 && observedStatus < 300) return message;
-        if (typeof message.statusCode === "number" || typeof message.status === "number" || typeof message.httpStatus === "number") {
-          return message;
-        }
-        return { ...message, statusCode: observedStatus, status: observedStatus };
-      };
-      const wrapProviderStream = (source: ReturnType<StreamFn>, observedStatus: { value?: number }): ReturnType<StreamFn> => {
-        const wrapped = createAssistantMessageEventStream();
-        void (async () => {
-          let result: Awaited<ReturnType<typeof source.result>> | undefined;
-          let sawTerminal = false;
-          try {
-            for await (const event of source) {
-              if (event.type === "done" || event.type === "error") {
-                sawTerminal = true;
-                if (event.type === "done" && exactRecord(event.message)) {
-                  assignProviderFailure(navigatorProviderFailureFromDiagnostics(event.message.diagnostics));
-                  // Keep held message/status/body/code/errno/diagnostics on the session surface.
-                  result = withObservedStatus(retainUpstreamMessage(event.message), observedStatus.value) as typeof event.message;
-                  wrapped.push({ ...event, message: result });
-                  continue;
-                }
-                if (event.type === "error" && exactRecord(event.error)) {
-                  classifyProviderStreamError(event.error);
-                  result = withObservedStatus(retainUpstreamMessage(event.error), observedStatus.value) as typeof event.error;
-                  wrapped.push({ ...event, error: result });
-                  continue;
-                }
-              }
-              wrapped.push(event);
-            }
-            // Only await result after a terminal done/error event. end(undefined) leaves result() unresolved forever.
-            if (sawTerminal) {
-              const terminal = await source.result();
-              if (result === undefined && exactRecord(terminal)) {
-                result = withObservedStatus(retainUpstreamMessage(terminal), observedStatus.value) as typeof terminal;
-              } else if (result === undefined) result = terminal;
-            }
-          } catch (error) {
-            // Stream throw: project held upstream fields onto the synthetic terminal message (session is durable).
-            classifyProviderStreamError(error);
-            if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
-            if (!sawTerminal) {
-              const message = withObservedStatus(setupFailureMessage(error), observedStatus.value);
-              wrapped.push({ type: "error", reason: "error", error: message });
-              result = message;
-              sawTerminal = true;
-            }
-          } finally {
-            // No terminal stream event: unknown only — do not forge upstream payload.
-            if (!sawTerminal) {
-              if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
-              const message = setupFailureMessage(new Error("Navigator provider produced no response"));
-              wrapped.push({ type: "error", reason: "error", error: message });
-              result = message;
-              sawTerminal = true;
-            }
-            wrapped.end(result);
-          }
-        })();
-        return wrapped as ReturnType<StreamFn>;
-      };
-      const invokeInstrumentedStream = (invoke: (observedStatus: { value?: number }) => ReturnType<StreamFn>): ReturnType<StreamFn> => {
-        // Reset before invoking the selected provider so setup throws cannot leave a prior call's fact.
-        providerFailure = undefined;
-        const observedStatus: { value?: number } = {};
-        try {
-          return wrapProviderStream(invoke(observedStatus), observedStatus);
-        } catch (error) {
-          // Setup failures become terminal synthetic errors with held upstream fields projected when present.
-          classifyProviderStreamError(error);
-          if (providerFailure === undefined) providerFailure = { source: "unknown", cause: "unknown" };
-          const wrapped = createAssistantMessageEventStream();
-          const message = setupFailureMessage(error);
-          queueMicrotask(() => {
-            wrapped.push({ type: "error", reason: "error", error: message });
-            wrapped.end(message);
-          });
-          return wrapped as ReturnType<StreamFn>;
-        }
-      };
-      return {
-        ...sourceProvider,
-        stream(model: Parameters<StreamFn>[0], streamContext: Parameters<StreamFn>[1], options: StreamOptionsArg) {
-          return invokeInstrumentedStream((observedStatus) => {
-            const instrumented = instrumentStreamOptions(options, observedStatus);
-            return sourceProvider.stream(model, streamContext, instrumented) as ReturnType<StreamFn>;
-          }) as ReturnType<StreamFn>;
-        },
-        streamSimple(model: Parameters<StreamSimpleFn>[0], streamContext: Parameters<StreamSimpleFn>[1], options: StreamSimpleOptionsArg) {
-          return invokeInstrumentedStream((observedStatus) => {
-            const instrumented = instrumentStreamOptions(options, observedStatus);
-            return sourceProvider.streamSimple(model, streamContext, instrumented) as ReturnType<StreamFn>;
-          }) as ReturnType<StreamSimpleFn>;
-        },
-      } as TProvider;
-    };
-    let modelRuntime: Awaited<ReturnType<typeof ModelRuntime.create>>;
+
+    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    let opened: Awaited<ReturnType<typeof openPiInstitutionalSession>>;
     try {
-      modelRuntime = await sharedModelRuntime;
-      modelRuntime.registerNativeProvider(instrumentProvider(provider));
-    } catch (error) {
-      throw navigatorUnavailableError("session", error);
-    }
-    let opened: Awaited<ReturnType<typeof openInProcessAgentSession>>;
-    try {
-      // Shared in-process session open (#233) — Archivist SessionManager from identity relations.
-      opened = await openInProcessAgentSession({
+      opened = await openPiInstitutionalSession({
         cwd: context.cwd,
-        kind: "navigator",
-        subject,
-        parent: context.sessionManager,
-        model,
-        modelRuntime,
-        thinkingLevel: parsed.thinkingLevel,
+        selection,
+        // Soul/routebook ride the prepare prompt; system materials stay empty here.
+        systemPrompt: "",
         noTools: "all",
-        tools: [NAVIGATOR_PREPARE_TOOL_NAME],
+        toolsAllowlist: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool],
+        sessionManager,
+        label: "Navigator",
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/authentication failed/i.test(message)) throw navigatorUnavailableError("auth", error);
+      if (/provider not found|model/i.test(message)) throw navigatorUnavailableError("model", error);
       throw navigatorUnavailableError("session", error);
     }
-    if (opened.session.thinkingLevel !== parsed.thinkingLevel) {
-      opened.dispose();
-      throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
-    }
+
+    const unsubscribe = opened.handle.subscribe((event) => {
+      if (event.type === "message_end" && event.message !== undefined) {
+        const message = event.message;
+        if (exactRecord(message) && (message.stopReason === "error" || message.stopReason === "aborted")) {
+          classifyTerminalMessage(message);
+        }
+      }
+    });
+
+    let disposed = false;
+    const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
+      unsubscribe();
+      void opened.handle.close();
+    };
+
     return {
       prompt: async (text) => {
+        providerFailure = undefined;
+        const failFrom = (error: unknown): never => {
+          const fact = providerFailure;
+          throw navigatorUnavailableError(
+            fact?.source ?? "transport",
+            error,
+            fact?.cause ?? "transport",
+          );
+        };
         try {
-          await opened.session.prompt(text);
+          const turn = await opened.handle.prompt(text);
+          if (opened.streamFailure !== undefined) {
+            classifyTerminalMessage(opened.streamFailure);
+            failFrom(opened.streamFailure);
+          }
+          if (turn.stopReason === "error" || turn.stopReason === "aborted") {
+            const cause = turn.errorMessage ?? "Navigator provider failure";
+            if (providerFailure === undefined) {
+              assignProviderFailure(navigatorProviderFailureFromError(new Error(cause)));
+            }
+            failFrom(cause);
+          }
         } catch (error) {
-          throw navigatorUnavailableError("transport", error);
+          if (error instanceof NavigatorUnavailableError) throw error;
+          classifyTerminalMessage(error);
+          failFrom(error);
         }
       },
       providerFailure: () => providerFailure,
       appendEntry: (customType, data) => {
-        opened.session.sessionManager.appendCustomEntry(customType, data);
+        sessionManager.appendCustomEntry(customType, data);
         try {
           sitianReport({
             level: "event",
             kind: "attendance",
             cwd: context.cwd,
-            sessionParent: opened.session.sessionManager.getSessionFile(),
+            sessionParent: sessionManager.getSessionFile(),
             payload: { customType, data },
             source: "navigator-attendance",
           });
@@ -1328,39 +1240,42 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
           // best-effort persistence in attendance adapter
         }
       },
-      entries: () => opened.session.sessionManager.getEntries(),
-      setModel: async (next, thinkingLevel) => {
+      entries: () => sessionManager.getEntries(),
+      setModel: async (next, nextThinking) => {
         let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
         try {
           nextParsed = parseNavigatorModelSetting(next);
         } catch (error) {
           throw navigatorUnavailableError("model", error);
         }
-        const nextModel = context.modelRegistry.find(nextParsed.provider, nextParsed.model);
-        const nextProvider = context.modelRegistry.getProvider(nextParsed.provider);
-        if (nextModel === undefined || nextProvider === undefined) throw new NavigatorUnavailableError("model", `Navigator model is unavailable: ${next}`);
-        let nextAuth: Awaited<ReturnType<typeof context.modelRegistry.getApiKeyAndHeaders>>;
-        try {
-          nextAuth = await context.modelRegistry.getApiKeyAndHeaders(nextModel);
-        } catch (error) {
-          throw navigatorUnavailableError("auth", error);
+        // Institutional handle has no live setModel; same-selection validate only.
+        // Model switches require a fresh attendance session (prepare recreates).
+        if (
+          nextParsed.provider !== selection.provider
+          || nextParsed.model !== selection.model
+        ) {
+          throw new NavigatorUnavailableError(
+            "model",
+            `Navigator model switch requires a new session: ${configuredLabel} → ${next}`,
+          );
         }
-        if (!nextAuth.ok) throw new NavigatorUnavailableError("auth", nextAuth.error);
-        try {
-          // setModel replaces the registered provider id; keep the stream seam instrumented.
-          modelRuntime.registerNativeProvider(instrumentProvider(nextProvider));
-          await opened.session.setModel(nextModel);
-          opened.session.setThinkingLevel(thinkingLevel);
-        } catch (error) {
-          throw navigatorUnavailableError("session", error);
+        if (nextParsed.thinkingLevel !== nextThinking || thinkingLevel !== nextThinking) {
+          throw new NavigatorUnavailableError(
+            "thinking",
+            `Navigator thinking level ${nextThinking} is unavailable for ${next}`,
+          );
         }
-        if (opened.session.thinkingLevel !== nextParsed.thinkingLevel || opened.session.thinkingLevel !== thinkingLevel) {
-          throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
-        }
+        selection = {
+          provider: nextParsed.provider,
+          model: nextParsed.model,
+          thinking: nextParsed.thinkingLevel,
+        };
+        thinkingLevel = nextParsed.thinkingLevel;
+        configuredLabel = next;
       },
-      getThinkingLevel: () => opened.session.thinkingLevel,
-      recordPointer: () => opened.session.sessionManager.getSessionDir(),
-      dispose: () => opened.dispose(),
+      getThinkingLevel: () => thinkingLevel,
+      recordPointer: () => sessionManager.getSessionDir(),
+      dispose,
     };
   };
 }

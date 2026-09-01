@@ -68,5 +68,6 @@ export function parentInheritedSeats(parentModel: ParentModel): InstitutionalRes
     notary: selection,
     auditor: selection,
     evidenceChild: selection,
+    navigator: selection,
   };
 }

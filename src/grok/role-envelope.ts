@@ -132,6 +132,8 @@ export async function prepareGrokRoleEnvelope(options: {
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
+  /** Truthful parent-session books for first-record-then-audit / navigator lifecycle (#590). */
+  const sessionEntries: Array<Record<string, unknown>> = [];
   const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
   let rejection: { readonly code: string; readonly toolCallIds: readonly string[] } | undefined;
@@ -170,19 +172,21 @@ export async function prepareGrokRoleEnvelope(options: {
     mode: "print",
     model: request.model === undefined ? undefined : { provider: request.model.provider },
     sessionManager: {
-      getLeafEntry: () => undefined,
+      getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,
-      getEntries: () => [],
-      getSessionDir: () => request.runDirectory,
+      getEntries: () => sessionEntries as ReturnType<HostContext["sessionManager"]["getEntries"]>,
+      getSessionDir: () => join(request.runDirectory, "session"),
       getSessionFile: () => sessionFile,
       getHeader: () => ({ type: "session", id: runId }),
       setSessionFile(path) { sessionFile = path; },
       appendCustomEntry(customType, data) {
+        const entry = { type: "custom", customType, data };
+        sessionEntries.push(entry);
         customEntries.push({ customType, data });
         // Same external face as Pi session custom entries (type/customType/data JSONL).
         appendFileSync(
           sessionFile,
-          `${JSON.stringify({ type: "custom", customType, data })}\n`,
+          `${JSON.stringify(entry)}\n`,
           "utf8",
         );
       },
@@ -237,7 +241,9 @@ export async function prepareGrokRoleEnvelope(options: {
   };
   const envelope: RoleEnvelopeHost = {
     host,
-    appendEntry(customType: string, data?: unknown) { customEntries.push({ customType, data }); },
+    appendEntry(customType: string, data?: unknown) {
+      context.sessionManager.appendCustomEntry?.(customType, data);
+    },
     async sendMessage(message) {
       if (typeof message === "object" && message !== null && "content" in message && typeof message.content === "string") {
         customEntries.push({ customType: "message", data: message.content });
@@ -321,6 +327,20 @@ export async function prepareGrokRoleEnvelope(options: {
             if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
             const toolCallId = randomUUID();
             calls.push({ toolCallId, toolName: name });
+            // First-record-then-audit: book the tool-call leaf before execute so
+            // judge/doctor subject gates see the candidate on parent session books.
+            sessionEntries.push({
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [{
+                  type: "toolCall",
+                  id: toolCallId,
+                  name,
+                  arguments: params?.arguments ?? {},
+                }],
+              },
+            });
             await emit("tool_execution_start", { toolCallId, toolName: name });
             const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} }))
               .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
@@ -413,6 +433,13 @@ export async function prepareGrokRoleEnvelope(options: {
     if (typeof value !== "object" || value === null) continue;
     const record = value as Record<string, unknown>;
     if (record.action === "transform" && typeof record.text === "string") prompt = record.text;
+  }
+  // Book the user assignment so judge audit subjects recover it from parent books.
+  if (typeof prompt === "string" && prompt.trim() !== "") {
+    sessionEntries.push({
+      type: "message",
+      message: { role: "user", content: prompt },
+    });
   }
   const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
   const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");

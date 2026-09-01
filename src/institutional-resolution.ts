@@ -40,7 +40,7 @@ function cleanSelection(model?: { provider?: string; model?: string; thinking?: 
 /**
  * Resolve effective per-seat institutional selections (#518 §2 Hop 1):
  * - gatekeeper / inspector / notary: seat override > gatekeeper override > parent effective
- * - auditor / evidenceChild: parent effective
+ * - auditor / evidenceChild / navigator: seat override (navigator) > parent effective
  */
 export function resolveInstitutionalSeatSelections(
   config: PublicCliConfig,
@@ -51,12 +51,16 @@ export function resolveInstitutionalSeatSelections(
   const ownInspector = cleanSelection(seatModelOnly(config.seats?.inspector));
   const ownNotary = cleanSelection(seatModelOnly(config.seats?.notary));
   const ownGatekeeper = cleanSelection(seatModelOnly(config.seats?.gatekeeper));
+  const ownNavigator = cleanSelection(seatModelOnly(config.seats?.navigator));
 
   const gatekeeper = ownGatekeeper ?? parentSelection;
   const inspector = ownInspector ?? ownGatekeeper ?? parentSelection;
   const notary = ownNotary ?? ownGatekeeper ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
+  // Navigator: explicit config seat wins; otherwise parent effective so public runs
+  // carry a page seat without ambient parent ExtensionContext (#590).
+  const navigator = ownNavigator ?? parentSelection;
 
   return {
     version: 1,
@@ -66,6 +70,7 @@ export function resolveInstitutionalSeatSelections(
       ...(notary === undefined ? {} : { notary }),
       ...(auditor === undefined ? {} : { auditor }),
       ...(evidenceChild === undefined ? {} : { evidenceChild }),
+      ...(navigator === undefined ? {} : { navigator }),
     },
   };
 }

@@ -63,7 +63,7 @@ function streamIdleTimeoutFromUnknown(value: unknown): StreamIdleTimeoutError | 
     : undefined;
 }
 
-// ── Legacy openInProcessAgentSession (preserved for Navigator B) ───────────
+// ── Legacy openInProcessAgentSession (pre-#590; navigator now uses openPiInstitutionalSession) ─
 
 type OpenInProcessAgentSessionBase = {
   readonly cwd: string;
