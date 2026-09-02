@@ -15,7 +15,7 @@ var __export = (target, all) => {
 
 // src/activation-ledger-git.ts
 import { execFileSync } from "node:child_process";
-import { basename, dirname as dirname3, isAbsolute, resolve as resolve3 } from "node:path";
+import { basename, dirname as dirname4, isAbsolute, resolve as resolve3 } from "node:path";
 function envWithoutGitDiscovery(base = process.env) {
   const env = { ...base, LC_ALL: "C" };
   for (const key of GIT_DISCOVERY_ENV_KEYS) {
@@ -60,7 +60,7 @@ function resolveBookKeyFromGit(cwd) {
     throw new Error("git rev-parse --git-common-dir returned an empty path");
   }
   const absoluteCommon = isAbsolute(commonDir) ? commonDir : resolve3(cwd, commonDir);
-  const hostDirectory = basename(absoluteCommon) === ".git" ? dirname3(absoluteCommon) : absoluteCommon;
+  const hostDirectory = basename(absoluteCommon) === ".git" ? dirname4(absoluteCommon) : absoluteCommon;
   const bookKey = basename(hostDirectory);
   if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
     throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
@@ -102,7 +102,7 @@ import {
   statSync
 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { basename as basename2, dirname as dirname4, isAbsolute as isAbsolute2, join, relative as relative2, resolve as resolve4, sep as sep2 } from "node:path";
+import { basename as basename2, dirname as dirname5, isAbsolute as isAbsolute2, join as join3, relative, resolve as resolve4, sep } from "node:path";
 function resolveActivationLedgerHome(home = () => process.env.HOME ?? homedir2()) {
   const processHome = home();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute2(processHome)) {
@@ -113,14 +113,14 @@ function resolveActivationLedgerHome(home = () => process.env.HOME ?? homedir2()
   return resolve4(processHome, ".ak-roles");
 }
 function activationBookDirectory(ledgerHome, bookKey) {
-  return join(ledgerHome, "books", bookKey);
+  return join3(ledgerHome, "books", bookKey);
 }
 function activationWaitingLedgerPath(ledgerHome, bookKey) {
-  return join(activationBookDirectory(ledgerHome, bookKey), "waiting.jsonl");
+  return join3(activationBookDirectory(ledgerHome, bookKey), "waiting.jsonl");
 }
 function pathContainedIn(root, candidate) {
-  const rel = relative2(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep2}`) && !isAbsolute2(rel);
+  const rel = relative(root, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute2(rel);
 }
 function physicalPathIdentity(path) {
   const absolute = resolve4(path);
@@ -129,12 +129,12 @@ function physicalPathIdentity(path) {
   while (true) {
     try {
       const real = realpathSync(cursor);
-      return missing.length === 0 ? real : join(real, ...missing);
+      return missing.length === 0 ? real : join3(real, ...missing);
     } catch (error) {
       if (errnoCode(error) !== "ENOENT") {
         return absolute;
       }
-      const parent = dirname4(cursor);
+      const parent = dirname5(cursor);
       if (parent === cursor) return absolute;
       missing.unshift(basename2(cursor));
       cursor = parent;
@@ -216,20 +216,20 @@ function ensureRealDirectoryTree(root, targetDir) {
   if (!statSync(realRoot).isDirectory()) {
     throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
   }
-  const rel = absoluteTarget === absoluteRoot ? "" : relative2(absoluteRoot, absoluteTarget);
+  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
   if (rel === "") return realRoot;
-  if (isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep2}`)) {
+  if (isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
     throw new ActivationLedgerError(
       `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
     );
   }
   let lexicalCursor = absoluteRoot;
-  for (const part of rel.split(sep2)) {
+  for (const part of rel.split(sep)) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
       throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
     }
-    lexicalCursor = join(lexicalCursor, part);
+    lexicalCursor = join3(lexicalCursor, part);
     let st;
     try {
       st = lstatSync(lexicalCursor);
@@ -355,12 +355,12 @@ __export(archivist_record_entry_exports, {
   WORKER_SUBMISSION_GATE_KIND: () => WORKER_SUBMISSION_GATE_KIND,
   createRecordSession: () => createRecordSession
 });
-import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync4, readFileSync as readFileSync2, realpathSync as realpathSync2, writeFileSync } from "node:fs";
-import { dirname as dirname11, resolve as resolve8, join as join12 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
+import { existsSync as existsSync5, readFileSync as readFileSync2, realpathSync as realpathSync2, writeFileSync } from "node:fs";
+import { dirname as dirname8, resolve as resolve6, join as join10 } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 function readCurrentSession(sessionDir) {
-  const ledger = join12(sessionDir, CURRENT_SESSION_LEDGER);
+  const ledger = join10(sessionDir, CURRENT_SESSION_LEDGER);
   try {
     const value = JSON.parse(readFileSync2(ledger, "utf8"));
     if (typeof value !== "object" || value === null || typeof value.sessionFile !== "string" || value.sessionFile.length === 0) {
@@ -375,7 +375,7 @@ function readCurrentSession(sessionDir) {
   }
 }
 function writeCurrentSession(sessionDir, sessionFile) {
-  const ledger = join12(sessionDir, CURRENT_SESSION_LEDGER);
+  const ledger = join10(sessionDir, CURRENT_SESSION_LEDGER);
   try {
     writeFileSync(ledger, `${JSON.stringify({ sessionFile })}
 `, { flag: "wx" });
@@ -387,8 +387,8 @@ function writeCurrentSession(sessionDir, sessionFile) {
   }
 }
 function assertRecentFinalFileUnderSessionDir(sessionDir, recentFile) {
-  const absoluteSessionDir = resolve8(sessionDir);
-  const absoluteFile = resolve8(recentFile);
+  const absoluteSessionDir = resolve6(sessionDir);
+  const absoluteFile = resolve6(recentFile);
   if (absoluteFile !== absoluteSessionDir && !pathContainedIn(absoluteSessionDir, absoluteFile)) {
     throw new ActivationLedgerError(
       `archivist record session must be under the authorized nest (${sessionDir}): ${recentFile}`
@@ -425,8 +425,8 @@ function createRecordSession(options) {
   let sessionDir;
   let parentSession;
   if (options.subject !== void 0) {
-    const digest = createHash6("sha256").update(options.subject).digest("hex").slice(0, 32);
-    sessionDir = join12(
+    const digest = createHash4("sha256").update(options.subject).digest("hex").slice(0, 32);
+    sessionDir = join10(
       activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)),
       options.kind,
       digest
@@ -435,11 +435,11 @@ function createRecordSession(options) {
   } else if (parentFile === void 0 || parentFile.length === 0) {
     return SessionManager.inMemory(cwd);
   } else {
-    const parentResolved = resolve8(parentFile);
-    sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join12(dirname11(parentResolved), options.kind) : join12(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
+    const parentResolved = resolve6(parentFile);
+    sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join10(dirname8(parentResolved), options.kind) : join10(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
     parentSession = parentFile;
   }
-  const nestAlreadyExists = existsSync4(sessionDir);
+  const nestAlreadyExists = existsSync5(sessionDir);
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   const mayResumeSameNest = options.subject !== void 0 || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest && nestAlreadyExists) {
@@ -454,7 +454,7 @@ function createRecordSession(options) {
   );
   if (session.isPersisted()) {
     const file = session.getSessionFile();
-    if (file !== void 0 && !existsSync4(file)) {
+    if (file !== void 0 && !existsSync5(file)) {
       const header = session.getHeader();
       if (header !== null && header.type === "session") {
         writeFileSync(file, `${JSON.stringify(header)}
@@ -551,12 +551,11 @@ var init_stream_idle_guard = __esm({
 var in_process_session_exports = {};
 __export(in_process_session_exports, {
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES: () => DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
-  openInProcessAgentSession: () => openInProcessAgentSession,
   openPiInstitutionalSession: () => openPiInstitutionalSession
 });
 import { mkdtemp as mkdtemp2, rm as rm2 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join13 } from "node:path";
+import { join as join11 } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -574,55 +573,6 @@ function streamIdleTimeoutFromUnknown(value) {
   if (message === void 0) return void 0;
   const match = /stream idle timeout after (\d+)ms/i.exec(message);
   return match !== null && match[1] !== void 0 ? new StreamIdleTimeoutError(Number(match[1])) : void 0;
-}
-function resolveSessionManager(options) {
-  if (options.sessionManager !== void 0) return options.sessionManager;
-  return createRecordSession({
-    cwd: options.cwd,
-    kind: options.kind,
-    ...options.subject === void 0 ? {} : { subject: options.subject },
-    ...options.parent === void 0 ? {} : { parent: options.parent }
-  });
-}
-async function openInProcessAgentSession(options) {
-  const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
-  const sessionManager = resolveSessionManager(options);
-  const createArgs = {
-    cwd: options.cwd,
-    model: options.model,
-    thinkingLevel: options.thinkingLevel ?? "off",
-    modelRuntime: options.modelRuntime,
-    sessionManager,
-    settingsManager: settings,
-    ...options.noTools === void 0 ? {} : { noTools: options.noTools },
-    ...options.tools === void 0 ? {} : { tools: options.tools },
-    ...options.customTools === void 0 ? {} : { customTools: options.customTools }
-  };
-  if (options.agentDir !== void 0) {
-    const loader = new DefaultResourceLoader({
-      cwd: options.cwd,
-      agentDir: options.agentDir,
-      settingsManager: settings,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-      ...options.systemPrompt === void 0 ? {} : { systemPrompt: options.systemPrompt }
-    });
-    await loader.reload();
-    createArgs.agentDir = options.agentDir;
-    createArgs.resourceLoader = loader;
-  } else if (options.systemPrompt !== void 0) {
-    throw new Error("openInProcessAgentSession requires agentDir when systemPrompt is set");
-  }
-  const { session } = await createAgentSession(createArgs);
-  return {
-    session,
-    dispose() {
-      session.dispose();
-    }
-  };
 }
 function emptyUsage() {
   return {
@@ -728,7 +678,7 @@ async function openPiInstitutionalSession(options) {
   let scratchDir;
   let resolvedAgentDir = options.agentDir;
   if (resolvedAgentDir === void 0) {
-    scratchDir = await mkdtemp2(join13(options.credentialScratchParent ?? tmpdir2(), "ak-institutional-"));
+    scratchDir = await mkdtemp2(join11(options.credentialScratchParent ?? tmpdir2(), "ak-institutional-"));
     resolvedAgentDir = scratchDir;
   }
   try {
@@ -736,7 +686,14 @@ async function openPiInstitutionalSession(options) {
     const childRegistry = new ModelRegistry(childRuntime);
     const childProvider = typeof childRegistry.getProvider === "function" ? childRegistry.getProvider(selection.provider) : void 0;
     const foundModel = typeof childRegistry.find === "function" ? childRegistry.find(selection.provider, selection.model) : void 0;
-    const providerDefaultModel = childProvider?.getModels?.()[0];
+    const withTypedReason = (error, reason) => Object.assign(error, { reason });
+    if (childProvider === void 0) {
+      throw withTypedReason(
+        new Error(`${label} model is unavailable: ${selection.provider}/${selection.model}`),
+        "model"
+      );
+    }
+    const providerDefaultModel = childProvider.getModels?.()[0];
     const fallbackApi = providerDefaultModel?.api ?? childProvider?.api ?? (selection.provider === "openai-codex" ? "openai-codex-responses" : "openai-completions");
     const modelToUse = foundModel ?? {
       id: selection.model,
@@ -753,17 +710,26 @@ async function openPiInstitutionalSession(options) {
     let resolution;
     if (typeof childRegistry.getProviderAuth === "function") {
       resolution = await childRegistry.getProviderAuth(selection.provider).catch((error) => {
-        throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        throw withTypedReason(
+          new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }),
+          "auth"
+        );
       });
       if (resolution === void 0) {
-        throw new Error(`${label} authentication failed: provider is not configured: ${selection.provider}`);
+        throw withTypedReason(
+          new Error(`${label} authentication failed: provider is not configured: ${selection.provider}`),
+          "auth"
+        );
       }
     }
     let authResult;
     if (typeof childRegistry.getApiKeyAndHeaders === "function") {
       authResult = await childRegistry.getApiKeyAndHeaders(modelToUse);
       if (authResult && !authResult.ok) {
-        throw new Error(`${label} authentication failed: ${authResult.error}`);
+        throw withTypedReason(
+          new Error(`${label} authentication failed: ${authResult.error}`),
+          "auth"
+        );
       }
     }
     const resolvedApiKey = authResult?.apiKey ?? resolution?.auth?.apiKey;
@@ -811,22 +777,43 @@ async function openPiInstitutionalSession(options) {
             options.signal === void 0 ? {} : { parentSignal: options.signal }
           );
           let observedHttpStatus;
+          let observedHttpPayload;
           try {
             const requestSignal = request?.signal;
             const streamSignal = requestSignal === void 0 ? idle.signal : AbortSignal.any([idle.signal, requestSignal]);
             const priorOnResponse = request?.onResponse;
+            const priorFetch = request?.fetch;
+            const baseFetch = priorFetch ?? globalThis.fetch.bind(globalThis);
+            const statusAwareFetch = async (input, init) => {
+              const response2 = await baseFetch(input, init);
+              if (isNonSuccessHttpStatus(response2?.status)) {
+                observedHttpStatus = response2.status;
+                try {
+                  const parsed = JSON.parse(await response2.clone().text());
+                  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+                    observedHttpPayload = projectConfirmedRemotePayload(parsed);
+                  }
+                } catch {
+                }
+              }
+              return response2;
+            };
             const retriedRequest = {
               ...request ?? {},
               ...resolvedEnv === void 0 ? {} : { env: resolvedEnv },
               signal: streamSignal,
               maxRetries: 0,
+              fetch: statusAwareFetch,
               onResponse: async (response2, resModel) => {
                 if (typeof response2?.status === "number") observedHttpStatus = response2.status;
                 await priorOnResponse?.(response2, resModel);
               }
             };
             if (childProvider === void 0) {
-              throw new Error(`${label} provider not found: ${model.provider}`);
+              throw withTypedReason(
+                new Error(`${label} provider not found: ${model.provider}`),
+                "model"
+              );
             }
             const source = simple ? childProvider.streamSimple(model, context, retriedRequest) : childProvider.stream(model, context, retriedRequest);
             let sawEvent = false;
@@ -849,7 +836,21 @@ async function openPiInstitutionalSession(options) {
               if (options.idleRetry !== false && idleFailure !== void 0 && attempt < DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES && options.signal?.aborted !== true) {
                 continue;
               }
-              streamFailureValue = idleFailure ?? new Error(errorMessage, { cause: response });
+              const failure2 = idleFailure ?? new Error(errorMessage, { cause: response });
+              const httpStatus = numericHttpStatus(observedHttpStatus) ?? numericHttpStatus(response.statusCode) ?? numericHttpStatus(response.status);
+              if (httpStatus !== void 0) {
+                Object.assign(failure2, {
+                  statusCode: httpStatus,
+                  status: httpStatus,
+                  ...observedHttpPayload ?? {}
+                });
+                Object.assign(response, {
+                  statusCode: httpStatus,
+                  status: httpStatus,
+                  ...observedHttpPayload ?? {}
+                });
+              }
+              streamFailureValue = failure2;
             }
             for (const ev of attemptEvents) {
               wrapped.push(ev);
@@ -879,9 +880,17 @@ async function openPiInstitutionalSession(options) {
               continue;
             }
             const typedFailure = idleFailure ?? failure2;
-            streamFailureValue = typedFailure;
             const projected = projectStructuredRemote(failure2);
             const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
+            const payload = projectConfirmedRemotePayload({
+              body: projected.body ?? observedHttpPayload?.body,
+              code: projected.code ?? observedHttpPayload?.code,
+              errno: projected.errno ?? observedHttpPayload?.errno
+            });
+            if (httpStatus !== void 0 && typeof typedFailure === "object" && typedFailure !== null) {
+              Object.assign(typedFailure, { statusCode: httpStatus, status: httpStatus, ...payload });
+            }
+            streamFailureValue = typedFailure;
             const response = {
               role: "assistant",
               content: [],
@@ -894,9 +903,7 @@ async function openPiInstitutionalSession(options) {
               timestamp: Date.now(),
               ...projected.diagnostics === void 0 ? {} : { diagnostics: projected.diagnostics },
               ...httpStatus === void 0 ? {} : { status: httpStatus, statusCode: httpStatus },
-              ...projected.body === void 0 ? {} : { body: projected.body },
-              ...projected.code === void 0 ? {} : { code: projected.code },
-              ...projected.errno === void 0 ? {} : { errno: projected.errno }
+              ...payload
             };
             wrapped.push({ type: "error", reason: "error", error: response });
             wrapped.end(response);
@@ -993,10 +1000,11 @@ async function openPiInstitutionalSession(options) {
         });
       }
     }
+    const requestedThinking = options.selection.thinking === "max" ? "max" : "off";
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      thinkingLevel: options.selection.thinking ?? "off",
+      thinkingLevel: requestedThinking,
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -1006,6 +1014,15 @@ async function openPiInstitutionalSession(options) {
       ...options.toolsAllowlist === void 0 ? {} : { tools: options.toolsAllowlist },
       ...customTools.length === 0 ? {} : { customTools }
     });
+    if (requestedThinking === "max" && session.thinkingLevel !== "max") {
+      session.dispose();
+      throw withTypedReason(
+        new Error(
+          `${label} thinking level max is unavailable for ${selection.provider}/${selection.model}`
+        ),
+        "thinking"
+      );
+    }
     const listeners = /* @__PURE__ */ new Set();
     const accumulatedUsage = emptyUsage();
     let lastEmittedAssistant;
@@ -1161,9 +1178,10 @@ var init_in_process_session = __esm({
 });
 
 // src/grok/production-host.ts
-import { mkdtemp as mkdtemp4, readFile as readFile12, rm as rm4, writeFile as writeFile8 } from "node:fs/promises";
-import { tmpdir as tmpdir4 } from "node:os";
-import { join as join20 } from "node:path";
+import { mkdtemp as mkdtemp5, readFile as readFile15, rm as rm5, writeFile as writeFile10 } from "node:fs/promises";
+import { tmpdir as tmpdir5 } from "node:os";
+import { join as join25 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // src/canonical-skill-binding.ts
 import { readFile, realpath } from "node:fs/promises";
@@ -1384,7 +1402,7 @@ function normalizeReviewComment(raw) {
 function createGhApiRunner(options = {}) {
   const spawnImpl = options.spawnImpl ?? spawn;
   return async (args, runOptions = {}) => {
-    return await new Promise((resolve13, reject) => {
+    return await new Promise((resolve17, reject) => {
       const signal = runOptions.signal;
       if (signal?.aborted) {
         reject(signal.reason ?? new Error("aborted"));
@@ -1457,11 +1475,11 @@ function createGhApiRunner(options = {}) {
               const value = line2.slice(idx + 1).trim();
               headers[name] = value;
             }
-            resolve13({ status, headers, bodyText });
+            resolve17({ status, headers, bodyText });
             return;
           }
           if (code === 0) {
-            resolve13({ status: 200, headers: {}, bodyText: stdout });
+            resolve17({ status: 200, headers: {}, bodyText: stdout });
             return;
           }
           const failure2 = new Error(
@@ -1715,15 +1733,47 @@ ${marker}
   return { body, marker };
 }
 
-// src/doctor-evidence.ts
-import { readdir, readFile as readFile2, realpath as realpath2, stat } from "node:fs/promises";
-import { dirname as dirname2, relative, resolve as resolve2, sep } from "node:path";
-
-// src/sha256.ts
-import { createHash as createHash2 } from "node:crypto";
-function sha256Hex(bytes) {
-  return createHash2("sha256").update(bytes).digest("hex");
+// src/auditor-dossier-tool.ts
+import { dirname as dirname2, join, resolve as resolve2 } from "node:path";
+import { Type } from "typebox";
+var AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier";
+function auditorRunDirectory(context) {
+  const sessionFile = context.sessionManager?.getSessionFile?.();
+  if (sessionFile === void 0) return void 0;
+  return resolve2(dirname2(dirname2(sessionFile)));
 }
+function createAuditorDossierTool(runDirectory) {
+  return {
+    name: AUDITOR_DOSSIER_TOOL_NAME,
+    description: "\u5B9A\u4F4D\u672C\u5BA1\u8BA1\u5E2D\u7ED1\u5B9A\u7684 run \u5377\u5B97\u53CA\u5176\u8BC1\u636E\u5165\u53E3\u3002",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute(_id, _params) {
+      if (runDirectory === void 0) {
+        return {
+          content: [{ type: "text", text: "\u672C\u5BA1\u8BA1\u5E2D\u65E0\u7ED1\u5B9A run \u5377\u5B97\u8BB0\u5F55\u3002" }],
+          details: void 0
+        };
+      }
+      const details = {
+        runDirectory,
+        admittedRequest: join(runDirectory, "admitted-request.json"),
+        parentSessionCandidate: join(runDirectory, "session", "session.jsonl"),
+        attachments: join(runDirectory, "attachments"),
+        artifacts: join(runDirectory, "artifacts")
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(details) }],
+        details
+      };
+    }
+  };
+}
+
+// src/session-opening-materials.ts
+import { existsSync } from "node:fs";
+import { readFile as readFile2 } from "node:fs/promises";
+import { dirname as dirname3, join as join2 } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // src/package-contracts/collector-output.ts
 var COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
@@ -1894,95 +1944,264 @@ function validateRuntimeReviewerReceipt(output) {
   return output;
 }
 
-// src/audit-escalation.ts
-var AUDIT_ESCALATION_KIND = "audit_escalation";
-var AUDIT_ESCALATION_LIVE_REGISTRY = /* @__PURE__ */ new WeakSet();
-function buildAuditEscalationResult(decision, deliveredOutput) {
-  const auditOwned = {
-    kind: AUDIT_ESCALATION_KIND
-  };
-  if (Object.hasOwn(decision, "conflicts")) {
-    auditOwned.conflicts = decision.conflicts;
+// src/package-contracts/fixer-output.ts
+import { Type as Type5 } from "typebox";
+
+// src/package-contracts/fixer-packet.ts
+import { Type as Type2 } from "typebox";
+import { Value } from "typebox/value";
+var FIXER_PREREQUISITE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]*$";
+var fixerPrerequisiteSchema = Type2.Object({
+  id: Type2.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }),
+  requirement: Type2.String({ pattern: "\\S" })
+}, { additionalProperties: false });
+var fixerPrerequisitesSchema = Type2.Array(fixerPrerequisiteSchema);
+function causeMessage(cause) {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "string") return cause;
+  try {
+    return JSON.stringify(cause) ?? String(cause);
+  } catch {
+    return String(cause);
   }
-  if (Object.hasOwn(decision, "decisionGate")) {
-    auditOwned.auditDecisionGate = decision.decisionGate;
-  }
-  const deliveredFields = deliveredOutput !== void 0 && deliveredOutput !== null && typeof deliveredOutput === "object" && !Array.isArray(deliveredOutput) ? { ...deliveredOutput } : {};
-  delete deliveredFields.conflicts;
-  delete deliveredFields.auditDecisionGate;
-  const result2 = {
-    ...deliveredFields,
-    ...auditOwned
-  };
-  AUDIT_ESCALATION_LIVE_REGISTRY.add(result2);
-  return result2;
 }
-function isAuditEscalationProjection(value) {
-  if (!isAuditEscalationResult(value)) return false;
-  return AUDIT_ESCALATION_LIVE_REGISTRY.has(value);
-}
-function humanDecisionText(result2) {
-  const lines = ["Human decision required: compliance audit escalation."];
-  if (Array.isArray(result2.conflicts)) {
-    lines.push("Conflicts:", ...result2.conflicts.map((conflict) => `- ${conflict}`));
+var FixerPacketValidationError = class extends Error {
+  code = "AK_INVALID_FIX_PACKET";
+  constructor(cause) {
+    const prefix = "Fixer prerequisites or instructions violate the invocation contract";
+    super(
+      cause === void 0 ? prefix : `${prefix}: ${causeMessage(cause)}`,
+      cause === void 0 ? void 0 : { cause }
+    );
+    this.name = "FixerPacketValidationError";
   }
-  const gate = result2.auditDecisionGate;
-  if (gate !== null && typeof gate === "object" && !Array.isArray(gate)) {
-    const record4 = gate;
-    if (typeof record4.question === "string") lines.push(`Question: ${record4.question}`);
-    if (Array.isArray(record4.options)) {
-      lines.push("Options:", ...record4.options.map((option) => `- ${option}`));
+};
+function fail(cause) {
+  throw new FixerPacketValidationError(cause);
+}
+function parseFailure(value) {
+  if (!Array.isArray(value)) fail(new Error("Fixer prerequisites must be a JSON array"));
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      fail(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
+    }
+    const keys = Object.keys(entry);
+    if (keys.length !== 2 || !keys.includes("id") || !keys.includes("requirement")) {
+      fail(new Error("Fixer prerequisite entry fields must be exactly id and requirement"));
+    }
+    if (typeof entry.id !== "string" || !new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(entry.id)) {
+      fail(new Error(`Fixer prerequisite id violates pattern ${FIXER_PREREQUISITE_ID_PATTERN}`));
+    }
+    if (typeof entry.requirement !== "string" || !/\S/.test(entry.requirement)) {
+      fail(new Error("Fixer prerequisite requirement must be nonblank"));
     }
   }
-  return lines.join("\n");
+  fail(new Error("Fixer prerequisites violate the attachment schema"));
 }
-function projectAuditEscalation(decision, deliveredOutput) {
-  const details = buildAuditEscalationResult(decision, deliveredOutput);
-  return {
-    content: [{ type: "text", text: humanDecisionText(details) }],
-    details,
-    terminate: true,
-    ...decision.usage === void 0 ? {} : { usage: decision.usage }
-  };
+function validateFixerPrerequisites(value) {
+  if (!Value.Check(fixerPrerequisitesSchema, value)) parseFailure(value);
+  const entries = value;
+  const ids = /* @__PURE__ */ new Set();
+  const prerequisites = entries.map((entry) => {
+    if (ids.has(entry.id)) {
+      fail(new Error(`Fixer prerequisites contain duplicate id: ${entry.id}`));
+    }
+    ids.add(entry.id);
+    return Object.freeze({ id: entry.id, requirement: entry.requirement });
+  });
+  return Object.freeze(prerequisites);
 }
-function isAuditEscalationResult(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
+function parseFixerPrerequisites(source) {
+  let decoded;
+  try {
+    decoded = JSON.parse(source);
+  } catch (error) {
+    fail(error);
   }
-  return value.kind === AUDIT_ESCALATION_KIND;
-}
-async function disposeComplianceDecision(decision, handlers, deliveredOutput) {
-  switch (decision.status) {
-    case "pass":
-      return await handlers.pass(decision.usage);
-    case "no-receipt":
-      if (handlers.noReceipt === void 0) {
-        throw new Error("Compliance no-receipt projection handler is unavailable");
-      }
-      return await handlers.noReceipt(
-        decision,
-        decision.usage === void 0 ? {} : { usage: decision.usage }
-      );
-    case "revise":
-      return await handlers.revise(decision.violations);
-    case "escalate":
-      return await handlers.escalate(
-        projectAuditEscalation(decision, deliveredOutput)
-      );
-  }
+  return validateFixerPrerequisites(decoded);
 }
 
-// src/submission-correctable-error.ts
-var correctableSubmissionErrorBrand = /* @__PURE__ */ Symbol("ak-roles.correctable-submission-error");
-var CorrectableSubmissionError = class extends Error {
-  [correctableSubmissionErrorBrand] = true;
-};
-function isCorrectableSubmissionError(error) {
-  return error instanceof CorrectableSubmissionError;
+// src/open-tool-schema.ts
+import { Type as Type3 } from "typebox";
+function described(name, schema) {
+  if (typeof schema.description === "string") return schema;
+  throw new Error(`Tool field ${name} has no semantic description at its schema owner`);
+}
+function declarationIdentity(schema) {
+  const { description: _description, ...semantic } = schema;
+  return JSON.stringify(semantic);
+}
+function openToolObjectFromUnion(schema) {
+  const declarations = /* @__PURE__ */ new Map();
+  for (const variant of schema.anyOf) {
+    for (const [name, declaration] of Object.entries(variant.properties ?? {})) {
+      const entries = declarations.get(name) ?? [];
+      const identity = declarationIdentity(declaration);
+      if (!entries.some((entry) => declarationIdentity(entry) === identity)) entries.push(declaration);
+      declarations.set(name, entries);
+    }
+  }
+  const properties = Object.fromEntries([...declarations].map(([name, entries]) => {
+    const descriptions = [...new Set(entries.map((entry) => entry.description).filter((value) => typeof value === "string"))].join(" ");
+    const declaration = entries.length === 1 ? entries[0] : Type3.Union(entries, descriptions === "" ? {} : { description: descriptions });
+    return [name, Type3.Optional(described(name, declaration))];
+  }));
+  const object = Type3.Object(properties, { additionalProperties: true });
+  object.required = [];
+  return object;
+}
+function openToolObject(schema) {
+  const object = Type3.Object(
+    Object.fromEntries(Object.entries(schema.properties).map(([name, declaration]) => [name, Type3.Optional(described(name, declaration))])),
+    { additionalProperties: true }
+  );
+  object.required = [];
+  return object;
+}
+
+// src/package-contracts/terminating-infrastructure.ts
+import { Type as Type4 } from "typebox";
+var INFRASTRUCTURE_FAILURE_DECLARATION_KEY = "infrastructureFailure";
+var INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic";
+var infrastructureFailureDeclarationSchema = Type4.Object(
+  {
+    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: Type4.Object(
+      {
+        [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: Type4.String({
+          minLength: 1,
+          description: "\u975E\u7A7A\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u8BCA\u65AD"
+        })
+      },
+      {
+        additionalProperties: true,
+        description: "\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u58F0\u660E"
+      }
+    )
+  },
+  { additionalProperties: true }
+);
+function withInfrastructureFailureDeclaration(schema) {
+  const baseProperties = schema.properties;
+  const properties = {
+    ...baseProperties ?? {},
+    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: infrastructureFailureDeclarationSchema.properties[INFRASTRUCTURE_FAILURE_DECLARATION_KEY]
+  };
+  const object = Type4.Object(properties, { additionalProperties: true });
+  object.required = [];
+  return object;
+}
+function isInfrastructureFailureDeclaration(parameters) {
+  if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters)) {
+    return false;
+  }
+  const record4 = parameters;
+  if (!Object.hasOwn(record4, INFRASTRUCTURE_FAILURE_DECLARATION_KEY)) return false;
+  const declaration = record4[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
+  if (declaration === null || typeof declaration !== "object" || Array.isArray(declaration)) {
+    return false;
+  }
+  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
+  return typeof diagnostic === "string" && diagnostic.trim().length > 0;
+}
+function infrastructureFailureDiagnostic(parameters) {
+  if (!isInfrastructureFailureDeclaration(parameters)) return void 0;
+  const declaration = parameters[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
+  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
+  return typeof diagnostic === "string" ? diagnostic.trim() : void 0;
+}
+function infrastructureFailureError(diagnostic) {
+  const error = new Error(diagnostic);
+  error.name = "InfrastructureFailure";
+  return error;
+}
+function failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId) {
+  const diagnostic = infrastructureFailureDiagnostic(parameters);
+  if (diagnostic === void 0) return;
+  hostActions.failInfrastructure(
+    infrastructureFailureError(diagnostic),
+    ctx,
+    toolCallId
+  );
+}
+
+// src/package-contracts/fixer-output.ts
+var FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
+var FIXER_ACCEPTED_TEXT = "\u4FEE\u5185\u53F8\u56DE\u6267\u5DF2\u63A5\u53D7";
+var nonblankTransportString = Type5.String({ minLength: 1 });
+var authorityBlockerSchema = Type5.Object({ cause: Type5.Literal("authority_violation"), evidence: nonblankTransportString });
+var prerequisiteBlockerSchema = Type5.Object({ cause: Type5.Literal("prerequisite_unmet"), prerequisiteId: Type5.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }), evidence: nonblankTransportString });
+var blockerSchema = Type5.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
+var exceptionSchema = Type5.Object({ where: nonblankTransportString, reason: nonblankTransportString });
+var testEvidenceSchema = Type5.Object({
+  contract: Type5.String({ minLength: 1, description: "\u6D4B\u8BD5\u6539\u52A8\u6240\u8BC1\u660E\u7684\u5951\u7EA6" }),
+  minimumNecessaryCost: Type5.String({ minLength: 1, description: "\u6D4B\u8BD5\u6539\u52A8\u7684\u4E00\u884C\u6700\u5C0F\u5FC5\u8981\u6210\u672C" }),
+  measuredDuration: Type5.String({ minLength: 1, description: "\u805A\u7126\u9A8C\u8BC1\u5B9E\u6D4B\u65F6\u957F" })
+}, { description: "\u6D4B\u8BD5\u8BC1\u636E\u6761\uFF1Bdiff \u542B\u6D4B\u8BD5\u6539\u52A8\u65F6\u63D0\u4EA4\uFF1B\u673A\u5668\u4E0D\u6838\u9A8C\u3002" });
+var completedClassResultSchema = Type5.Object({
+  name: nonblankTransportString,
+  disposition: Type5.Literal("completed"),
+  searchScope: nonblankTransportString,
+  exceptions: Type5.Array(exceptionSchema),
+  commitSha: nonblankTransportString
+});
+var refusedClassResultSchema = Type5.Object({
+  name: nonblankTransportString,
+  disposition: Type5.Literal("refused"),
+  remainingScope: nonblankTransportString,
+  blocker: blockerSchema
+});
+var classResultSchema = Type5.Union([completedClassResultSchema, refusedClassResultSchema]);
+var completedClassResultsSchema = Type5.Array(completedClassResultSchema, { minItems: 1 });
+var fixerOutputVariants = Type5.Union([
+  Type5.Object({ status: Type5.Literal("planned", { description: "planned \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type5.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }),
+  Type5.Object({ status: Type5.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type5.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), remainingScope: Type5.String({ minLength: 1, description: "\u4F9D\u6CD5\u4E0D\u80FD\u5B8C\u6210\u7684\u5DE5\u4F5C\u8303\u56F4" }), blocker: Type5.Unsafe({ ...blockerSchema, description: "\u5408\u6CD5\u963B\u65AD\u5B8C\u6210\u7684 blocker" }) }),
+  Type5.Object({ status: Type5.Literal("unfinished", { description: "unfinished \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u81F4\u672C\u5C40\u672A\u5B8C\u6210\u65F6\u53EF\u7528\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002" }), report: Type5.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), remainingScope: Type5.String({ minLength: 1, description: "\u672C\u5C40\u540E\u5269\u4F59\u5DE5\u4F5C" }), reason: Type5.Optional(Type5.String({ minLength: 1, description: "\u963B\u65AD\u539F\u56E0\uFF1A\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002" })), classResults: Type5.Optional(Type5.Unsafe({ ...completedClassResultsSchema, description: "\u672C\u5C40\u5DF2\u5B8C\u6210\u7684 class \u7ED3\u7B97" })), testEvidence: Type5.Optional(testEvidenceSchema) }),
+  Type5.Object({ status: Type5.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type5.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: Type5.Array(classResultSchema, { minItems: 1, description: "\u5DF2\u5B8C\u6210\u7684 class \u7ED3\u7B97" }), testEvidence: Type5.Optional(testEvidenceSchema) }),
+  Type5.Object({ status: Type5.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type5.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: Type5.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u62D2\u7EDD\u7ED3\u7B97" }) }),
+  Type5.Object({ status: Type5.Literal("partially_completed", { description: "partially_completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type5.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: Type5.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u5B8C\u6210\u6216\u62D2\u7EDD\u7ED3\u7B97" }), testEvidence: Type5.Optional(testEvidenceSchema) })
+]);
+var fixerOutputSchema = withInfrastructureFailureDeclaration(
+  openToolObjectFromUnion(fixerOutputVariants)
+);
+function validateFixerOutput(value, _phase) {
+  return value;
+}
+function safeProperty(value, property) {
+  if (value === null || typeof value !== "object") return void 0;
+  try {
+    return value[property];
+  } catch {
+    return void 0;
+  }
+}
+function validateFixerOutputForPacket(value, phase, packet) {
+  const output = validateFixerOutput(value, phase);
+  const declaredIds = new Set(packet.prerequisites.map((entry) => entry.id));
+  const topLevelBlocker = safeProperty(output, "blocker");
+  const classResults = safeProperty(output, "classResults");
+  const blockers = topLevelBlocker === void 0 ? Array.isArray(classResults) ? classResults.map((entry) => safeProperty(entry, "blocker")) : [] : [topLevelBlocker];
+  for (const blocker of blockers) {
+    if (safeProperty(blocker, "cause") !== "prerequisite_unmet") continue;
+    const prerequisiteId = safeProperty(blocker, "prerequisiteId");
+    if (typeof prerequisiteId === "string" && !declaredIds.has(prerequisiteId)) {
+      throw new Error("Fixer output violates blocker.prerequisiteId declared-prerequisite constraint");
+    }
+  }
+  return output;
+}
+
+// src/package-contracts/worker-output.ts
+var CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
+var CODER_ACCEPTED_TEXT = "\u5C06\u4F5C\u76D1\u56DE\u6267\u5DF2\u63A5\u53D7";
+function validateAcceptedCoderDetails(output) {
+  return output;
+}
+function validateAcceptedWorkerDetails(output, roleLabel = "Coder") {
+  return roleLabel === "Fixer" ? validateFixerOutput(output) : validateAcceptedCoderDetails(output);
 }
 
 // src/doctor-contracts.ts
-import { Type as Type3 } from "typebox";
+import { Type as Type6 } from "typebox";
 
 // src/canonical-json.ts
 var CANONICAL_JSON_VALIDATION_ERROR_CODE = "canonical-json-invalid";
@@ -2052,109 +2271,6 @@ function canonicalJson(value) {
   return serialize(value, "$");
 }
 
-// src/open-tool-schema.ts
-import { Type } from "typebox";
-function described(name, schema) {
-  if (typeof schema.description === "string") return schema;
-  throw new Error(`Tool field ${name} has no semantic description at its schema owner`);
-}
-function declarationIdentity(schema) {
-  const { description: _description, ...semantic } = schema;
-  return JSON.stringify(semantic);
-}
-function openToolObjectFromUnion(schema) {
-  const declarations = /* @__PURE__ */ new Map();
-  for (const variant of schema.anyOf) {
-    for (const [name, declaration] of Object.entries(variant.properties ?? {})) {
-      const entries = declarations.get(name) ?? [];
-      const identity = declarationIdentity(declaration);
-      if (!entries.some((entry) => declarationIdentity(entry) === identity)) entries.push(declaration);
-      declarations.set(name, entries);
-    }
-  }
-  const properties = Object.fromEntries([...declarations].map(([name, entries]) => {
-    const descriptions = [...new Set(entries.map((entry) => entry.description).filter((value) => typeof value === "string"))].join(" ");
-    const declaration = entries.length === 1 ? entries[0] : Type.Union(entries, descriptions === "" ? {} : { description: descriptions });
-    return [name, Type.Optional(described(name, declaration))];
-  }));
-  const object = Type.Object(properties, { additionalProperties: true });
-  object.required = [];
-  return object;
-}
-function openToolObject(schema) {
-  const object = Type.Object(
-    Object.fromEntries(Object.entries(schema.properties).map(([name, declaration]) => [name, Type.Optional(described(name, declaration))])),
-    { additionalProperties: true }
-  );
-  object.required = [];
-  return object;
-}
-
-// src/package-contracts/terminating-infrastructure.ts
-import { Type as Type2 } from "typebox";
-var INFRASTRUCTURE_FAILURE_DECLARATION_KEY = "infrastructureFailure";
-var INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic";
-var infrastructureFailureDeclarationSchema = Type2.Object(
-  {
-    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: Type2.Object(
-      {
-        [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: Type2.String({
-          minLength: 1,
-          description: "\u975E\u7A7A\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u8BCA\u65AD"
-        })
-      },
-      {
-        additionalProperties: true,
-        description: "\u57FA\u7840\u8BBE\u65BD\u5931\u8D25\u58F0\u660E"
-      }
-    )
-  },
-  { additionalProperties: true }
-);
-function withInfrastructureFailureDeclaration(schema) {
-  const baseProperties = schema.properties;
-  const properties = {
-    ...baseProperties ?? {},
-    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: infrastructureFailureDeclarationSchema.properties[INFRASTRUCTURE_FAILURE_DECLARATION_KEY]
-  };
-  const object = Type2.Object(properties, { additionalProperties: true });
-  object.required = [];
-  return object;
-}
-function isInfrastructureFailureDeclaration(parameters) {
-  if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters)) {
-    return false;
-  }
-  const record4 = parameters;
-  if (!Object.hasOwn(record4, INFRASTRUCTURE_FAILURE_DECLARATION_KEY)) return false;
-  const declaration = record4[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
-  if (declaration === null || typeof declaration !== "object" || Array.isArray(declaration)) {
-    return false;
-  }
-  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
-  return typeof diagnostic === "string" && diagnostic.trim().length > 0;
-}
-function infrastructureFailureDiagnostic(parameters) {
-  if (!isInfrastructureFailureDeclaration(parameters)) return void 0;
-  const declaration = parameters[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
-  const diagnostic = declaration[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
-  return typeof diagnostic === "string" ? diagnostic.trim() : void 0;
-}
-function infrastructureFailureError(diagnostic) {
-  const error = new Error(diagnostic);
-  error.name = "InfrastructureFailure";
-  return error;
-}
-function failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId) {
-  const diagnostic = infrastructureFailureDiagnostic(parameters);
-  if (diagnostic === void 0) return;
-  hostActions.failInfrastructure(
-    infrastructureFailureError(diagnostic),
-    ctx,
-    toolCallId
-  );
-}
-
 // src/doctor-contracts.ts
 var DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 var DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -2162,62 +2278,62 @@ var DOCTOR_ACCEPTED_TEXT = "\u592A\u533B\u7F72\u56DE\u6267\u5DF2\u63A5\u53D7";
 var DOCTOR_ACCEPTED_AUDIT_NO_RECEIPT_TEXT = "\u592A\u533B\u7F72\u56DE\u6267\u5DF2\u63A5\u53D7\uFF1B\u5BA1\u8BA1\u65E0\u56DE\u6267";
 var DOCTOR_OUTPUT_TOOL_DESCRIPTION = "\u63D0\u4EA4\u552F\u4E00\u7EC8\u5C40\u5355\u6848\u8BC1\u8BCD\uFF1Bcompleted \u5141\u8BB8\u7A7A findings\uFF1Bruntime \u8865\u8BB0\u6D3E\u751F\u6210\u672C\u5165\u56DE\u6267\u3002";
 var DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
-var nonblank = Type3.String({ minLength: 1, pattern: "\\S" });
-var count = Type3.Object({ count: Type3.Integer({ minimum: 0 }), sources: Type3.Array(nonblank) }, { additionalProperties: false });
-var evidenceIds = Type3.Array(nonblank, { minItems: 1 });
-var guardrail = Type3.Object({ answer: Type3.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
-var lastRealBite = Type3.Union([
-  Type3.Object({ kind: Type3.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
-  Type3.Object({ kind: Type3.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false })
+var nonblank = Type6.String({ minLength: 1, pattern: "\\S" });
+var count = Type6.Object({ count: Type6.Integer({ minimum: 0 }), sources: Type6.Array(nonblank) }, { additionalProperties: false });
+var evidenceIds = Type6.Array(nonblank, { minItems: 1 });
+var guardrail = Type6.Object({ answer: Type6.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
+var lastRealBite = Type6.Union([
+  Type6.Object({ kind: Type6.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
+  Type6.Object({ kind: Type6.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false })
 ]);
 var assetKinds = DOCTOR_TARGET_KINDS;
 var findingBody = {
   evidenceIds,
-  disposition: Type3.Union([Type3.Literal("keep"), Type3.Literal("thin"), Type3.Literal("delete")]),
-  guardrails: Type3.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true }),
-  prescription: Type3.Object({ kind: Type3.Union([Type3.Literal("retain"), Type3.Literal("delete"), Type3.Literal("simplify"), Type3.Literal("patch"), Type3.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type3.Optional(nonblank) }, { additionalProperties: false }),
+  disposition: Type6.Union([Type6.Literal("keep"), Type6.Literal("thin"), Type6.Literal("delete")]),
+  guardrails: Type6.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true }),
+  prescription: Type6.Object({ kind: Type6.Union([Type6.Literal("retain"), Type6.Literal("delete"), Type6.Literal("simplify"), Type6.Literal("patch"), Type6.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type6.Optional(nonblank) }, { additionalProperties: false }),
   lastRealBite
 };
-var finding = Type3.Union([
-  Type3.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: false }),
-  Type3.Object({ targetKey: nonblank, targetKind: Type3.Union(assetKinds.map((kind) => Type3.Literal(kind))), assetEvidence: Type3.Object({ targetKey: nonblank, targetKind: Type3.Union(assetKinds.map((kind) => Type3.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false })
+var finding = Type6.Union([
+  Type6.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: false }),
+  Type6.Object({ targetKey: nonblank, targetKind: Type6.Union(assetKinds.map((kind) => Type6.Literal(kind))), assetEvidence: Type6.Object({ targetKey: nonblank, targetKind: Type6.Union(assetKinds.map((kind) => Type6.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false })
 ]);
-var caseIdentity = Type3.Object({ issueNumber: Type3.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
-var cost = Type3.Object({
+var caseIdentity = Type6.Object({ issueNumber: Type6.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
+var cost = Type6.Object({
   invocations: count,
   legs: count,
   modelApiTurns: count,
   outputTokens: count,
   toolCalls: count,
-  retries: Type3.Object({ count: Type3.Integer({ minimum: 0 }), sources: Type3.Array(nonblank), evidence: Type3.Literal("literal run-dir naming") }, { additionalProperties: false }),
-  statuses: Type3.Array(Type3.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
-  commits: Type3.Array(Type3.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
-  sessions: Type3.Array(Type3.Union([
-    Type3.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type3.Number({ minimum: 0 }), completion: Type3.Literal("accepted") }, { additionalProperties: false }),
-    Type3.Object({ source: nonblank, startedAt: Type3.Optional(nonblank), endedAt: Type3.Optional(nonblank), wallMilliseconds: Type3.Optional(Type3.Number({ minimum: 0 })), completion: Type3.Literal("incomplete"), degradationReason: Type3.Optional(nonblank) }, { additionalProperties: false })
+  retries: Type6.Object({ count: Type6.Integer({ minimum: 0 }), sources: Type6.Array(nonblank), evidence: Type6.Literal("literal run-dir naming") }, { additionalProperties: false }),
+  statuses: Type6.Array(Type6.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
+  commits: Type6.Array(Type6.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
+  sessions: Type6.Array(Type6.Union([
+    Type6.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type6.Number({ minimum: 0 }), completion: Type6.Literal("accepted") }, { additionalProperties: false }),
+    Type6.Object({ source: nonblank, startedAt: Type6.Optional(nonblank), endedAt: Type6.Optional(nonblank), wallMilliseconds: Type6.Optional(Type6.Number({ minimum: 0 })), completion: Type6.Literal("incomplete"), degradationReason: Type6.Optional(nonblank) }, { additionalProperties: false })
   ])),
-  outputBytes: Type3.Object({ count: Type3.Integer({ minimum: 0 }), sources: Type3.Array(nonblank), payload: Type3.Literal("raw JSONL bytes"), providerWireBytes: Type3.Literal("unavailable") }, { additionalProperties: false })
+  outputBytes: Type6.Object({ count: Type6.Integer({ minimum: 0 }), sources: Type6.Array(nonblank), payload: Type6.Literal("raw JSONL bytes"), providerWireBytes: Type6.Literal("unavailable") }, { additionalProperties: false })
 }, { additionalProperties: false });
-var doctorSubmissionVariants = Type3.Union([
-  Type3.Object({
-    status: Type3.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u5141\u8BB8\u7A7A findings\uFF1Bruntime \u8865\u8BB0\u6D3E\u751F\u6210\u672C\u5165\u56DE\u6267" }),
-    case: Type3.Unsafe({ ...caseIdentity, description: "\u7559\u5B58\u592A\u533B\u7F72\u6848\u8EAB\u4EFD" }),
-    findings: Type3.Array(finding, { description: "\u53EF\u7A7A\u6216\u4EC5\u542B\u975E\u5904\u65B9\u6848\u89C2\u5BDF\uFF1B\u7F3A\u53EF\u590D\u7528\u8D44\u4EA7\u6216 bounded-bite \u8BC1\u636E\u53EA\u6392\u9664\u5BF9\u5E94\u8D44\u4EA7\u5904\u65B9" })
+var doctorSubmissionVariants = Type6.Union([
+  Type6.Object({
+    status: Type6.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u5141\u8BB8\u7A7A findings\uFF1Bruntime \u8865\u8BB0\u6D3E\u751F\u6210\u672C\u5165\u56DE\u6267" }),
+    case: Type6.Unsafe({ ...caseIdentity, description: "\u7559\u5B58\u592A\u533B\u7F72\u6848\u8EAB\u4EFD" }),
+    findings: Type6.Array(finding, { description: "\u53EF\u7A7A\u6216\u4EC5\u542B\u975E\u5904\u65B9\u6848\u89C2\u5BDF\uFF1B\u7F3A\u53EF\u590D\u7528\u8D44\u4EA7\u6216 bounded-bite \u8BC1\u636E\u53EA\u6392\u9664\u5BF9\u5E94\u8D44\u4EA7\u5904\u65B9" })
   }, { additionalProperties: false, description: "\u5355\u6848\u8BC1\u8BCD\uFF0C\u4E0D\u8981\u6C42\u4EFB\u4F55\u5904\u65B9\u6216\u53EF\u590D\u7528 finding" }),
-  Type3.Object({
-    status: Type3.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u4EC5\u5F53\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" }),
-    reason: Type3.String({ minLength: 1, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u8BC1\u8BCD\u7684\u539F\u56E0" }),
-    missingEvidence: Type3.Array(Type3.Object({ need: nonblank, targetKeys: Type3.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "\u5982\u5B9E\u8BC1\u8BCD\u6240\u9700\u800C\u5C1A\u7F3A\u7684\u8BC1\u636E" })
+  Type6.Object({
+    status: Type6.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u4EC5\u5F53\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" }),
+    reason: Type6.String({ minLength: 1, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u8BC1\u8BCD\u7684\u539F\u56E0" }),
+    missingEvidence: Type6.Array(Type6.Object({ need: nonblank, targetKeys: Type6.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1, description: "\u5982\u5B9E\u8BC1\u8BCD\u6240\u9700\u800C\u5C1A\u7F3A\u7684\u8BC1\u636E" })
   }, { additionalProperties: false, description: "\u8BC1\u636E\u4E0D\u8DB3\u4EE5\u652F\u6491\u5982\u5B9E\u6848\u8BC1\u8BCD" })
 ]);
 var doctorSubmissionSchema = withInfrastructureFailureDeclaration(
   openToolObjectFromUnion(doctorSubmissionVariants)
 );
-var doctorOutputSchema = Type3.Union([
-  Type3.Object({ status: Type3.Literal("completed"), case: caseIdentity, findings: Type3.Array(finding), cost }, { additionalProperties: false }),
+var doctorOutputSchema = Type6.Union([
+  Type6.Object({ status: Type6.Literal("completed"), case: caseIdentity, findings: Type6.Array(finding), cost }, { additionalProperties: false }),
   doctorSubmissionVariants.anyOf[1]
 ]);
-var doctorEvidenceReadSchema = Type3.Object({ evidenceId: Type3.String({ minLength: 1, description: "\u5F85\u8BFB\u7559\u5B58\u8BC1\u636E\u6807\u8BC6" }), offset: Type3.Optional(Type3.Integer({ minimum: 0, description: "\u8D77\u59CB\u5B57\u8282\u504F\u79FB\uFF08\u4ECE 0 \u8BA1\uFF09" })), limit: Type3.Optional(Type3.Integer({ minimum: 1, maximum: 4096, description: "\u8FD4\u56DE\u5B57\u8282\u4E0A\u9650" })) }, { additionalProperties: false });
+var doctorEvidenceReadSchema = Type6.Object({ evidenceId: Type6.String({ minLength: 1, description: "\u5F85\u8BFB\u7559\u5B58\u8BC1\u636E\u6807\u8BC6" }), offset: Type6.Optional(Type6.Integer({ minimum: 0, description: "\u8D77\u59CB\u5B57\u8282\u504F\u79FB\uFF08\u4ECE 0 \u8BA1\uFF09" })), limit: Type6.Optional(Type6.Integer({ minimum: 1, maximum: 4096, description: "\u8FD4\u56DE\u5B57\u8282\u4E0A\u9650" })) }, { additionalProperties: false });
 var DoctorSubmissionContractError = class extends Error {
   name = "DoctorSubmissionContractError";
 };
@@ -2338,7 +2454,7 @@ function validateDoctorOutput(value, patient, store) {
 }
 
 // src/merger-contracts.ts
-import { Type as Type4 } from "typebox";
+import { Type as Type7 } from "typebox";
 
 // src/git-object-id.ts
 var FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -2358,23 +2474,29 @@ function exactUtf8(bytes, label) {
   return text;
 }
 
+// src/sha256.ts
+import { createHash as createHash2 } from "node:crypto";
+function sha256Hex(bytes) {
+  return createHash2("sha256").update(bytes).digest("hex");
+}
+
 // src/merger-contracts.ts
 var oidPattern = "^(?:[0-9a-f]{40}|[0-9a-f]{64})$";
-var materialSchema = Type4.Object({ bytesBase64: Type4.String(), sha256: Type4.String() }, { additionalProperties: false });
-var checkSchema = Type4.Object({ name: Type4.String({ minLength: 1 }), argv: Type4.Array(Type4.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
-var mergerInputSchema = Type4.Object({
-  version: Type4.Literal(1),
-  attemptId: Type4.String({ minLength: 1 }),
-  targetObjectId: Type4.String({ pattern: oidPattern }),
-  sourceObjectId: Type4.String({ pattern: oidPattern }),
-  materials: Type4.Object({ task: materialSchema, authority: materialSchema, targetIntent: materialSchema, sourceIntent: materialSchema }, { additionalProperties: false }),
-  expectedConflictPaths: Type4.Array(Type4.String({ minLength: 1 }), { minItems: 1 }),
-  resolutionScope: Type4.Array(Type4.String({ minLength: 1 }), { minItems: 1 }),
-  authorizedChecks: Type4.Array(checkSchema)
+var materialSchema = Type7.Object({ bytesBase64: Type7.String(), sha256: Type7.String() }, { additionalProperties: false });
+var checkSchema = Type7.Object({ name: Type7.String({ minLength: 1 }), argv: Type7.Array(Type7.String({ minLength: 1 }), { minItems: 1 }) }, { additionalProperties: false });
+var mergerInputSchema = Type7.Object({
+  version: Type7.Literal(1),
+  attemptId: Type7.String({ minLength: 1 }),
+  targetObjectId: Type7.String({ pattern: oidPattern }),
+  sourceObjectId: Type7.String({ pattern: oidPattern }),
+  materials: Type7.Object({ task: materialSchema, authority: materialSchema, targetIntent: materialSchema, sourceIntent: materialSchema }, { additionalProperties: false }),
+  expectedConflictPaths: Type7.Array(Type7.String({ minLength: 1 }), { minItems: 1 }),
+  resolutionScope: Type7.Array(Type7.String({ minLength: 1 }), { minItems: 1 }),
+  authorizedChecks: Type7.Array(checkSchema)
 }, { additionalProperties: false });
-var mergerOutputVariants = Type4.Union([
-  Type4.Object({ status: Type4.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: Type4.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), report: Type4.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), mergeCommitId: Type4.String({ pattern: oidPattern, description: "\u5DF2\u6838\u9A8C\u7684\u5B8C\u6210\u5408\u5E76 commit object ID" }) }, { additionalProperties: false }),
-  Type4.Object({ status: Type4.Literal("escalate", { description: "escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: Type4.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), diagnosis: Type4.String({ minLength: 1, description: "\u5408\u5E76\u5B8C\u6210\u9700\u5347\u7EA7\u7684\u539F\u56E0" }), report: Type4.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }, { additionalProperties: false })
+var mergerOutputVariants = Type7.Union([
+  Type7.Object({ status: Type7.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: Type7.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), report: Type7.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), mergeCommitId: Type7.String({ pattern: oidPattern, description: "\u5DF2\u6838\u9A8C\u7684\u5B8C\u6210\u5408\u5E76 commit object ID" }) }, { additionalProperties: false }),
+  Type7.Object({ status: Type7.Literal("escalate", { description: "escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), attemptId: Type7.String({ minLength: 1, description: "\u5DF2\u53D7\u7406\u5408\u5E76 attempt \u8EAB\u4EFD" }), diagnosis: Type7.String({ minLength: 1, description: "\u5408\u5E76\u5B8C\u6210\u9700\u5347\u7EA7\u7684\u539F\u56E0" }), report: Type7.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }, { additionalProperties: false })
 ]);
 var mergerOutputSchema = withInfrastructureFailureDeclaration(
   openToolObjectFromUnion(mergerOutputVariants)
@@ -2389,21 +2511,21 @@ var MergerInputContractError = class extends Error {
     this.name = "MergerInputContractError";
   }
 };
-function fail(message = "Merger input violates its exact contract") {
+function fail2(message = "Merger input violates its exact contract") {
   throw new MergerInputContractError(message);
 }
 function canonicalPath(path) {
   return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\0") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
 function validatePathSet(value, label) {
-  if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath)) fail(`Merger ${label} must be a non-empty canonical path set`);
+  if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath)) fail2(`Merger ${label} must be a non-empty canonical path set`);
   return value;
 }
 function validateMaterial(value, label) {
-  if (!record(value) || typeof value.bytesBase64 !== "string" || typeof value.sha256 !== "string") fail(`Merger ${label} material is malformed`);
+  if (!record(value) || typeof value.bytesBase64 !== "string" || typeof value.sha256 !== "string") fail2(`Merger ${label} material is malformed`);
   const bytes = Buffer.from(value.bytesBase64, "base64");
   exactUtf8(bytes, `Merger ${label} material`);
-  if (sha256Hex(bytes) !== value.sha256) fail(`Merger ${label} material digest mismatch`);
+  if (sha256Hex(bytes) !== value.sha256) fail2(`Merger ${label} material digest mismatch`);
 }
 function deepFreeze(value) {
   if (value && typeof value === "object") {
@@ -2413,15 +2535,15 @@ function deepFreeze(value) {
   return value;
 }
 function validateMergerInput(value) {
-  if (!record(value) || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length) fail("Merger input has invalid identity or object ID");
-  if (!record(value.materials)) fail();
+  if (!record(value) || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length) fail2("Merger input has invalid identity or object ID");
+  if (!record(value.materials)) fail2();
   for (const key of ["task", "authority", "targetIntent", "sourceIntent"]) validateMaterial(value.materials[key], key);
   const conflicts = validatePathSet(value.expectedConflictPaths, "expected conflict paths");
   const scope = validatePathSet(value.resolutionScope, "resolution scope");
-  if (!conflicts.every((path) => scope.includes(path))) fail("Merger resolution scope must contain the complete conflict set");
-  if (!Array.isArray(value.authorizedChecks)) fail("Merger authorized checks are malformed");
+  if (!conflicts.every((path) => scope.includes(path))) fail2("Merger resolution scope must contain the complete conflict set");
+  if (!Array.isArray(value.authorizedChecks)) fail2("Merger authorized checks are malformed");
   for (const check of value.authorizedChecks) {
-    if (!record(check) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank)) fail("Merger authorized check is malformed");
+    if (!record(check) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank)) fail2("Merger authorized check is malformed");
   }
   return deepFreeze(structuredClone(value));
 }
@@ -2434,7 +2556,7 @@ function validateMergerOutput(value, expectedAttemptId) {
 }
 
 // src/notary-contracts.ts
-import { Type as Type5 } from "typebox";
+import { Type as Type8 } from "typebox";
 var NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
 var NOTARY_ACCEPTED_TEXT = "\u7B26\u5B9D\u90CE\u56DE\u6267\u5DF2\u63A5\u53D7";
 var NOTARY_SOURCE_RUN_FLAG = {
@@ -2453,11 +2575,11 @@ var NOTARY_TICKET_FLAG = {
 };
 var notaryOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
-    Type5.Object({
-      status: Type5.Unknown({
+    Type8.Object({
+      status: Type8.Unknown({
         description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
       }),
-      findings: Type5.Unknown({
+      findings: Type8.Unknown({
         description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58"
       })
     })
@@ -2548,552 +2670,6 @@ function validateRecordedGleanerLeftOutput(value) {
     return value;
   }
   throw new Error("Gleaner-left output has no execution discriminator");
-}
-
-// src/package-contracts/fixer-output.ts
-import { Type as Type7 } from "typebox";
-
-// src/package-contracts/fixer-packet.ts
-import { Type as Type6 } from "typebox";
-import { Value } from "typebox/value";
-var FIXER_PREREQUISITE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]*$";
-var fixerPrerequisiteSchema = Type6.Object({
-  id: Type6.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }),
-  requirement: Type6.String({ pattern: "\\S" })
-}, { additionalProperties: false });
-var fixerPrerequisitesSchema = Type6.Array(fixerPrerequisiteSchema);
-function causeMessage(cause) {
-  if (cause instanceof Error) return cause.message;
-  if (typeof cause === "string") return cause;
-  try {
-    return JSON.stringify(cause) ?? String(cause);
-  } catch {
-    return String(cause);
-  }
-}
-var FixerPacketValidationError = class extends Error {
-  code = "AK_INVALID_FIX_PACKET";
-  constructor(cause) {
-    const prefix = "Fixer prerequisites or instructions violate the invocation contract";
-    super(
-      cause === void 0 ? prefix : `${prefix}: ${causeMessage(cause)}`,
-      cause === void 0 ? void 0 : { cause }
-    );
-    this.name = "FixerPacketValidationError";
-  }
-};
-function fail2(cause) {
-  throw new FixerPacketValidationError(cause);
-}
-function parseFailure(value) {
-  if (!Array.isArray(value)) fail2(new Error("Fixer prerequisites must be a JSON array"));
-  for (const entry of value) {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      fail2(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
-    }
-    const keys = Object.keys(entry);
-    if (keys.length !== 2 || !keys.includes("id") || !keys.includes("requirement")) {
-      fail2(new Error("Fixer prerequisite entry fields must be exactly id and requirement"));
-    }
-    if (typeof entry.id !== "string" || !new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(entry.id)) {
-      fail2(new Error(`Fixer prerequisite id violates pattern ${FIXER_PREREQUISITE_ID_PATTERN}`));
-    }
-    if (typeof entry.requirement !== "string" || !/\S/.test(entry.requirement)) {
-      fail2(new Error("Fixer prerequisite requirement must be nonblank"));
-    }
-  }
-  fail2(new Error("Fixer prerequisites violate the attachment schema"));
-}
-function validateFixerPrerequisites(value) {
-  if (!Value.Check(fixerPrerequisitesSchema, value)) parseFailure(value);
-  const entries = value;
-  const ids = /* @__PURE__ */ new Set();
-  const prerequisites = entries.map((entry) => {
-    if (ids.has(entry.id)) {
-      fail2(new Error(`Fixer prerequisites contain duplicate id: ${entry.id}`));
-    }
-    ids.add(entry.id);
-    return Object.freeze({ id: entry.id, requirement: entry.requirement });
-  });
-  return Object.freeze(prerequisites);
-}
-function parseFixerPrerequisites(source) {
-  let decoded;
-  try {
-    decoded = JSON.parse(source);
-  } catch (error) {
-    fail2(error);
-  }
-  return validateFixerPrerequisites(decoded);
-}
-
-// src/package-contracts/fixer-output.ts
-var FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
-var FIXER_ACCEPTED_TEXT = "\u4FEE\u5185\u53F8\u56DE\u6267\u5DF2\u63A5\u53D7";
-var nonblankTransportString = Type7.String({ minLength: 1 });
-var authorityBlockerSchema = Type7.Object({ cause: Type7.Literal("authority_violation"), evidence: nonblankTransportString });
-var prerequisiteBlockerSchema = Type7.Object({ cause: Type7.Literal("prerequisite_unmet"), prerequisiteId: Type7.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }), evidence: nonblankTransportString });
-var blockerSchema = Type7.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
-var exceptionSchema = Type7.Object({ where: nonblankTransportString, reason: nonblankTransportString });
-var testEvidenceSchema = Type7.Object({
-  contract: Type7.String({ minLength: 1, description: "\u6D4B\u8BD5\u6539\u52A8\u6240\u8BC1\u660E\u7684\u5951\u7EA6" }),
-  minimumNecessaryCost: Type7.String({ minLength: 1, description: "\u6D4B\u8BD5\u6539\u52A8\u7684\u4E00\u884C\u6700\u5C0F\u5FC5\u8981\u6210\u672C" }),
-  measuredDuration: Type7.String({ minLength: 1, description: "\u805A\u7126\u9A8C\u8BC1\u5B9E\u6D4B\u65F6\u957F" })
-}, { description: "\u6D4B\u8BD5\u8BC1\u636E\u6761\uFF1Bdiff \u542B\u6D4B\u8BD5\u6539\u52A8\u65F6\u63D0\u4EA4\uFF1B\u673A\u5668\u4E0D\u6838\u9A8C\u3002" });
-var completedClassResultSchema = Type7.Object({
-  name: nonblankTransportString,
-  disposition: Type7.Literal("completed"),
-  searchScope: nonblankTransportString,
-  exceptions: Type7.Array(exceptionSchema),
-  commitSha: nonblankTransportString
-});
-var refusedClassResultSchema = Type7.Object({
-  name: nonblankTransportString,
-  disposition: Type7.Literal("refused"),
-  remainingScope: nonblankTransportString,
-  blocker: blockerSchema
-});
-var classResultSchema = Type7.Union([completedClassResultSchema, refusedClassResultSchema]);
-var completedClassResultsSchema = Type7.Array(completedClassResultSchema, { minItems: 1 });
-var fixerOutputVariants = Type7.Union([
-  Type7.Object({ status: Type7.Literal("planned", { description: "planned \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type7.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }) }),
-  Type7.Object({ status: Type7.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type7.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), remainingScope: Type7.String({ minLength: 1, description: "\u4F9D\u6CD5\u4E0D\u80FD\u5B8C\u6210\u7684\u5DE5\u4F5C\u8303\u56F4" }), blocker: Type7.Unsafe({ ...blockerSchema, description: "\u5408\u6CD5\u963B\u65AD\u5B8C\u6210\u7684 blocker" }) }),
-  Type7.Object({ status: Type7.Literal("unfinished", { description: "unfinished \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8\uFF1B\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u81F4\u672C\u5C40\u672A\u5B8C\u6210\u65F6\u53EF\u7528\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002" }), report: Type7.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), remainingScope: Type7.String({ minLength: 1, description: "\u672C\u5C40\u540E\u5269\u4F59\u5DE5\u4F5C" }), reason: Type7.Optional(Type7.String({ minLength: 1, description: "\u963B\u65AD\u539F\u56E0\uFF1A\u7F3A\u524D\u7F6E\u6216\u8FDD\u5BAA\u7EA6\u675F\u3002\u7F3A\u5F85\u51B3 owner \u51B3\u5B9A\u6216\u7B54\u590D\u5C5E\u7F3A\u524D\u7F6E\u3002" })), classResults: Type7.Optional(Type7.Unsafe({ ...completedClassResultsSchema, description: "\u672C\u5C40\u5DF2\u5B8C\u6210\u7684 class \u7ED3\u7B97" })), testEvidence: Type7.Optional(testEvidenceSchema) }),
-  Type7.Object({ status: Type7.Literal("completed", { description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type7.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: Type7.Array(classResultSchema, { minItems: 1, description: "\u5DF2\u5B8C\u6210\u7684 class \u7ED3\u7B97" }), testEvidence: Type7.Optional(testEvidenceSchema) }),
-  Type7.Object({ status: Type7.Literal("refused", { description: "refused \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type7.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: Type7.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u62D2\u7EDD\u7ED3\u7B97" }) }),
-  Type7.Object({ status: Type7.Literal("partially_completed", { description: "partially_completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), report: Type7.String({ minLength: 1, description: "\u5982\u5B9E\u7ED3\u679C\u62A5\u544A" }), classResults: Type7.Array(classResultSchema, { minItems: 1, description: "\u5404\u7C7B\u5B8C\u6210\u6216\u62D2\u7EDD\u7ED3\u7B97" }), testEvidence: Type7.Optional(testEvidenceSchema) })
-]);
-var fixerOutputSchema = withInfrastructureFailureDeclaration(
-  openToolObjectFromUnion(fixerOutputVariants)
-);
-function validateFixerOutput(value, _phase) {
-  return value;
-}
-function safeProperty(value, property) {
-  if (value === null || typeof value !== "object") return void 0;
-  try {
-    return value[property];
-  } catch {
-    return void 0;
-  }
-}
-function validateFixerOutputForPacket(value, phase, packet) {
-  const output = validateFixerOutput(value, phase);
-  const declaredIds = new Set(packet.prerequisites.map((entry) => entry.id));
-  const topLevelBlocker = safeProperty(output, "blocker");
-  const classResults = safeProperty(output, "classResults");
-  const blockers = topLevelBlocker === void 0 ? Array.isArray(classResults) ? classResults.map((entry) => safeProperty(entry, "blocker")) : [] : [topLevelBlocker];
-  for (const blocker of blockers) {
-    if (safeProperty(blocker, "cause") !== "prerequisite_unmet") continue;
-    const prerequisiteId = safeProperty(blocker, "prerequisiteId");
-    if (typeof prerequisiteId === "string" && !declaredIds.has(prerequisiteId)) {
-      throw new Error("Fixer output violates blocker.prerequisiteId declared-prerequisite constraint");
-    }
-  }
-  return output;
-}
-
-// src/package-contracts/worker-output.ts
-var CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
-var CODER_ACCEPTED_TEXT = "\u5C06\u4F5C\u76D1\u56DE\u6267\u5DF2\u63A5\u53D7";
-function validateAcceptedCoderDetails(output) {
-  return output;
-}
-function validateAcceptedWorkerDetails(output, roleLabel = "Coder") {
-  return roleLabel === "Fixer" ? validateFixerOutput(output) : validateAcceptedCoderDetails(output);
-}
-
-// src/package-contracts/terminating-tools.ts
-var TERMINATING_TOOL_NAMES = [
-  CODER_OUTPUT_TOOL_NAME,
-  FIXER_OUTPUT_TOOL_NAME,
-  REVIEWER_OUTPUT_TOOL_NAME,
-  JUDGE_OUTPUT_TOOL_NAME,
-  COLLECTOR_OUTPUT_TOOL,
-  DOCTOR_OUTPUT_TOOL_NAME,
-  MERGER_OUTPUT_TOOL_NAME,
-  NOTARY_OUTPUT_TOOL_NAME,
-  COUNTERSIGN_OUTPUT_TOOL_NAME,
-  GLEANER_LEFT_OUTPUT_TOOL_NAME
-];
-function isTerminatingToolName(name) {
-  return TERMINATING_TOOL_NAMES.includes(name);
-}
-var AcceptedDetailsContractError = class extends CorrectableSubmissionError {
-  code = "accepted_details_contract";
-  constructor(message, options) {
-    super(message, options);
-    this.name = "AcceptedDetailsContractError";
-  }
-};
-function safeProperty2(candidate, property) {
-  try {
-    return candidate?.[property];
-  } catch {
-    return void 0;
-  }
-}
-function validateAcceptedDetails(toolName, details) {
-  const candidate = details !== null && typeof details === "object" && !Array.isArray(details) ? details : void 0;
-  let auditEscalation = false;
-  try {
-    auditEscalation = isAuditEscalationResult(details);
-  } catch {
-  }
-  if (auditEscalation || safeProperty2(candidate, "kind") === "audit_escalation") {
-    throw new AcceptedDetailsContractError(
-      "audit escalation is not an accepted role receipt"
-    );
-  }
-  const statusKey = toolName === JUDGE_OUTPUT_TOOL_NAME ? "judgeStatus" : toolName === COUNTERSIGN_OUTPUT_TOOL_NAME ? "countersignStatus" : "status";
-  const discriminator = safeProperty2(candidate, statusKey);
-  const lawfulStatuses = {
-    [CODER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "unfinished"],
-    [FIXER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "partially_completed", "unfinished"],
-    [REVIEWER_OUTPUT_TOOL_NAME]: ["completed", "refused"],
-    [JUDGE_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
-    [COLLECTOR_OUTPUT_TOOL]: [],
-    [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
-    [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
-    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
-    [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
-    [GLEANER_LEFT_OUTPUT_TOOL_NAME]: ["completed"]
-  };
-  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
-  const baseDiscriminator = discriminator;
-  const runtimeBindingMissing = toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object") || toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2;
-  if (runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator))) {
-    throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
-  }
-  try {
-    switch (toolName) {
-      case CODER_OUTPUT_TOOL_NAME:
-        return validateAcceptedWorkerDetails(details, "Coder");
-      case FIXER_OUTPUT_TOOL_NAME:
-        return validateAcceptedWorkerDetails(details, "Fixer");
-      case REVIEWER_OUTPUT_TOOL_NAME:
-        return validateRuntimeReviewerReceipt(details);
-      case JUDGE_OUTPUT_TOOL_NAME:
-        return validateAcceptedJudgeDetails(details);
-      case COLLECTOR_OUTPUT_TOOL:
-        return validateAcceptedCollectorReceipt(details);
-      case DOCTOR_OUTPUT_TOOL_NAME:
-        return validateRecordedDoctorOutput(details);
-      case MERGER_OUTPUT_TOOL_NAME:
-        return validateMergerOutput(details);
-      case NOTARY_OUTPUT_TOOL_NAME:
-        return validateRecordedNotaryOutput(details);
-      case COUNTERSIGN_OUTPUT_TOOL_NAME:
-        return validateRecordedCountersignOutput(details);
-      case GLEANER_LEFT_OUTPUT_TOOL_NAME:
-        return validateRecordedGleanerLeftOutput(details);
-    }
-  } catch (error) {
-    if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
-    throw error;
-  }
-}
-function acceptedFacts(toolName, details) {
-  switch (toolName) {
-    case CODER_OUTPUT_TOOL_NAME:
-    case FIXER_OUTPUT_TOOL_NAME:
-    case REVIEWER_OUTPUT_TOOL_NAME:
-    case DOCTOR_OUTPUT_TOOL_NAME:
-    case NOTARY_OUTPUT_TOOL_NAME:
-    case GLEANER_LEFT_OUTPUT_TOOL_NAME:
-      return { status: details.status };
-    case JUDGE_OUTPUT_TOOL_NAME:
-      return { status: details.judgeStatus };
-    case COUNTERSIGN_OUTPUT_TOOL_NAME:
-      return { status: details.countersignStatus };
-    case MERGER_OUTPUT_TOOL_NAME: {
-      const output = details;
-      const status = output.status;
-      return { status, ...status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {} };
-    }
-    case COLLECTOR_OUTPUT_TOOL:
-      return { status: "collected" };
-  }
-}
-
-// src/doctor-evidence.ts
-function record2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-async function discoverCaseFiles(root) {
-  const found = [];
-  async function walk(dir, depth) {
-    for (const item of await readdir(dir, { withFileTypes: true })) {
-      const path = resolve2(dir, item.name);
-      if (item.isDirectory()) await walk(path, depth + 1);
-      else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
-    }
-  }
-  await walk(root, 0);
-  return found.sort();
-}
-function sourceList(count2, sources) {
-  return { count: count2, sources: [...new Set(sources)].sort() };
-}
-function accumulate(metric, value, source) {
-  metric.count += value;
-  if (value) metric.sources.push(source);
-}
-function timestamp(row) {
-  return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : void 0;
-}
-function isMissingPathError(error) {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
-}
-async function stableRunsIdentity(root) {
-  let cursor = root;
-  while (true) {
-    try {
-      const git3 = await stat(resolve2(cursor, ".git"));
-      if (git3.isDirectory() || git3.isFile()) return relative(cursor, root).split(sep).join("/");
-    } catch (error) {
-      if (!isMissingPathError(error)) throw error;
-    }
-    const parent = dirname2(cursor);
-    if (parent === cursor) return root;
-    cursor = parent;
-  }
-}
-function deriveSession(content, id) {
-  const rows = [];
-  const degradationReasons = [];
-  for (const line2 of content.split("\n")) if (line2.trim()) {
-    try {
-      const row = JSON.parse(line2);
-      if (!record2(row)) {
-        degradationReasons.push(`non-object session row in ${id}`);
-        break;
-      }
-      rows.push(row);
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        degradationReasons.push(`malformed JSON tail in ${id}: ${error.message}`);
-        break;
-      }
-      throw error;
-    }
-  }
-  const started = rows.find((row) => row.type === "session");
-  const startedAt = started && timestamp(started);
-  if (!startedAt) degradationReasons.push(`Pi session header is missing: ${id}`);
-  let accepted, observedCommit, turns = 0, calls = 0, tokens = 0;
-  const statuses = [], commits = [];
-  for (const row of rows) {
-    const message = record2(row.message) ? row.message : void 0;
-    if (message?.role === "assistant") {
-      for (const part of Array.isArray(message.content) ? message.content : []) if (record2(part) && part.type === "toolCall") calls++;
-      if (typeof message.responseId === "string") {
-        turns++;
-        const usage = record2(message.usage) ? message.usage : void 0;
-        if (usage && typeof usage.output === "number") tokens += usage.output;
-      }
-    }
-    if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && record2(message.details)) {
-      let details;
-      try {
-        details = validateAcceptedDetails(message.toolName, message.details);
-      } catch (error) {
-        if (error instanceof AcceptedDetailsContractError) continue;
-        throw error;
-      }
-      accepted = row;
-      const facts = acceptedFacts(message.toolName, details);
-      if (facts.commit && facts.commit !== observedCommit) {
-        commits.push({ source: id, commit: facts.commit });
-        observedCommit = facts.commit;
-      }
-      statuses.length = 0;
-      if (facts.status !== void 0) {
-        statuses.push({ source: id, status: facts.status });
-      } else {
-        statuses.push({ source: id, status: "terminating receipt has no receipt-level status" });
-      }
-    }
-  }
-  const acceptedAt = accepted && timestamp(accepted);
-  const final = acceptedAt ? accepted : rows.at(-1);
-  const endedAt = final && timestamp(final);
-  const wall = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : void 0;
-  if (wall !== void 0 && wall < 0) degradationReasons.push(`non-monotonic session timestamps in ${id}`);
-  const degradationReason = degradationReasons.length ? degradationReasons.join("; ") : void 0;
-  const complete = !!acceptedAt && !degradationReason && wall !== void 0 && wall >= 0;
-  const session = complete ? { source: id, startedAt, endedAt, wallMilliseconds: wall, completion: "accepted" } : { source: id, ...startedAt ? { startedAt } : {}, ...endedAt ? { endedAt } : {}, ...wall !== void 0 && wall >= 0 ? { wallMilliseconds: wall } : {}, completion: "incomplete", ...degradationReason ? { degradationReason } : {} };
-  return { session, turns, calls, tokens, statuses, commits };
-}
-async function loadDoctorCase(runsPath) {
-  const root = await realpath2(runsPath);
-  const match = root.split(sep).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
-  if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/issues/<n>/runs directory");
-  const evidence = [], sessions = [], statuses = [], commits = [];
-  const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
-  for (const path of await discoverCaseFiles(root)) {
-    const id = relative(root, path).split(sep).join("/");
-    const bytes = await readFile2(path);
-    const content = bytes.toString("utf8");
-    const kind = id.endsWith(".jsonl") ? "session" : "stderr";
-    evidence.push({ id, kind, byteLength: bytes.byteLength, contentLength: content.length, sha256: sha256Hex(bytes), content });
-    if (kind === "stderr") continue;
-    const result2 = deriveSession(content, id);
-    sessions.push(result2.session);
-    statuses.push(...result2.statuses);
-    commits.push(...result2.commits);
-    accumulate(turns, result2.turns, id);
-    accumulate(calls, result2.calls, id);
-    accumulate(tokens, result2.tokens, id);
-  }
-  const runDirs = (await readdir(root, { withFileTypes: true })).filter((item) => item.isDirectory()).map((item) => item.name).sort();
-  const legs = evidence.filter((entry) => entry.kind === "session").map((entry) => entry.id);
-  const retryDirs = runDirs.filter((name) => /(?:^|[-_])retry(?:[-_]|$)/i.test(name));
-  const rawBytes = evidence.filter((entry) => entry.kind === "session").reduce((sum, entry) => sum + entry.byteLength, 0);
-  const cost2 = { invocations: sourceList(runDirs.length, runDirs), legs: sourceList(legs.length, legs), modelApiTurns: sourceList(turns.count, turns.sources), outputTokens: sourceList(tokens.count, tokens.sources), toolCalls: sourceList(calls.count, calls.sources), retries: { ...sourceList(retryDirs.length, retryDirs), evidence: "literal run-dir naming" }, statuses, commits, sessions, outputBytes: { ...sourceList(rawBytes, legs), payload: "raw JSONL bytes", providerWireBytes: "unavailable" } };
-  return { version: 1, identity: { issueNumber: Number(match[1]), runsPath: await stableRunsIdentity(root) }, evidence, cost: cost2 };
-}
-
-// src/merger-git-state.ts
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-var execFileAsync = promisify(execFile);
-async function git(cwd, args) {
-  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
-  return new Uint8Array(stdout);
-}
-function line(bytes, label) {
-  const value = exactUtf8(bytes, label).trim();
-  if (!value) throw new Error(`${label} is empty`);
-  return value;
-}
-function nulPaths(bytes, label) {
-  const raw = exactUtf8(bytes, label);
-  if (raw.length > 0 && !raw.endsWith("\0")) throw new Error(`${label} is not NUL terminated`);
-  return raw.split("\0").filter(Boolean).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-}
-async function unmerged(cwd) {
-  const raw = exactUtf8(await git(cwd, ["ls-files", "-u", "-z"]), "Git unmerged index");
-  const paths = /* @__PURE__ */ new Set();
-  for (const row of raw.split("\0")) {
-    if (!row) continue;
-    const tab = row.indexOf("	");
-    if (tab < 0 || tab === row.length - 1) throw new Error("Git returned a malformed unmerged index row");
-    paths.add(row.slice(tab + 1));
-  }
-  return [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-}
-function createProductionMergerGitState(repositoryRoot = process.cwd()) {
-  return {
-    async activeMerge() {
-      const targetObjectId = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
-      let mergeHeadRaw;
-      try {
-        mergeHeadRaw = await git(repositoryRoot, ["rev-parse", "--verify", "MERGE_HEAD"]);
-      } catch {
-        throw new Error("Assigned repository does not have one ordinary in-progress merge");
-      }
-      const mergeHeads = exactUtf8(mergeHeadRaw, "Git MERGE_HEAD").trim().split(/\r?\n/).filter(Boolean);
-      if (mergeHeads.length !== 1 || !isFullGitObjectId(targetObjectId) || !isFullGitObjectId(mergeHeads[0]) || targetObjectId.length !== mergeHeads[0].length) throw new Error("Assigned repository does not have one ordinary in-progress merge");
-      let automaticMergeTreeRaw;
-      try {
-        automaticMergeTreeRaw = await git(repositoryRoot, ["rev-parse", "--verify", "AUTO_MERGE^{tree}"]);
-      } catch {
-        throw new Error("Git automatic merge tree identity is unavailable or invalid");
-      }
-      const automaticMergeTreeId = line(automaticMergeTreeRaw, "Git automatic merge tree");
-      if (!isFullGitObjectId(automaticMergeTreeId) || automaticMergeTreeId.length !== targetObjectId.length) throw new Error("Git automatic merge tree identity is unavailable or invalid");
-      return { targetObjectId, sourceObjectId: mergeHeads[0], unmergedPaths: await unmerged(repositoryRoot), automaticMergeTreeId };
-    },
-    async completedMerge(mergeCommitId, automaticMergeTreeId) {
-      if (!isFullGitObjectId(mergeCommitId) || !isFullGitObjectId(automaticMergeTreeId) || mergeCommitId.length !== automaticMergeTreeId.length) throw new Error("Merger completion object ID is invalid");
-      const identity = exactUtf8(await git(repositoryRoot, ["show", "-s", "--format=%H%x00%P", mergeCommitId]), "Git merge commit").trimEnd().split("\0");
-      if (identity.length !== 2 || identity[0] !== mergeCommitId) throw new Error("Git merge completion identity drifted");
-      const parentObjectIds = identity[1].split(" ").filter(Boolean);
-      const currentHead = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
-      const status = await git(repositoryRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-      const frozenTree = line(await git(repositoryRoot, ["rev-parse", "--verify", `${automaticMergeTreeId}^{tree}`]), "Git frozen automatic merge tree");
-      if (frozenTree !== automaticMergeTreeId) throw new Error("Git frozen automatic merge tree identity drifted");
-      const mergeTree = line(await git(repositoryRoot, ["rev-parse", "--verify", `${mergeCommitId}^{tree}`]), "Git completed merge tree");
-      const resolutionChangedPaths = nulPaths(await git(repositoryRoot, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--no-renames", automaticMergeTreeId, mergeTree]), "Git resolution path delta");
-      return { mergeCommitId: currentHead, parentObjectIds, unmergedPaths: await unmerged(repositoryRoot), worktreeClean: status.byteLength === 0 && currentHead === mergeCommitId, resolutionChangedPaths };
-    }
-  };
-}
-
-// src/notary-source-run.ts
-init_activation_ledger_git();
-init_activation_ledger_topology();
-import { dirname as dirname6, isAbsolute as isAbsolute3, join as join6, resolve as resolve5, basename as basename3 } from "node:path";
-import { lstat, realpath as realpath3 } from "node:fs/promises";
-
-// src/public-cli/run-lifecycle.ts
-init_activation_ledger_topology();
-import { chmod, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
-import { join as join5 } from "node:path";
-
-// src/grok/session-identity.ts
-import { mkdir, readFile as readFile3, rename, writeFile } from "node:fs/promises";
-import { dirname as dirname5, join as join2 } from "node:path";
-var GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
-function createGrokSessionIdentityAuthority(authority) {
-  const bindingPath = (principal) => join2(authority.decode(principal).sessionDirectory, GROK_ACP_SESSION_BINDING);
-  return {
-    async load(principal) {
-      try {
-        const value = JSON.parse(await readFile3(bindingPath(principal), "utf8"));
-        if (typeof value !== "object" || value === null || typeof value.sessionId !== "string") {
-          throw new Error("durable Grok ACP session binding is invalid");
-        }
-        return value.sessionId;
-      } catch (error) {
-        if (error.code === "ENOENT") return void 0;
-        throw error;
-      }
-    },
-    async bind(principal, sessionId) {
-      const target = bindingPath(principal);
-      await mkdir(dirname5(target), { recursive: true });
-      const temporary = `${target}.${process.pid}.tmp`;
-      await writeFile(temporary, `${JSON.stringify({ sessionId })}
-`, { encoding: "utf8", mode: 384 });
-      await rename(temporary, target);
-    }
-  };
-}
-
-// src/typed-provider-http.ts
-import { readFile as readFile4, unlink, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join3 } from "node:path";
-var TYPED_HTTP_FILE = "typed-provider-http.json";
-function typedProviderHttpPath(runDirectory) {
-  return join3(runDirectory, TYPED_HTTP_FILE);
-}
-async function clearTypedProviderHttpObservation(runDirectory) {
-  try {
-    await unlink(typedProviderHttpPath(runDirectory));
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
-}
-async function recordTypedProviderHttpStatus(runDirectory, observation) {
-  if (observation.httpStatus >= 200 && observation.httpStatus < 300) {
-    await clearTypedProviderHttpObservation(runDirectory);
-    return;
-  }
-  const body = {
-    httpStatus: observation.httpStatus,
-    provider: observation.provider
-  };
-  await writeFile2(
-    typedProviderHttpPath(runDirectory),
-    `${JSON.stringify(body)}
-`,
-    "utf8"
-  );
 }
 
 // src/packaged-role-registry.ts
@@ -3234,6 +2810,582 @@ function packagedRoleOutputTool(role) {
   return packagedRoleMetadata(role)?.outputTool;
 }
 
+// src/session-opening-materials.ts
+function resolvePackageRootDir(moduleUrl = import.meta.url) {
+  let dir = dirname3(fileURLToPath(moduleUrl));
+  for (let i = 0; i < 8; i += 1) {
+    if (existsSync(join2(dir, "package.json")) && existsSync(join2(dir, "souls"))) {
+      return dir;
+    }
+    const parent = dirname3(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return fileURLToPath(new URL("..", moduleUrl));
+}
+var packageRootUrl = pathToFileURL(resolvePackageRootDir() + "/").href;
+async function readPackageMaterial(relativePath) {
+  return readFile2(fileURLToPath(new URL(relativePath, packageRootUrl)), "utf8");
+}
+async function joinPackageMaterials(relativePaths) {
+  const chunks = [];
+  for (const relativePath of relativePaths) {
+    chunks.push(await readPackageMaterial(relativePath));
+  }
+  return chunks.join("\n\n");
+}
+var MAIN_ROLE_SESSION_MATERIALS = {
+  ...Object.fromEntries(
+    PUBLIC_ROLE_RECORDS.map((record4) => [record4.role, record4.sessionMaterials])
+  ),
+  navigator: ["CLAUDE.md", "souls/navigator.md"]
+};
+function loadMainRoleSessionMaterials(role) {
+  return joinPackageMaterials(MAIN_ROLE_SESSION_MATERIALS[role]);
+}
+var GATEKEEPER_SESSION_MATERIALS = {
+  gatekeeper: [
+    "CLAUDE.md",
+    "souls/gatekeeper.md",
+    "souls/quality-law.md",
+    "souls/gate-output-guide.md"
+  ],
+  inspector: [
+    "CLAUDE.md",
+    "souls/inspector.md",
+    "souls/quality-law.md",
+    "souls/gate-output-guide.md"
+  ],
+  notary: NOTARY_SESSION_MATERIALS
+};
+function loadGatekeeperSessionMaterials(role) {
+  return joinPackageMaterials(GATEKEEPER_SESSION_MATERIALS[role]);
+}
+
+// src/auditor-soul.ts
+function auditorSoulRelativePath(role) {
+  return `souls/${role}-auditor.md`;
+}
+var AUDITOR_SESSION_MATERIALS = {
+  judge: [
+    "CLAUDE.md",
+    "souls/judge-auditor.md",
+    "souls/audit-law.md",
+    "souls/quality-law.md"
+  ],
+  doctor: ["CLAUDE.md", "souls/doctor-auditor.md"]
+};
+async function loadAuditorSoul(role) {
+  const materials = AUDITOR_SESSION_MATERIALS[role];
+  const soulPath = auditorSoulRelativePath(role);
+  const soul = await readPackageMaterial(soulPath);
+  if (soul.trim().length === 0) {
+    throw new Error(`The ${role} auditor Soul is blank`);
+  }
+  return joinPackageMaterials(materials);
+}
+
+// src/compliance-transport.ts
+import { Type as Type11 } from "typebox";
+
+// src/evidence-child-executor.ts
+import { mkdtemp as mkdtemp3, rm as rm3 } from "node:fs/promises";
+import { tmpdir as tmpdir3 } from "node:os";
+import { join as join12 } from "node:path";
+import "@earendil-works/pi-ai";
+
+// src/sitian-appender.ts
+init_activation_ledger_git();
+init_activation_ledger_topology();
+import { createHash as createHash3, randomUUID } from "node:crypto";
+import { appendFileSync, existsSync as existsSync2, readFileSync } from "node:fs";
+import { basename as basename3, dirname as dirname6, join as join4, resolve as resolve5 } from "node:path";
+
+// src/sitian-contracts.ts
+function attachDirectErrnoCode(error, cause) {
+  if (cause === null || typeof cause !== "object" || !("code" in cause)) return;
+  const code = cause.code;
+  if (typeof code === "string") error.code = code;
+}
+var SitianInfrastructureError = class extends Error {
+  knownCause = "session";
+  constructor(message, options) {
+    super(message, options);
+    this.name = "SitianInfrastructureError";
+    attachDirectErrnoCode(this, options?.cause);
+  }
+};
+
+// src/sitian-appender.ts
+function isRecord5(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+var S4_SUBMISSION_LEDGER_KINDS = /* @__PURE__ */ new Set([
+  "candidate",
+  "roundContext",
+  "outcome",
+  "sealed",
+  "post-seal-anomaly"
+]);
+function resolveSitianVolumeCategory(kind) {
+  if (S4_SUBMISSION_LEDGER_KINDS.has(kind)) {
+    return "submission-ledger";
+  }
+  return kind;
+}
+function safeBookKey(cwd) {
+  try {
+    return resolveBookKeyFromGit(cwd);
+  } catch {
+    return basename3(resolve5(cwd)) || "default";
+  }
+}
+function resolveSitianRecordPathInLedger(input, ledgerHome) {
+  const cwd = input.cwd ?? process.cwd();
+  const category = resolveSitianVolumeCategory(input.kind);
+  let sessionDir;
+  if (input.sessionParent !== void 0 && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
+    sessionDir = join4(dirname6(input.sessionParent), category);
+  } else {
+    const bookKey = safeBookKey(cwd);
+    const bookDir = activationBookDirectory(ledgerHome, bookKey);
+    if (input.subject !== void 0) {
+      let subjectStr;
+      if (typeof input.subject === "string") {
+        subjectStr = input.subject;
+      } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
+        subjectStr = input.subject.runId;
+      } else {
+        subjectStr = JSON.stringify(input.subject);
+      }
+      const digest = createHash3("sha256").update(subjectStr).digest("hex").slice(0, 32);
+      sessionDir = join4(bookDir, category, digest);
+    } else {
+      sessionDir = join4(bookDir, category);
+    }
+  }
+  const recordFile = join4(sessionDir, "records.jsonl");
+  return { sessionDir, recordFile, ledgerHome };
+}
+function resolveSitianRecordPath(input) {
+  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
+}
+function appendSitianRecord(input) {
+  try {
+    const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
+    ensureRealDirectoryTree(ledgerHome, sessionDir);
+    const identity = input.identity ?? randomUUID();
+    const timestamp2 = input.timestamp ?? (/* @__PURE__ */ new Date()).toISOString();
+    const host = input.host ?? "pi";
+    const record4 = {
+      level: input.level,
+      kind: input.kind,
+      identity,
+      ...input.subject === void 0 ? {} : { subject: input.subject },
+      ...input.sessionParent === void 0 ? {} : { sessionParent: input.sessionParent },
+      ...input.priorEventId === void 0 ? {} : { priorEventId: input.priorEventId },
+      timestamp: timestamp2,
+      host,
+      ...input.source === void 0 ? {} : { source: input.source },
+      ...input.payload === void 0 ? {} : { payload: input.payload },
+      ...input.raw === void 0 ? {} : { raw: input.raw },
+      ...input.usage === void 0 ? {} : { usage: input.usage }
+    };
+    if (existsSync2(recordFile)) {
+      const buffer = readFileSync(recordFile);
+      if (buffer.length > 0) {
+        if (buffer[buffer.length - 1] !== 10) {
+          appendFileSync(recordFile, "\n", "utf8");
+        }
+        const text = readFileSync(recordFile, "utf8");
+        for (const line2 of text.split("\n")) {
+          const trimmed = line2.trim();
+          if (!trimmed) continue;
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (isRecord5(parsed) && parsed.identity === identity) {
+              return {
+                identity,
+                recordFile,
+                kind: record4.kind,
+                level: record4.level
+              };
+            }
+          } catch {
+          }
+        }
+      }
+    }
+    const row = `${JSON.stringify(record4)}
+`;
+    appendFileSync(recordFile, row, "utf8");
+    return {
+      identity,
+      recordFile,
+      kind: record4.kind,
+      level: record4.level
+    };
+  } catch (error) {
+    if (error instanceof SitianInfrastructureError) throw error;
+    throw new SitianInfrastructureError(
+      `Sitian appender persistence failure: ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+
+// src/sitian-reader.ts
+import { existsSync as existsSync3 } from "node:fs";
+import { readFile as readFile3 } from "node:fs/promises";
+function isRecord6(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function readSitianRecords(recordFile) {
+  if (!existsSync3(recordFile)) {
+    return { records: [], diagnostics: [] };
+  }
+  const text = await readFile3(recordFile, "utf8");
+  const lines = text.split("\n");
+  const records2 = [];
+  const diagnostics = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line2 = lines[index];
+    if (!line2.trim()) continue;
+    try {
+      const parsed = JSON.parse(line2);
+      if (isRecord6(parsed)) {
+        records2.push(parsed);
+      } else {
+        const typeDesc = parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed;
+        diagnostics.push({
+          kind: "malformed",
+          line: index + 1,
+          raw: line2,
+          error: `expected JSON object, got ${typeDesc}`
+        });
+      }
+    } catch (error) {
+      diagnostics.push({
+        kind: "malformed",
+        line: index + 1,
+        raw: line2,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  return { records: records2, diagnostics };
+}
+
+// src/sitian-facade.ts
+function sitianReport(input) {
+  return appendSitianRecord(input);
+}
+
+// src/engine-detour-tool.ts
+import { Type as Type9 } from "typebox";
+
+// src/engine-detour.ts
+import { spawn as spawn2 } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join as join5 } from "node:path";
+var ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
+var AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
+var ENGINE_DETOUR_STAGED_PROMPT_TOKEN = "<<ak-engine-staged-prompt>>";
+var ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC = "\u52B3\u52A1\u5F15\u64CE stdout \u4E3A\u7A7A";
+var ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC = "\u672C\u6FC0\u6D3B\u5185\u52B3\u52A1\u5F15\u64CE\u5DF2\u4F7F\u7528";
+function abortReasonError(signal) {
+  const reason = signal.reason;
+  if (reason instanceof Error) return reason;
+  if (typeof reason === "string" && reason.trim() !== "") {
+    return new Error(reason);
+  }
+  const error = new Error("aborted");
+  error.name = "AbortError";
+  return error;
+}
+function resolveArgvWithStagedPrompt(argv, stagedPath) {
+  let replaced = 0;
+  const out = argv.map((part) => {
+    if (part !== ENGINE_DETOUR_STAGED_PROMPT_TOKEN) return part;
+    replaced += 1;
+    return stagedPath;
+  });
+  if (replaced !== 1) {
+    throw new Error(
+      `\u52B3\u52A1\u5F15\u64CE stagedPrompt \u9700\u8981 argv \u4E2D\u6070\u597D\u4E00\u4E2A ${ENGINE_DETOUR_STAGED_PROMPT_TOKEN}\uFF08\u5B9E\u9645 ${replaced}\uFF09`
+    );
+  }
+  return out;
+}
+async function spawnEngineDetourOnce(input) {
+  if (input.argv.length === 0) {
+    throw new Error("\u52B3\u52A1\u5F15\u64CE argv \u4E0D\u5F97\u4E3A\u7A7A");
+  }
+  const command = input.argv[0];
+  const args = input.argv.slice(1);
+  return await new Promise((resolve17, reject) => {
+    let settled = false;
+    const signal = input.signal;
+    const child = spawn2(command, args, {
+      cwd: input.cwd,
+      env: input.env ?? process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const fail5 = (error) => {
+      if (settled) return;
+      settled = true;
+      if (signal !== void 0) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+    const succeed = (result2) => {
+      if (settled) return;
+      settled = true;
+      if (signal !== void 0) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve17(result2);
+    };
+    const onAbort = () => {
+      fail5(signal !== void 0 ? abortReasonError(signal) : new Error("aborted"));
+      try {
+        child.kill("SIGTERM");
+      } catch {
+      }
+    };
+    if (signal !== void 0) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+    child.on("error", (error) => fail5(error));
+    child.on("close", (code) => {
+      succeed({ code: code ?? 1, stdout, stderr });
+    });
+  });
+}
+async function runEngineDetourOnce(input) {
+  if (input.stagedPrompt === void 0) {
+    return spawnEngineDetourOnce(input);
+  }
+  const stagingDir = await mkdtemp(join5(tmpdir(), "ak-engine-detour-"));
+  const stagedPath = join5(stagingDir, "prompt.txt");
+  let result2;
+  let runError;
+  try {
+    await writeFile(stagedPath, input.stagedPrompt, "utf8");
+    const argv = resolveArgvWithStagedPrompt(input.argv, stagedPath);
+    result2 = await spawnEngineDetourOnce({
+      argv,
+      cwd: input.cwd,
+      ...input.env === void 0 ? {} : { env: input.env },
+      ...input.signal === void 0 ? {} : { signal: input.signal }
+    });
+  } catch (error) {
+    runError = error;
+  }
+  try {
+    await rm(stagingDir, { recursive: true, force: true });
+  } catch (cleanupError) {
+    if (runError !== void 0) {
+      throw new Error(
+        `\u52B3\u52A1\u5F15\u64CE stagedPrompt \u6E05\u7406\u5931\u8D25\uFF08\u539F\u8FD0\u884C\u9519\u8BEF\u4FDD\u7559\u4E3A cause\uFF09: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        { cause: runError }
+      );
+    }
+    throw cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
+  }
+  if (runError !== void 0) {
+    throw runError instanceof Error ? runError : new Error(String(runError));
+  }
+  return result2;
+}
+function isEngineDetourFailure(result2) {
+  return result2.code !== 0 || result2.stdout.trim() === "";
+}
+function engineDetourFailureDiagnostic(result2) {
+  if (result2.stderr.trim().length > 0) return result2.stderr;
+  if (result2.stdout.trim() === "") return ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC;
+  const rows = result2.stdout.split("\n");
+  let lastRow = "";
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (rows[index].trim() !== "") {
+      lastRow = rows[index];
+      break;
+    }
+  }
+  return `\u52B3\u52A1\u5F15\u64CE\u4EE5 code ${result2.code} \u9000\u51FA\uFF1A${lastRow}`;
+}
+function engineNameFromEnv() {
+  const raw = process.env[AK_ROLE_ENGINE_ENV];
+  if (typeof raw !== "string") return void 0;
+  const trimmed = raw.trim();
+  return trimmed === "" ? void 0 : trimmed;
+}
+
+// src/engine-detour-tool.ts
+var engineDetourArgsSchema = Type9.Object(
+  {
+    argv: Type9.Array(Type9.String({ minLength: 1 }), {
+      minItems: 1,
+      description: "\u9996\u9879\u4E3A PATH \u4E2D\u7684\u53EF\u6267\u884C\u6587\u4EF6\uFF0C\u5176\u4F59\u9879\u4E3A\u53C2\u6570\u3002"
+    })
+  },
+  { additionalProperties: false }
+);
+function isCallerCancellation(error, signal) {
+  if (signal?.aborted === true) return true;
+  if (typeof error === "object" && error !== null && error.name === "AbortError") {
+    return true;
+  }
+  return false;
+}
+function createEngineDetourToolDefinition(input) {
+  const latch = input.latch ?? { used: false };
+  const engineName = input.engineName;
+  return {
+    name: ENGINE_DETOUR_TOOL_NAME,
+    label: "\u52B3\u52A1\u5F15\u64CE",
+    description: `\u8FD0\u884C\u4E00\u6B21\u52B3\u52A1\u5F15\u64CE\u5B50\u8FDB\u7A0B\uFF08engine=${engineName}\uFF09\uFF0Cstdout \u8FD4\u56DE\u672C session\uFF1B\u6BCF\u6B21\u6FC0\u6D3B\u81F3\u591A\u4E00\u6B21\u3002`,
+    promptSnippet: "\u8FD0\u884C\u914D\u7F6E\u7684\u52B3\u52A1\u5F15\u64CE\u4E00\u6B21\u5E76\u8FD4\u56DE stdout",
+    parameters: engineDetourArgsSchema,
+    async execute(toolCallId, params, signal, _onUpdate, ctx) {
+      if (latch.used) {
+        input.fail(
+          new Error(ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC),
+          toolCallId,
+          ctx
+        );
+      }
+      latch.used = true;
+      const args = params;
+      const argv = Array.isArray(args.argv) ? args.argv : [];
+      if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
+        input.fail(
+          new Error("\u52B3\u52A1\u5F15\u64CE argv \u987B\u4E3A\u975E\u7A7A\u5B57\u7B26\u4E32\u6570\u7EC4"),
+          toolCallId,
+          ctx
+        );
+      }
+      let result2;
+      try {
+        result2 = await runEngineDetourOnce({
+          argv,
+          cwd: ctx.cwd,
+          ...signal === void 0 ? {} : { signal }
+        });
+      } catch (error) {
+        if (isCallerCancellation(error, signal)) throw error;
+        const cause = error instanceof Error ? error : new Error(String(error).trim() || "\u52B3\u52A1\u5F15\u64CE spawn \u5931\u8D25");
+        input.fail(cause, toolCallId, ctx);
+      }
+      if (isEngineDetourFailure(result2)) {
+        input.fail(
+          new Error(engineDetourFailureDiagnostic(result2)),
+          toolCallId,
+          ctx
+        );
+      }
+      return {
+        content: [{ type: "text", text: result2.stdout }],
+        details: {
+          tool: ENGINE_DETOUR_TOOL_NAME,
+          code: result2.code
+        }
+      };
+    }
+  };
+}
+function registerEngineDetourTool(roleHost, hostActions) {
+  const engineName = engineNameFromEnv();
+  if (engineName === void 0) {
+    return {
+      registered: false,
+      resetLatch() {
+      }
+    };
+  }
+  const latch = { used: false };
+  const definition = createEngineDetourToolDefinition({
+    engineName,
+    latch,
+    fail(error, toolCallId, ctx) {
+      hostActions.failInfrastructure(error, ctx, toolCallId);
+    }
+  });
+  roleHost.registerTool(definition);
+  return {
+    registered: true,
+    resetLatch() {
+      latch.used = false;
+    }
+  };
+}
+
+// src/package-resources/engine-material.ts
+import { existsSync as existsSync4, readdirSync } from "node:fs";
+import { join as join6 } from "node:path";
+var ENGINE_MATERIAL_RELATIVE_ROOT = "resources/engines";
+function isEngineNameSyntax(name) {
+  if (typeof name !== "string") return false;
+  if (name.length === 0 || name.trim() !== name) return false;
+  if (name === "." || name === "..") return false;
+  if (name.includes("/") || name.includes("\\") || name.includes("\0")) return false;
+  return true;
+}
+function resolveEngineMaterialDirectory(packageRoot) {
+  return join6(packageRoot, ENGINE_MATERIAL_RELATIVE_ROOT);
+}
+function resolveEngineMaterialPath(packageRoot, name) {
+  const legal = assertLegalEngineName(name);
+  return join6(resolveEngineMaterialDirectory(packageRoot), `${legal}.md`);
+}
+function assertLegalEngineName(name) {
+  if (!isEngineNameSyntax(name)) {
+    throw new Error(`illegal engine name: ${name}`);
+  }
+  return name;
+}
+function engineSessionMaterialFromOptions(options) {
+  if (options.engine === void 0) return void 0;
+  if (options.packageRoot === void 0 || options.packageRoot.trim() === "") {
+    throw new Error("packageRoot is required when engine is configured");
+  }
+  const name = assertLegalEngineName(options.engine);
+  const materialPath = resolveEngineMaterialPath(options.packageRoot, name);
+  if (existsSync4(materialPath)) {
+    return Object.freeze({ name, materialPath });
+  }
+  return Object.freeze({ name });
+}
+function appendEngineSessionMaterial(lines, engineMaterial) {
+  if (engineMaterial === void 0) {
+    return [...lines];
+  }
+  const out = [...lines];
+  out.push("");
+  if (engineMaterial.materialPath !== void 0) {
+    out.push("\u672C\u6B21\u914D\u7F6E\u7684\u52B3\u52A1\u5F15\u64CE\u53CA\u5176\u624B\u518C\uFF1A");
+    out.push(`- engine: ${engineMaterial.name}`);
+    out.push(`- ${engineMaterial.materialPath}`);
+  } else {
+    out.push(`- engine: ${engineMaterial.name}`);
+  }
+  return out;
+}
+
 // src/public-cli/registry.ts
 var PUBLIC_CALLABLE_ROLES = PACKAGED_ROLE_REGISTRY.map(
   (entry) => entry.role
@@ -3251,13 +3403,2703 @@ var PUBLIC_CONFIGURABLE_SEATS = [
   ...AUTOMATIC_CONFIGURABLE_SEATS
 ];
 
+// src/institutional-resolution.ts
+import { readFile as readFile4, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join7 } from "node:path";
+var INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json";
+var InstitutionalResolutionError = class extends Error {
+  reason;
+  constructor(message, reason, options) {
+    super(message, options);
+    this.name = "InstitutionalResolutionError";
+    this.reason = reason;
+  }
+};
+function cleanSelection(model) {
+  if (model === void 0) return void 0;
+  if (typeof model.provider !== "string" || typeof model.model !== "string") return void 0;
+  return {
+    provider: model.provider,
+    model: model.model,
+    ...model.thinking === void 0 ? {} : { thinking: model.thinking }
+  };
+}
+async function readInstitutionalSeatSelection(runDirectory, seat) {
+  const filePath = join7(runDirectory, INSTITUTIONAL_RESOLUTION_FILE);
+  let raw;
+  try {
+    raw = await readFile4(filePath, "utf8");
+  } catch (error) {
+    throw new InstitutionalResolutionError(
+      `institutional resolution page is missing at ${filePath}`,
+      "missing-page",
+      { cause: error }
+    );
+  }
+  let page;
+  try {
+    page = JSON.parse(raw);
+  } catch (error) {
+    throw new InstitutionalResolutionError(
+      `institutional resolution page is corrupted at ${filePath}`,
+      "corrupted",
+      { cause: error }
+    );
+  }
+  if (typeof page !== "object" || page === null || page.version !== 1) {
+    throw new InstitutionalResolutionError(
+      `institutional resolution page format is invalid at ${filePath}`,
+      "invalid-format"
+    );
+  }
+  const seats = page.seats;
+  if (typeof seats !== "object" || seats === null) {
+    throw new InstitutionalResolutionError(
+      `institutional resolution page missing seats object at ${filePath}`,
+      "invalid-format"
+    );
+  }
+  const selection = cleanSelection(seats[seat]);
+  if (selection === void 0) {
+    throw new InstitutionalResolutionError(
+      `institutional resolution page has no resolution for seat "${seat}" at ${filePath}`,
+      "missing-seat"
+    );
+  }
+  return selection;
+}
+
+// src/navigator-session-contracts.ts
+import { mkdir, readFile as readFile5, writeFile as writeFile3 } from "node:fs/promises";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname7, join as join8 } from "node:path";
+import { Type as Type10 } from "typebox";
+import { Value as Value2 } from "typebox/value";
+var NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
+var NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
+var NAVIGATOR_UNAVAILABLE_KEYS = /* @__PURE__ */ new Set([
+  "context",
+  "session",
+  "model",
+  "thinking",
+  "auth",
+  "quota",
+  "transport",
+  "unknown"
+]);
+function navigatorUnavailableKey(value) {
+  return typeof value === "string" && NAVIGATOR_UNAVAILABLE_KEYS.has(value) ? value : void 0;
+}
+var NavigatorUnavailableError = class extends Error {
+  unavailableSource;
+  unavailableCause;
+  originalCause;
+  constructor(source, message, cause = source, originalCause) {
+    super(message);
+    this.name = "NavigatorUnavailableError";
+    this.unavailableSource = source;
+    this.unavailableCause = cause;
+    this.originalCause = originalCause;
+  }
+};
+function navigatorUnavailableError(source, error, cause = source) {
+  const message = error instanceof Error ? error.message : String(error);
+  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
+}
+function exactRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function navigatorProviderFailureFromStatus(status) {
+  if (status === 401 || status === 403) return { source: "auth", cause: "auth" };
+  if (status === 429) return { source: "quota", cause: "quota" };
+  return void 0;
+}
+function navigatorProviderFailureFromCode(code) {
+  if (typeof code === "number") return navigatorProviderFailureFromStatus(code);
+  if (typeof code !== "string") return void 0;
+  if (code === "unauthorized" || code === "authentication_failed") return { source: "auth", cause: "auth" };
+  if (code === "insufficient_quota" || code === "quota_exhausted") return { source: "quota", cause: "quota" };
+  if (code === "transport_error") return { source: "transport", cause: "transport" };
+  return void 0;
+}
+function navigatorProviderFailureFromError(error) {
+  let cursor = error;
+  const seen = /* @__PURE__ */ new Set();
+  while (typeof cursor === "object" && cursor !== null && !seen.has(cursor)) {
+    seen.add(cursor);
+    if (cursor instanceof NavigatorUnavailableError) {
+      return { source: cursor.unavailableSource, cause: cursor.unavailableCause };
+    }
+    if (!exactRecord(cursor)) {
+      cursor = cursor instanceof Error ? cursor.cause : void 0;
+      continue;
+    }
+    const fromReason = navigatorUnavailableKey(cursor.reason);
+    if (fromReason !== void 0) return { source: fromReason, cause: fromReason };
+    const statusCode = typeof cursor.statusCode === "number" ? cursor.statusCode : typeof cursor.status === "number" ? cursor.status : typeof cursor.httpStatus === "number" ? cursor.httpStatus : void 0;
+    const fromStatus = navigatorProviderFailureFromStatus(statusCode);
+    if (fromStatus !== void 0) return fromStatus;
+    const fromCode = navigatorProviderFailureFromCode(cursor.code);
+    if (fromCode !== void 0) return fromCode;
+    cursor = cursor.cause;
+  }
+  return void 0;
+}
+function navigatorProviderFailureFromDiagnostics(diagnostics) {
+  if (!Array.isArray(diagnostics)) return void 0;
+  for (const diagnostic of diagnostics) {
+    if (!exactRecord(diagnostic)) continue;
+    if (diagnostic.type === "provider_transport_failure") return { source: "transport", cause: "transport" };
+    if (exactRecord(diagnostic.error)) {
+      const fromCode = navigatorProviderFailureFromCode(diagnostic.error.code);
+      if (fromCode !== void 0) return fromCode;
+    }
+    if (exactRecord(diagnostic.details)) {
+      const status = typeof diagnostic.details.status === "number" ? diagnostic.details.status : typeof diagnostic.details.statusCode === "number" ? diagnostic.details.statusCode : void 0;
+      const fromStatus = navigatorProviderFailureFromStatus(status);
+      if (fromStatus !== void 0) return fromStatus;
+      const fromCode = navigatorProviderFailureFromCode(diagnostic.details.code);
+      if (fromCode !== void 0) return fromCode;
+    }
+  }
+  return void 0;
+}
+var navigatorProviderFailureSchema = Type10.Object({
+  source: Type10.Union([
+    Type10.Literal("context"),
+    Type10.Literal("session"),
+    Type10.Literal("model"),
+    Type10.Literal("thinking"),
+    Type10.Literal("auth"),
+    Type10.Literal("quota"),
+    Type10.Literal("transport"),
+    Type10.Literal("unknown")
+  ]),
+  cause: Type10.Union([
+    Type10.Literal("context"),
+    Type10.Literal("session"),
+    Type10.Literal("model"),
+    Type10.Literal("thinking"),
+    Type10.Literal("auth"),
+    Type10.Literal("quota"),
+    Type10.Literal("transport"),
+    Type10.Literal("unknown")
+  ])
+}, { additionalProperties: false });
+function navigatorModelSettingPath() {
+  return join8(process.env.PI_CODING_AGENT_DIR ?? join8(homedir3(), ".pi", "agent"), "navigator-model.json");
+}
+async function readNavigatorModelSetting(path = navigatorModelSettingPath()) {
+  try {
+    const raw = JSON.parse(await readFile5(path, "utf8"));
+    if (!exactRecord(raw) || typeof raw.model !== "string" || raw.model.trim() === "") {
+      throw new Error("Navigator model setting is malformed");
+    }
+    return raw.model;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return NAVIGATOR_DEFAULT_MODEL;
+    }
+    throw error;
+  }
+}
+function parseNavigatorModelSetting(value) {
+  const slash = value.indexOf("/");
+  if (slash <= 0 || slash === value.length - 1) {
+    throw new Error("Navigator model setting must be provider/model[:max]");
+  }
+  const provider = value.slice(0, slash);
+  const modelWithThinking = value.slice(slash + 1);
+  const colon = modelWithThinking.lastIndexOf(":");
+  const suffix = colon < 0 ? void 0 : modelWithThinking.slice(colon + 1);
+  if (suffix !== void 0 && suffix !== "max") {
+    throw new Error("Navigator model setting must use :max or omit the thinking suffix");
+  }
+  const model = colon < 0 ? modelWithThinking : modelWithThinking.slice(0, colon);
+  if (model === "") throw new Error("Navigator model setting must include a model");
+  return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
+}
+async function resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath) {
+  const runDirectory = auditorRunDirectory(context);
+  if (runDirectory !== void 0) {
+    try {
+      const selection = await readInstitutionalSeatSelection(runDirectory, "navigator");
+      const thinkingLevel = selection.thinking === "max" ? "max" : "off";
+      return {
+        selection: {
+          provider: selection.provider,
+          model: selection.model,
+          ...selection.thinking === void 0 ? {} : { thinking: selection.thinking }
+        },
+        configuredLabel: `${selection.provider}/${selection.model}${thinkingLevel === "max" ? ":max" : ""}`,
+        thinkingLevel
+      };
+    } catch (error) {
+      if (error instanceof InstitutionalResolutionError && (error.reason === "missing-page" || error.reason === "missing-seat")) {
+      } else {
+        throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("model", error);
+      }
+    }
+  }
+  let configured;
+  try {
+    configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
+  } catch (error) {
+    throw navigatorUnavailableError("model", error);
+  }
+  let parsed;
+  try {
+    parsed = parseNavigatorModelSetting(configured);
+  } catch (error) {
+    throw navigatorUnavailableError("model", error);
+  }
+  return {
+    selection: {
+      provider: parsed.provider,
+      model: parsed.model,
+      thinking: parsed.thinkingLevel
+    },
+    configuredLabel: configured,
+    thinkingLevel: parsed.thinkingLevel
+  };
+}
+
+// src/receipt-delivery-policy.ts
+var RECEIPT_DELIVERY_TURN_LIMIT = 2;
+var RECEIPT_DELIVERY_PROMPT = "\u672C\u4F1A\u8BDD\u5C1A\u65E0\u5DF2\u63A5\u53D7\u7684 typed \u56DE\u6267\u3002";
+var NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle";
+function noReceiptLifecycleFacts(input) {
+  if (input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT) {
+    throw new TypeError("no-receipt lifecycle requires an exhausted delivery budget");
+  }
+  return {
+    terminalToolCalled: input.terminalToolCalled,
+    rejectedReceipts: input.rejectedReceipts.map(({ reason }) => ({
+      reason,
+      diagnosticAvailable: reason.trim() !== ""
+    })),
+    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+    sessionCompletion: "settled-without-accepted-receipt",
+    runPointer: input.runPointer,
+    attemptPointer: input.attemptPointer,
+    acceptedReceipt: false
+  };
+}
+function createReceiptDeliveryPolicy() {
+  let accepted = false;
+  let terminalToolCalled = false;
+  let deliveryTurns = 0;
+  const rejectedReceipts = [];
+  return {
+    recordAccepted() {
+      accepted = true;
+      terminalToolCalled = true;
+    },
+    /** Infrastructure owns terminality and must never trigger receipt催交. */
+    stopForInfrastructure() {
+      accepted = true;
+    },
+    recordRejected(reason) {
+      terminalToolCalled = true;
+      rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
+      deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);
+    },
+    recordDeliveryRequest() {
+      deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);
+    },
+    nextAction() {
+      if (accepted) return "accepted";
+      return deliveryTurns < RECEIPT_DELIVERY_TURN_LIMIT ? "request-delivery" : "no-receipt";
+    },
+    facts(binding) {
+      return noReceiptLifecycleFacts({ terminalToolCalled, rejectedReceipts: [...rejectedReceipts], deliveryTurns, ...binding });
+    }
+  };
+}
+
+// src/typed-provider-http.ts
+import { readFile as readFile6, unlink, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join9 } from "node:path";
+var TYPED_HTTP_FILE = "typed-provider-http.json";
+function typedProviderHttpPath(runDirectory) {
+  return join9(runDirectory, TYPED_HTTP_FILE);
+}
+async function clearTypedProviderHttpObservation(runDirectory) {
+  try {
+    await unlink(typedProviderHttpPath(runDirectory));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+async function recordTypedProviderHttpStatus(runDirectory, observation) {
+  if (observation.httpStatus >= 200 && observation.httpStatus < 300) {
+    await clearTypedProviderHttpObservation(runDirectory);
+    return;
+  }
+  const body = {
+    httpStatus: observation.httpStatus,
+    provider: observation.provider
+  };
+  await writeFile4(
+    typedProviderHttpPath(runDirectory),
+    `${JSON.stringify(body)}
+`,
+    "utf8"
+  );
+}
+
+// src/evidence-child-executor.ts
+init_upstream_error_testimony();
+var EVIDENCE_CHILD_SESSION_MATERIALS = [
+  "souls/quality-law.md"
+];
+async function buildEvidenceChildSystemPrompt(engineMaterial) {
+  const materials = [];
+  for (const relativePath of EVIDENCE_CHILD_SESSION_MATERIALS) {
+    materials.push(await readPackageMaterial(relativePath));
+  }
+  return appendEngineSessionMaterial(materials, engineMaterial).join("\n");
+}
+var AUDITOR_TURN_LIMIT = 32;
+var AuditorTurnLimitError = class extends Error {
+  constructor(limit, observedTurns, lastResponse) {
+    super(observedTurns === void 0 ? `Auditor exceeded ${limit} turns` : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
+    this.limit = limit;
+    this.observedTurns = observedTurns;
+    this.lastResponse = lastResponse;
+    this.name = "AuditorTurnLimitError";
+  }
+  limit;
+  observedTurns;
+  lastResponse;
+};
+async function withInProcessScratch(options, run) {
+  const scratch = await mkdtemp3(join12(options.parentDirectory ?? tmpdir3(), options.prefix));
+  let failure2;
+  try {
+    return await run(scratch);
+  } catch (error) {
+    failure2 = error;
+    throw error;
+  } finally {
+    try {
+      await rm3(scratch, { recursive: true, force: true });
+    } catch (cleanupFailure) {
+      if (failure2 !== void 0) {
+        throw new AggregateError([failure2, cleanupFailure], "in-process child scratch cleanup failed", { cause: failure2 });
+      }
+      throw cleanupFailure;
+    }
+  }
+}
+async function runChildCleanup(cleanups, primaryFailure, label) {
+  let cleanupFailure;
+  for (const cleanup of cleanups) {
+    try {
+      await cleanup();
+    } catch (failure2) {
+      cleanupFailure = cleanupFailure === void 0 ? failure2 : new AggregateError([cleanupFailure, failure2], `${label} cleanup failed`, {
+        cause: cleanupFailure
+      });
+    }
+  }
+  if (cleanupFailure === void 0) return;
+  if (primaryFailure !== void 0) {
+    throw new AggregateError(
+      [primaryFailure, cleanupFailure],
+      `${label} execution and cleanup failed`,
+      { cause: primaryFailure }
+    );
+  }
+  throw new AggregateError([cleanupFailure], `${label} cleanup failed`, {
+    cause: cleanupFailure
+  });
+}
+function numericHttpStatus2(value) {
+  return isNonSuccessHttpStatus(value) ? value : void 0;
+}
+function projectStructuredRemote2(error) {
+  let httpStatus;
+  let diagnostics;
+  let body;
+  let code;
+  let errno;
+  let cursor = error;
+  const seen = /* @__PURE__ */ new Set();
+  while (typeof cursor === "object" && cursor !== null && !seen.has(cursor)) {
+    seen.add(cursor);
+    const record4 = cursor;
+    const nodeStatus = numericHttpStatus2(record4.statusCode) ?? numericHttpStatus2(record4.status) ?? numericHttpStatus2(record4.httpStatus);
+    const nodeDiagnostics = Array.isArray(record4.diagnostics) && record4.diagnostics.length > 0 ? record4.diagnostics : void 0;
+    const nodeHasTestimony = hasUpstreamErrorTestimony({
+      ...nodeStatus === void 0 ? {} : { httpStatus: nodeStatus },
+      ...nodeDiagnostics === void 0 ? {} : { diagnostics: nodeDiagnostics }
+    });
+    if (httpStatus === void 0 && nodeStatus !== void 0) httpStatus = nodeStatus;
+    if (diagnostics === void 0 && nodeDiagnostics !== void 0) diagnostics = nodeDiagnostics;
+    if (nodeHasTestimony) {
+      const payload = projectConfirmedRemotePayload(record4);
+      if (body === void 0 && payload.body !== void 0) body = payload.body;
+      if (code === void 0 && payload.code !== void 0) code = payload.code;
+      if (errno === void 0 && payload.errno !== void 0) errno = payload.errno;
+    }
+    cursor = record4.cause;
+  }
+  return {
+    hasTestimony: hasUpstreamErrorTestimony({
+      ...httpStatus === void 0 ? {} : { httpStatus },
+      ...diagnostics === void 0 ? {} : { diagnostics }
+    }),
+    ...httpStatus === void 0 ? {} : { httpStatus },
+    ...diagnostics === void 0 ? {} : { diagnostics },
+    ...body === void 0 ? {} : { body },
+    ...code === void 0 ? {} : { code },
+    ...errno === void 0 ? {} : { errno }
+  };
+}
+function classifiedError(error, evidenceChildFailure) {
+  const diagnostic = typeof error === "object" && error !== null && typeof error.errorMessage === "string" ? error.errorMessage : error === void 0 ? "" : String(error);
+  const wrapped = error instanceof Error ? error : Object.assign(new Error(diagnostic, { cause: error }), { evidenceChildOriginal: error });
+  const classification = "evidenceChildFailure" in wrapped ? wrapped.evidenceChildFailure : evidenceChildFailure === "provider" && !projectStructuredRemote2(error).hasTestimony ? "unknown" : evidenceChildFailure;
+  return Object.assign(wrapped, { evidenceChildFailure: classification });
+}
+function extractToolResultText(details) {
+  if (typeof details !== "object" || details === null) return void 0;
+  const record4 = details;
+  const content = record4.content;
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === "object" && part !== null) {
+        const text = part.text;
+        if (typeof text === "string" && text.trim() !== "") return text;
+      }
+    }
+  }
+  return void 0;
+}
+function emptyUsage2() {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+  };
+}
+function addUsage2(total, next) {
+  total.input += next.input;
+  total.output += next.output;
+  total.cacheRead += next.cacheRead;
+  total.cacheWrite += next.cacheWrite;
+  total.totalTokens += next.totalTokens;
+  total.cost.input += next.cost.input;
+  total.cost.output += next.cost.output;
+  total.cost.cacheRead += next.cost.cacheRead;
+  total.cost.cacheWrite += next.cost.cacheWrite;
+  total.cost.total += next.cost.total;
+}
+async function executeEvidenceChild(workspace, prompt, context, options = {}) {
+  const signal = options.signal;
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(context);
+  if (runDirectory === void 0) {
+    throw new Error("Evidence child requires a run directory carrying the institutional resolution page");
+  }
+  const selection = await readInstitutionalSeatSelection(runDirectory, "evidenceChild");
+  return withInProcessScratch(
+    {
+      prefix: "ak-evidence-child-",
+      ...options.credentialScratchParent === void 0 ? {} : { parentDirectory: options.credentialScratchParent }
+    },
+    async (childConfigDir) => {
+      const { openPiInstitutionalSession: openPiInstitutionalSession2 } = await Promise.resolve().then(() => (init_in_process_session(), in_process_session_exports));
+      const { createRecordSession: createRecordSession2 } = await Promise.resolve().then(() => (init_archivist_record_entry(), archivist_record_entry_exports));
+      const engineName = engineNameFromEnv();
+      const engineMaterial = engineName === void 0 ? void 0 : options.packageRoot === void 0 || options.packageRoot.trim() === "" ? Object.freeze({ name: engineName }) : engineSessionMaterialFromOptions({
+        engine: engineName,
+        packageRoot: options.packageRoot
+      });
+      let engineDetourFailure;
+      const engineDetourTool = engineName === void 0 ? void 0 : createEngineDetourToolDefinition({
+        engineName,
+        fail(error) {
+          engineDetourFailure ??= error instanceof Error ? error : new Error(String(error));
+          throw engineDetourFailure;
+        }
+      });
+      let opened;
+      try {
+        opened = await openPiInstitutionalSession2({
+          cwd: workspace,
+          agentDir: childConfigDir,
+          selection,
+          systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
+          ...engineDetourTool === void 0 ? {} : { customTools: [engineDetourTool] },
+          sessionManager: createRecordSession2({
+            cwd: workspace,
+            kind: "evidence-children",
+            ...context.sessionManager === void 0 ? {} : { parent: context.sessionManager }
+          }),
+          ...signal === void 0 ? {} : { signal },
+          label: "Evidence child"
+        });
+      } catch (error) {
+        throw classifiedError(error, "provider");
+      }
+      const { handle } = opened;
+      const usage = emptyUsage2();
+      const unsubscribe = handle.subscribe((event) => {
+        if (event.type === "message_end" && event.role === "assistant") {
+          if (event.usage) addUsage2(usage, event.usage);
+        }
+      });
+      const abortChild = () => {
+        handle.abort();
+      };
+      if (signal?.aborted) abortChild();
+      else signal?.addEventListener("abort", abortChild, { once: true });
+      let primaryFailure;
+      try {
+        const delivered = prompt;
+        let turnResult;
+        try {
+          turnResult = await handle.prompt(delivered);
+        } catch (error) {
+          if (engineDetourFailure !== void 0) {
+            throw classifiedError(engineDetourFailure, "child");
+          }
+          throw classifiedError(error, "provider");
+        }
+        if (engineDetourFailure !== void 0) {
+          throw classifiedError(engineDetourFailure, "child");
+        }
+        if (signal?.aborted) throw new Error("Evidence child was cancelled");
+        const lastAssistant = turnResult.messages !== void 0 ? [...turnResult.messages].reverse().find((message) => message?.role === "assistant") : void 0;
+        if (turnResult.stopReason === "error" || turnResult.stopReason === "aborted" || lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")) {
+          const errMsg = turnResult.errorMessage ?? lastAssistant?.errorMessage ?? "";
+          throw classifiedError(
+            new Error(errMsg, { cause: lastAssistant }),
+            lastAssistant && projectStructuredRemote2(lastAssistant).hasTestimony ? "provider" : "unknown"
+          );
+        }
+        if (lastAssistant !== void 0 && lastAssistant.role !== "assistant") {
+          throw classifiedError(
+            new Error("Evidence child child terminated without a report", {
+              cause: lastAssistant ?? turnResult.messages
+            }),
+            "child"
+          );
+        }
+        const report = turnResult.text;
+        if (report.trim().length === 0) {
+          throw new Error("Evidence child returned a blank child report");
+        }
+        return { report, usage, prompt: delivered };
+      } catch (error) {
+        primaryFailure = classifiedError(error, "child");
+        throw primaryFailure;
+      } finally {
+        signal?.removeEventListener("abort", abortChild);
+        await runChildCleanup([() => unsubscribe(), () => handle.close()], primaryFailure, "Reviewer child");
+      }
+    }
+  );
+}
+function auditorSeatKey(gateSeat) {
+  return gateSeat ?? "auditor";
+}
+async function executeAuditorChild(options) {
+  const { createRecordSession: createRecordSession2 } = await Promise.resolve().then(() => (init_archivist_record_entry(), archivist_record_entry_exports));
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  if (runDirectory === void 0) {
+    throw new Error(`${options.roleLabel} requires a run directory carrying the institutional resolution page`);
+  }
+  const seat = auditorSeatKey(options.gateSeat);
+  const selection = await readInstitutionalSeatSelection(runDirectory, seat);
+  return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
+    const cwd = options.context.cwd ?? process.cwd();
+    let decision;
+    let noReceiptLifecycle;
+    let decisionSubmitted = false;
+    let decisionCallId;
+    let decisionToolFailure;
+    const decisionToolFailures = /* @__PURE__ */ new Map();
+    const delivery = createReceiptDeliveryPolicy();
+    const tool2 = {
+      ...options.tool,
+      label: options.roleLabel,
+      async execute(...args) {
+        if (decisionSubmitted && decisionCallId !== args[0]) {
+          throw new Error("Auditor decision was submitted more than once");
+        }
+        try {
+          const result2 = await options.tool.execute(...args);
+          delivery.recordAccepted();
+          const rawDecision = args[1];
+          const isMissingArgs = rawDecision === void 0 || typeof rawDecision === "object" && rawDecision !== null && !Array.isArray(rawDecision) && Object.keys(rawDecision).length === 0;
+          decision = isMissingArgs ? void 0 : rawDecision;
+          decisionCallId = args[0];
+          decisionToolFailure = void 0;
+          decisionToolFailures.delete(args[0]);
+          decisionSubmitted = true;
+          return { ...result2, terminate: true };
+        } catch (error) {
+          decisionToolFailure = error;
+          decisionToolFailures.set(args[0], error);
+          throw error;
+        }
+      }
+    };
+    const parentSessionManager = options.context.sessionManager;
+    const parentHeader = parentSessionManager?.getHeader?.();
+    const parentSessionFile = parentSessionManager?.getSessionFile?.();
+    const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
+    const auditorSessionManager = createRecordSession2({
+      cwd,
+      kind: "auditor-roles",
+      ...parentSessionManager === void 0 ? {} : { parent: parentSessionManager }
+    });
+    const { openPiInstitutionalSession: openPiInstitutionalSession2 } = await Promise.resolve().then(() => (init_in_process_session(), in_process_session_exports));
+    const evidenceToolFailures = /* @__PURE__ */ new Map();
+    const wrappedDossierTool = {
+      ...options.dossierTool,
+      label: options.roleLabel,
+      async execute(...args) {
+        try {
+          return await options.dossierTool.execute(...args);
+        } catch (error) {
+          evidenceToolFailures.set(args[0], error);
+          throw error;
+        }
+      }
+    };
+    const opened = await openPiInstitutionalSession2({
+      cwd,
+      agentDir: scratch,
+      selection,
+      systemPrompt: options.systemPrompt,
+      customTools: [wrappedDossierTool, tool2],
+      sessionManager: auditorSessionManager,
+      ...options.signal === void 0 ? {} : { signal: options.signal },
+      idleRetry: true,
+      label: options.roleLabel
+    });
+    const { handle } = opened;
+    const binding = {
+      version: 1,
+      parent: {
+        ...parentHeader?.id === void 0 ? {} : { sessionId: parentHeader.id },
+        ...parentSessionFile === void 0 ? {} : { sessionFile: parentSessionFile },
+        ...parentAttemptEntryId === null || parentAttemptEntryId === void 0 ? {} : { attemptEntryId: parentAttemptEntryId }
+      }
+    };
+    auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
+    try {
+      sitianReport({
+        level: "event",
+        kind: "auditor",
+        cwd,
+        sessionParent: parentSessionFile,
+        payload: { type: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, ...binding },
+        source: "evidence-child-executor"
+      });
+    } catch {
+    }
+    let turns = 0;
+    const sessionUsage = emptyUsage2();
+    let boundaryResponse;
+    let retentionFailure;
+    let retainedResponse;
+    let rejectedDecisionResponse;
+    let promptNeighboringFailure;
+    let promptDecisionFailures = [];
+    const findToolFailure = (response) => {
+      const callIds = response.content.flatMap((part) => part.type === "toolCall" && part.name !== tool2.name ? [part.id] : []);
+      for (const callId of callIds) {
+        if (evidenceToolFailures.has(callId)) return evidenceToolFailures.get(callId);
+      }
+      return void 0;
+    };
+    const drainRejectedDecisionFailures = (response) => {
+      for (const part of response.content) {
+        if (part.type !== "toolCall" || part.name !== tool2.name || !decisionToolFailures.has(part.id)) continue;
+        decisionToolFailure = decisionToolFailures.get(part.id);
+        promptDecisionFailures.push(decisionToolFailure);
+        decisionToolFailures.delete(part.id);
+      }
+    };
+    const retainedAssistants = [];
+    const unsubscribe = handle.subscribe((event) => {
+      if (event.type === "tool_result" && event.isError === true && event.toolName !== tool2.name) {
+        const detailText = extractToolResultText(event.details);
+        if (detailText !== void 0 && /^Tool\s+.+ not found$/.test(detailText.trim())) return;
+        const failure2 = detailText === void 0 ? new Error(event.toolName ?? "evidence tool failed") : new Error(detailText);
+        const errno = /^([A-Z_]+):/.exec(detailText ?? "");
+        if (errno !== null && errno[1] !== void 0) failure2.code = errno[1];
+        evidenceToolFailures.set(event.toolCallId, failure2);
+      }
+      if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === void 0) {
+        turns += 1;
+        if (event.usage) addUsage2(sessionUsage, event.usage);
+        const msg = event.message;
+        retainedResponse = msg;
+        if (msg) {
+          retainedAssistants.push(msg);
+          try {
+            options.retainResponse?.(msg);
+          } catch (error) {
+            retentionFailure = error;
+          }
+          for (const part of msg.content) {
+            if (part.type === "toolCall" && part.name === tool2.name) {
+              rejectedDecisionResponse = msg;
+              if (decision === void 0) {
+                decision = part.arguments === void 0 || typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0 ? void 0 : part.arguments;
+                decisionCallId = part.id;
+                if (part.arguments === void 0 || typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0) {
+                  decisionSubmitted = true;
+                }
+              }
+            }
+          }
+          if (turns >= AUDITOR_TURN_LIMIT || msg.stopReason === "error") boundaryResponse = msg;
+        }
+      }
+      if (event.type === "turn_end") {
+        if (rejectedDecisionResponse !== void 0) {
+          promptNeighboringFailure = findToolFailure(rejectedDecisionResponse);
+          drainRejectedDecisionFailures(rejectedDecisionResponse);
+        }
+        if (decisionSubmitted || promptNeighboringFailure !== void 0 || boundaryResponse !== void 0 && rejectedDecisionResponse === void 0 || retentionFailure !== void 0) {
+          handle.abort();
+        }
+      }
+    });
+    const abort = () => {
+      handle.abort();
+    };
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+    let auditorFailure;
+    try {
+      try {
+        const promptAllowingRejectedDecision = async (prompt) => {
+          rejectedDecisionResponse = void 0;
+          promptNeighboringFailure = void 0;
+          decisionToolFailure = void 0;
+          promptDecisionFailures = [];
+          let promptFailure;
+          try {
+            await handle.prompt(prompt);
+          } catch (error) {
+            promptFailure = error;
+          }
+          const correlatedResponse = rejectedDecisionResponse;
+          if (correlatedResponse !== void 0) {
+            promptNeighboringFailure ??= findToolFailure(correlatedResponse);
+            drainRejectedDecisionFailures(correlatedResponse);
+          }
+          if (promptNeighboringFailure !== void 0) throw promptNeighboringFailure;
+          if (decisionSubmitted) {
+            decisionToolFailure = void 0;
+            return;
+          }
+          if (decisionToolFailure !== void 0) return;
+          if (retentionFailure !== void 0) return;
+          if (opened.streamFailure !== void 0) throw opened.streamFailure;
+          if (promptFailure !== void 0) throw promptFailure;
+        };
+        const chargeAndClearRejectedDecisionFailures = (failures) => {
+          for (const failure2 of failures) {
+            delivery.recordRejected(failure2 instanceof Error ? failure2.message : String(failure2));
+          }
+          decisionToolFailure = void 0;
+          promptDecisionFailures = [];
+        };
+        await promptAllowingRejectedDecision(options.prompt);
+        while (!decisionSubmitted && retentionFailure === void 0 && (boundaryResponse === void 0 || decisionToolFailure !== void 0) && opened.streamFailure === void 0 && delivery.nextAction() === "request-delivery") {
+          if (decisionToolFailure !== void 0) {
+            const failures = promptDecisionFailures.length === 0 ? [decisionToolFailure] : promptDecisionFailures;
+            chargeAndClearRejectedDecisionFailures(failures);
+            if (delivery.nextAction() === "no-receipt") boundaryResponse = void 0;
+            if (delivery.nextAction() === "request-delivery") {
+              if (retainedResponse === rejectedDecisionResponse) {
+                await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+                chargeAndClearRejectedDecisionFailures(promptDecisionFailures);
+              }
+            }
+          } else {
+            delivery.recordDeliveryRequest();
+            await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
+          }
+        }
+        if (!decisionSubmitted && retentionFailure === void 0 && opened.streamFailure === void 0 && delivery.nextAction() === "no-receipt") {
+          const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
+          const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
+          const facts = delivery.facts({ runPointer, attemptPointer });
+          decision = facts;
+          decisionToolFailure = void 0;
+          auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "auditor",
+              cwd,
+              sessionParent: parentSessionFile,
+              payload: { type: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, ...facts },
+              source: "evidence-child-executor"
+            });
+          } catch {
+          }
+          noReceiptLifecycle = facts;
+        }
+      } catch (error) {
+        if (options.signal?.aborted) throw options.signal.reason;
+        if (retentionFailure === void 0 && opened.streamFailure !== void 0) throw opened.streamFailure;
+        if (retentionFailure === void 0) throw error;
+      }
+      if (options.signal?.aborted) throw options.signal.reason;
+      if (retentionFailure === void 0 && opened.streamFailure !== void 0) throw opened.streamFailure;
+      if (!decisionSubmitted && decisionToolFailure !== void 0) throw decisionToolFailure;
+      const relevantResponse = !decisionSubmitted ? boundaryResponse : retainedResponse && retainedResponse.role === "assistant" && retainedResponse.content.some((part) => part.type === "toolCall" && part.name === tool2.name) ? retainedResponse : void 0;
+      if (relevantResponse !== void 0) {
+        const toolFailure = findToolFailure(relevantResponse);
+        if (toolFailure !== void 0) throw toolFailure;
+      }
+      const assistants = [...retainedAssistants].reverse();
+      const response = !decisionSubmitted ? assistants[0] : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool2.name));
+      if (boundaryResponse !== void 0 && boundaryResponse.stopReason !== "error" && !decisionSubmitted && noReceiptLifecycle === void 0) {
+        const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
+        throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
+          stopReason: boundaryResponse.stopReason,
+          toolNames
+        });
+      }
+      if (response !== void 0) {
+        try {
+          if (retentionFailure !== void 0) throw retentionFailure;
+          if (retainedResponse === void 0) options.retainResponse?.(response);
+        } catch (retentionFailure2) {
+          if (response.stopReason !== "error") throw retentionFailure2;
+          const diagnostic = typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? response.errorMessage : void 0;
+          const projected = projectStructuredRemote2(response);
+          const failure2 = new Error(
+            diagnostic ?? "",
+            { cause: retentionFailure2 }
+          );
+          if (projected.hasTestimony && (response.model || response.provider)) {
+            failure2.name = response.model || response.provider || "Error";
+            failure2.failureCode = response.provider || response.model;
+          }
+          failure2.knownCause = projected.hasTestimony ? "provider" : "unrecognized";
+          const retentionError = retentionFailure2 instanceof Error ? retentionFailure2 : void 0;
+          const retentionCause = retentionError?.cause;
+          failure2.details = {
+            ...diagnostic === void 0 ? {} : { errorMessage: diagnostic },
+            ...projected.hasTestimony && response.provider ? { provider: response.provider } : {},
+            ...projected.hasTestimony && response.model ? { model: response.model } : {},
+            ...response.api ? { api: response.api } : {},
+            ...response.rawStopReason ? { rawStopReason: response.rawStopReason } : {},
+            ...projected.httpStatus === void 0 ? {} : { httpStatus: projected.httpStatus },
+            ...projected.diagnostics === void 0 ? {} : { diagnostics: projected.diagnostics },
+            ...projected.body === void 0 ? {} : { body: projected.body },
+            ...projected.code === void 0 ? {} : { code: projected.code },
+            ...projected.errno === void 0 ? {} : { errno: projected.errno },
+            retentionFailure: {
+              name: retentionError?.name ?? typeof retentionFailure2,
+              message: retentionError?.message ?? String(retentionFailure2),
+              ...retentionError?.code !== void 0 ? { code: retentionError.code } : {},
+              ...retentionCause === void 0 ? {} : {
+                cause: retentionCause instanceof Error ? {
+                  name: retentionCause.name,
+                  message: retentionCause.message,
+                  ...retentionCause.code === void 0 ? {} : { code: retentionCause.code }
+                } : retentionCause
+              }
+            }
+          };
+          const failureData = {
+            version: 1,
+            parent: binding.parent,
+            failure: {
+              cause: failure2.knownCause,
+              ...failure2.failureCode === void 0 ? {} : { identity: { name: failure2.name, code: failure2.failureCode } },
+              ...failure2.message === "" ? {} : { diagnostic: failure2.message },
+              details: failure2.details
+            }
+          };
+          auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, failureData);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "auditor",
+              cwd,
+              sessionParent: parentSessionFile,
+              payload: { type: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, ...failureData },
+              source: "evidence-child-executor"
+            });
+          } catch {
+          }
+          throw failure2;
+        }
+      }
+      if (response === void 0 || response.stopReason === "error" || !decisionSubmitted && (response.stopReason === "aborted" || decision === void 0)) {
+        throw new Error(response?.errorMessage ?? `${options.roleLabel} exited without a readable decision receipt`);
+      }
+      return {
+        decision,
+        response: { ...response, usage: sessionUsage },
+        ...noReceiptLifecycle === void 0 ? {} : { noReceiptLifecycle }
+      };
+    } catch (error) {
+      auditorFailure = error;
+      throw error;
+    } finally {
+      options.signal?.removeEventListener("abort", abort);
+      await runChildCleanup([() => unsubscribe(), () => handle.close()], auditorFailure, options.roleLabel);
+    }
+  });
+}
+function exactRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
+  return async ({ context, subject, modelSettingPath, tool: tool2 }) => {
+    const resolved = await resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath);
+    let selection = resolved.selection;
+    let thinkingLevel = resolved.thinkingLevel;
+    let configuredLabel = resolved.configuredLabel;
+    const { createRecordSession: createRecordSession2 } = await Promise.resolve().then(() => (init_archivist_record_entry(), archivist_record_entry_exports));
+    const sessionManager = createRecordSession2({
+      cwd: context.cwd,
+      kind: "navigator",
+      subject,
+      parent: context.sessionManager
+    });
+    let providerFailure;
+    let observationWrite = Promise.resolve();
+    const assignProviderFailure = (fact) => {
+      if (fact !== void 0) providerFailure = fact;
+    };
+    const classifyTerminalMessage = (message) => {
+      if (!exactRecord2(message)) {
+        assignProviderFailure(navigatorProviderFailureFromError(message));
+        return;
+      }
+      assignProviderFailure(navigatorProviderFailureFromDiagnostics(message.diagnostics));
+      if (providerFailure !== void 0) return;
+      if (message.role !== "assistant") assignProviderFailure(navigatorProviderFailureFromError(message));
+      if (providerFailure !== void 0) return;
+      const status = typeof message.statusCode === "number" ? message.statusCode : typeof message.status === "number" ? message.status : typeof message.httpStatus === "number" ? message.httpStatus : void 0;
+      if (typeof status === "number") {
+        assignProviderFailure(navigatorProviderFailureFromStatus(status));
+        if (providerFailure === void 0 && status >= 400 && status < 600) {
+          assignProviderFailure({ source: "transport", cause: "transport" });
+        }
+        const runDir = process.env.AK_ROLE_RUN_DIR;
+        const provider = typeof message.provider === "string" && message.provider.trim() !== "" ? message.provider : selection.provider;
+        if (typeof runDir === "string" && runDir.trim() !== "" && provider.trim() !== "") {
+          observationWrite = observationWrite.then(
+            () => recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider })
+          );
+        }
+      }
+    };
+    const { openPiInstitutionalSession: openPiInstitutionalSession2 } = await Promise.resolve().then(() => (init_in_process_session(), in_process_session_exports));
+    let opened;
+    try {
+      opened = await openPiInstitutionalSession2({
+        cwd: context.cwd,
+        selection,
+        systemPrompt: "",
+        noTools: "all",
+        toolsAllowlist: [NAVIGATOR_PREPARE_TOOL_NAME],
+        customTools: [tool2],
+        sessionManager,
+        label: "Navigator"
+      });
+    } catch (error) {
+      const fact = navigatorProviderFailureFromError(error);
+      throw navigatorUnavailableError(fact?.source ?? "session", error, fact?.cause ?? "session");
+    }
+    const unsubscribe = opened.handle.subscribe((event) => {
+      if (event.type === "message_end" && event.message !== void 0) {
+        const message = event.message;
+        if (exactRecord2(message) && (message.stopReason === "error" || message.stopReason === "aborted")) {
+          classifyTerminalMessage(message);
+        }
+      }
+    });
+    let disposal;
+    const dispose = () => {
+      if (disposal === void 0) {
+        disposal = runChildCleanup(
+          [() => unsubscribe(), () => opened.handle.close()],
+          void 0,
+          "Navigator"
+        );
+      }
+      return disposal;
+    };
+    return {
+      prompt: async (text) => {
+        providerFailure = void 0;
+        observationWrite = Promise.resolve();
+        const failFrom = (error) => {
+          if (providerFailure === void 0) {
+            assignProviderFailure({ source: "transport", cause: "transport" });
+          }
+          const fact = providerFailure;
+          throw navigatorUnavailableError(fact.source, error, fact.cause);
+        };
+        let terminal;
+        try {
+          const turn = await opened.handle.prompt(text);
+          if (turn.stopReason === "error" || turn.stopReason === "aborted") {
+            const cause = turn.errorMessage ?? opened.streamFailure ?? "Navigator provider failure";
+            if (providerFailure === void 0 && opened.streamFailure !== void 0) {
+              classifyTerminalMessage(opened.streamFailure);
+            }
+            if (providerFailure === void 0) {
+              assignProviderFailure(navigatorProviderFailureFromError(
+                typeof cause === "object" && cause !== null ? cause : new Error(String(cause))
+              ));
+            }
+            terminal = cause;
+          } else if (opened.streamFailure !== void 0) {
+            if (providerFailure === void 0) classifyTerminalMessage(opened.streamFailure);
+            terminal = opened.streamFailure;
+          }
+        } catch (error) {
+          if (error instanceof NavigatorUnavailableError) throw error;
+          if (providerFailure === void 0) classifyTerminalMessage(error);
+          terminal = error;
+        }
+        await observationWrite;
+        if (terminal !== void 0) failFrom(terminal);
+      },
+      providerFailure: () => providerFailure,
+      appendEntry: (customType, data) => {
+        sessionManager.appendCustomEntry(customType, data);
+        try {
+          sitianReport({
+            level: "event",
+            kind: "attendance",
+            cwd: context.cwd,
+            sessionParent: sessionManager.getSessionFile(),
+            payload: { customType, data },
+            source: "evidence-child-executor"
+          });
+        } catch {
+        }
+      },
+      entries: () => sessionManager.getEntries(),
+      setModel: async (next, nextThinking) => {
+        let nextParsed;
+        try {
+          nextParsed = parseNavigatorModelSetting(next);
+        } catch (error) {
+          throw navigatorUnavailableError("model", error);
+        }
+        if (nextParsed.provider !== selection.provider || nextParsed.model !== selection.model) {
+          throw new NavigatorUnavailableError(
+            "model",
+            `Navigator model switch requires a new session: ${configuredLabel} \u2192 ${next}`
+          );
+        }
+        if (nextParsed.thinkingLevel !== nextThinking || thinkingLevel !== nextThinking) {
+          throw new NavigatorUnavailableError(
+            "thinking",
+            `Navigator thinking level ${nextThinking} is unavailable for ${next}`
+          );
+        }
+        selection = {
+          provider: nextParsed.provider,
+          model: nextParsed.model,
+          thinking: nextParsed.thinkingLevel
+        };
+        thinkingLevel = nextParsed.thinkingLevel;
+        configuredLabel = next;
+      },
+      getThinkingLevel: () => thinkingLevel,
+      recordPointer: () => sessionManager.getSessionDir(),
+      dispose
+    };
+  };
+}
+
+// src/compliance-transport.ts
+var ComplianceCandidateUnreadableError = class extends Error {
+  observation;
+  candidate;
+  usage;
+  constructor(observation, candidate, usage) {
+    const detail = observation.kind === "non-object-arguments" ? `${observation.kind}:${observation.type}` : observation.kind === "object-status-unreadable" ? `${observation.kind}:${observation.status}` : observation.kind === "missing-subject" ? `${observation.kind}:${observation.subject}` : observation.kind;
+    super(`Compliance candidate unreadable: ${detail}`);
+    this.name = "ComplianceCandidateUnreadableError";
+    this.observation = observation;
+    this.candidate = candidate;
+    if (usage !== void 0) this.usage = usage;
+  }
+};
+var AUDITOR_DOSSIER_PROMPT = "\u672C run \u5377\u5B97\u5DF2\u5C31\u7EEA\u3002";
+var nonblank2 = Type11.String({ minLength: 1, pattern: "\\S" });
+var decisionGateSchema = Type11.Object({ question: nonblank2, options: Type11.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
+var complianceDecisionSchema = Type11.Object({ status: Type11.Unknown({ description: "pass | revise | escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), violations: Type11.Array(nonblank2, { description: "\u89C2\u5BDF\u5230\u7684\u5408\u89C4\u8FDD\u89C4" }), conflicts: Type11.Array(nonblank2, { description: "\u672A\u51B3\u6743\u5A01\u6216\u6267\u884C\u51B2\u7A81" }), decisionGate: Type11.Union([decisionGateSchema, Type11.Null()], { description: "\u5347\u7EA7\u95EE\u9898\u4E0E\u53EF\u9009\u9009\u9879" }) }, { additionalProperties: true, required: [] });
+function createComplianceDecisionTool(name, description) {
+  return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
+    return { content: [{ type: "text", text: "\u5BA1\u8BA1\u51B3\u8BAE\u5DF2\u6536" }], details: params, terminate: true };
+  } };
+}
+var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
+var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
+var ComplianceResponseRetentionError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ComplianceResponseRetentionError";
+    attachDirectErrnoCode(this, options?.cause);
+  }
+};
+function retainComplianceResponse(context, response) {
+  try {
+    sitianReport({
+      level: "event",
+      kind: "auditor",
+      cwd: context.cwd,
+      sessionParent: context.sessionManager.getSessionFile(),
+      payload: { version: 1, response },
+      source: "compliance-transport"
+    });
+  } catch (error) {
+    throw new ComplianceResponseRetentionError(
+      `compliance response retention failed: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
+    );
+  }
+}
+function readListField(value) {
+  return Array.isArray(value) ? value : value === void 0 ? [] : [value];
+}
+function readComplianceCandidate(arguments_, usage) {
+  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
+    throw new ComplianceCandidateUnreadableError(
+      { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ },
+      arguments_,
+      usage
+    );
+  }
+  const args = arguments_;
+  const status = args.status;
+  if (status === "pass") return { status, ...usage === void 0 ? {} : { usage } };
+  if (status === "revise") return { status, violations: readListField(args.violations), ...usage === void 0 ? {} : { usage } };
+  if (status === "escalate") return { status, ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}, ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}, ...usage === void 0 ? {} : { usage } };
+  throw new ComplianceCandidateUnreadableError(
+    { kind: "object-status-unreadable", status: status === void 0 ? "missing" : "unknown" },
+    arguments_,
+    usage
+  );
+}
+async function runComplianceAudit(options) {
+  const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
+  const receipt = await executeAuditorChild({
+    tool: options.tool,
+    dossierTool: createAuditorDossierTool(options.runDirectory),
+    systemPrompt: options.systemPrompt,
+    prompt,
+    roleLabel: options.roleLabel,
+    context: options.context,
+    retainResponse: (response) => retainComplianceResponse(options.context, response),
+    ...options.runDirectory === void 0 ? {} : { runDirectory: options.runDirectory },
+    ...options.signal === void 0 ? {} : { signal: options.signal }
+  });
+  if (receipt.noReceiptLifecycle !== void 0) {
+    return {
+      status: "no-receipt",
+      ...receipt.noReceiptLifecycle,
+      ...receipt.response.usage === void 0 ? {} : { usage: receipt.response.usage }
+    };
+  }
+  return readComplianceCandidate(receipt.decision, receipt.response.usage);
+}
+
+// src/dossier-resolution.ts
+import { existsSync as existsSync6, statSync as statSync2 } from "node:fs";
+import { resolve as resolve7 } from "node:path";
+var JUDGE_OUTPUT_TOOL_NAME2 = JUDGE_OUTPUT_TOOL_NAME;
+var AUDIT_RUN_DIR_ENV = "AK_ROLE_RUN_DIR";
+var DOCTOR_CANDIDATE_ENTRY_TYPE = "ak_doctor_audit_candidate";
+function resolveAuditDossier(env = process.env) {
+  const raw = env[AUDIT_RUN_DIR_ENV];
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return { status: "ok" };
+  }
+  const runDirectory = resolve7(raw);
+  try {
+    if (!existsSync6(runDirectory) || !statSync2(runDirectory).isDirectory()) {
+      return { status: "incomplete", observation: { kind: "missing-dossier" } };
+    }
+  } catch {
+    return { status: "incomplete", observation: { kind: "missing-dossier" } };
+  }
+  return { status: "ok", runDirectory };
+}
+function isRecord7(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readJudgeAuditSubjects(context) {
+  const entries = context.sessionManager.getEntries?.() ?? [];
+  let hasAssignment = false;
+  let hasCandidate = false;
+  for (const entry of entries) {
+    if (!isRecord7(entry) || entry.type !== "message" || !isRecord7(entry.message)) continue;
+    const message = entry.message;
+    if (message.role === "user") {
+      const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((part) => isRecord7(part) && part.type === "text" && typeof part.text === "string" ? part.text : "").join("") : "";
+      if (text.trim().length > 0) hasAssignment = true;
+    }
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (isRecord7(part) && part.type === "toolCall" && part.name === JUDGE_OUTPUT_TOOL_NAME2 && isRecord7(part.arguments)) {
+          hasCandidate = true;
+        }
+      }
+    }
+  }
+  if (!hasAssignment) {
+    return { status: "incomplete", observation: { kind: "missing-subject", subject: "assignment" } };
+  }
+  if (!hasCandidate) {
+    return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-verdict" } };
+  }
+  return { status: "ok" };
+}
+function readDoctorAuditSubjects(context) {
+  const entries = context.sessionManager.getEntries?.() ?? [];
+  for (const entry of entries) {
+    if (isRecord7(entry) && entry.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
+      return { status: "ok" };
+    }
+  }
+  return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-testimony" } };
+}
+var AuditMaterialsUnavailableError = class extends Error {
+  observation;
+  candidate;
+  constructor(observation) {
+    const detail = observation.kind === "missing-subject" ? `${observation.kind}:${observation.subject}` : observation.kind;
+    super(`Audit materials unavailable: ${detail}`);
+    this.name = "AuditMaterialsUnavailableError";
+    this.observation = observation;
+    this.candidate = void 0;
+  }
+};
+function requireAuditMaterials(resolution) {
+  if (resolution.status === "incomplete") {
+    throw new AuditMaterialsUnavailableError(resolution.observation);
+  }
+}
+
+// src/doctor-auditor.ts
+var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
+var tool = createComplianceDecisionTool(
+  DOCTOR_AUDIT_TOOL_NAME,
+  "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u592A\u533B\u7F72\u5BA1\u5211\uFF09\u3002"
+);
+function createPiDoctorAuditor() {
+  return async (options) => {
+    const dossier = resolveAuditDossier();
+    requireAuditMaterials(dossier);
+    const subjects = readDoctorAuditSubjects(options.context);
+    requireAuditMaterials(subjects);
+    return runComplianceAudit({
+      tool,
+      systemPrompt: await loadAuditorSoul("doctor"),
+      roleLabel: "Doctor Soul compliance audit",
+      invalidDecisionLabel: "invalid Doctor audit decision",
+      context: options.context,
+      ...auditorRunDirectory(options.context) === void 0 ? {} : { runDirectory: auditorRunDirectory(options.context) },
+      ...options.signal === void 0 ? {} : { signal: options.signal }
+    });
+  };
+}
+
+// src/doctor-evidence.ts
+import { readdir, readFile as readFile7, realpath as realpath2, stat } from "node:fs/promises";
+import { dirname as dirname9, relative as relative2, resolve as resolve8, sep as sep2 } from "node:path";
+
+// src/audit-escalation.ts
+var AUDIT_ESCALATION_KIND = "audit_escalation";
+var AUDIT_ESCALATION_LIVE_REGISTRY = /* @__PURE__ */ new WeakSet();
+function buildAuditEscalationResult(decision, deliveredOutput) {
+  const auditOwned = {
+    kind: AUDIT_ESCALATION_KIND
+  };
+  if (Object.hasOwn(decision, "conflicts")) {
+    auditOwned.conflicts = decision.conflicts;
+  }
+  if (Object.hasOwn(decision, "decisionGate")) {
+    auditOwned.auditDecisionGate = decision.decisionGate;
+  }
+  const deliveredFields = deliveredOutput !== void 0 && deliveredOutput !== null && typeof deliveredOutput === "object" && !Array.isArray(deliveredOutput) ? { ...deliveredOutput } : {};
+  delete deliveredFields.conflicts;
+  delete deliveredFields.auditDecisionGate;
+  const result2 = {
+    ...deliveredFields,
+    ...auditOwned
+  };
+  AUDIT_ESCALATION_LIVE_REGISTRY.add(result2);
+  return result2;
+}
+function isAuditEscalationProjection(value) {
+  if (!isAuditEscalationResult(value)) return false;
+  return AUDIT_ESCALATION_LIVE_REGISTRY.has(value);
+}
+function humanDecisionText(result2) {
+  const lines = ["Human decision required: compliance audit escalation."];
+  if (Array.isArray(result2.conflicts)) {
+    lines.push("Conflicts:", ...result2.conflicts.map((conflict) => `- ${conflict}`));
+  }
+  const gate = result2.auditDecisionGate;
+  if (gate !== null && typeof gate === "object" && !Array.isArray(gate)) {
+    const record4 = gate;
+    if (typeof record4.question === "string") lines.push(`Question: ${record4.question}`);
+    if (Array.isArray(record4.options)) {
+      lines.push("Options:", ...record4.options.map((option) => `- ${option}`));
+    }
+  }
+  return lines.join("\n");
+}
+function projectAuditEscalation(decision, deliveredOutput) {
+  const details = buildAuditEscalationResult(decision, deliveredOutput);
+  return {
+    content: [{ type: "text", text: humanDecisionText(details) }],
+    details,
+    terminate: true,
+    ...decision.usage === void 0 ? {} : { usage: decision.usage }
+  };
+}
+function isAuditEscalationResult(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return value.kind === AUDIT_ESCALATION_KIND;
+}
+async function disposeComplianceDecision(decision, handlers, deliveredOutput) {
+  switch (decision.status) {
+    case "pass":
+      return await handlers.pass(decision.usage);
+    case "no-receipt":
+      if (handlers.noReceipt === void 0) {
+        throw new Error("Compliance no-receipt projection handler is unavailable");
+      }
+      return await handlers.noReceipt(
+        decision,
+        decision.usage === void 0 ? {} : { usage: decision.usage }
+      );
+    case "revise":
+      return await handlers.revise(decision.violations);
+    case "escalate":
+      return await handlers.escalate(
+        projectAuditEscalation(decision, deliveredOutput)
+      );
+  }
+}
+
+// src/submission-correctable-error.ts
+var correctableSubmissionErrorBrand = /* @__PURE__ */ Symbol("ak-roles.correctable-submission-error");
+var CorrectableSubmissionError = class extends Error {
+  [correctableSubmissionErrorBrand] = true;
+};
+function isCorrectableSubmissionError(error) {
+  return error instanceof CorrectableSubmissionError;
+}
+
+// src/package-contracts/terminating-tools.ts
+var TERMINATING_TOOL_NAMES = [
+  CODER_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
+  REVIEWER_OUTPUT_TOOL_NAME,
+  JUDGE_OUTPUT_TOOL_NAME,
+  COLLECTOR_OUTPUT_TOOL,
+  DOCTOR_OUTPUT_TOOL_NAME,
+  MERGER_OUTPUT_TOOL_NAME,
+  NOTARY_OUTPUT_TOOL_NAME,
+  COUNTERSIGN_OUTPUT_TOOL_NAME,
+  GLEANER_LEFT_OUTPUT_TOOL_NAME
+];
+function isTerminatingToolName(name) {
+  return TERMINATING_TOOL_NAMES.includes(name);
+}
+var AcceptedDetailsContractError = class extends CorrectableSubmissionError {
+  code = "accepted_details_contract";
+  constructor(message, options) {
+    super(message, options);
+    this.name = "AcceptedDetailsContractError";
+  }
+};
+function safeProperty2(candidate, property) {
+  try {
+    return candidate?.[property];
+  } catch {
+    return void 0;
+  }
+}
+function validateAcceptedDetails(toolName, details) {
+  const candidate = details !== null && typeof details === "object" && !Array.isArray(details) ? details : void 0;
+  let auditEscalation = false;
+  try {
+    auditEscalation = isAuditEscalationResult(details);
+  } catch {
+  }
+  if (auditEscalation || safeProperty2(candidate, "kind") === "audit_escalation") {
+    throw new AcceptedDetailsContractError(
+      "audit escalation is not an accepted role receipt"
+    );
+  }
+  const statusKey = toolName === JUDGE_OUTPUT_TOOL_NAME ? "judgeStatus" : toolName === COUNTERSIGN_OUTPUT_TOOL_NAME ? "countersignStatus" : "status";
+  const discriminator = safeProperty2(candidate, statusKey);
+  const lawfulStatuses = {
+    [CODER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "unfinished"],
+    [FIXER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "partially_completed", "unfinished"],
+    [REVIEWER_OUTPUT_TOOL_NAME]: ["completed", "refused"],
+    [JUDGE_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
+    [COLLECTOR_OUTPUT_TOOL]: [],
+    [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
+    [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
+    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+    [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
+    [GLEANER_LEFT_OUTPUT_TOOL_NAME]: ["completed"]
+  };
+  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
+  const baseDiscriminator = discriminator;
+  const runtimeBindingMissing = toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object") || toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2;
+  if (runtimeBindingMissing || !collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator))) {
+    throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
+  }
+  try {
+    switch (toolName) {
+      case CODER_OUTPUT_TOOL_NAME:
+        return validateAcceptedWorkerDetails(details, "Coder");
+      case FIXER_OUTPUT_TOOL_NAME:
+        return validateAcceptedWorkerDetails(details, "Fixer");
+      case REVIEWER_OUTPUT_TOOL_NAME:
+        return validateRuntimeReviewerReceipt(details);
+      case JUDGE_OUTPUT_TOOL_NAME:
+        return validateAcceptedJudgeDetails(details);
+      case COLLECTOR_OUTPUT_TOOL:
+        return validateAcceptedCollectorReceipt(details);
+      case DOCTOR_OUTPUT_TOOL_NAME:
+        return validateRecordedDoctorOutput(details);
+      case MERGER_OUTPUT_TOOL_NAME:
+        return validateMergerOutput(details);
+      case NOTARY_OUTPUT_TOOL_NAME:
+        return validateRecordedNotaryOutput(details);
+      case COUNTERSIGN_OUTPUT_TOOL_NAME:
+        return validateRecordedCountersignOutput(details);
+      case GLEANER_LEFT_OUTPUT_TOOL_NAME:
+        return validateRecordedGleanerLeftOutput(details);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
+    throw error;
+  }
+}
+function acceptedFacts(toolName, details) {
+  switch (toolName) {
+    case CODER_OUTPUT_TOOL_NAME:
+    case FIXER_OUTPUT_TOOL_NAME:
+    case REVIEWER_OUTPUT_TOOL_NAME:
+    case DOCTOR_OUTPUT_TOOL_NAME:
+    case NOTARY_OUTPUT_TOOL_NAME:
+    case GLEANER_LEFT_OUTPUT_TOOL_NAME:
+      return { status: details.status };
+    case JUDGE_OUTPUT_TOOL_NAME:
+      return { status: details.judgeStatus };
+    case COUNTERSIGN_OUTPUT_TOOL_NAME:
+      return { status: details.countersignStatus };
+    case MERGER_OUTPUT_TOOL_NAME: {
+      const output = details;
+      const status = output.status;
+      return { status, ...status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {} };
+    }
+    case COLLECTOR_OUTPUT_TOOL:
+      return { status: "collected" };
+  }
+}
+
+// src/doctor-evidence.ts
+function record2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function discoverCaseFiles(root) {
+  const found = [];
+  async function walk(dir, depth) {
+    for (const item of await readdir(dir, { withFileTypes: true })) {
+      const path = resolve8(dir, item.name);
+      if (item.isDirectory()) await walk(path, depth + 1);
+      else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
+    }
+  }
+  await walk(root, 0);
+  return found.sort();
+}
+function sourceList(count2, sources) {
+  return { count: count2, sources: [...new Set(sources)].sort() };
+}
+function accumulate(metric, value, source) {
+  metric.count += value;
+  if (value) metric.sources.push(source);
+}
+function timestamp(row) {
+  return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : void 0;
+}
+function isMissingPathError(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+async function stableRunsIdentity(root) {
+  let cursor = root;
+  while (true) {
+    try {
+      const git4 = await stat(resolve8(cursor, ".git"));
+      if (git4.isDirectory() || git4.isFile()) return relative2(cursor, root).split(sep2).join("/");
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+    }
+    const parent = dirname9(cursor);
+    if (parent === cursor) return root;
+    cursor = parent;
+  }
+}
+function deriveSession(content, id) {
+  const rows = [];
+  const degradationReasons = [];
+  for (const line2 of content.split("\n")) if (line2.trim()) {
+    try {
+      const row = JSON.parse(line2);
+      if (!record2(row)) {
+        degradationReasons.push(`non-object session row in ${id}`);
+        break;
+      }
+      rows.push(row);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        degradationReasons.push(`malformed JSON tail in ${id}: ${error.message}`);
+        break;
+      }
+      throw error;
+    }
+  }
+  const started = rows.find((row) => row.type === "session");
+  const startedAt = started && timestamp(started);
+  if (!startedAt) degradationReasons.push(`Pi session header is missing: ${id}`);
+  let accepted, observedCommit, turns = 0, calls = 0, tokens = 0;
+  const statuses = [], commits = [];
+  for (const row of rows) {
+    const message = record2(row.message) ? row.message : void 0;
+    if (message?.role === "assistant") {
+      for (const part of Array.isArray(message.content) ? message.content : []) if (record2(part) && part.type === "toolCall") calls++;
+      if (typeof message.responseId === "string") {
+        turns++;
+        const usage = record2(message.usage) ? message.usage : void 0;
+        if (usage && typeof usage.output === "number") tokens += usage.output;
+      }
+    }
+    if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && record2(message.details)) {
+      let details;
+      try {
+        details = validateAcceptedDetails(message.toolName, message.details);
+      } catch (error) {
+        if (error instanceof AcceptedDetailsContractError) continue;
+        throw error;
+      }
+      accepted = row;
+      const facts = acceptedFacts(message.toolName, details);
+      if (facts.commit && facts.commit !== observedCommit) {
+        commits.push({ source: id, commit: facts.commit });
+        observedCommit = facts.commit;
+      }
+      statuses.length = 0;
+      if (facts.status !== void 0) {
+        statuses.push({ source: id, status: facts.status });
+      } else {
+        statuses.push({ source: id, status: "terminating receipt has no receipt-level status" });
+      }
+    }
+  }
+  const acceptedAt = accepted && timestamp(accepted);
+  const final = acceptedAt ? accepted : rows.at(-1);
+  const endedAt = final && timestamp(final);
+  const wall = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : void 0;
+  if (wall !== void 0 && wall < 0) degradationReasons.push(`non-monotonic session timestamps in ${id}`);
+  const degradationReason = degradationReasons.length ? degradationReasons.join("; ") : void 0;
+  const complete = !!acceptedAt && !degradationReason && wall !== void 0 && wall >= 0;
+  const session = complete ? { source: id, startedAt, endedAt, wallMilliseconds: wall, completion: "accepted" } : { source: id, ...startedAt ? { startedAt } : {}, ...endedAt ? { endedAt } : {}, ...wall !== void 0 && wall >= 0 ? { wallMilliseconds: wall } : {}, completion: "incomplete", ...degradationReason ? { degradationReason } : {} };
+  return { session, turns, calls, tokens, statuses, commits };
+}
+async function loadDoctorCase(runsPath) {
+  const root = await realpath2(runsPath);
+  const match = root.split(sep2).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
+  if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/issues/<n>/runs directory");
+  const evidence = [], sessions = [], statuses = [], commits = [];
+  const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
+  for (const path of await discoverCaseFiles(root)) {
+    const id = relative2(root, path).split(sep2).join("/");
+    const bytes = await readFile7(path);
+    const content = bytes.toString("utf8");
+    const kind = id.endsWith(".jsonl") ? "session" : "stderr";
+    evidence.push({ id, kind, byteLength: bytes.byteLength, contentLength: content.length, sha256: sha256Hex(bytes), content });
+    if (kind === "stderr") continue;
+    const result2 = deriveSession(content, id);
+    sessions.push(result2.session);
+    statuses.push(...result2.statuses);
+    commits.push(...result2.commits);
+    accumulate(turns, result2.turns, id);
+    accumulate(calls, result2.calls, id);
+    accumulate(tokens, result2.tokens, id);
+  }
+  const runDirs = (await readdir(root, { withFileTypes: true })).filter((item) => item.isDirectory()).map((item) => item.name).sort();
+  const legs = evidence.filter((entry) => entry.kind === "session").map((entry) => entry.id);
+  const retryDirs = runDirs.filter((name) => /(?:^|[-_])retry(?:[-_]|$)/i.test(name));
+  const rawBytes = evidence.filter((entry) => entry.kind === "session").reduce((sum, entry) => sum + entry.byteLength, 0);
+  const cost2 = { invocations: sourceList(runDirs.length, runDirs), legs: sourceList(legs.length, legs), modelApiTurns: sourceList(turns.count, turns.sources), outputTokens: sourceList(tokens.count, tokens.sources), toolCalls: sourceList(calls.count, calls.sources), retries: { ...sourceList(retryDirs.length, retryDirs), evidence: "literal run-dir naming" }, statuses, commits, sessions, outputBytes: { ...sourceList(rawBytes, legs), payload: "raw JSONL bytes", providerWireBytes: "unavailable" } };
+  return { version: 1, identity: { issueNumber: Number(match[1]), runsPath: await stableRunsIdentity(root) }, evidence, cost: cost2 };
+}
+
+// src/judge-auditor.ts
+var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
+var auditDecisionTool = createComplianceDecisionTool(
+  JUDGE_AUDIT_TOOL_NAME,
+  "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5927\u7406\u5BFA\u5BA1\u5211\uFF09\u3002"
+);
+function createPiJudgeAuditor() {
+  return async (options) => {
+    const dossier = resolveAuditDossier();
+    requireAuditMaterials(dossier);
+    const subjects = readJudgeAuditSubjects(options.context);
+    requireAuditMaterials(subjects);
+    return runComplianceAudit({
+      tool: auditDecisionTool,
+      systemPrompt: await loadAuditorSoul("judge"),
+      roleLabel: "Judge compliance audit",
+      invalidDecisionLabel: "invalid judge audit decision",
+      context: options.context,
+      ...auditorRunDirectory(options.context) === void 0 ? {} : { runDirectory: auditorRunDirectory(options.context) },
+      ...options.signal === void 0 ? {} : { signal: options.signal }
+    });
+  };
+}
+
+// src/merger-git-state.ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+async function git(cwd, args) {
+  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
+  return new Uint8Array(stdout);
+}
+function line(bytes, label) {
+  const value = exactUtf8(bytes, label).trim();
+  if (!value) throw new Error(`${label} is empty`);
+  return value;
+}
+function nulPaths(bytes, label) {
+  const raw = exactUtf8(bytes, label);
+  if (raw.length > 0 && !raw.endsWith("\0")) throw new Error(`${label} is not NUL terminated`);
+  return raw.split("\0").filter(Boolean).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+}
+async function unmerged(cwd) {
+  const raw = exactUtf8(await git(cwd, ["ls-files", "-u", "-z"]), "Git unmerged index");
+  const paths = /* @__PURE__ */ new Set();
+  for (const row of raw.split("\0")) {
+    if (!row) continue;
+    const tab = row.indexOf("	");
+    if (tab < 0 || tab === row.length - 1) throw new Error("Git returned a malformed unmerged index row");
+    paths.add(row.slice(tab + 1));
+  }
+  return [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+}
+function createProductionMergerGitState(repositoryRoot = process.cwd()) {
+  return {
+    async activeMerge() {
+      const targetObjectId = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
+      let mergeHeadRaw;
+      try {
+        mergeHeadRaw = await git(repositoryRoot, ["rev-parse", "--verify", "MERGE_HEAD"]);
+      } catch {
+        throw new Error("Assigned repository does not have one ordinary in-progress merge");
+      }
+      const mergeHeads = exactUtf8(mergeHeadRaw, "Git MERGE_HEAD").trim().split(/\r?\n/).filter(Boolean);
+      if (mergeHeads.length !== 1 || !isFullGitObjectId(targetObjectId) || !isFullGitObjectId(mergeHeads[0]) || targetObjectId.length !== mergeHeads[0].length) throw new Error("Assigned repository does not have one ordinary in-progress merge");
+      let automaticMergeTreeRaw;
+      try {
+        automaticMergeTreeRaw = await git(repositoryRoot, ["rev-parse", "--verify", "AUTO_MERGE^{tree}"]);
+      } catch {
+        throw new Error("Git automatic merge tree identity is unavailable or invalid");
+      }
+      const automaticMergeTreeId = line(automaticMergeTreeRaw, "Git automatic merge tree");
+      if (!isFullGitObjectId(automaticMergeTreeId) || automaticMergeTreeId.length !== targetObjectId.length) throw new Error("Git automatic merge tree identity is unavailable or invalid");
+      return { targetObjectId, sourceObjectId: mergeHeads[0], unmergedPaths: await unmerged(repositoryRoot), automaticMergeTreeId };
+    },
+    async completedMerge(mergeCommitId, automaticMergeTreeId) {
+      if (!isFullGitObjectId(mergeCommitId) || !isFullGitObjectId(automaticMergeTreeId) || mergeCommitId.length !== automaticMergeTreeId.length) throw new Error("Merger completion object ID is invalid");
+      const identity = exactUtf8(await git(repositoryRoot, ["show", "-s", "--format=%H%x00%P", mergeCommitId]), "Git merge commit").trimEnd().split("\0");
+      if (identity.length !== 2 || identity[0] !== mergeCommitId) throw new Error("Git merge completion identity drifted");
+      const parentObjectIds = identity[1].split(" ").filter(Boolean);
+      const currentHead = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
+      const status = await git(repositoryRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+      const frozenTree = line(await git(repositoryRoot, ["rev-parse", "--verify", `${automaticMergeTreeId}^{tree}`]), "Git frozen automatic merge tree");
+      if (frozenTree !== automaticMergeTreeId) throw new Error("Git frozen automatic merge tree identity drifted");
+      const mergeTree = line(await git(repositoryRoot, ["rev-parse", "--verify", `${mergeCommitId}^{tree}`]), "Git completed merge tree");
+      const resolutionChangedPaths = nulPaths(await git(repositoryRoot, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--no-renames", automaticMergeTreeId, mergeTree]), "Git resolution path delta");
+      return { mergeCommitId: currentHead, parentObjectIds, unmergedPaths: await unmerged(repositoryRoot), worktreeClean: status.byteLength === 0 && currentHead === mergeCommitId, resolutionChangedPaths };
+    }
+  };
+}
+
+// src/navigator-attendance.ts
+import { createHash as createHash5 } from "node:crypto";
+import { resolve as resolve10 } from "node:path";
+import "@earendil-works/pi-coding-agent";
+import { Type as Type12 } from "typebox";
+
+// src/uuidv7.ts
+import { randomBytes } from "node:crypto";
+var UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function isUuidV7(value) {
+  return typeof value === "string" && UUIDV7.test(value);
+}
+function uuidv7(now = Date.now()) {
+  const b = randomBytes(16);
+  let n = BigInt(now);
+  for (let i = 5; i >= 0; i--) {
+    b[i] = Number(n & 255n);
+    n >>= 8n;
+  }
+  b[6] = b[6] & 15 | 112;
+  b[8] = b[8] & 63 | 128;
+  const h = b.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+// src/work-subject-identity.ts
+init_activation_ledger_topology();
+import { resolve as resolve9 } from "node:path";
+function issueRoot(value) {
+  const normalized = value.replaceAll("\\", "/");
+  const marker = ".ak/work/issues/";
+  const index = normalized.indexOf(marker);
+  if (index < 0) return void 0;
+  const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
+  return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
+}
+function workIdentityFromCwd(cwd) {
+  const resolvedCwd = resolve9(cwd, ".");
+  const cwdIssue = issueRoot(resolvedCwd);
+  if (cwdIssue !== void 0) return cwdIssue;
+  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
+  return void 0;
+}
+function isMachineLedgerSessionPath(sessionPath) {
+  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
+}
+function subjectPath(sessionDir, cwd = process.cwd()) {
+  if (sessionDir === "") {
+    return workIdentityFromCwd(cwd) ?? resolve9(cwd, ".ak/work");
+  }
+  const resolvedSession = resolve9(cwd, sessionDir || ".ak/work");
+  if (isMachineLedgerSessionPath(resolvedSession)) {
+    return workIdentityFromCwd(cwd) ?? resolve9(cwd, ".ak/work");
+  }
+  const issue = issueRoot(resolvedSession);
+  if (issue !== void 0) return issue;
+  const runsMarker = "/runs/";
+  const runsIndex = resolvedSession.indexOf(runsMarker);
+  if (runsIndex >= 0) {
+    return resolvedSession.slice(0, runsIndex);
+  }
+  return resolvedSession;
+}
+function workSubjectKeysEqual(left, right) {
+  return physicalPathIdentity(left) === physicalPathIdentity(right);
+}
+
+// src/navigator-invocation-identity.ts
+var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
+  "kind",
+  "source",
+  "reasonCode"
+];
+var NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
+  "observation",
+  "candidate",
+  "submission",
+  "stage",
+  "reason"
+];
+function buildNavigatorInfrastructureFailureFact() {
+  return {
+    kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
+    source: "shared-role-lifecycle",
+    reasonCode: "host_failure"
+  };
+}
+function hasNavigatorInfrastructureFailureBase(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record4 = value;
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
+    if (!Object.hasOwn(record4, key)) return false;
+  }
+  return record4.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record4.source === "shared-role-lifecycle" && record4.reasonCode === "host_failure";
+}
+var PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
+  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
+);
+function mintNavigatorInvocationId() {
+  return uuidv7();
+}
+function invocationPhaseFromUnknown(value) {
+  if (value === null || value === "plan" || value === "apply") return value;
+  return void 0;
+}
+function parseInvocationMarkerIdentity(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
+  const record4 = data;
+  const invocationId = record4.invocationId;
+  if (typeof invocationId !== "string") return void 0;
+  const trimmedId = invocationId.trim();
+  if (!isUuidV7(trimmedId)) return void 0;
+  if (typeof record4.role !== "string" || record4.role.trim() === "") return void 0;
+  const phase = invocationPhaseFromUnknown(record4.phase);
+  if (phase === void 0) return void 0;
+  if (typeof record4.subjectKey !== "string" || record4.subjectKey.trim() === "") return void 0;
+  return {
+    invocationId: trimmedId,
+    role: record4.role,
+    phase,
+    subjectKey: record4.subjectKey
+  };
+}
+function markerMatchesExpectedIdentity(marker, expected) {
+  if (marker.role !== expected.role) return false;
+  if (expected.phase !== void 0) {
+    if (marker.phase !== expected.phase) return false;
+  } else if (expected.allowedPhases !== void 0) {
+    if (!expected.allowedPhases.includes(marker.phase)) return false;
+  }
+  if (expected.subjectKey !== void 0) {
+    if (!workSubjectKeysEqual(marker.subjectKey, expected.subjectKey)) return false;
+  }
+  return true;
+}
+function classifyPackagedRoleTerminalResult(message) {
+  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  if (typeof message.details === "object" && message.details !== null && message.details.submissionDisposition === "pending-round-closure") return { kind: "nonterminal" };
+  const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
+  const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : void 0;
+  if (message.isError === true) {
+    if (infraFact === void 0) return { kind: "nonterminal" };
+    return { kind: "infrastructure", fact: infraFact };
+  }
+  if (message.isError === false) {
+    if (infraFact !== void 0) return { kind: "nonterminal" };
+    return { kind: "accepted" };
+  }
+  return { kind: "nonterminal" };
+}
+function durableTerminalAt(entries, index) {
+  const entry = entries[index];
+  const message = entry?.type === "custom" && entry.customType === "ak-role-submission-closure" ? typeof entry.data === "object" && entry.data !== null ? entry.data : void 0 : entry?.type === "message" && entry.message?.role === "toolResult" ? entry.message : void 0;
+  if (typeof message?.toolName !== "string") return void 0;
+  const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
+  if (role === void 0) return void 0;
+  const classification = classifyPackagedRoleTerminalResult(message);
+  if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {
+    return void 0;
+  }
+  return {
+    index,
+    role,
+    toolName: message.toolName,
+    classification: classification.kind,
+    message
+  };
+}
+function isPackagedRoleTerminalEntry(entry) {
+  return durableTerminalAt(entry === void 0 ? [] : [entry], 0) !== void 0;
+}
+function isInvocationMarkerEntry(entry) {
+  return entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY;
+}
+function latestInvocationMarkerIndex(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    if (isInvocationMarkerEntry(entries[i])) return i;
+  }
+  return -1;
+}
+function resolveLifecycleInvocationPrincipal(entries, expected) {
+  const markerIndex = latestInvocationMarkerIndex(entries);
+  if (markerIndex < 0) {
+    return { invocationId: mintNavigatorInvocationId(), resume: false };
+  }
+  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
+  if (marker === void 0) {
+    return { invocationId: mintNavigatorInvocationId(), resume: false };
+  }
+  if (expected !== void 0 && !markerMatchesExpectedIdentity(marker, expected)) {
+    return { invocationId: mintNavigatorInvocationId(), resume: false };
+  }
+  for (let i = markerIndex + 1; i < entries.length; i += 1) {
+    if (isPackagedRoleTerminalEntry(entries[i])) {
+      return { invocationId: mintNavigatorInvocationId(), resume: false };
+    }
+  }
+  return { invocationId: marker.invocationId, resume: true };
+}
+
+// src/navigator-attendance.ts
+init_activation_ledger_topology();
+
+// src/public-command-renderer.ts
+var PUBLIC_CALLABLE_ROLES2 = new Set(
+  PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
+);
+function renderPublicAkRoleCommand(target) {
+  if (!PUBLIC_CALLABLE_ROLES2.has(target.role)) return void 0;
+  const role = target.role;
+  if (target.phase === null || target.phase === void 0) {
+    return `ak-role ${role}`;
+  }
+  if (role === "coder" || role === "fixer") {
+    return `ak-role ${role} ${target.phase}`;
+  }
+  return `ak-role ${role}`;
+}
+
+// src/navigator-attendance.ts
+var NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
+var NAVIGATOR_PREPARE_ACCEPTED_TEXT = "\u6E38\u5955\u4F7F\u51C6\u5907\u5DF2\u63A5\u53D7";
+function resolveNavigatorAuthorityMaterial(roleInput, fileAuthority) {
+  if (roleInput !== void 0 && roleInput.trim() !== "") return roleInput;
+  if (fileAuthority !== void 0 && fileAuthority.trim() !== "") return fileAuthority;
+  return void 0;
+}
+var NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
+var prepareSchema = Type12.Object({
+  candidates: Type12.Optional(Type12.Unknown({
+    description: "\u65B9\u5411\u5019\u9009\uFF1Bcandidates[].next.role \u5FC5\u586B\uFF0Cphase \u53EF\u9009\uFF0Croute/matches/reason/command \u53EF\u9009\u4E0A\u4E0B\u6587\uFF0C\u975E\u53D7\u7406\u95F8"
+  }))
+}, { additionalProperties: true });
+var ROUTE_ENTRY = "ak-navigator-route";
+var CONTEXT_ENTRY = "ak-navigator-context";
+var INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
+var SETTLEMENT_ENTRY = "ak-navigator-settlement";
+var targetRoles = new Set(NAVIGATOR_TARGETS.map(({ role }) => role));
+function exactRecord3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function rejectedPrepareReason(entries, start) {
+  const recent = entries.slice(start);
+  const prepareCalls = /* @__PURE__ */ new Set();
+  for (const entry of recent) {
+    if (!exactRecord3(entry) || entry.type !== "message" || !exactRecord3(entry.message) || entry.message.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
+    for (const part of entry.message.content) {
+      if (exactRecord3(part) && part.type === "toolCall" && part.name === NAVIGATOR_PREPARE_TOOL_NAME && typeof part.id === "string") prepareCalls.add(part.id);
+    }
+  }
+  let reason;
+  for (const entry of recent) {
+    if (!exactRecord3(entry) || entry.type !== "message" || !exactRecord3(entry.message) || entry.message.role !== "toolResult" || entry.message.isError !== true) continue;
+    const callId = entry.message.toolCallId;
+    if (entry.message.toolName !== NAVIGATOR_PREPARE_TOOL_NAME || typeof callId !== "string" || !prepareCalls.has(callId)) {
+      return void 0;
+    }
+    const content = entry.message.content;
+    const text = Array.isArray(content) ? content.flatMap((part) => exactRecord3(part) && typeof part.text === "string" ? [part.text] : []).join("") : typeof content === "string" ? content : "";
+    if (text.trim() !== "") reason = text.trim();
+  }
+  return reason;
+}
+function targetIsValid(value) {
+  if (!exactRecord3(value) || !targetRoles.has(String(value.role))) return false;
+  const metadata = packagedRoleMetadata(String(value.role));
+  return metadata !== void 0 && metadata.phases.includes(value.phase);
+}
+function normalizeTarget(value) {
+  if (!exactRecord3(value)) return void 0;
+  const role = typeof value.role === "string" ? value.role.trim() : "";
+  if (!targetRoles.has(role)) return void 0;
+  const metadata = packagedRoleMetadata(role);
+  if (metadata === void 0) return void 0;
+  if (value.phase === void 0 || value.phase === null) {
+    return { role, phase: null };
+  }
+  if (value.phase === "plan" || value.phase === "apply") {
+    if (metadata.phases.includes(value.phase)) {
+      return { role, phase: value.phase };
+    }
+    return { role, phase: null };
+  }
+  return void 0;
+}
+function normalizeMatches(value) {
+  if (!exactRecord3(value)) return void 0;
+  if (typeof value.role !== "string" || value.role.trim() === "") return void 0;
+  if (value.kind !== "accepted") return void 0;
+  let phase;
+  if (value.phase === void 0 || value.phase === null) phase = null;
+  else if (value.phase === "plan" || value.phase === "apply") phase = value.phase;
+  else return void 0;
+  if (value.statuses !== void 0) {
+    if (!Array.isArray(value.statuses) || value.statuses.some((status) => typeof status !== "string" || status.trim() === "")) {
+      return void 0;
+    }
+    return {
+      role: value.role,
+      phase,
+      kind: "accepted",
+      statuses: [...value.statuses]
+    };
+  }
+  return { role: value.role, phase, kind: "accepted" };
+}
+function normalizeCandidate(value) {
+  if (!exactRecord3(value)) return void 0;
+  const next = normalizeTarget(value.next);
+  const route = Array.isArray(value.route) ? value.route.map(normalizeTarget).filter((target) => target !== void 0) : void 0;
+  const matches = normalizeMatches(value.matches);
+  const id = typeof value.id === "string" && value.id.trim() !== "" ? value.id : void 0;
+  const reason = typeof value.reason === "string" && value.reason.trim() !== "" ? value.reason : void 0;
+  return {
+    ...id === void 0 ? {} : { id },
+    ...matches === void 0 ? {} : { matches },
+    ...route === void 0 || route.length === 0 ? {} : { route },
+    ...next === void 0 ? {} : { next },
+    ...reason === void 0 ? {} : { reason }
+  };
+}
+function normalizePrepareOutput(value) {
+  if (!exactRecord3(value) || !Array.isArray(value.candidates)) return [];
+  return value.candidates.map(normalizeCandidate).filter((candidate) => candidate !== void 0);
+}
+function routeEqual(a, b) {
+  return a !== void 0 && a.length === b.length && a.every((target, index) => target.role === b[index].role && target.phase === b[index].phase);
+}
+function routeText(route) {
+  return route.map((target) => target.phase === null ? target.role : `${target.role} ${target.phase}`).join(" \u2192 ");
+}
+function targetText(target) {
+  return target.phase === null ? target.role : `${target.role} ${target.phase}`;
+}
+function oneLine(value) {
+  return value.split(/\r?\n/, 1)[0].trim();
+}
+function navigatorSubjectKey(subjectRoot, subject, provenance = "role_input") {
+  if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
+  if (provenance === "placeholder") return subjectRoot;
+  const normalized = subject.trim().replace(/\s+/g, " ");
+  if (normalized === "") return subjectRoot;
+  return `${subjectRoot}#${createHash5("sha256").update(normalized).digest("hex").slice(0, 32)}`;
+}
+function navigatorSubjectKeyForInput(subjectRoot, reference, cwd = process.cwd()) {
+  if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
+  const resolvedReference = resolve10(cwd, reference);
+  const marker = "/runs/";
+  if (resolvedReference.includes(marker)) {
+    return subjectRoot;
+  }
+  return navigatorSubjectKey(subjectRoot, resolvedReference);
+}
+function createNavigatorPrepareTool(onOutput) {
+  return {
+    name: NAVIGATOR_PREPARE_TOOL_NAME,
+    label: "\u6E38\u5955\u4F7F\u51C6\u5907",
+    description: "\u63D0\u4EA4\u6E38\u5955\u4F7F\u65B9\u5411\u5EFA\u8BAE\u3002",
+    parameters: prepareSchema,
+    async execute(_id, value) {
+      onOutput(value);
+      return { content: [{ type: "text", text: NAVIGATOR_PREPARE_ACCEPTED_TEXT }], details: value, terminate: true };
+    }
+  };
+}
+function selectNavigatorCandidate(candidates, settlement) {
+  if (settlement.kind !== "accepted") return void 0;
+  const usable = candidates.filter((candidate) => candidate.next !== void 0);
+  if (usable.length === 0) return void 0;
+  const rolePhaseMatched = usable.filter(
+    (candidate) => candidate.matches !== void 0 && candidate.matches.role === settlement.role && candidate.matches.phase === settlement.phase
+  );
+  if (rolePhaseMatched.length > 0) {
+    if (settlement.status !== void 0) {
+      const statusSpecific = rolePhaseMatched.find(
+        (candidate) => candidate.matches?.statuses !== void 0 && candidate.matches.statuses.includes(settlement.status)
+      );
+      if (statusSpecific !== void 0) {
+        return { candidate: statusSpecific, matchedToSettlement: true };
+      }
+    }
+    const rolePhaseGeneric = rolePhaseMatched.find(
+      (candidate) => candidate.matches?.statuses === void 0
+    );
+    if (rolePhaseGeneric !== void 0) {
+      return { candidate: rolePhaseGeneric, matchedToSettlement: true };
+    }
+    return void 0;
+  }
+  const unbound = usable.find((candidate) => candidate.matches === void 0);
+  if (unbound === void 0) return void 0;
+  return { candidate: unbound, matchedToSettlement: false };
+}
+function formatNavigatorReport(report) {
+  const playbookFailure = report.routePlaybookReadFailure === void 0 ? [] : [`\u8DEF\u4E66\u8BFB\u53D6\u5931\u8D25\uFF1A${oneLine(report.routePlaybookReadFailure)}`];
+  if (report.disposition === "no-advice") return playbookFailure.join("\n");
+  if (report.disposition === "unavailable") return [...playbookFailure, `\u5BFC\u822A\u4E0D\u53EF\u7528\uFF1A${oneLine(report.unavailableReason ?? "\u672A\u80FD\u5B8C\u6210\u5BFC\u822A\u51C6\u5907")}`].join("\n");
+  if (report.disposition === "arrival") return [...playbookFailure, oneLine(report.arrivalMessage ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730")].join("\n");
+  return [
+    ...playbookFailure,
+    ...report.route === void 0 ? [] : [`\u8DEF\u7EBF\uFF1A${routeText(report.route)}`],
+    `\u4E0B\u4E00\u6B65\uFF1A${targetText(report.next)}`,
+    ...report.reason === void 0 || report.reason.trim() === "" ? [] : [`\u7406\u7531\uFF1A${oneLine(report.reason)}`],
+    ...report.command === void 0 || report.command.trim() === "" ? [] : [`\u547D\u4EE4\uFF1A${oneLine(report.command)}`]
+  ].join("\n");
+}
+function settlementNavigationFromEvent(event) {
+  if (event.disposition !== "recommendation") return void 0;
+  if (event.next === void 0) return void 0;
+  return {
+    disposition: "recommendation",
+    ...event.route === void 0 ? {} : { route: event.route },
+    next: event.next,
+    ...event.reason === void 0 ? {} : { reason: event.reason },
+    ...event.command === void 0 ? {} : { command: event.command }
+  };
+}
+function appendNavigatorReportToContent(content, reportText) {
+  if (reportText === "") return content.slice();
+  const parts = content.slice();
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part !== void 0 && part.type === "text" && typeof part.text === "string") {
+      parts[index] = { ...part, type: "text", text: `${part.text}
+${reportText}` };
+      return parts;
+    }
+  }
+  return [...parts, { type: "text", text: reportText }];
+}
+function decorateSettlementWithNavigation(event, presentation) {
+  if (presentation === void 0) return void 0;
+  if (settlementNavigationFromEvent(presentation.event) === void 0) return void 0;
+  const { routePlaybookReadFailure: _advisoryFailure, ...receiptReport } = presentation.report;
+  const reportText = formatNavigatorReport(receiptReport);
+  if (reportText === "") return void 0;
+  return {
+    content: appendNavigatorReportToContent(event.content, reportText),
+    details: event.details
+  };
+}
+function createNavigatorAttendance(options) {
+  let preparation;
+  let sessionReady;
+  let session;
+  let subjectKey = options.subjectKey;
+  let subject = options.subject;
+  let authority = options.authority;
+  let contextError = options.contextError;
+  let candidates;
+  const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
+  let activeInvocationId = invocationPrincipal;
+  let previousRoute;
+  let outputSink;
+  let settlementTail = Promise.resolve();
+  let settlementFailure;
+  let preparationFailure;
+  let preparationNoReceipt = false;
+  let routePlaybookReadFailure;
+  let disposed = false;
+  let warmedHelp;
+  const loadLiveHelp = async () => {
+    try {
+      return await Promise.all(
+        NAVIGATOR_TARGETS.map(async ({ role }) => ({
+          role,
+          help: await options.loadRoleHelp(role)
+        }))
+      );
+    } catch (error) {
+      throw navigatorUnavailableError("transport", error);
+    }
+  };
+  const unavailable = (invocationId, reason) => {
+    const failure2 = reason instanceof NavigatorUnavailableError ? reason : navigatorUnavailableError("unknown", reason);
+    return {
+      disposition: "unavailable",
+      unavailableReason: failure2.message,
+      unavailableSource: failure2.unavailableSource,
+      unavailableCause: failure2.unavailableCause
+    };
+  };
+  let routePlaybookSettlement;
+  let prepareBoundSettlement;
+  const prepare = async () => {
+    const boundSettlement = prepareBoundSettlement;
+    prepareBoundSettlement = void 0;
+    preparationNoReceipt = false;
+    const invocationId = invocationPrincipal;
+    activeInvocationId = invocationId;
+    if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
+    if (typeof authority !== "string" || authority.trim() === "") {
+      throw navigatorUnavailableError(
+        "context",
+        new Error("controlling authority content was not supplied as typed work context")
+      );
+    }
+    let soul;
+    let modelSetting;
+    let help;
+    let routePlaybook = "";
+    routePlaybookReadFailure = void 0;
+    const soulPromise = (async () => {
+      try {
+        const text = (await options.loadSoul()).trim();
+        if (!text) throw new Error("Navigator soul is empty");
+        return text;
+      } catch (error) {
+        throw navigatorUnavailableError("context", error);
+      }
+    })();
+    const routePlaybookPromise = (async () => {
+      if (options.loadRoutePlaybook === void 0) return "";
+      try {
+        return await options.loadRoutePlaybook();
+      } catch (error) {
+        routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
+        return "";
+      }
+    })();
+    routePlaybookSettlement = routePlaybookPromise.then(() => void 0);
+    const modelPromise = (async () => {
+      try {
+        const resolved = await resolveNavigatorSeatSelection(
+          options.context,
+          options.modelSettingPath,
+          options.modelSettingPath ?? navigatorModelSettingPath()
+        );
+        return resolved.configuredLabel;
+      } catch (error) {
+        if (error instanceof NavigatorUnavailableError) throw error;
+        throw navigatorUnavailableError("model", error);
+      }
+    })();
+    const helpPromise = warmedHelp ?? loadLiveHelp();
+    warmedHelp = void 0;
+    [soul, routePlaybook, modelSetting, help] = await Promise.all([
+      soulPromise,
+      routePlaybookPromise,
+      modelPromise,
+      helpPromise
+    ]);
+    let model;
+    try {
+      model = parseNavigatorModelSetting(modelSetting);
+    } catch (error) {
+      throw navigatorUnavailableError("model", error);
+    }
+    const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">
+${text}
+</role_help>`).join("\n");
+    let output;
+    let prepareBatchRejected = false;
+    outputSink = (value) => {
+      if (prepareBatchRejected || output !== void 0) {
+        output = void 0;
+        prepareBatchRejected = true;
+        throw new Error("Navigator preparation must submit exactly one typed candidate batch");
+      }
+      output = value;
+    };
+    const tool2 = createNavigatorPrepareTool((value) => {
+      outputSink?.(value);
+    });
+    if (session === void 0) {
+      sessionReady = (async () => {
+        let created;
+        try {
+          created = await options.createSession({ context: options.context, subject: subjectKey, ...options.modelSettingPath === void 0 ? {} : { modelSettingPath: options.modelSettingPath }, tool: tool2 });
+        } catch (error) {
+          throw navigatorUnavailableError("session", error);
+        }
+        if (disposed) {
+          await created.dispose();
+          throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        }
+        try {
+          await created.setModel?.(modelSetting, model.thinkingLevel);
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          if (created.getThinkingLevel?.() !== void 0 && created.getThinkingLevel() !== model.thinkingLevel) {
+            throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+          }
+          created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          session = created;
+          return created;
+        } catch (error) {
+          if (session !== created) await created.dispose();
+          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
+        }
+      })();
+      await sessionReady;
+      sessionReady = void 0;
+    } else {
+      try {
+        await session.setModel?.(modelSetting, model.thinkingLevel);
+        if (session.getThinkingLevel?.() !== void 0 && session.getThinkingLevel() !== model.thinkingLevel) {
+          throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+        }
+      } catch (error) {
+        throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
+      }
+      session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+    }
+    if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+    const activeSession = session;
+    if (activeSession === void 0) throw new Error("Navigator session was not created");
+    const prior = activeSession.entries().filter((entry) => exactRecord3(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord3(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
+    if (exactRecord3(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
+      previousRoute = prior.route.map((target) => ({ role: target.role, phase: target.phase }));
+    }
+    const publicSettlementHistory = activeSession.entries().filter((entry) => exactRecord3(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord3(entry.data)).slice(-8).map((entry) => entry.data);
+    const projection = {
+      subjectKey,
+      subject,
+      authority,
+      currentRole: { role: options.role, phase: options.phase },
+      ...boundSettlement === void 0 ? {} : { currentSettlement: boundSettlement },
+      priorRoute: exactRecord3(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target)) ? prior.route.map((target) => ({ role: target.role, phase: target.phase })) : null,
+      publicSettlementHistory,
+      liveRoleHelp: help
+    };
+    activeSession.appendEntry(CONTEXT_ENTRY, projection);
+    const request = [
+      "\u672C\u6B21\u5BFC\u822A\u6750\u6599\u5982\u4E0B\uFF1A",
+      `<navigator_soul>
+${soul}
+</navigator_soul>`,
+      ...routePlaybookReadFailure === void 0 ? [`<route_playbook>
+${routePlaybook}
+</route_playbook>`] : ["\u53EF\u9009\u8DEF\u7EBF\u624B\u518C\u672A\u80FD\u8BFB\u53D6\u3002"],
+      `<work_subject>
+${subject}
+</work_subject>`,
+      `<controlling_authority>
+${authority}
+</controlling_authority>`,
+      `<current_role>
+${JSON.stringify({ role: options.role, phase: options.phase })}
+</current_role>`,
+      ...boundSettlement === void 0 ? [] : [`<current_settlement>
+${JSON.stringify(boundSettlement)}
+</current_settlement>`],
+      `<prior_route>
+${JSON.stringify(prior ?? null)}
+</prior_route>`,
+      `<public_settlement_history>
+${JSON.stringify(projection.publicSettlementHistory)}
+</public_settlement_history>`,
+      `<live_role_help>
+${helpContext}
+</live_role_help>`
+    ].join("\n\n");
+    try {
+      try {
+        if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        const delivery = createReceiptDeliveryPolicy();
+        const promptAllowingRejectedPrepare = async (text, deliveryRequest) => {
+          const entryStart = activeSession.entries().length;
+          prepareBatchRejected = false;
+          let promptFailure;
+          try {
+            await activeSession.prompt(text);
+          } catch (error) {
+            promptFailure = error;
+          }
+          const providerFailure = activeSession.providerFailure?.();
+          if (providerFailure !== void 0) {
+            throw navigatorUnavailableError(providerFailure.source, promptFailure ?? "Navigator provider failure", providerFailure.cause);
+          }
+          const rejectedReason = rejectedPrepareReason(activeSession.entries(), entryStart);
+          if (rejectedReason !== void 0) {
+            output = void 0;
+            prepareBatchRejected = true;
+            delivery.recordRejected(rejectedReason);
+            return;
+          }
+          if (promptFailure !== void 0) throw promptFailure;
+          if (deliveryRequest && output === void 0) delivery.recordDeliveryRequest();
+        };
+        await promptAllowingRejectedPrepare(request, false);
+        while (output === void 0 && delivery.nextAction() === "request-delivery") {
+          await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
+        }
+        if (output === void 0 && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === void 0) {
+          const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
+          activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          preparationNoReceipt = true;
+          candidates = [];
+          return candidates;
+        }
+      } catch (error) {
+        throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
+      }
+      if (output === void 0) {
+        const nativeFailure = [...activeSession.entries()].reverse().find((entry) => {
+          if (!exactRecord3(entry) || entry.type !== "message" || !exactRecord3(entry.message)) return false;
+          return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
+        });
+        const nativeMessage = exactRecord3(nativeFailure) && exactRecord3(nativeFailure.message) ? nativeFailure.message : void 0;
+        const errorMessage = nativeMessage !== void 0 && typeof nativeMessage.errorMessage === "string" ? nativeMessage.errorMessage : "Navigator did not submit direction advice";
+        const providerFailure = activeSession.providerFailure?.();
+        const source = providerFailure?.source ?? "unknown";
+        const cause = providerFailure?.cause ?? source;
+        throw navigatorUnavailableError(source, errorMessage, cause);
+      }
+      candidates = normalizePrepareOutput(output);
+      return candidates;
+    } finally {
+      outputSink = void 0;
+    }
+  };
+  return {
+    setWorkContext(next) {
+      let closing;
+      if (next.subjectKey !== subjectKey && session !== void 0) {
+        const previous = session;
+        session = void 0;
+        previousRoute = void 0;
+        closing = previous.dispose();
+      }
+      subjectKey = next.subjectKey;
+      subject = next.subject;
+      authority = next.authority;
+      contextError = next.contextError;
+      return closing;
+    },
+    /**
+     * Start live-help subprocesses during activation without beginning full
+     * preparation. Next prepare() consumes the warm result; a later prepare
+     * reloads so live help edits remain visible.
+     */
+    warmHelp() {
+      if (disposed || warmedHelp !== void 0 || preparation !== void 0) return;
+      warmedHelp = loadLiveHelp();
+      void warmedHelp.catch(() => void 0);
+    },
+    prepare() {
+      if (disposed || preparation !== void 0) return;
+      preparationFailure = void 0;
+      preparation = prepare();
+      void preparation.catch((error) => {
+        preparationFailure = error;
+      });
+    },
+    isPreparing() {
+      return preparation !== void 0 || sessionReady !== void 0;
+    },
+    knownRoutePlaybookReadFailure() {
+      return routePlaybookReadFailure;
+    },
+    settle(settlement) {
+      const next = settlementTail.then(() => settleOnce(settlement));
+      settlementTail = next.catch((error) => {
+        settlementFailure = error;
+      });
+      return next;
+    },
+    dispose() {
+      disposed = true;
+      const current = session;
+      session = void 0;
+      activeInvocationId = void 0;
+      return current?.dispose();
+    }
+  };
+  async function settleOnce(settlement) {
+    const invocationId = activeInvocationId ?? invocationPrincipal;
+    let report;
+    if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
+      if (sessionReady !== void 0) {
+        try {
+          await sessionReady;
+        } catch (error) {
+          preparationFailure ??= error;
+        }
+      }
+      if (preparation !== void 0) {
+        try {
+          await preparation;
+        } catch (error) {
+          preparationFailure ??= error;
+        }
+      }
+      session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.kind === "human_decision" ? { status: settlement.status } : {} });
+      if (preparationFailure !== void 0) {
+        report = unavailable(invocationId, preparationFailure);
+      } else {
+        report = { disposition: "no-advice" };
+      }
+    } else if (settlement.kind === "arrival") {
+      if (sessionReady !== void 0) {
+        try {
+          await sessionReady;
+        } catch (error) {
+          preparationFailure ??= error;
+        }
+      }
+      if (preparation !== void 0) {
+        try {
+          await preparation;
+        } catch (error) {
+          preparationFailure ??= error;
+        }
+      }
+      report = preparationFailure === void 0 ? { disposition: "arrival", arrivalMessage: settlement.message ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730" } : unavailable(invocationId, preparationFailure);
+    } else if (preparation === void 0) {
+      report = unavailable(invocationId, "Navigator preparation did not start");
+    } else {
+      try {
+        if (sessionReady !== void 0) await sessionReady;
+        let prepared = await preparation;
+        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
+        let selected = selectNavigatorCandidate(prepared, settlement);
+        if (selected?.candidate.next !== void 0 && !selected.matchedToSettlement) {
+          prepareBoundSettlement = settlement;
+          prepared = await prepare();
+          selected = selectNavigatorCandidate(prepared, settlement);
+        }
+        const selectedCandidate = selected?.candidate;
+        if (selectedCandidate?.next === void 0 && preparationNoReceipt) {
+          report = { disposition: "no-advice" };
+        } else if (selectedCandidate?.next === void 0) {
+          throw new Error("Navigator prepared no machine-usable next direction");
+        } else {
+          const selectedRoute = selectedCandidate.route;
+          const routeChanged = selectedRoute !== void 0 && !routeEqual(previousRoute, selectedRoute);
+          const command = renderPublicAkRoleCommand(selectedCandidate.next);
+          report = {
+            disposition: "recommendation",
+            ...routeChanged ? { route: selectedRoute } : {},
+            next: selectedCandidate.next,
+            ...selectedCandidate.reason === void 0 ? {} : { reason: oneLine(selectedCandidate.reason) },
+            ...command === void 0 ? {} : { command }
+          };
+          if (selectedRoute !== void 0) {
+            previousRoute = selectedRoute;
+            session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+          }
+        }
+      } catch (error) {
+        report = unavailable(invocationId, error);
+      }
+    }
+    await routePlaybookSettlement;
+    if (routePlaybookReadFailure !== void 0) {
+      report = { ...report, routePlaybookReadFailure };
+    }
+    const event = {
+      version: 1,
+      disposition: report.disposition,
+      invocationId,
+      role: options.role,
+      phase: options.phase,
+      subjectKey,
+      ...report.route === void 0 ? {} : { route: report.route },
+      ...report.next === void 0 ? {} : { next: report.next },
+      ...report.reason === void 0 ? {} : { reason: report.reason },
+      ...report.command === void 0 ? {} : { command: report.command },
+      ...report.unavailableReason === void 0 ? {} : { unavailableReason: report.unavailableReason },
+      ...report.unavailableSource === void 0 ? {} : { unavailableSource: report.unavailableSource },
+      ...report.unavailableCause === void 0 ? {} : { unavailableCause: report.unavailableCause },
+      ...report.routePlaybookReadFailure === void 0 ? {} : { routePlaybookReadFailure: report.routePlaybookReadFailure },
+      ...report.arrivalMessage === void 0 ? {} : { arrivalMessage: report.arrivalMessage }
+    };
+    if (!disposed) {
+      await options.onEvent(event, report);
+    }
+    preparation = void 0;
+    sessionReady = void 0;
+    candidates = void 0;
+    preparationFailure = void 0;
+    preparationNoReceipt = false;
+    routePlaybookSettlement = void 0;
+    routePlaybookReadFailure = void 0;
+  }
+}
+
+// src/navigator-work-context.ts
+import { readFile as readFile12 } from "node:fs/promises";
+import { resolve as resolve13 } from "node:path";
+
+// src/notary-source-run.ts
+init_activation_ledger_git();
+init_activation_ledger_topology();
+import { dirname as dirname12, isAbsolute as isAbsolute4, join as join17, resolve as resolve12, basename as basename5 } from "node:path";
+import { lstat as lstat2, realpath as realpath4 } from "node:fs/promises";
+
+// src/public-cli/run-lifecycle.ts
+init_activation_ledger_topology();
+import { chmod, open, readdir as readdir2, readFile as readFile11, unlink as unlink2, writeFile as writeFile7 } from "node:fs/promises";
+import { join as join16 } from "node:path";
+
+// src/grok/session-identity.ts
+import { mkdir as mkdir2, readFile as readFile8, rename, writeFile as writeFile5 } from "node:fs/promises";
+import { dirname as dirname11, join as join14 } from "node:path";
+var GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
+function createGrokSessionIdentityAuthority(authority) {
+  const bindingPath = (principal) => join14(authority.decode(principal).sessionDirectory, GROK_ACP_SESSION_BINDING);
+  return {
+    async load(principal) {
+      try {
+        const value = JSON.parse(await readFile8(bindingPath(principal), "utf8"));
+        if (typeof value !== "object" || value === null || typeof value.sessionId !== "string") {
+          throw new Error("durable Grok ACP session binding is invalid");
+        }
+        return value.sessionId;
+      } catch (error) {
+        if (error.code === "ENOENT") return void 0;
+        throw error;
+      }
+    },
+    async bind(principal, sessionId) {
+      const target = bindingPath(principal);
+      await mkdir2(dirname11(target), { recursive: true });
+      const temporary = `${target}.${process.pid}.tmp`;
+      await writeFile5(temporary, `${JSON.stringify({ sessionId })}
+`, { encoding: "utf8", mode: 384 });
+      await rename(temporary, target);
+    }
+  };
+}
+
 // src/public-cli/invocation.ts
 init_activation_ledger_topology();
 init_activation_ledger_git();
+import {
+  lstat,
+  mkdir as mkdir3,
+  readFile as readFile10,
+  realpath as realpath3,
+  writeFile as writeFile6
+} from "node:fs/promises";
+import { basename as basename4, isAbsolute as isAbsolute3, join as join15, resolve as resolve11, sep as sep3 } from "node:path";
 
 // src/collector-config.ts
-import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile5 } from "node:fs/promises";
+import { createHash as createHash6 } from "node:crypto";
+import { readFile as readFile9 } from "node:fs/promises";
 var COLLECTOR_HOST = "github.com";
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
@@ -3299,12 +6141,12 @@ function canonicalManifest(requests) {
 }
 function emptyCollectorManifest() {
   const canonicalJson2 = canonicalManifest([]);
-  return { requests: [], canonicalJson: canonicalJson2, digest: createHash3("sha256").update(canonicalJson2).digest("hex") };
+  return { requests: [], canonicalJson: canonicalJson2, digest: createHash6("sha256").update(canonicalJson2).digest("hex") };
 }
 async function loadCollectorManifest(path) {
   let bytes;
   try {
-    bytes = await readFile5(path);
+    bytes = await readFile9(path);
   } catch (error) {
     fail3(`Collector request manifest is unreadable at ${path}`, error);
   }
@@ -3326,26 +6168,7 @@ async function loadCollectorManifest(path) {
     requests.push({ id: item.id, requestBody: item.body });
   }
   const canonicalJson2 = canonicalManifest(requests);
-  return { requests, canonicalJson: canonicalJson2, digest: createHash3("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
-}
-
-// src/uuidv7.ts
-import { randomBytes } from "node:crypto";
-var UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-function isUuidV7(value) {
-  return typeof value === "string" && UUIDV7.test(value);
-}
-function uuidv7(now = Date.now()) {
-  const b = randomBytes(16);
-  let n = BigInt(now);
-  for (let i = 5; i >= 0; i--) {
-    b[i] = Number(n & 255n);
-    n >>= 8n;
-  }
-  b[6] = b[6] & 15 | 112;
-  b[8] = b[8] & 63 | 128;
-  const h = b.toString("hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  return { requests, canonicalJson: canonicalJson2, digest: createHash6("sha256").update(canonicalJson2).digest("hex"), sourcePath: path };
 }
 
 // src/public-cli/option-definitions.ts
@@ -3755,7 +6578,7 @@ var SUPPORT_COMMAND_HELP = {
   },
   config: {
     command: "config",
-    summary: "Persistent seat model, labor-engine, and auto-resume defaults.",
+    summary: "Persistent seat model, labor-engine, host, and auto-resume defaults.",
     usage: [
       "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
       "ak-role config unset <gatekeeper|inspector|notary>",
@@ -3769,6 +6592,7 @@ var SUPPORT_COMMAND_HELP = {
       "ak-role config set judge openai-codex/gpt-5.6-sol:high",
       "ak-role config unset gatekeeper",
       "ak-role config set-engine judge opus",
+      "ak-role config set-host judge grok-build",
       "ak-role config set-auto-resume-limit 3"
     ]
   },
@@ -3794,63 +6618,26 @@ var PUBLIC_COMMAND_HELP = {
   ...SUPPORT_COMMAND_HELP
 };
 
-// src/institutional-resolution.ts
-import { readFile as readFile6, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join4 } from "node:path";
-var INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json";
-var InstitutionalResolutionError = class extends Error {
-  constructor(message, options) {
-    super(message, options);
-    this.name = "InstitutionalResolutionError";
-  }
-};
-function cleanSelection(model) {
-  if (model === void 0) return void 0;
-  if (typeof model.provider !== "string" || typeof model.model !== "string") return void 0;
-  return {
-    provider: model.provider,
-    model: model.model,
-    ...model.thinking === void 0 ? {} : { thinking: model.thinking }
-  };
-}
-async function readInstitutionalSeatSelection(runDirectory, seat) {
-  const filePath = join4(runDirectory, INSTITUTIONAL_RESOLUTION_FILE);
-  let raw;
+// src/public-cli/invocation.ts
+async function loadAdmittedJudgeRequest(runDirectory) {
   try {
-    raw = await readFile6(filePath, "utf8");
-  } catch (error) {
-    throw new InstitutionalResolutionError(
-      `institutional resolution page is missing at ${filePath}`,
-      { cause: error }
+    const raw = JSON.parse(
+      await readFile10(join15(runDirectory, "admitted-request.json"), "utf8")
     );
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return void 0;
+    const record4 = raw;
+    if (record4.role !== "judge") return void 0;
+    if (typeof record4.instruction !== "string") return void 0;
+    if (typeof record4.instructionEmpty !== "boolean") return void 0;
+    if (!Array.isArray(record4.attachments)) return void 0;
+    return {
+      instruction: record4.instruction,
+      instructionEmpty: record4.instructionEmpty,
+      attachments: record4.attachments
+    };
+  } catch {
+    return void 0;
   }
-  let page;
-  try {
-    page = JSON.parse(raw);
-  } catch (error) {
-    throw new InstitutionalResolutionError(
-      `institutional resolution page is corrupted at ${filePath}`,
-      { cause: error }
-    );
-  }
-  if (typeof page !== "object" || page === null || page.version !== 1) {
-    throw new InstitutionalResolutionError(
-      `institutional resolution page format is invalid at ${filePath}`
-    );
-  }
-  const seats = page.seats;
-  if (typeof seats !== "object" || seats === null) {
-    throw new InstitutionalResolutionError(
-      `institutional resolution page missing seats object at ${filePath}`
-    );
-  }
-  const selection = cleanSelection(seats[seat]);
-  if (selection === void 0) {
-    throw new InstitutionalResolutionError(
-      `institutional resolution page has no resolution for seat "${seat}" at ${filePath}`
-    );
-  }
-  return selection;
 }
 
 // src/public-cli/run-lifecycle.ts
@@ -3862,7 +6649,7 @@ function isV1ResumableProvider(provider) {
 async function readRoleRunStateDisk(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile7(join5(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile11(join16(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -3939,7 +6726,7 @@ function parseRunDirectoryName(name) {
 async function requireRunDirectory(candidate, display) {
   let real;
   try {
-    real = await realpath3(candidate);
+    real = await realpath4(candidate);
   } catch (error) {
     throw new NotarySourceRunError(
       `notary --source-run is not a readable run directory: ${display}`,
@@ -3948,7 +6735,7 @@ async function requireRunDirectory(candidate, display) {
   }
   let stat2;
   try {
-    stat2 = await lstat(real);
+    stat2 = await lstat2(real);
   } catch (error) {
     throw new NotarySourceRunError(
       `notary --source-run is not a readable run directory: ${display}`,
@@ -3960,17 +6747,17 @@ async function requireRunDirectory(candidate, display) {
       `notary --source-run must be a run directory: ${display}`
     );
   }
-  const identity = parseRunDirectoryName(basename3(real));
+  const identity = parseRunDirectoryName(basename5(real));
   if (identity === void 0) {
     throw new NotarySourceRunError(
-      `notary --source-run must be named <runId>@<role>: ${basename3(real)}`
+      `notary --source-run must be named <runId>@<role>: ${basename5(real)}`
     );
   }
   return real;
 }
 async function loadNotarySourceRunLocator(path) {
   const real = await requireRunDirectory(path, path);
-  const identity = parseRunDirectoryName(basename3(real));
+  const identity = parseRunDirectoryName(basename5(real));
   const runState = await readRoleRunIdentity(real);
   if (runState === void 0) {
     throw new NotarySourceRunError(
@@ -3994,13 +6781,100 @@ async function loadNotarySourceRunLocator(path) {
   };
 }
 
+// src/navigator-work-context.ts
+function navigatorInputReference(getFlag, role) {
+  if (getFlag === void 0) return void 0;
+  const name = packagedRoleInputFlag(role);
+  const value = name === void 0 ? void 0 : getFlag(name);
+  return typeof value === "string" && value !== "" ? resolve13(value) : void 0;
+}
+async function loadNavigatorWorkContext(options) {
+  const reference = navigatorInputReference(options.getFlag, options.role);
+  const input = reference === void 0 || options.role === "doctor" || options.role === "notary" ? void 0 : await readFile12(reference, "utf8");
+  const subjectRoot = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
+  let subjectKey = reference === void 0 ? subjectRoot : navigatorSubjectKeyForInput(subjectRoot, reference, options.context.cwd);
+  let subject = input ?? `work subject: ${subjectKey}`;
+  let subjectProvenance = input === void 0 ? "placeholder" : "role_input";
+  if (options.role === "doctor" && reference !== void 0) {
+    const patient = await loadDoctorCase(reference);
+    subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
+    subjectProvenance = "role_input";
+  }
+  if (options.role === "notary" && reference !== void 0) {
+    const locator = await loadNotarySourceRunLocator(reference);
+    subject = JSON.stringify({ sourceRun: locator });
+    subjectProvenance = "role_input";
+  }
+  const publicRunDir = process.env.AK_ROLE_RUN_DIR;
+  const currentSessionDir = options.context.sessionManager.getSessionDir();
+  const isBoundPublicRun = typeof publicRunDir === "string" && publicRunDir.trim() !== "" && resolve13(currentSessionDir) === resolve13(publicRunDir, "session");
+  if (options.role === "judge" && isBoundPublicRun) {
+    let admitted;
+    try {
+      admitted = await loadAdmittedJudgeRequest(publicRunDir);
+    } catch (error) {
+      throw navigatorUnavailableError("context", error);
+    }
+    if (admitted === void 0) {
+      throw navigatorUnavailableError(
+        "context",
+        new Error("public Judge admitted request was missing or malformed")
+      );
+    }
+    if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
+      const prose = admitted.instruction;
+      subjectProvenance = "role_input";
+      subject = prose;
+      subjectKey = navigatorSubjectKey(subjectRoot, prose, subjectProvenance);
+      return { subjectKey, subject, authority: prose, subjectProvenance };
+    }
+    return {
+      subjectKey: subjectRoot,
+      subject: `work subject: ${subjectRoot}`,
+      authority: "",
+      subjectProvenance: "placeholder"
+    };
+  }
+  if (input !== void 0 && input.trim() !== "") {
+    return { subjectKey, subject, authority: input, subjectProvenance };
+  }
+  const workRoot = subjectRoot.includes("/.ak/work/") ? subjectRoot : void 0;
+  const authorityFiles = workRoot === void 0 ? [] : [
+    resolve13(workRoot, "authority.md"),
+    resolve13(workRoot, "authority.txt"),
+    resolve13(workRoot, "design-v2/owner-direction.md")
+  ];
+  let authorityMaterial;
+  for (const path of authorityFiles) {
+    try {
+      const content = await readFile12(path, "utf8");
+      if (content.trim() !== "") {
+        authorityMaterial = content;
+        break;
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
+  const authority = resolveNavigatorAuthorityMaterial(input, authorityMaterial);
+  if (authority === void 0) {
+    return {
+      subjectKey: subjectRoot,
+      subject: `work subject: ${subjectRoot}`,
+      authority: "",
+      subjectProvenance: "placeholder"
+    };
+  }
+  return { subjectKey, subject, authority, subjectProvenance };
+}
+
 // src/package-resources/method-skill-binding.ts
-import { dirname as dirname7 } from "node:path";
+import { dirname as dirname13 } from "node:path";
 
 // src/package-resources/method-skill.ts
-import { createHash as createHash4 } from "node:crypto";
-import { readFile as readFile8, realpath as realpath4 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { createHash as createHash7 } from "node:crypto";
+import { readFile as readFile13, realpath as realpath5 } from "node:fs/promises";
+import { join as join18 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
   constructor(skillName, path, cause) {
     super(`Canonical ${skillName} Skill is unavailable at ${path}`, { cause });
@@ -4023,7 +6897,7 @@ var REQUIRED_COMPANIONS = {
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
-  return createHash4("sha1").update(header).update(body).digest("hex");
+  return createHash7("sha1").update(header).update(body).digest("hex");
 }
 function stripSkillFrontmatter(content) {
   if (!content.startsWith("---")) return content;
@@ -4036,16 +6910,16 @@ function packagedMethodSkillRelativeDirectory(name) {
   return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
 }
 function resolvePackagedMethodSkillRoot(packageRoot, name) {
-  return join7(packageRoot, packagedMethodSkillRelativeDirectory(name));
+  return join18(packageRoot, packagedMethodSkillRelativeDirectory(name));
 }
 function resolvePackagedMethodSkillPath(packageRoot, name) {
-  return join7(resolvePackagedMethodSkillRoot(packageRoot, name), "SKILL.md");
+  return join18(resolvePackagedMethodSkillRoot(packageRoot, name), "SKILL.md");
 }
-function isRecord5(value) {
+function isRecord8(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseProvenance(raw, expectedName) {
-  if (!isRecord5(raw)) {
+  if (!isRecord8(raw)) {
     throw new Error(`Packaged method provenance must be an object for ${expectedName}`);
   }
   if (raw.name !== expectedName) {
@@ -4059,7 +6933,7 @@ function parseProvenance(raw, expectedName) {
   if (typeof raw.packageAdaptation !== "string" || raw.packageAdaptation.trim() === "") {
     throw new Error(`Packaged method provenance packageAdaptation must be nonblank`);
   }
-  if (!isRecord5(raw.upstream)) {
+  if (!isRecord8(raw.upstream)) {
     throw new Error(`Packaged method provenance upstream must be an object`);
   }
   const upstream = raw.upstream;
@@ -4086,12 +6960,12 @@ function parseProvenance(raw, expectedName) {
       `Packaged method provenance upstream must include nonblank tag or version`
     );
   }
-  if (!isRecord5(raw.files)) {
+  if (!isRecord8(raw.files)) {
     throw new Error(`Packaged method provenance files must be an object`);
   }
   const files = {};
   for (const [rel, entry] of Object.entries(raw.files)) {
-    if (!isRecord5(entry)) {
+    if (!isRecord8(entry)) {
       throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
     }
     if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
@@ -4133,11 +7007,11 @@ function parseProvenance(raw, expectedName) {
 }
 async function loadPackagedMethodSkillMaterial(packageRoot, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot, name);
-  const skillPathConfigured = join7(rootDirectory, "SKILL.md");
-  const provenancePath = join7(rootDirectory, "provenance.json");
+  const skillPathConfigured = join18(rootDirectory, "SKILL.md");
+  const provenancePath = join18(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile8(provenancePath, "utf8");
+    provenanceRaw = await readFile13(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -4151,10 +7025,10 @@ async function loadPackagedMethodSkillMaterial(packageRoot, name) {
   }
   const provenance = parseProvenance(provenanceJson, name);
   for (const [rel, expected] of Object.entries(provenance.files)) {
-    const absolute = join7(rootDirectory, rel);
+    const absolute = join18(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile8(absolute);
+      bytes = await readFile13(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -4169,8 +7043,8 @@ async function loadPackagedMethodSkillMaterial(packageRoot, name) {
   let skillPath;
   let raw;
   try {
-    skillPath = await realpath4(skillPathConfigured);
-    raw = await readFile8(skillPath, "utf8");
+    skillPath = await realpath5(skillPathConfigured);
+    raw = await readFile13(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -4206,7 +7080,7 @@ async function loadPackagedCanonicalSkillBinding(packageRoot, name) {
   const snapshot = Object.freeze({
     raw: material.raw,
     path: material.skillPath,
-    baseDir: dirname7(material.skillPath),
+    baseDir: dirname13(material.skillPath),
     body: material.body,
     snapshotIdentity: Object.freeze({ text: material.raw })
   });
@@ -4229,10 +7103,42 @@ async function loadPackagedCanonicalSkillBinding(packageRoot, name) {
   return Object.freeze(binding);
 }
 
-// src/reviewer-pinned-git.ts
-import { execFile as execFile2 } from "node:child_process";
-import { access, realpath as realpath5 } from "node:fs/promises";
-import { promisify as promisify2 } from "node:util";
+// src/reviewer-prompt-identity.ts
+function isReviewerPromptText(value) {
+  return typeof value === "string";
+}
+function sameReviewerPromptText(first, second) {
+  return first === second;
+}
+
+// src/reviewer-child-executor.ts
+function projectSharedChildFailure(error) {
+  if (typeof error === "object" && error !== null && "evidenceChildFailure" in error) {
+    const classification = error.evidenceChildFailure;
+    if (classification === "provider" || classification === "child" || classification === "unknown") {
+      Object.assign(error, { reviewerFailure: classification });
+    }
+  }
+  return error;
+}
+async function executeReviewerChild(workspace, leg, context, options = {}) {
+  try {
+    return await executeEvidenceChild(workspace, leg.prompt, context, {
+      ...options.signal === void 0 ? {} : { signal: options.signal },
+      ...options.credentialScratchParent === void 0 ? {} : { credentialScratchParent: options.credentialScratchParent },
+      ...options.runDirectory === void 0 ? {} : { runDirectory: options.runDirectory },
+      ...options.packageRoot === void 0 ? {} : { packageRoot: options.packageRoot }
+    });
+  } catch (error) {
+    throw projectSharedChildFailure(error);
+  }
+}
+
+// src/reviewer-workspace.ts
+import { spawn as spawn3 } from "node:child_process";
+import { mkdtemp as mkdtemp4, rm as rm4 } from "node:fs/promises";
+import { tmpdir as tmpdir4 } from "node:os";
+import { join as join19 } from "node:path";
 
 // src/reviewer-git-snapshot.ts
 var REVIEW_REF_PREFIXES = ["refs/heads", "refs/tags", "refs/remotes"];
@@ -4261,6 +7167,299 @@ function immutableReviewerRefs(refs) {
 function sameReviewerPinnedTarget(actual, expected) {
   return actual.repositoryRoot === expected.repositoryRoot && actual.objectFormat === expected.objectFormat && actual.targetHead === expected.targetHead;
 }
+
+// src/reviewer-workspace.ts
+var ReviewerProcessError = class extends Error {
+  constructor(command, args, code, signal, timedOut, aborted, stderr, stdout, cause) {
+    super(`${command} ${args.join(" ")} failed`, { cause });
+    this.command = command;
+    this.args = args;
+    this.code = code;
+    this.signal = signal;
+    this.timedOut = timedOut;
+    this.aborted = aborted;
+    this.stderr = stderr;
+    this.stdout = stdout;
+    this.name = "ReviewerProcessError";
+  }
+  command;
+  args;
+  code;
+  signal;
+  timedOut;
+  aborted;
+  stderr;
+  stdout;
+};
+async function runCommand(command, args, options = {}) {
+  return await new Promise((resolve17, reject) => {
+    const child = spawn3(command, args, { ...options.cwd === void 0 ? {} : { cwd: options.cwd }, stdio: ["ignore", "pipe", "pipe"], signal: options.signal });
+    let stdout = "", stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+    let settled = false;
+    const fail5 = (error, code, signal) => {
+      if (settled) return;
+      settled = true;
+      reject(new ReviewerProcessError(command, args, code, signal, false, options.signal?.aborted === true, stderr, stdout, error));
+    };
+    child.on("error", (error) => fail5(error, null, null));
+    child.on("close", (code, signal) => {
+      const actual = code ?? 1;
+      if ((options.allowedCodes ?? [0]).includes(actual)) {
+        settled = true;
+        resolve17({ stdout, stderr, code: actual });
+      } else fail5(void 0, code, signal);
+    });
+  });
+}
+async function git2(cwd, args, signal, allowedCodes) {
+  return runCommand("git", ["-C", cwd, ...args], { ...signal === void 0 ? {} : { signal }, ...allowedCodes === void 0 ? {} : { allowedCodes } });
+}
+async function verifySnapshot(cwd, snapshot, signal) {
+  if ((await git2(cwd, ["rev-parse", "--show-object-format"], signal)).stdout.trim() !== snapshot.objectFormat) throw new Error("Review clone object format does not match the pinned session snapshot");
+  const head = (await git2(cwd, ["rev-parse", "HEAD^{commit}"], signal)).stdout.trim();
+  if (head !== snapshot.targetHead) throw new Error(`Review clone target mismatch: expected ${snapshot.targetHead}, got ${head}`);
+  await git2(cwd, ["cat-file", "-e", `${snapshot.targetHead}^{commit}`], signal);
+}
+function workspaceError(error, failure2, disposition, target) {
+  const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error });
+  return Object.assign(wrapped, { reviewerFailure: failure2, workspaceDisposition: disposition, targetSnapshot: target });
+}
+async function prepareSnapshot(accepted, signal, dependencies) {
+  let mirrorRoot;
+  try {
+    dependencies.fault?.("snapshot.head");
+    const objectFormat = (await git2(accepted.repositoryRoot, ["rev-parse", "--show-object-format"], signal)).stdout.trim();
+    const targetHead = (await git2(accepted.repositoryRoot, ["rev-parse", "HEAD^{commit}"], signal)).stdout.trim();
+    if (!sameReviewerPinnedTarget({ repositoryRoot: accepted.repositoryRoot, objectFormat, targetHead }, accepted)) throw new Error("Accepted Reviewer target identity no longer matches the repository");
+    await git2(accepted.repositoryRoot, ["cat-file", "-e", `${targetHead}^{commit}`], signal);
+    dependencies.fault?.("mirror.before-create");
+    mirrorRoot = await mkdtemp4(join19(tmpdir4(), "ak-reviewer-snapshot-"));
+    const mirrorPath = join19(mirrorRoot, "repository.git");
+    dependencies.fault?.("mirror.create");
+    await runCommand("git", ["init", "--bare", `--object-format=${accepted.objectFormat}`, mirrorPath], signal === void 0 ? {} : { signal });
+    await git2(mirrorPath, ["fetch", "--no-tags", accepted.repositoryRoot, targetHead], signal);
+    await git2(mirrorPath, ["update-ref", "refs/ak-reviewer/target", targetHead], signal);
+    dependencies.fault?.("mirror.verify");
+    await git2(mirrorPath, ["cat-file", "-e", `${targetHead}^{commit}`], signal);
+    return { ...accepted, targetHead, mirrorRoot, mirrorPath };
+  } catch (error) {
+    throw workspaceError(error, "snapshot", mirrorRoot === void 0 ? "not-created" : { retained: mirrorRoot }, accepted);
+  }
+}
+async function prepareClone(snapshot, signal, dependencies) {
+  let workspace;
+  const target = { repositoryRoot: snapshot.repositoryRoot, objectFormat: snapshot.objectFormat, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
+  try {
+    dependencies.fault?.("workspace.before-create");
+    workspace = await mkdtemp4(join19(tmpdir4(), "ak-reviewer-leg-"));
+    dependencies.fault?.("workspace.init");
+    await git2(workspace, ["init", `--object-format=${snapshot.objectFormat}`, "--initial-branch=ak-reviewer-unborn"], signal);
+    dependencies.fault?.("workspace.fetch");
+    await git2(workspace, ["fetch", "--no-tags", snapshot.mirrorPath, snapshot.targetHead], signal);
+    await git2(workspace, ["checkout", "--detach", snapshot.targetHead], signal);
+    dependencies.fault?.("workspace.verify");
+    await verifySnapshot(workspace, snapshot, signal);
+    return workspace;
+  } catch (error) {
+    throw workspaceError(error, "workspace", workspace === void 0 ? "not-created" : { retained: workspace }, target);
+  }
+}
+function createReviewerWorkspaceOwner(dependencies = {}) {
+  let ownedSnapshot;
+  let cleanupPromise;
+  return {
+    async prepare(target, axes, signal) {
+      const snapshot = await prepareSnapshot(target, signal, dependencies);
+      ownedSnapshot = snapshot;
+      const frozenTarget = Object.freeze({ repositoryRoot: snapshot.repositoryRoot, objectFormat: snapshot.objectFormat, targetHead: snapshot.targetHead, refs: Object.freeze({ ...snapshot.refs }) });
+      const workspaces = [];
+      try {
+        for (const axis of axes) {
+          const path = await prepareClone(snapshot, signal, dependencies);
+          workspaces.push(Object.freeze({ axis, path, target: frozenTarget }));
+        }
+      } catch (error) {
+        if (typeof error === "object" && error !== null) Object.assign(error, { preparedWorkspaces: Object.freeze([...workspaces]) });
+        throw error;
+      }
+      return Object.freeze({ target: frozenTarget, workspaces: Object.freeze(workspaces) });
+    },
+    async dispose(workspace) {
+      await rm4(workspace.path, { recursive: true, force: false });
+      return "deleted";
+    },
+    async shutdown() {
+      if (ownedSnapshot === void 0) return;
+      cleanupPromise ??= rm4(ownedSnapshot.mirrorRoot, { recursive: true, force: false });
+      await cleanupPromise;
+    }
+  };
+}
+
+// src/reviewer-failure-diagnostic.ts
+function normalizeReviewerFailureDiagnostic(error, failure2) {
+  const original = error instanceof Error && Object.hasOwn(error, "reviewerOriginal") ? error.reviewerOriginal : error;
+  const message = original instanceof Error ? original.message.trim() : typeof original === "string" ? original.trim() : typeof original === "object" && original !== null && typeof original.errorMessage === "string" ? original.errorMessage.trim() : "";
+  if (message !== "") return message;
+  return failure2 === "provider" ? "Reviewer Agent provider supplied no diagnostic details" : "Reviewer Agent failed without diagnostic details";
+}
+
+// src/reviewer-agent.ts
+function reviewerDispatchFailureMessage(outcome) {
+  const diagnostics = [...new Set(
+    Object.values(outcome.legs).filter((leg) => leg?.status === "failed").map((leg) => leg.diagnostic.trim()).filter((diagnostic) => diagnostic.length > 0)
+  )];
+  if (diagnostics.length === 0) return "Reviewer dispatch execution failed";
+  return diagnostics.length === 1 ? diagnostics[0] : diagnostics.join("; ");
+}
+var ReviewerDispatchExecutionError = class extends Error {
+  constructor(outcome) {
+    super(reviewerDispatchFailureMessage(outcome));
+    this.outcome = outcome;
+    this.name = "ReviewerDispatchExecutionError";
+  }
+  outcome;
+};
+function classify(error, signal) {
+  if (signal?.aborted) return "cancelled";
+  if (typeof error === "object" && error !== null && "reviewerFailure" in error) return error.reviewerFailure;
+  return "unknown";
+}
+function failed(error, target, prompt, signal, retained) {
+  const attached = typeof error === "object" && error !== null ? error : {};
+  const failure2 = classify(error, signal);
+  const diagnostic = normalizeReviewerFailureDiagnostic(error, failure2);
+  return Object.freeze({
+    status: "failed",
+    failure: failure2,
+    diagnostic,
+    cause: error,
+    target: attached.targetSnapshot ?? target,
+    prompt,
+    workspaceDisposition: retained === void 0 ? attached.workspaceDisposition ?? "not-created" : { retained }
+  });
+}
+function createReviewerAgentRunner(dependencies = {}) {
+  const workspaceOwner = createReviewerWorkspaceOwner(dependencies.fault === void 0 ? {} : { fault: dependencies.fault });
+  let accepted = false;
+  return {
+    async run(dispatch, options) {
+      if (dispatch.recipe !== "reviewer-common-bundle-v1" || dispatch.legs.length < 1 || dispatch.legs.length > 2 || dispatch.legs[0]?.axis !== "standards" || dispatch.legs.length === 2 && dispatch.legs[1]?.axis !== "spec") throw new Error("Invalid accepted Reviewer dispatch cardinality or axes");
+      if (accepted) throw new Error("Reviewer runner accepts exactly one dispatch");
+      accepted = true;
+      for (const leg of dispatch.legs) if (!isReviewerPromptText(leg.prompt)) throw new Error("Accepted Reviewer prompt evidence mismatch");
+      let batch;
+      try {
+        batch = await workspaceOwner.prepare(dispatch.targetSnapshot, dispatch.legs.map((l) => l.axis), options.signal);
+      } catch (error) {
+        const prepared = typeof error === "object" && error !== null && "preparedWorkspaces" in error ? error.preparedWorkspaces ?? [] : [];
+        const failedIndex = prepared.length;
+        const legs = Object.fromEntries(dispatch.legs.map((leg, index) => [leg.axis, failed(error, dispatch.targetSnapshot, leg.prompt, options.signal, index < failedIndex ? prepared[index].path : void 0)]));
+        for (let index = failedIndex + 1; index < dispatch.legs.length; index += 1) {
+          const axis = dispatch.legs[index].axis;
+          legs[axis] = Object.freeze({ ...legs[axis], workspaceDisposition: "not-created" });
+        }
+        const target = Object.values(legs)[0].target;
+        throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }));
+      }
+      const settled = await Promise.allSettled(batch.workspaces.map(async (workspace) => {
+        const leg = dispatch.legs.find((candidate) => candidate.axis === workspace.axis);
+        try {
+          const child = await executeReviewerChild(workspace.path, leg, options.context, {
+            ...options.signal === void 0 ? {} : { signal: options.signal },
+            ...dependencies.credentialScratchParent === void 0 ? {} : { credentialScratchParent: dependencies.credentialScratchParent },
+            ...dependencies.packageRoot === void 0 ? {} : { packageRoot: dependencies.packageRoot }
+          });
+          const disposition = await workspaceOwner.dispose(workspace);
+          return [leg.axis, Object.freeze({ status: "successful", report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition })];
+        } catch (error) {
+          return [leg.axis, failed(error, batch.target, leg.prompt, options.signal, workspace.path)];
+        }
+      }));
+      const pairs = settled.map((item) => item.status === "fulfilled" ? item.value : (() => {
+        throw item.reason;
+      })());
+      const outcome = Object.freeze({ identity: dispatch.identity, target: batch.target, legs: Object.freeze(Object.fromEntries(pairs)) });
+      if (Object.values(outcome.legs).some((leg) => leg?.status === "failed")) throw new ReviewerDispatchExecutionError(outcome);
+      return outcome;
+    },
+    shutdown: () => workspaceOwner.shutdown()
+  };
+}
+function createPerDispatchReviewerAgent(dependencies = {}) {
+  const active = /* @__PURE__ */ new Set();
+  return {
+    async run(dispatch, options) {
+      const runner = createReviewerAgentRunner(dependencies);
+      active.add(runner);
+      try {
+        return await runner.run(dispatch, options);
+      } finally {
+        active.delete(runner);
+        await runner.shutdown();
+      }
+    },
+    async shutdown() {
+      const runners = [...active];
+      active.clear();
+      await Promise.all(runners.map((runner) => runner.shutdown()));
+    }
+  };
+}
+
+// src/role-runtime.ts
+import { readFileSync as readFileSync4, writeSync as writeSync4 } from "node:fs";
+import { join as pathJoin } from "node:path";
+
+// src/host-contracts.ts
+import { Type as Type13 } from "typebox";
+var ExplicitInternalActivationError = class extends Error {
+  knownCause;
+  failureCode;
+  constructor(message, options) {
+    super(
+      message,
+      options.cause === void 0 ? void 0 : { cause: options.cause }
+    );
+    this.name = options.name ?? "ExplicitInternalActivationError";
+    this.knownCause = options.knownCause;
+    if (options.code !== void 0) {
+      this.failureCode = options.code;
+    }
+  }
+};
+function stringEnum(values, options = {}) {
+  return Type13.Union(values.map((value) => Type13.Literal(value)), options);
+}
+
+// src/public-cli/reviewer-dispatch-rejection.ts
+import { writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join20 } from "node:path";
+
+// src/adr-path-refs.ts
+var ADR_PATH_IN_BODY = /docs\/adr\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md/g;
+function extractReferencedAdrPaths(text) {
+  const seen = /* @__PURE__ */ new Set();
+  const paths = [];
+  for (const match of text.matchAll(ADR_PATH_IN_BODY)) {
+    const path = match[0];
+    if (seen.has(path)) continue;
+    seen.add(path);
+    paths.push(path);
+  }
+  return Object.freeze(paths);
+}
+
+// src/reviewer-pinned-git.ts
+import { execFile as execFile2 } from "node:child_process";
+import { access, realpath as realpath6 } from "node:fs/promises";
+import { promisify as promisify2 } from "node:util";
 
 // src/reviewer-preflight-error.ts
 var ReviewerCorrectablePreflightError = class extends Error {
@@ -4341,7 +7540,7 @@ async function gitText(root, args) {
 }
 async function createReviewerPinnedGitReader(root = process.cwd()) {
   const discoveredRoot = await gitText(root, ["rev-parse", "--show-toplevel"]);
-  const repositoryRoot = await realpath5(discoveredRoot);
+  const repositoryRoot = await realpath6(discoveredRoot);
   const objectFormat = await gitText(repositoryRoot, ["rev-parse", "--show-object-format"]);
   if (objectFormat !== "sha1" && objectFormat !== "sha256") throw new Error("Unsupported Git object format");
   const oidWidth = objectFormat === "sha1" ? 40 : 64;
@@ -4513,1361 +7712,6 @@ function normalizeOrigin(ownerRaw, repoRaw) {
 }
 function stripGitSuffix(name) {
   return name.toLowerCase().endsWith(".git") ? name.slice(0, -4) : name;
-}
-
-// src/session-opening-materials.ts
-import { existsSync } from "node:fs";
-import { readFile as readFile9 } from "node:fs/promises";
-import { dirname as dirname8, join as join8 } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-function resolvePackageRootDir(moduleUrl = import.meta.url) {
-  let dir = dirname8(fileURLToPath(moduleUrl));
-  for (let i = 0; i < 8; i += 1) {
-    if (existsSync(join8(dir, "package.json")) && existsSync(join8(dir, "souls"))) {
-      return dir;
-    }
-    const parent = dirname8(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return fileURLToPath(new URL("..", moduleUrl));
-}
-var packageRootUrl = pathToFileURL(resolvePackageRootDir() + "/").href;
-async function readPackageMaterial(relativePath) {
-  return readFile9(fileURLToPath(new URL(relativePath, packageRootUrl)), "utf8");
-}
-async function joinPackageMaterials(relativePaths) {
-  const chunks = [];
-  for (const relativePath of relativePaths) {
-    chunks.push(await readPackageMaterial(relativePath));
-  }
-  return chunks.join("\n\n");
-}
-var MAIN_ROLE_SESSION_MATERIALS = {
-  ...Object.fromEntries(
-    PUBLIC_ROLE_RECORDS.map((record4) => [record4.role, record4.sessionMaterials])
-  ),
-  navigator: ["CLAUDE.md", "souls/navigator.md"]
-};
-function loadMainRoleSessionMaterials(role) {
-  return joinPackageMaterials(MAIN_ROLE_SESSION_MATERIALS[role]);
-}
-var GATEKEEPER_SESSION_MATERIALS = {
-  gatekeeper: [
-    "CLAUDE.md",
-    "souls/gatekeeper.md",
-    "souls/quality-law.md",
-    "souls/gate-output-guide.md"
-  ],
-  inspector: [
-    "CLAUDE.md",
-    "souls/inspector.md",
-    "souls/quality-law.md",
-    "souls/gate-output-guide.md"
-  ],
-  notary: NOTARY_SESSION_MATERIALS
-};
-function loadGatekeeperSessionMaterials(role) {
-  return joinPackageMaterials(GATEKEEPER_SESSION_MATERIALS[role]);
-}
-
-// src/grok/role-envelope.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { mkdir as mkdir4, readFile as readFile11, writeFile as writeFile7 } from "node:fs/promises";
-import { createServer } from "node:net";
-import { appendFileSync as appendFileSync2 } from "node:fs";
-import { basename as basename7, dirname as dirname15, join as join19 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
-
-// src/gatekeeper-role.ts
-import { Type as Type11 } from "typebox";
-
-// src/evidence-child-executor.ts
-import { mkdtemp as mkdtemp3, rm as rm3 } from "node:fs/promises";
-import { tmpdir as tmpdir3 } from "node:os";
-import { join as join14 } from "node:path";
-import "@earendil-works/pi-ai";
-
-// src/compliance-transport.ts
-import { Type as Type9 } from "typebox";
-
-// src/auditor-dossier-tool.ts
-import { dirname as dirname9, join as join9, resolve as resolve6 } from "node:path";
-import { Type as Type8 } from "typebox";
-function auditorRunDirectory(context) {
-  const sessionFile = context.sessionManager?.getSessionFile?.();
-  if (sessionFile === void 0) return void 0;
-  return resolve6(dirname9(dirname9(sessionFile)));
-}
-
-// src/sitian-appender.ts
-init_activation_ledger_git();
-init_activation_ledger_topology();
-import { createHash as createHash5, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync as existsSync2, readFileSync } from "node:fs";
-import { basename as basename4, dirname as dirname10, join as join10, resolve as resolve7 } from "node:path";
-
-// src/sitian-contracts.ts
-function attachDirectErrnoCode(error, cause) {
-  if (cause === null || typeof cause !== "object" || !("code" in cause)) return;
-  const code = cause.code;
-  if (typeof code === "string") error.code = code;
-}
-var SitianInfrastructureError = class extends Error {
-  knownCause = "session";
-  constructor(message, options) {
-    super(message, options);
-    this.name = "SitianInfrastructureError";
-    attachDirectErrnoCode(this, options?.cause);
-  }
-};
-
-// src/sitian-appender.ts
-function isRecord6(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-var S4_SUBMISSION_LEDGER_KINDS = /* @__PURE__ */ new Set([
-  "candidate",
-  "roundContext",
-  "outcome",
-  "sealed",
-  "post-seal-anomaly"
-]);
-function resolveSitianVolumeCategory(kind) {
-  if (S4_SUBMISSION_LEDGER_KINDS.has(kind)) {
-    return "submission-ledger";
-  }
-  return kind;
-}
-function safeBookKey(cwd) {
-  try {
-    return resolveBookKeyFromGit(cwd);
-  } catch {
-    return basename4(resolve7(cwd)) || "default";
-  }
-}
-function resolveSitianRecordPathInLedger(input, ledgerHome) {
-  const cwd = input.cwd ?? process.cwd();
-  const category = resolveSitianVolumeCategory(input.kind);
-  let sessionDir;
-  if (input.sessionParent !== void 0 && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
-    sessionDir = join10(dirname10(input.sessionParent), category);
-  } else {
-    const bookKey = safeBookKey(cwd);
-    const bookDir = activationBookDirectory(ledgerHome, bookKey);
-    if (input.subject !== void 0) {
-      let subjectStr;
-      if (typeof input.subject === "string") {
-        subjectStr = input.subject;
-      } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
-        subjectStr = input.subject.runId;
-      } else {
-        subjectStr = JSON.stringify(input.subject);
-      }
-      const digest = createHash5("sha256").update(subjectStr).digest("hex").slice(0, 32);
-      sessionDir = join10(bookDir, category, digest);
-    } else {
-      sessionDir = join10(bookDir, category);
-    }
-  }
-  const recordFile = join10(sessionDir, "records.jsonl");
-  return { sessionDir, recordFile, ledgerHome };
-}
-function resolveSitianRecordPath(input) {
-  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
-}
-function appendSitianRecord(input) {
-  try {
-    const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
-    ensureRealDirectoryTree(ledgerHome, sessionDir);
-    const identity = input.identity ?? randomUUID();
-    const timestamp2 = input.timestamp ?? (/* @__PURE__ */ new Date()).toISOString();
-    const host = input.host ?? "pi";
-    const record4 = {
-      level: input.level,
-      kind: input.kind,
-      identity,
-      ...input.subject === void 0 ? {} : { subject: input.subject },
-      ...input.sessionParent === void 0 ? {} : { sessionParent: input.sessionParent },
-      ...input.priorEventId === void 0 ? {} : { priorEventId: input.priorEventId },
-      timestamp: timestamp2,
-      host,
-      ...input.source === void 0 ? {} : { source: input.source },
-      ...input.payload === void 0 ? {} : { payload: input.payload },
-      ...input.raw === void 0 ? {} : { raw: input.raw },
-      ...input.usage === void 0 ? {} : { usage: input.usage }
-    };
-    if (existsSync2(recordFile)) {
-      const buffer = readFileSync(recordFile);
-      if (buffer.length > 0) {
-        if (buffer[buffer.length - 1] !== 10) {
-          appendFileSync(recordFile, "\n", "utf8");
-        }
-        const text = readFileSync(recordFile, "utf8");
-        for (const line2 of text.split("\n")) {
-          const trimmed = line2.trim();
-          if (!trimmed) continue;
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (isRecord6(parsed) && parsed.identity === identity) {
-              return {
-                identity,
-                recordFile,
-                kind: record4.kind,
-                level: record4.level
-              };
-            }
-          } catch {
-          }
-        }
-      }
-    }
-    const row = `${JSON.stringify(record4)}
-`;
-    appendFileSync(recordFile, row, "utf8");
-    return {
-      identity,
-      recordFile,
-      kind: record4.kind,
-      level: record4.level
-    };
-  } catch (error) {
-    if (error instanceof SitianInfrastructureError) throw error;
-    throw new SitianInfrastructureError(
-      `Sitian appender persistence failure: ${errorText(error)}`,
-      { cause: error }
-    );
-  }
-}
-
-// src/sitian-reader.ts
-import { existsSync as existsSync3 } from "node:fs";
-import { readFile as readFile10 } from "node:fs/promises";
-function isRecord7(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-async function readSitianRecords(recordFile) {
-  if (!existsSync3(recordFile)) {
-    return { records: [], diagnostics: [] };
-  }
-  const text = await readFile10(recordFile, "utf8");
-  const lines = text.split("\n");
-  const records2 = [];
-  const diagnostics = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line2 = lines[index];
-    if (!line2.trim()) continue;
-    try {
-      const parsed = JSON.parse(line2);
-      if (isRecord7(parsed)) {
-        records2.push(parsed);
-      } else {
-        const typeDesc = parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed;
-        diagnostics.push({
-          kind: "malformed",
-          line: index + 1,
-          raw: line2,
-          error: `expected JSON object, got ${typeDesc}`
-        });
-      }
-    } catch (error) {
-      diagnostics.push({
-        kind: "malformed",
-        line: index + 1,
-        raw: line2,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-  return { records: records2, diagnostics };
-}
-
-// src/sitian-facade.ts
-function sitianReport(input) {
-  return appendSitianRecord(input);
-}
-
-// src/compliance-transport.ts
-var nonblank2 = Type9.String({ minLength: 1, pattern: "\\S" });
-var decisionGateSchema = Type9.Object({ question: nonblank2, options: Type9.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false });
-var complianceDecisionSchema = Type9.Object({ status: Type9.Unknown({ description: "pass | revise | escalate \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }), violations: Type9.Array(nonblank2, { description: "\u89C2\u5BDF\u5230\u7684\u5408\u89C4\u8FDD\u89C4" }), conflicts: Type9.Array(nonblank2, { description: "\u672A\u51B3\u6743\u5A01\u6216\u6267\u884C\u51B2\u7A81" }), decisionGate: Type9.Union([decisionGateSchema, Type9.Null()], { description: "\u5347\u7EA7\u95EE\u9898\u4E0E\u53EF\u9009\u9009\u9879" }) }, { additionalProperties: true, required: [] });
-function createComplianceDecisionTool(name, description) {
-  return { name, description, parameters: complianceDecisionSchema, async execute(_id, params) {
-    return { content: [{ type: "text", text: "\u5BA1\u8BA1\u51B3\u8BAE\u5DF2\u6536" }], details: params, terminate: true };
-  } };
-}
-var AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding";
-var AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure";
-var ComplianceResponseRetentionError = class extends Error {
-  constructor(message, options) {
-    super(message, options);
-    this.name = "ComplianceResponseRetentionError";
-    attachDirectErrnoCode(this, options?.cause);
-  }
-};
-
-// src/engine-detour-tool.ts
-import { Type as Type10 } from "typebox";
-
-// src/engine-detour.ts
-import { spawn as spawn2 } from "node:child_process";
-import { mkdtemp, rm, writeFile as writeFile5 } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join as join11 } from "node:path";
-var ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
-var AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
-var ENGINE_DETOUR_STAGED_PROMPT_TOKEN = "<<ak-engine-staged-prompt>>";
-var ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC = "\u52B3\u52A1\u5F15\u64CE stdout \u4E3A\u7A7A";
-var ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC = "\u672C\u6FC0\u6D3B\u5185\u52B3\u52A1\u5F15\u64CE\u5DF2\u4F7F\u7528";
-function abortReasonError(signal) {
-  const reason = signal.reason;
-  if (reason instanceof Error) return reason;
-  if (typeof reason === "string" && reason.trim() !== "") {
-    return new Error(reason);
-  }
-  const error = new Error("aborted");
-  error.name = "AbortError";
-  return error;
-}
-function resolveArgvWithStagedPrompt(argv, stagedPath) {
-  let replaced = 0;
-  const out = argv.map((part) => {
-    if (part !== ENGINE_DETOUR_STAGED_PROMPT_TOKEN) return part;
-    replaced += 1;
-    return stagedPath;
-  });
-  if (replaced !== 1) {
-    throw new Error(
-      `\u52B3\u52A1\u5F15\u64CE stagedPrompt \u9700\u8981 argv \u4E2D\u6070\u597D\u4E00\u4E2A ${ENGINE_DETOUR_STAGED_PROMPT_TOKEN}\uFF08\u5B9E\u9645 ${replaced}\uFF09`
-    );
-  }
-  return out;
-}
-async function spawnEngineDetourOnce(input) {
-  if (input.argv.length === 0) {
-    throw new Error("\u52B3\u52A1\u5F15\u64CE argv \u4E0D\u5F97\u4E3A\u7A7A");
-  }
-  const command = input.argv[0];
-  const args = input.argv.slice(1);
-  return await new Promise((resolve13, reject) => {
-    let settled = false;
-    const signal = input.signal;
-    const child = spawn2(command, args, {
-      cwd: input.cwd,
-      env: input.env ?? process.env,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => {
-      stderr += chunk;
-    });
-    const fail5 = (error) => {
-      if (settled) return;
-      settled = true;
-      if (signal !== void 0) {
-        signal.removeEventListener("abort", onAbort);
-      }
-      reject(error instanceof Error ? error : new Error(String(error)));
-    };
-    const succeed = (result2) => {
-      if (settled) return;
-      settled = true;
-      if (signal !== void 0) {
-        signal.removeEventListener("abort", onAbort);
-      }
-      resolve13(result2);
-    };
-    const onAbort = () => {
-      fail5(signal !== void 0 ? abortReasonError(signal) : new Error("aborted"));
-      try {
-        child.kill("SIGTERM");
-      } catch {
-      }
-    };
-    if (signal !== void 0) {
-      if (signal.aborted) {
-        onAbort();
-      } else {
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
-    }
-    child.on("error", (error) => fail5(error));
-    child.on("close", (code) => {
-      succeed({ code: code ?? 1, stdout, stderr });
-    });
-  });
-}
-async function runEngineDetourOnce(input) {
-  if (input.stagedPrompt === void 0) {
-    return spawnEngineDetourOnce(input);
-  }
-  const stagingDir = await mkdtemp(join11(tmpdir(), "ak-engine-detour-"));
-  const stagedPath = join11(stagingDir, "prompt.txt");
-  let result2;
-  let runError;
-  try {
-    await writeFile5(stagedPath, input.stagedPrompt, "utf8");
-    const argv = resolveArgvWithStagedPrompt(input.argv, stagedPath);
-    result2 = await spawnEngineDetourOnce({
-      argv,
-      cwd: input.cwd,
-      ...input.env === void 0 ? {} : { env: input.env },
-      ...input.signal === void 0 ? {} : { signal: input.signal }
-    });
-  } catch (error) {
-    runError = error;
-  }
-  try {
-    await rm(stagingDir, { recursive: true, force: true });
-  } catch (cleanupError) {
-    if (runError !== void 0) {
-      throw new Error(
-        `\u52B3\u52A1\u5F15\u64CE stagedPrompt \u6E05\u7406\u5931\u8D25\uFF08\u539F\u8FD0\u884C\u9519\u8BEF\u4FDD\u7559\u4E3A cause\uFF09: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-        { cause: runError }
-      );
-    }
-    throw cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
-  }
-  if (runError !== void 0) {
-    throw runError instanceof Error ? runError : new Error(String(runError));
-  }
-  return result2;
-}
-function isEngineDetourFailure(result2) {
-  return result2.code !== 0 || result2.stdout.trim() === "";
-}
-function engineDetourFailureDiagnostic(result2) {
-  if (result2.stderr.trim().length > 0) return result2.stderr;
-  if (result2.stdout.trim() === "") return ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC;
-  const rows = result2.stdout.split("\n");
-  let lastRow = "";
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    if (rows[index].trim() !== "") {
-      lastRow = rows[index];
-      break;
-    }
-  }
-  return `\u52B3\u52A1\u5F15\u64CE\u4EE5 code ${result2.code} \u9000\u51FA\uFF1A${lastRow}`;
-}
-function engineNameFromEnv() {
-  const raw = process.env[AK_ROLE_ENGINE_ENV];
-  if (typeof raw !== "string") return void 0;
-  const trimmed = raw.trim();
-  return trimmed === "" ? void 0 : trimmed;
-}
-
-// src/engine-detour-tool.ts
-var engineDetourArgsSchema = Type10.Object(
-  {
-    argv: Type10.Array(Type10.String({ minLength: 1 }), {
-      minItems: 1,
-      description: "\u9996\u9879\u4E3A PATH \u4E2D\u7684\u53EF\u6267\u884C\u6587\u4EF6\uFF0C\u5176\u4F59\u9879\u4E3A\u53C2\u6570\u3002"
-    })
-  },
-  { additionalProperties: false }
-);
-function isCallerCancellation(error, signal) {
-  if (signal?.aborted === true) return true;
-  if (typeof error === "object" && error !== null && error.name === "AbortError") {
-    return true;
-  }
-  return false;
-}
-function createEngineDetourToolDefinition(input) {
-  const latch = input.latch ?? { used: false };
-  const engineName = input.engineName;
-  return {
-    name: ENGINE_DETOUR_TOOL_NAME,
-    label: "\u52B3\u52A1\u5F15\u64CE",
-    description: `\u8FD0\u884C\u4E00\u6B21\u52B3\u52A1\u5F15\u64CE\u5B50\u8FDB\u7A0B\uFF08engine=${engineName}\uFF09\uFF0Cstdout \u8FD4\u56DE\u672C session\uFF1B\u6BCF\u6B21\u6FC0\u6D3B\u81F3\u591A\u4E00\u6B21\u3002`,
-    promptSnippet: "\u8FD0\u884C\u914D\u7F6E\u7684\u52B3\u52A1\u5F15\u64CE\u4E00\u6B21\u5E76\u8FD4\u56DE stdout",
-    parameters: engineDetourArgsSchema,
-    async execute(toolCallId, params, signal, _onUpdate, ctx) {
-      if (latch.used) {
-        input.fail(
-          new Error(ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC),
-          toolCallId,
-          ctx
-        );
-      }
-      latch.used = true;
-      const args = params;
-      const argv = Array.isArray(args.argv) ? args.argv : [];
-      if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
-        input.fail(
-          new Error("\u52B3\u52A1\u5F15\u64CE argv \u987B\u4E3A\u975E\u7A7A\u5B57\u7B26\u4E32\u6570\u7EC4"),
-          toolCallId,
-          ctx
-        );
-      }
-      let result2;
-      try {
-        result2 = await runEngineDetourOnce({
-          argv,
-          cwd: ctx.cwd,
-          ...signal === void 0 ? {} : { signal }
-        });
-      } catch (error) {
-        if (isCallerCancellation(error, signal)) throw error;
-        const cause = error instanceof Error ? error : new Error(String(error).trim() || "\u52B3\u52A1\u5F15\u64CE spawn \u5931\u8D25");
-        input.fail(cause, toolCallId, ctx);
-      }
-      if (isEngineDetourFailure(result2)) {
-        input.fail(
-          new Error(engineDetourFailureDiagnostic(result2)),
-          toolCallId,
-          ctx
-        );
-      }
-      return {
-        content: [{ type: "text", text: result2.stdout }],
-        details: {
-          tool: ENGINE_DETOUR_TOOL_NAME,
-          code: result2.code
-        }
-      };
-    }
-  };
-}
-function registerEngineDetourTool(roleHost, hostActions) {
-  const engineName = engineNameFromEnv();
-  if (engineName === void 0) {
-    return {
-      registered: false,
-      resetLatch() {
-      }
-    };
-  }
-  const latch = { used: false };
-  const definition = createEngineDetourToolDefinition({
-    engineName,
-    latch,
-    fail(error, toolCallId, ctx) {
-      hostActions.failInfrastructure(error, ctx, toolCallId);
-    }
-  });
-  roleHost.registerTool(definition);
-  return {
-    registered: true,
-    resetLatch() {
-      latch.used = false;
-    }
-  };
-}
-
-// src/receipt-delivery-policy.ts
-var RECEIPT_DELIVERY_TURN_LIMIT = 2;
-var RECEIPT_DELIVERY_PROMPT = "\u672C\u4F1A\u8BDD\u5C1A\u65E0\u5DF2\u63A5\u53D7\u7684 typed \u56DE\u6267\u3002";
-var NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle";
-function noReceiptLifecycleFacts(input) {
-  if (input.deliveryTurns !== RECEIPT_DELIVERY_TURN_LIMIT) {
-    throw new TypeError("no-receipt lifecycle requires an exhausted delivery budget");
-  }
-  return {
-    terminalToolCalled: input.terminalToolCalled,
-    rejectedReceipts: input.rejectedReceipts.map(({ reason }) => ({
-      reason,
-      diagnosticAvailable: reason.trim() !== ""
-    })),
-    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
-    sessionCompletion: "settled-without-accepted-receipt",
-    runPointer: input.runPointer,
-    attemptPointer: input.attemptPointer,
-    acceptedReceipt: false
-  };
-}
-function createReceiptDeliveryPolicy() {
-  let accepted = false;
-  let terminalToolCalled = false;
-  let deliveryTurns = 0;
-  const rejectedReceipts = [];
-  return {
-    recordAccepted() {
-      accepted = true;
-      terminalToolCalled = true;
-    },
-    /** Infrastructure owns terminality and must never trigger receipt催交. */
-    stopForInfrastructure() {
-      accepted = true;
-    },
-    recordRejected(reason) {
-      terminalToolCalled = true;
-      rejectedReceipts.push({ reason, diagnosticAvailable: reason.trim() !== "" });
-      deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);
-    },
-    recordDeliveryRequest() {
-      deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);
-    },
-    nextAction() {
-      if (accepted) return "accepted";
-      return deliveryTurns < RECEIPT_DELIVERY_TURN_LIMIT ? "request-delivery" : "no-receipt";
-    },
-    facts(binding) {
-      return noReceiptLifecycleFacts({ terminalToolCalled, rejectedReceipts: [...rejectedReceipts], deliveryTurns, ...binding });
-    }
-  };
-}
-
-// src/evidence-child-executor.ts
-init_upstream_error_testimony();
-var AUDITOR_TURN_LIMIT = 32;
-var AuditorTurnLimitError = class extends Error {
-  constructor(limit, observedTurns, lastResponse) {
-    super(observedTurns === void 0 ? `Auditor exceeded ${limit} turns` : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
-    this.limit = limit;
-    this.observedTurns = observedTurns;
-    this.lastResponse = lastResponse;
-    this.name = "AuditorTurnLimitError";
-  }
-  limit;
-  observedTurns;
-  lastResponse;
-};
-async function withInProcessScratch(options, run) {
-  const scratch = await mkdtemp3(join14(options.parentDirectory ?? tmpdir3(), options.prefix));
-  let failure2;
-  try {
-    return await run(scratch);
-  } catch (error) {
-    failure2 = error;
-    throw error;
-  } finally {
-    try {
-      await rm3(scratch, { recursive: true, force: true });
-    } catch (cleanupFailure) {
-      if (failure2 !== void 0) {
-        throw new AggregateError([failure2, cleanupFailure], "in-process child scratch cleanup failed", { cause: failure2 });
-      }
-      throw cleanupFailure;
-    }
-  }
-}
-async function runChildCleanup(cleanups, primaryFailure, label) {
-  let cleanupFailure;
-  for (const cleanup of cleanups) {
-    try {
-      await cleanup();
-    } catch (failure2) {
-      cleanupFailure = cleanupFailure === void 0 ? failure2 : new AggregateError([cleanupFailure, failure2], `${label} cleanup failed`, {
-        cause: cleanupFailure
-      });
-    }
-  }
-  if (cleanupFailure === void 0) return;
-  if (primaryFailure !== void 0) {
-    throw new AggregateError(
-      [primaryFailure, cleanupFailure],
-      `${label} execution and cleanup failed`,
-      { cause: primaryFailure }
-    );
-  }
-  throw new AggregateError([cleanupFailure], `${label} cleanup failed`, {
-    cause: cleanupFailure
-  });
-}
-function numericHttpStatus2(value) {
-  return isNonSuccessHttpStatus(value) ? value : void 0;
-}
-function projectStructuredRemote2(error) {
-  let httpStatus;
-  let diagnostics;
-  let body;
-  let code;
-  let errno;
-  let cursor = error;
-  const seen = /* @__PURE__ */ new Set();
-  while (typeof cursor === "object" && cursor !== null && !seen.has(cursor)) {
-    seen.add(cursor);
-    const record4 = cursor;
-    const nodeStatus = numericHttpStatus2(record4.statusCode) ?? numericHttpStatus2(record4.status) ?? numericHttpStatus2(record4.httpStatus);
-    const nodeDiagnostics = Array.isArray(record4.diagnostics) && record4.diagnostics.length > 0 ? record4.diagnostics : void 0;
-    const nodeHasTestimony = hasUpstreamErrorTestimony({
-      ...nodeStatus === void 0 ? {} : { httpStatus: nodeStatus },
-      ...nodeDiagnostics === void 0 ? {} : { diagnostics: nodeDiagnostics }
-    });
-    if (httpStatus === void 0 && nodeStatus !== void 0) httpStatus = nodeStatus;
-    if (diagnostics === void 0 && nodeDiagnostics !== void 0) diagnostics = nodeDiagnostics;
-    if (nodeHasTestimony) {
-      const payload = projectConfirmedRemotePayload(record4);
-      if (body === void 0 && payload.body !== void 0) body = payload.body;
-      if (code === void 0 && payload.code !== void 0) code = payload.code;
-      if (errno === void 0 && payload.errno !== void 0) errno = payload.errno;
-    }
-    cursor = record4.cause;
-  }
-  return {
-    hasTestimony: hasUpstreamErrorTestimony({
-      ...httpStatus === void 0 ? {} : { httpStatus },
-      ...diagnostics === void 0 ? {} : { diagnostics }
-    }),
-    ...httpStatus === void 0 ? {} : { httpStatus },
-    ...diagnostics === void 0 ? {} : { diagnostics },
-    ...body === void 0 ? {} : { body },
-    ...code === void 0 ? {} : { code },
-    ...errno === void 0 ? {} : { errno }
-  };
-}
-function extractToolResultText(details) {
-  if (typeof details !== "object" || details === null) return void 0;
-  const record4 = details;
-  const content = record4.content;
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (typeof part === "object" && part !== null) {
-        const text = part.text;
-        if (typeof text === "string" && text.trim() !== "") return text;
-      }
-    }
-  }
-  return void 0;
-}
-function emptyUsage2() {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-  };
-}
-function addUsage2(total, next) {
-  total.input += next.input;
-  total.output += next.output;
-  total.cacheRead += next.cacheRead;
-  total.cacheWrite += next.cacheWrite;
-  total.totalTokens += next.totalTokens;
-  total.cost.input += next.cost.input;
-  total.cost.output += next.cost.output;
-  total.cost.cacheRead += next.cost.cacheRead;
-  total.cost.cacheWrite += next.cost.cacheWrite;
-  total.cost.total += next.cost.total;
-}
-function auditorSeatKey(gateSeat) {
-  return gateSeat ?? "auditor";
-}
-async function executeAuditorChild(options) {
-  const { createRecordSession: createRecordSession2 } = await Promise.resolve().then(() => (init_archivist_record_entry(), archivist_record_entry_exports));
-  const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
-  if (runDirectory === void 0) {
-    throw new Error(`${options.roleLabel} requires a run directory carrying the institutional resolution page`);
-  }
-  const seat = auditorSeatKey(options.gateSeat);
-  const selection = await readInstitutionalSeatSelection(runDirectory, seat);
-  return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
-    const cwd = options.context.cwd ?? process.cwd();
-    let decision;
-    let noReceiptLifecycle;
-    let decisionSubmitted = false;
-    let decisionCallId;
-    let decisionToolFailure;
-    const decisionToolFailures = /* @__PURE__ */ new Map();
-    const delivery = createReceiptDeliveryPolicy();
-    const tool2 = {
-      ...options.tool,
-      label: options.roleLabel,
-      async execute(...args) {
-        if (decisionSubmitted && decisionCallId !== args[0]) {
-          throw new Error("Auditor decision was submitted more than once");
-        }
-        try {
-          const result2 = await options.tool.execute(...args);
-          delivery.recordAccepted();
-          const rawDecision = args[1];
-          const isMissingArgs = rawDecision === void 0 || typeof rawDecision === "object" && rawDecision !== null && !Array.isArray(rawDecision) && Object.keys(rawDecision).length === 0;
-          decision = isMissingArgs ? void 0 : rawDecision;
-          decisionCallId = args[0];
-          decisionToolFailure = void 0;
-          decisionToolFailures.delete(args[0]);
-          decisionSubmitted = true;
-          return { ...result2, terminate: true };
-        } catch (error) {
-          decisionToolFailure = error;
-          decisionToolFailures.set(args[0], error);
-          throw error;
-        }
-      }
-    };
-    const parentSessionManager = options.context.sessionManager;
-    const parentHeader = parentSessionManager?.getHeader?.();
-    const parentSessionFile = parentSessionManager?.getSessionFile?.();
-    const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
-    const auditorSessionManager = createRecordSession2({
-      cwd,
-      kind: "auditor-roles",
-      ...parentSessionManager === void 0 ? {} : { parent: parentSessionManager }
-    });
-    const { openPiInstitutionalSession: openPiInstitutionalSession2 } = await Promise.resolve().then(() => (init_in_process_session(), in_process_session_exports));
-    const evidenceToolFailures = /* @__PURE__ */ new Map();
-    const wrappedDossierTool = {
-      ...options.dossierTool,
-      label: options.roleLabel,
-      async execute(...args) {
-        try {
-          return await options.dossierTool.execute(...args);
-        } catch (error) {
-          evidenceToolFailures.set(args[0], error);
-          throw error;
-        }
-      }
-    };
-    const opened = await openPiInstitutionalSession2({
-      cwd,
-      agentDir: scratch,
-      selection,
-      systemPrompt: options.systemPrompt,
-      customTools: [wrappedDossierTool, tool2],
-      sessionManager: auditorSessionManager,
-      ...options.signal === void 0 ? {} : { signal: options.signal },
-      idleRetry: true,
-      label: options.roleLabel
-    });
-    const { handle } = opened;
-    const binding = {
-      version: 1,
-      parent: {
-        ...parentHeader?.id === void 0 ? {} : { sessionId: parentHeader.id },
-        ...parentSessionFile === void 0 ? {} : { sessionFile: parentSessionFile },
-        ...parentAttemptEntryId === null || parentAttemptEntryId === void 0 ? {} : { attemptEntryId: parentAttemptEntryId }
-      }
-    };
-    auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
-    try {
-      sitianReport({
-        level: "event",
-        kind: "auditor",
-        cwd,
-        sessionParent: parentSessionFile,
-        payload: { type: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, ...binding },
-        source: "evidence-child-executor"
-      });
-    } catch {
-    }
-    let turns = 0;
-    const sessionUsage = emptyUsage2();
-    let boundaryResponse;
-    let retentionFailure;
-    let retainedResponse;
-    let rejectedDecisionResponse;
-    let promptNeighboringFailure;
-    let promptDecisionFailures = [];
-    const findToolFailure = (response) => {
-      const callIds = response.content.flatMap((part) => part.type === "toolCall" && part.name !== tool2.name ? [part.id] : []);
-      for (const callId of callIds) {
-        if (evidenceToolFailures.has(callId)) return evidenceToolFailures.get(callId);
-      }
-      return void 0;
-    };
-    const drainRejectedDecisionFailures = (response) => {
-      for (const part of response.content) {
-        if (part.type !== "toolCall" || part.name !== tool2.name || !decisionToolFailures.has(part.id)) continue;
-        decisionToolFailure = decisionToolFailures.get(part.id);
-        promptDecisionFailures.push(decisionToolFailure);
-        decisionToolFailures.delete(part.id);
-      }
-    };
-    const retainedAssistants = [];
-    const unsubscribe = handle.subscribe((event) => {
-      if (event.type === "tool_result" && event.isError === true && event.toolName !== tool2.name) {
-        const detailText = extractToolResultText(event.details);
-        if (detailText !== void 0 && /^Tool\s+.+ not found$/.test(detailText.trim())) return;
-        const failure2 = detailText === void 0 ? new Error(event.toolName ?? "evidence tool failed") : new Error(detailText);
-        const errno = /^([A-Z_]+):/.exec(detailText ?? "");
-        if (errno !== null && errno[1] !== void 0) failure2.code = errno[1];
-        evidenceToolFailures.set(event.toolCallId, failure2);
-      }
-      if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === void 0) {
-        turns += 1;
-        if (event.usage) addUsage2(sessionUsage, event.usage);
-        const msg = event.message;
-        retainedResponse = msg;
-        if (msg) {
-          retainedAssistants.push(msg);
-          try {
-            options.retainResponse?.(msg);
-          } catch (error) {
-            retentionFailure = error;
-          }
-          for (const part of msg.content) {
-            if (part.type === "toolCall" && part.name === tool2.name) {
-              rejectedDecisionResponse = msg;
-              if (decision === void 0) {
-                decision = part.arguments === void 0 || typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0 ? void 0 : part.arguments;
-                decisionCallId = part.id;
-                if (part.arguments === void 0 || typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0) {
-                  decisionSubmitted = true;
-                }
-              }
-            }
-          }
-          if (turns >= AUDITOR_TURN_LIMIT || msg.stopReason === "error") boundaryResponse = msg;
-        }
-      }
-      if (event.type === "turn_end") {
-        if (rejectedDecisionResponse !== void 0) {
-          promptNeighboringFailure = findToolFailure(rejectedDecisionResponse);
-          drainRejectedDecisionFailures(rejectedDecisionResponse);
-        }
-        if (decisionSubmitted || promptNeighboringFailure !== void 0 || boundaryResponse !== void 0 && rejectedDecisionResponse === void 0 || retentionFailure !== void 0) {
-          handle.abort();
-        }
-      }
-    });
-    const abort = () => {
-      handle.abort();
-    };
-    if (options.signal?.aborted) abort();
-    else options.signal?.addEventListener("abort", abort, { once: true });
-    let auditorFailure;
-    try {
-      try {
-        const promptAllowingRejectedDecision = async (prompt) => {
-          rejectedDecisionResponse = void 0;
-          promptNeighboringFailure = void 0;
-          decisionToolFailure = void 0;
-          promptDecisionFailures = [];
-          let promptFailure;
-          try {
-            await handle.prompt(prompt);
-          } catch (error) {
-            promptFailure = error;
-          }
-          const correlatedResponse = rejectedDecisionResponse;
-          if (correlatedResponse !== void 0) {
-            promptNeighboringFailure ??= findToolFailure(correlatedResponse);
-            drainRejectedDecisionFailures(correlatedResponse);
-          }
-          if (promptNeighboringFailure !== void 0) throw promptNeighboringFailure;
-          if (decisionSubmitted) {
-            decisionToolFailure = void 0;
-            return;
-          }
-          if (decisionToolFailure !== void 0) return;
-          if (retentionFailure !== void 0) return;
-          if (opened.streamFailure !== void 0) throw opened.streamFailure;
-          if (promptFailure !== void 0) throw promptFailure;
-        };
-        const chargeAndClearRejectedDecisionFailures = (failures) => {
-          for (const failure2 of failures) {
-            delivery.recordRejected(failure2 instanceof Error ? failure2.message : String(failure2));
-          }
-          decisionToolFailure = void 0;
-          promptDecisionFailures = [];
-        };
-        await promptAllowingRejectedDecision(options.prompt);
-        while (!decisionSubmitted && retentionFailure === void 0 && (boundaryResponse === void 0 || decisionToolFailure !== void 0) && opened.streamFailure === void 0 && delivery.nextAction() === "request-delivery") {
-          if (decisionToolFailure !== void 0) {
-            const failures = promptDecisionFailures.length === 0 ? [decisionToolFailure] : promptDecisionFailures;
-            chargeAndClearRejectedDecisionFailures(failures);
-            if (delivery.nextAction() === "no-receipt") boundaryResponse = void 0;
-            if (delivery.nextAction() === "request-delivery") {
-              if (retainedResponse === rejectedDecisionResponse) {
-                await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
-                chargeAndClearRejectedDecisionFailures(promptDecisionFailures);
-              }
-            }
-          } else {
-            delivery.recordDeliveryRequest();
-            await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
-          }
-        }
-        if (!decisionSubmitted && retentionFailure === void 0 && opened.streamFailure === void 0 && delivery.nextAction() === "no-receipt") {
-          const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
-          const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
-          const facts = delivery.facts({ runPointer, attemptPointer });
-          decision = facts;
-          decisionToolFailure = void 0;
-          auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-          try {
-            sitianReport({
-              level: "event",
-              kind: "auditor",
-              cwd,
-              sessionParent: parentSessionFile,
-              payload: { type: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, ...facts },
-              source: "evidence-child-executor"
-            });
-          } catch {
-          }
-          noReceiptLifecycle = facts;
-        }
-      } catch (error) {
-        if (options.signal?.aborted) throw options.signal.reason;
-        if (retentionFailure === void 0 && opened.streamFailure !== void 0) throw opened.streamFailure;
-        if (retentionFailure === void 0) throw error;
-      }
-      if (options.signal?.aborted) throw options.signal.reason;
-      if (retentionFailure === void 0 && opened.streamFailure !== void 0) throw opened.streamFailure;
-      if (!decisionSubmitted && decisionToolFailure !== void 0) throw decisionToolFailure;
-      const relevantResponse = !decisionSubmitted ? boundaryResponse : retainedResponse && retainedResponse.role === "assistant" && retainedResponse.content.some((part) => part.type === "toolCall" && part.name === tool2.name) ? retainedResponse : void 0;
-      if (relevantResponse !== void 0) {
-        const toolFailure = findToolFailure(relevantResponse);
-        if (toolFailure !== void 0) throw toolFailure;
-      }
-      const assistants = [...retainedAssistants].reverse();
-      const response = !decisionSubmitted ? assistants[0] : assistants.find((message) => message.content.some((part) => part.type === "toolCall" && part.name === tool2.name));
-      if (boundaryResponse !== void 0 && boundaryResponse.stopReason !== "error" && !decisionSubmitted && noReceiptLifecycle === void 0) {
-        const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
-        throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
-          stopReason: boundaryResponse.stopReason,
-          toolNames
-        });
-      }
-      if (response !== void 0) {
-        try {
-          if (retentionFailure !== void 0) throw retentionFailure;
-          if (retainedResponse === void 0) options.retainResponse?.(response);
-        } catch (retentionFailure2) {
-          if (response.stopReason !== "error") throw retentionFailure2;
-          const diagnostic = typeof response.errorMessage === "string" && response.errorMessage.trim() !== "" ? response.errorMessage : void 0;
-          const projected = projectStructuredRemote2(response);
-          const failure2 = new Error(
-            diagnostic ?? "",
-            { cause: retentionFailure2 }
-          );
-          if (projected.hasTestimony && (response.model || response.provider)) {
-            failure2.name = response.model || response.provider || "Error";
-            failure2.failureCode = response.provider || response.model;
-          }
-          failure2.knownCause = projected.hasTestimony ? "provider" : "unrecognized";
-          const retentionError = retentionFailure2 instanceof Error ? retentionFailure2 : void 0;
-          const retentionCause = retentionError?.cause;
-          failure2.details = {
-            ...diagnostic === void 0 ? {} : { errorMessage: diagnostic },
-            ...projected.hasTestimony && response.provider ? { provider: response.provider } : {},
-            ...projected.hasTestimony && response.model ? { model: response.model } : {},
-            ...response.api ? { api: response.api } : {},
-            ...response.rawStopReason ? { rawStopReason: response.rawStopReason } : {},
-            ...projected.httpStatus === void 0 ? {} : { httpStatus: projected.httpStatus },
-            ...projected.diagnostics === void 0 ? {} : { diagnostics: projected.diagnostics },
-            ...projected.body === void 0 ? {} : { body: projected.body },
-            ...projected.code === void 0 ? {} : { code: projected.code },
-            ...projected.errno === void 0 ? {} : { errno: projected.errno },
-            retentionFailure: {
-              name: retentionError?.name ?? typeof retentionFailure2,
-              message: retentionError?.message ?? String(retentionFailure2),
-              ...retentionError?.code !== void 0 ? { code: retentionError.code } : {},
-              ...retentionCause === void 0 ? {} : {
-                cause: retentionCause instanceof Error ? {
-                  name: retentionCause.name,
-                  message: retentionCause.message,
-                  ...retentionCause.code === void 0 ? {} : { code: retentionCause.code }
-                } : retentionCause
-              }
-            }
-          };
-          const failureData = {
-            version: 1,
-            parent: binding.parent,
-            failure: {
-              cause: failure2.knownCause,
-              ...failure2.failureCode === void 0 ? {} : { identity: { name: failure2.name, code: failure2.failureCode } },
-              ...failure2.message === "" ? {} : { diagnostic: failure2.message },
-              details: failure2.details
-            }
-          };
-          auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, failureData);
-          try {
-            sitianReport({
-              level: "event",
-              kind: "auditor",
-              cwd,
-              sessionParent: parentSessionFile,
-              payload: { type: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, ...failureData },
-              source: "evidence-child-executor"
-            });
-          } catch {
-          }
-          throw failure2;
-        }
-      }
-      if (response === void 0 || response.stopReason === "error" || !decisionSubmitted && (response.stopReason === "aborted" || decision === void 0)) {
-        throw new Error(response?.errorMessage ?? `${options.roleLabel} exited without a readable decision receipt`);
-      }
-      return {
-        decision,
-        response: { ...response, usage: sessionUsage },
-        ...noReceiptLifecycle === void 0 ? {} : { noReceiptLifecycle }
-      };
-    } catch (error) {
-      auditorFailure = error;
-      throw error;
-    } finally {
-      options.signal?.removeEventListener("abort", abort);
-      await runChildCleanup([() => unsubscribe(), () => handle.close()], auditorFailure, options.roleLabel);
-    }
-  });
-}
-
-// src/submission-errors.ts
-function gatekeeperNonPassMessage(result2) {
-  if (result2.status === "bounce") {
-    const findings = result2.findings.length === 0 ? "\uFF08\u65E0 findings\uFF09" : result2.findings.join("; ");
-    return `\u95E8\u4E0B\u7701\u6253\u56DE\u91CD\u5199\uFF0Cfindings\uFF1A${findings}`;
-  }
-  return `\u95E8\u4E0B\u7701 ${result2.status}\uFF08${result2.stage}\uFF09\uFF1A${result2.reason}`;
-}
-var GatekeeperDecisionError = class extends Error {
-  result;
-  constructor(result2) {
-    super(gatekeeperNonPassMessage(result2));
-    this.name = "GatekeeperDecisionError";
-    this.result = result2;
-  }
-};
-var WorkerCommitReminderError = class extends Error {
-  code = "worker_commit_reminder";
-  constructor() {
-    super("\u672A\u89C2\u5BDF\u5230 commit");
-    this.name = "WorkerCommitReminderError";
-  }
-};
-var WorkerPrefixReminderError = class extends Error {
-  code = "worker_prefix_reminder";
-  constructor() {
-    super("\u89C2\u5BDF\u5230\u7F3A\u524D\u7F00 commit");
-    this.name = "WorkerPrefixReminderError";
-  }
-};
-var WorkerUnfinishedReasonReminderError = class extends Error {
-  code = "worker_unfinished_reason_reminder";
-  constructor() {
-    super("\u672C\u6B21 unfinished \u56DE\u6267\u672A\u542B reason\uFF1B\u672C\u63A5\u7F1D\u7F3A\u7531\u81F3\u591A\u6253\u56DE\u4E24\u6B21\u3002");
-    this.name = "WorkerUnfinishedReasonReminderError";
-  }
-};
-
-// src/gatekeeper-role.ts
-var GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
-var INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
-var NOTARY_OUTPUT_TOOL = "ak_notary_output";
-var SUBJECT_TOOL = "ak_gatekeeper_subject";
-function gateSeatLabel(stage) {
-  switch (stage) {
-    case "gatekeeper":
-      return "\u95E8\u4E0B\u7701";
-    case "inspector":
-      return "\u5BDF\u9662";
-    case "notary":
-      return "\u7B26\u5B9D\u90CE";
-  }
-}
-var officerDecisionSchema = openToolObject(Type11.Object({
-  status: Type11.Unknown({ description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
-  findings: Type11.Unknown({ description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58" })
-}));
-var gatekeeperDecisionSchema = openToolObject(Type11.Object({
-  status: Type11.Unknown({ description: "dispatch \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
-  officer: Type11.Unknown({ description: "status \u4E3A dispatch \u65F6\u4E3A inspector | notary" })
-}));
-function result(content, details) {
-  return { content: [{ type: "text", text: content }], details };
-}
-function subjectTool(subject) {
-  return {
-    name: SUBJECT_TOOL,
-    description: "\u8BFB\u53D6\u5DF2\u53D7\u7406\u5377\u5B97\uFF1B\u53EA\u4F9B\u53D6\u9605\uFF0C\u4E0D\u8BC4\u5224\u4E0D\u6539\u52A8\u3002",
-    parameters: Type11.Object({}, { additionalProperties: false }),
-    async execute() {
-      return result(JSON.stringify(subject), subject);
-    }
-  };
-}
-function createOfficerDecisionTool(name) {
-  return {
-    name,
-    description: "\u63D0\u4EA4\u4E00\u4EFD typed pass/bounce \u51B3\u8BAE\u3002",
-    parameters: officerDecisionSchema,
-    async execute(_id, args) {
-      return result(`\u5DF2\u6536 ${String(args?.status)}`, args);
-    }
-  };
-}
-function createGatekeeperOutputTool() {
-  return {
-    name: GATEKEEPER_OUTPUT_TOOL,
-    description: "\u63D0\u4EA4\u95E8\u4E0B\u7701\u6D3E\u5B98\u51B3\u5B9A\u3002",
-    parameters: gatekeeperDecisionSchema,
-    async execute(_id, args) {
-      return result(`\u5DF2\u6536 ${String(args?.status)}`, args);
-    }
-  };
-}
-async function defaultLoadSoul(role) {
-  return loadGatekeeperSessionMaterials(role);
-}
-function failureReason(error) {
-  if (error instanceof AggregateError) return error.errors.map(failureReason).join("; ");
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-}
-function asStringArray2(value) {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item) => typeof item === "string");
-}
-var MISSING_ARGUMENTS_SUBMISSION = Object.freeze({ missing: "arguments" });
-function isRecord8(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function retainedSubmission(decision) {
-  return decision === void 0 || isRecord8(decision) && Object.keys(decision).length === 0 ? MISSING_ARGUMENTS_SUBMISSION : decision;
-}
-function noUsableReleaseFailure(stage, decision) {
-  return {
-    status: "transport_failure",
-    stage,
-    reason: stage === "gatekeeper" ? "decision \u65E0\u663E\u5F0F dispatch" : "decision \u65E0\u663E\u5F0F pass/bounce",
-    submission: retainedSubmission(decision)
-  };
-}
-function readRecord(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
-  return value;
-}
-function projectProvinceDecision(decision) {
-  const record4 = readRecord(decision);
-  if (record4 === void 0) return noUsableReleaseFailure("gatekeeper", decision);
-  if (record4.status === "dispatch" && (record4.officer === "inspector" || record4.officer === "notary")) {
-    return { status: "dispatch", officer: record4.officer };
-  }
-  return noUsableReleaseFailure("gatekeeper", decision);
-}
-function projectOfficerDecision(officer, decision) {
-  const record4 = readRecord(decision);
-  if (record4 === void 0) return noUsableReleaseFailure(officer, decision);
-  if (record4.status === "bounce") {
-    return {
-      status: "bounce",
-      officer,
-      disposition: "rewrite",
-      findings: asStringArray2(record4.findings),
-      submission: retainedSubmission(decision)
-    };
-  }
-  if (record4.status === "pass") {
-    return {
-      status: "pass",
-      officer,
-      findings: asStringArray2(record4.findings)
-    };
-  }
-  return noUsableReleaseFailure(officer, decision);
-}
-async function runGatekeeper(options) {
-  const loadSoul = options.loadSoul ?? defaultLoadSoul;
-  let provinceRun;
-  try {
-    provinceRun = await executeAuditorChild({
-      context: options.context,
-      roleLabel: "Gatekeeper",
-      gateSeat: "gatekeeper",
-      systemPrompt: await loadSoul("gatekeeper"),
-      prompt: "\u5377\u5B97\u5DF2\u53D7\u7406\u3002",
-      tool: createGatekeeperOutputTool(),
-      dossierTool: subjectTool(options.subject),
-      ...options.signal === void 0 ? {} : { signal: options.signal },
-      ...options.runDirectory === void 0 ? {} : { runDirectory: options.runDirectory }
-    });
-  } catch (error) {
-    return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
-  }
-  if (provinceRun.noReceiptLifecycle !== void 0) {
-    return { status: "no_receipt", stage: "gatekeeper", reason: `${gateSeatLabel("gatekeeper")}\u672A\u4EA7\u751F\u5DF2\u63A5\u53D7\u56DE\u6267\u5373\u6563\u5C40`, facts: provinceRun.noReceiptLifecycle };
-  }
-  const province = projectProvinceDecision(provinceRun.decision);
-  if (province.status !== "dispatch") return province;
-  const officer = province.officer;
-  try {
-    const roleLabel = officer === "inspector" ? "Inspector" : "Notary";
-    const officerRun = await executeAuditorChild({
-      context: options.context,
-      roleLabel,
-      gateSeat: officer,
-      systemPrompt: await loadSoul(officer),
-      prompt: "\u5377\u5B97\u5DF2\u53D7\u7406\u3002",
-      tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
-      dossierTool: subjectTool(options.subject),
-      ...options.signal === void 0 ? {} : { signal: options.signal },
-      ...options.runDirectory === void 0 ? {} : { runDirectory: options.runDirectory }
-    });
-    if (officerRun.noReceiptLifecycle !== void 0) {
-      return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}\u672A\u4EA7\u751F\u5DF2\u63A5\u53D7\u56DE\u6267\u5373\u6563\u5C40`, facts: officerRun.noReceiptLifecycle };
-    }
-    return projectOfficerDecision(officer, officerRun.decision);
-  } catch (error) {
-    return { status: "transport_failure", stage: officer, reason: failureReason(error) };
-  }
-}
-async function requireGatekeeperPass(options) {
-  const gatekeeper = await runGatekeeper({
-    context: options.context,
-    subject: options.subject,
-    ...options.signal === void 0 ? {} : { signal: options.signal }
-  });
-  if (gatekeeper.status === "pass") return;
-  if (gatekeeper.status === "transport_failure") {
-    const error = new Error(`\u95E8\u4E0B\u7701 transport_failure\uFF08${gatekeeper.stage}\uFF09\uFF1A${gatekeeper.reason}`);
-    error.stage = gatekeeper.stage;
-    error.reason = gatekeeper.reason;
-    if (gatekeeper.submission !== void 0) error.submission = gatekeeper.submission;
-    options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
-  }
-  options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
-  throw new GatekeeperDecisionError(gatekeeper);
-}
-
-// src/role-runtime.ts
-import { readFileSync as readFileSync4, writeSync as writeSync4 } from "node:fs";
-import { join as pathJoin } from "node:path";
-
-// src/host-contracts.ts
-import { Type as Type12 } from "typebox";
-var ExplicitInternalActivationError = class extends Error {
-  knownCause;
-  failureCode;
-  constructor(message, options) {
-    super(
-      message,
-      options.cause === void 0 ? void 0 : { cause: options.cause }
-    );
-    this.name = options.name ?? "ExplicitInternalActivationError";
-    this.knownCause = options.knownCause;
-    if (options.code !== void 0) {
-      this.failureCode = options.code;
-    }
-  }
-};
-function stringEnum(values, options = {}) {
-  return Type12.Union(values.map((value) => Type12.Literal(value)), options);
-}
-
-// src/public-cli/reviewer-dispatch-rejection.ts
-import { writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join15 } from "node:path";
-
-// src/adr-path-refs.ts
-var ADR_PATH_IN_BODY = /docs\/adr\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md/g;
-function extractReferencedAdrPaths(text) {
-  const seen = /* @__PURE__ */ new Set();
-  const paths = [];
-  for (const match of text.matchAll(ADR_PATH_IN_BODY)) {
-    const path = match[0];
-    if (seen.has(path)) continue;
-    seen.add(path);
-    paths.push(path);
-  }
-  return Object.freeze(paths);
-}
-
-// src/reviewer-prompt-identity.ts
-function isReviewerPromptText(value) {
-  return typeof value === "string";
-}
-function sameReviewerPromptText(first, second) {
-  return first === second;
 }
 
 // src/reviewer-scope-prompt.ts
@@ -6195,7 +8039,7 @@ function createReviewerDispatcher(d) {
 // src/public-cli/reviewer-dispatch-rejection.ts
 var REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
 function reviewerDispatchRejectionPath(runDirectory) {
-  return join15(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+  return join20(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 function recordReviewerDispatchRejectionSync(runDirectory, rejection) {
   writeFileSync2(
@@ -6212,10 +8056,48 @@ import { Value as Value5 } from "typebox/value";
 // src/submission-ledger.ts
 init_activation_ledger_topology();
 
+// src/submission-errors.ts
+function gatekeeperNonPassMessage(result2) {
+  if (result2.status === "bounce") {
+    const findings = result2.findings.length === 0 ? "\uFF08\u65E0 findings\uFF09" : result2.findings.join("; ");
+    return `\u95E8\u4E0B\u7701\u6253\u56DE\u91CD\u5199\uFF0Cfindings\uFF1A${findings}`;
+  }
+  return `\u95E8\u4E0B\u7701 ${result2.status}\uFF08${result2.stage}\uFF09\uFF1A${result2.reason}`;
+}
+var GatekeeperDecisionError = class extends Error {
+  result;
+  constructor(result2) {
+    super(gatekeeperNonPassMessage(result2));
+    this.name = "GatekeeperDecisionError";
+    this.result = result2;
+  }
+};
+var WorkerCommitReminderError = class extends Error {
+  code = "worker_commit_reminder";
+  constructor() {
+    super("\u672A\u89C2\u5BDF\u5230 commit");
+    this.name = "WorkerCommitReminderError";
+  }
+};
+var WorkerPrefixReminderError = class extends Error {
+  code = "worker_prefix_reminder";
+  constructor() {
+    super("\u89C2\u5BDF\u5230\u7F3A\u524D\u7F00 commit");
+    this.name = "WorkerPrefixReminderError";
+  }
+};
+var WorkerUnfinishedReasonReminderError = class extends Error {
+  code = "worker_unfinished_reason_reminder";
+  constructor() {
+    super("\u672C\u6B21 unfinished \u56DE\u6267\u672A\u542B reason\uFF1B\u672C\u63A5\u7F1D\u7F3A\u7531\u81F3\u591A\u6253\u56DE\u4E24\u6B21\u3002");
+    this.name = "WorkerUnfinishedReasonReminderError";
+  }
+};
+
 // src/run-terminal-artifacts.ts
-import { basename as basename5, dirname as dirname12, join as join16 } from "node:path";
+import { basename as basename6, dirname as dirname14, join as join21 } from "node:path";
 function runIdFromRunDirectory(runDirectory) {
-  const name = basename5(runDirectory);
+  const name = basename6(runDirectory);
   const at = name.lastIndexOf("@");
   if (at <= 0 || at === name.length - 1) return void 0;
   return name.slice(0, at);
@@ -6425,18 +8307,18 @@ function createSubmissionLedgerHost(host, outputTools, failInfrastructure2 = (er
 }
 
 // src/activation-trace.ts
-import { Type as Type13 } from "typebox";
-var causeSchema = Type13.Object({
-  identity: Type13.String({ minLength: 1 }),
-  name: Type13.String({ minLength: 1 }),
-  message: Type13.String(),
-  evidenceId: Type13.Optional(Type13.String({ minLength: 1 }))
+import { Type as Type14 } from "typebox";
+var causeSchema = Type14.Object({
+  identity: Type14.String({ minLength: 1 }),
+  name: Type14.String({ minLength: 1 }),
+  message: Type14.String(),
+  evidenceId: Type14.Optional(Type14.String({ minLength: 1 }))
 }, { additionalProperties: false });
-var activationTraceRecordSchema = Type13.Object({
-  role: Type13.String({ minLength: 1 }),
-  stageId: Type13.String({ pattern: "^[a-z][a-z0-9-]*$" }),
-  status: Type13.Literal("failed"),
-  timestamp: Type13.String({ format: "date-time" }),
+var activationTraceRecordSchema = Type14.Object({
+  role: Type14.String({ minLength: 1 }),
+  stageId: Type14.String({ pattern: "^[a-z][a-z0-9-]*$" }),
+  status: Type14.Literal("failed"),
+  timestamp: Type14.String({ format: "date-time" }),
   cause: causeSchema
 }, { additionalProperties: false });
 var activationCauseEvidence = 0;
@@ -6468,17 +8350,17 @@ import {
   openSync,
   writeSync
 } from "node:fs";
-import { dirname as dirname13, isAbsolute as isAbsolute5, resolve as resolve10 } from "node:path";
+import { dirname as dirname15, isAbsolute as isAbsolute6, resolve as resolve15 } from "node:path";
 
 // src/activation-ledger-session.ts
 init_activation_ledger_topology();
 import {
   lstatSync as lstatSync2,
   realpathSync as realpathSync3,
-  statSync as statSync2,
+  statSync as statSync3,
   writeFileSync as writeFileSync3
 } from "node:fs";
-import { isAbsolute as isAbsolute4, resolve as resolve9 } from "node:path";
+import { isAbsolute as isAbsolute5, resolve as resolve14 } from "node:path";
 var ActivationSessionFileMissingError = class extends Error {
   code = "AK_ACTIVATION_SESSION_FILE_MISSING";
   path;
@@ -6518,12 +8400,12 @@ function durableSessionPointer(sessionManager) {
       "Workflow role activation requires a durable Pi session file principal (getSessionFile); directory-only or --no-session invocations are rejected"
     );
   }
-  if (!isAbsolute4(file)) {
+  if (!isAbsolute5(file)) {
     throw new Error(
       `Workflow role activation requires an absolute durable session file path; got relative path: ${file}`
     );
   }
-  const resolvedFile = resolve9(file);
+  const resolvedFile = resolve14(file);
   try {
     lstatSync2(resolvedFile);
   } catch (error) {
@@ -6550,7 +8432,7 @@ function durableSessionPointer(sessionManager) {
   }
   let info;
   try {
-    info = statSync2(realFile);
+    info = statSync3(realFile);
   } catch (error) {
     throw new Error(
       `Workflow role activation failed to stat durable session file (${realFile}): ${errorText(error)}`,
@@ -6610,14 +8492,14 @@ function serializeAcceptedActivationFact(fact) {
 `;
 }
 function appendActivationLedgerLine(ledgerPath, line2, options) {
-  if (!isAbsolute5(options.ledgerHome)) {
+  if (!isAbsolute6(options.ledgerHome)) {
     throw new ActivationLedgerError(
       `activation ledger home must be absolute: ${options.ledgerHome}`
     );
   }
-  const resolvedLedger = resolve10(ledgerPath);
-  const resolvedHome = resolve10(options.ledgerHome);
-  const parent = dirname13(resolvedLedger);
+  const resolvedLedger = resolve15(ledgerPath);
+  const resolvedHome = resolve15(options.ledgerHome);
+  const parent = dirname15(resolvedLedger);
   ensureRealDirectoryTree(resolvedHome, parent);
   assertLedgerFileInsideHome(resolvedLedger, resolvedHome);
   if (typeof constants.O_NOFOLLOW !== "number") {
@@ -6715,32 +8597,32 @@ function writeStderrJsonlRecord(record4, write = writeSync2) {
 
 // src/tool-execution-observation.ts
 import { writeSync as writeSync3 } from "node:fs";
-import { Type as Type14 } from "typebox";
-import { Value as Value2 } from "typebox/value";
+import { Type as Type15 } from "typebox";
+import { Value as Value3 } from "typebox/value";
 var TOOL_EXECUTION_UPDATE_THROTTLE_MS = 3e4;
 var observationBase = {
-  role: Type14.String({ minLength: 1 }),
-  toolCallId: Type14.String({ minLength: 1 }),
-  toolName: Type14.String({ minLength: 1 }),
-  timestamp: Type14.String({ format: "date-time" })
+  role: Type15.String({ minLength: 1 }),
+  toolCallId: Type15.String({ minLength: 1 }),
+  toolName: Type15.String({ minLength: 1 }),
+  timestamp: Type15.String({ format: "date-time" })
 };
-var toolExecutionObservationRecordSchema = Type14.Union([
-  Type14.Object({
+var toolExecutionObservationRecordSchema = Type15.Union([
+  Type15.Object({
     ...observationBase,
-    event: Type14.Literal("tool_execution_start")
+    event: Type15.Literal("tool_execution_start")
   }, { additionalProperties: true }),
-  Type14.Object({
+  Type15.Object({
     ...observationBase,
-    event: Type14.Literal("tool_execution_update")
+    event: Type15.Literal("tool_execution_update")
   }, { additionalProperties: true }),
-  Type14.Object({
+  Type15.Object({
     ...observationBase,
-    event: Type14.Literal("tool_execution_end"),
-    isError: Type14.Boolean()
+    event: Type15.Literal("tool_execution_end"),
+    isError: Type15.Boolean()
   }, { additionalProperties: true })
 ]);
 function validateToolExecutionObservationRecord(record4) {
-  if (!Value2.Check(toolExecutionObservationRecordSchema, record4)) {
+  if (!Value3.Check(toolExecutionObservationRecordSchema, record4)) {
     throw new TypeError("Tool execution observation record does not match its contract");
   }
   return record4;
@@ -6826,19 +8708,19 @@ function createToolExecutionObservationFace(options) {
 }
 
 // src/collector-evidence.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
 function createSystemCollectorClock() {
   const start = process.hrtime.bigint();
   return {
     wallNow: () => /* @__PURE__ */ new Date(),
     monoNow: () => Number(process.hrtime.bigint() - start) / 1e6,
-    sleep: (ms, signal) => new Promise((resolve13, reject) => {
+    sleep: (ms, signal) => new Promise((resolve17, reject) => {
       if (signal?.aborted) {
         reject(signal.reason ?? new Error("aborted"));
         return;
       }
-      const timer = setTimeout(resolve13, ms);
+      const timer = setTimeout(resolve17, ms);
       const onAbort = () => {
         clearTimeout(timer);
         reject(signal?.reason ?? new Error("aborted"));
@@ -6848,7 +8730,7 @@ function createSystemCollectorClock() {
   };
 }
 function sha256Text(text) {
-  return createHash7("sha256").update(text, "utf8").digest("hex");
+  return createHash8("sha256").update(text, "utf8").digest("hex");
 }
 function computeWindowRelation(authoritativeTime, activationTime, deadlineTime) {
   if (authoritativeTime === void 0 || authoritativeTime === null || authoritativeTime.length === 0) {
@@ -7112,20 +8994,20 @@ function assignWindowRelations(records2, activationTime, deadlineTime) {
 }
 
 // src/collector-ledger.ts
-import Value3 from "typebox/value";
+import Value4 from "typebox/value";
 
 // src/collector-tool-schemas.ts
-import { Type as Type15 } from "typebox";
-var collectorObserveArgsSchema = Type15.Object({}, { additionalProperties: false });
-var collectorRequestArgsSchema = Type15.Object({
-  requestId: Type15.String({ minLength: 1, description: "\u914D\u7F6E\u8BF7\u6C42\u8EAB\u4EFD" }),
-  snapshotId: Type15.String({ minLength: 1, description: "\u6700\u65B0\u7559\u5B58\u89C2\u5BDF\u5FEB\u7167" })
+import { Type as Type16 } from "typebox";
+var collectorObserveArgsSchema = Type16.Object({}, { additionalProperties: false });
+var collectorRequestArgsSchema = Type16.Object({
+  requestId: Type16.String({ minLength: 1, description: "\u914D\u7F6E\u8BF7\u6C42\u8EAB\u4EFD" }),
+  snapshotId: Type16.String({ minLength: 1, description: "\u6700\u65B0\u7559\u5B58\u89C2\u5BDF\u5FEB\u7167" })
 }, { additionalProperties: false });
-var collectorWaitArgsSchema = Type15.Object({
-  durationMs: Type15.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "\u7B49\u5F85\u6BEB\u79D2\uFF1B\u5355\u6B21\u4E0A\u9650\u4E94\u5206\u949F\u4E14\u4E0D\u8D85\u5269\u4F59\u8D44\u683C" })
+var collectorWaitArgsSchema = Type16.Object({
+  durationMs: Type16.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "\u7B49\u5F85\u6BEB\u79D2\uFF1B\u5355\u6B21\u4E0A\u9650\u4E94\u5206\u949F\u4E14\u4E0D\u8D85\u5269\u4F59\u8D44\u683C" })
 }, { additionalProperties: false });
 var collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
-  Type15.Object({}, { additionalProperties: true })
+  Type16.Object({}, { additionalProperties: true })
 );
 collectorOutputArgsSchema.required = [];
 
@@ -8186,9 +10068,6 @@ function createCollectorRoleRuntime(pi, dependencies, hostActions) {
   };
 }
 
-// src/dossier-resolution.ts
-var DOCTOR_CANDIDATE_ENTRY_TYPE = "ak_doctor_audit_candidate";
-
 // src/doctor-role.ts
 var DOCTOR_CASE_FLAG = { name: "ak-doctor-case", definition: { description: "Retained .ak-roles/books/<book>/issues/<n>/runs directory", type: "string" } };
 function appendCandidate(ctx, data) {
@@ -8387,24 +10266,24 @@ function createNotaryRoleRuntime(pi, dependencies, host) {
 }
 
 // src/countersign-role.ts
-import { Type as Type16 } from "typebox";
+import { Type as Type17 } from "typebox";
 var countersignVerdictSchema = withInfrastructureFailureDeclaration(
-  Type16.Object(
+  Type17.Object(
     {
       countersignStatus: stringEnum(["converged", "continue", "escalate"], { description: "converged | continue | escalate" }),
-      fix: Type16.Optional(
-        Type16.Object(
-          { summary: Type16.String({ minLength: 1, description: "\u9000\u56DE\u6458\u8981" }) },
+      fix: Type17.Optional(
+        Type17.Object(
+          { summary: Type17.String({ minLength: 1, description: "\u9000\u56DE\u6458\u8981" }) },
           { additionalProperties: false, description: "\u9000\u56DE\u8BF4\u660E" }
         )
       ),
-      note: Type16.Optional(Type16.String({ minLength: 1, description: "\u9644\u6CE8" })),
-      evidence: Type16.Optional(Type16.Unknown({ description: "\u7559\u5B58\u8BC1\u636E" })),
-      decisionGate: Type16.Optional(
-        Type16.Object(
+      note: Type17.Optional(Type17.String({ minLength: 1, description: "\u9644\u6CE8" })),
+      evidence: Type17.Optional(Type17.Unknown({ description: "\u7559\u5B58\u8BC1\u636E" })),
+      decisionGate: Type17.Optional(
+        Type17.Object(
           {
-            question: Type16.String({ minLength: 1 }),
-            options: Type16.Array(Type16.String({ minLength: 1 }), { minItems: 1 })
+            question: Type17.String({ minLength: 1 }),
+            options: Type17.Array(Type17.String({ minLength: 1 }), { minItems: 1 })
           },
           { additionalProperties: false, description: "\u9700\u965B\u4E0B\u5904\u7F6E\u7684\u95EE\u9898\u4E0E\u9009\u9879" }
         )
@@ -8423,18 +10302,18 @@ var COUNTERSIGN_TOOL_SPEC = {
 };
 
 // src/gleaner-left-role.ts
-import { Type as Type17 } from "typebox";
+import { Type as Type18 } from "typebox";
 var gleanerLeftOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
-    Type17.Object({
-      status: Type17.Unknown({
+    Type18.Object({
+      status: Type18.Unknown({
         description: "completed \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8"
       }),
-      findings: Type17.Array(
-        Type17.Object(
+      findings: Type18.Array(
+        Type18.Object(
           {
-            pointer: Type17.String({ description: "\u6587\u4EF6/\u884C\u6307\u9488" }),
-            statement: Type17.String({ description: "\u7591\u70B9\u9648\u8FF0" })
+            pointer: Type18.String({ description: "\u6587\u4EF6/\u884C\u6307\u9488" }),
+            statement: Type18.String({ description: "\u7591\u70B9\u9648\u8FF0" })
           },
           { additionalProperties: true, description: "\u4E00\u6761\u5F39\u7AE0" }
         ),
@@ -8451,325 +10330,20 @@ var GLEANER_LEFT_TOOL_SPEC = {
   parameters: gleanerLeftOutputSchema
 };
 
-// src/navigator-attendance.ts
-import { createHash as createHash8 } from "node:crypto";
-import { ModelRuntime as ModelRuntime2 } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream as createAssistantMessageEventStream2 } from "@earendil-works/pi-ai";
-import { Type as Type18 } from "typebox";
-import { Value as Value4 } from "typebox/value";
-
-// src/work-subject-identity.ts
-init_activation_ledger_topology();
-import { resolve as resolve11 } from "node:path";
-function issueRoot(value) {
-  const normalized = value.replaceAll("\\", "/");
-  const marker = ".ak/work/issues/";
-  const index = normalized.indexOf(marker);
-  if (index < 0) return void 0;
-  const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
-  return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
-}
-function workIdentityFromCwd(cwd) {
-  const resolvedCwd = resolve11(cwd, ".");
-  const cwdIssue = issueRoot(resolvedCwd);
-  if (cwdIssue !== void 0) return cwdIssue;
-  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
-  return void 0;
-}
-function isMachineLedgerSessionPath(sessionPath) {
-  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
-}
-function subjectPath(sessionDir, cwd = process.cwd()) {
-  if (sessionDir === "") {
-    return workIdentityFromCwd(cwd) ?? resolve11(cwd, ".ak/work");
-  }
-  const resolvedSession = resolve11(cwd, sessionDir || ".ak/work");
-  if (isMachineLedgerSessionPath(resolvedSession)) {
-    return workIdentityFromCwd(cwd) ?? resolve11(cwd, ".ak/work");
-  }
-  const issue = issueRoot(resolvedSession);
-  if (issue !== void 0) return issue;
-  const runsMarker = "/runs/";
-  const runsIndex = resolvedSession.indexOf(runsMarker);
-  if (runsIndex >= 0) {
-    return resolvedSession.slice(0, runsIndex);
-  }
-  return resolvedSession;
-}
-function workSubjectKeysEqual(left, right) {
-  return physicalPathIdentity(left) === physicalPathIdentity(right);
-}
-
-// src/navigator-invocation-identity.ts
-var NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
-var NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure";
-var NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS = [
-  "kind",
-  "source",
-  "reasonCode"
-];
-var NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS = [
-  "observation",
-  "candidate",
-  "submission",
-  "stage",
-  "reason"
-];
-function buildNavigatorInfrastructureFailureFact() {
-  return {
-    kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
-    source: "shared-role-lifecycle",
-    reasonCode: "host_failure"
-  };
-}
-function hasNavigatorInfrastructureFailureBase(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record4 = value;
-  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_KEYS) {
-    if (!Object.hasOwn(record4, key)) return false;
-  }
-  return record4.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND && record4.source === "shared-role-lifecycle" && record4.reasonCode === "host_failure";
-}
-var PACKAGED_ROLE_OUTPUT_TOOLS = new Map(
-  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role])
-);
-function mintNavigatorInvocationId() {
-  return uuidv7();
-}
-function invocationPhaseFromUnknown(value) {
-  if (value === null || value === "plan" || value === "apply") return value;
-  return void 0;
-}
-function parseInvocationMarkerIdentity(data) {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
-  const record4 = data;
-  const invocationId = record4.invocationId;
-  if (typeof invocationId !== "string") return void 0;
-  const trimmedId = invocationId.trim();
-  if (!isUuidV7(trimmedId)) return void 0;
-  if (typeof record4.role !== "string" || record4.role.trim() === "") return void 0;
-  const phase = invocationPhaseFromUnknown(record4.phase);
-  if (phase === void 0) return void 0;
-  if (typeof record4.subjectKey !== "string" || record4.subjectKey.trim() === "") return void 0;
-  return {
-    invocationId: trimmedId,
-    role: record4.role,
-    phase,
-    subjectKey: record4.subjectKey
-  };
-}
-function markerMatchesExpectedIdentity(marker, expected) {
-  if (marker.role !== expected.role) return false;
-  if (expected.phase !== void 0) {
-    if (marker.phase !== expected.phase) return false;
-  } else if (expected.allowedPhases !== void 0) {
-    if (!expected.allowedPhases.includes(marker.phase)) return false;
-  }
-  if (expected.subjectKey !== void 0) {
-    if (!workSubjectKeysEqual(marker.subjectKey, expected.subjectKey)) return false;
-  }
-  return true;
-}
-function classifyPackagedRoleTerminalResult(message) {
-  if (typeof message.toolName !== "string") return { kind: "nonterminal" };
-  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
-  if (typeof message.details === "object" && message.details !== null && message.details.submissionDisposition === "pending-round-closure") return { kind: "nonterminal" };
-  const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
-  const infraFact = hasInfraBase ? buildNavigatorInfrastructureFailureFact() : void 0;
-  if (message.isError === true) {
-    if (infraFact === void 0) return { kind: "nonterminal" };
-    return { kind: "infrastructure", fact: infraFact };
-  }
-  if (message.isError === false) {
-    if (infraFact !== void 0) return { kind: "nonterminal" };
-    return { kind: "accepted" };
-  }
-  return { kind: "nonterminal" };
-}
-function durableTerminalAt(entries, index) {
-  const entry = entries[index];
-  const message = entry?.type === "custom" && entry.customType === "ak-role-submission-closure" ? typeof entry.data === "object" && entry.data !== null ? entry.data : void 0 : entry?.type === "message" && entry.message?.role === "toolResult" ? entry.message : void 0;
-  if (typeof message?.toolName !== "string") return void 0;
-  const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
-  if (role === void 0) return void 0;
-  const classification = classifyPackagedRoleTerminalResult(message);
-  if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {
-    return void 0;
-  }
-  return {
-    index,
-    role,
-    toolName: message.toolName,
-    classification: classification.kind,
-    message
-  };
-}
-function isPackagedRoleTerminalEntry(entry) {
-  return durableTerminalAt(entry === void 0 ? [] : [entry], 0) !== void 0;
-}
-function isInvocationMarkerEntry(entry) {
-  return entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY;
-}
-function latestInvocationMarkerIndex(entries) {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    if (isInvocationMarkerEntry(entries[i])) return i;
-  }
-  return -1;
-}
-function resolveLifecycleInvocationPrincipal(entries, expected) {
-  const markerIndex = latestInvocationMarkerIndex(entries);
-  if (markerIndex < 0) {
-    return { invocationId: mintNavigatorInvocationId(), resume: false };
-  }
-  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
-  if (marker === void 0) {
-    return { invocationId: mintNavigatorInvocationId(), resume: false };
-  }
-  if (expected !== void 0 && !markerMatchesExpectedIdentity(marker, expected)) {
-    return { invocationId: mintNavigatorInvocationId(), resume: false };
-  }
-  for (let i = markerIndex + 1; i < entries.length; i += 1) {
-    if (isPackagedRoleTerminalEntry(entries[i])) {
-      return { invocationId: mintNavigatorInvocationId(), resume: false };
-    }
-  }
-  return { invocationId: marker.invocationId, resume: true };
-}
-
-// src/navigator-attendance.ts
-init_activation_ledger_topology();
-
-// src/in-process-session.ts
-init_in_process_session();
-
-// src/public-command-renderer.ts
-var PUBLIC_CALLABLE_ROLES2 = new Set(
-  PACKAGED_ROLE_REGISTRY.map((entry) => entry.role)
-);
-
-// src/navigator-attendance.ts
-init_upstream_error_testimony();
-var NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
-var NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
-var NavigatorUnavailableError = class extends Error {
-  unavailableSource;
-  unavailableCause;
-  originalCause;
-  constructor(source, message, cause = source, originalCause) {
-    super(message);
-    this.name = "NavigatorUnavailableError";
-    this.unavailableSource = source;
-    this.unavailableCause = cause;
-    this.originalCause = originalCause;
-  }
-};
-var navigatorProviderFailureSchema = Type18.Object({
-  source: Type18.Union([Type18.Literal("context"), Type18.Literal("session"), Type18.Literal("model"), Type18.Literal("thinking"), Type18.Literal("auth"), Type18.Literal("quota"), Type18.Literal("transport"), Type18.Literal("unknown")]),
-  cause: Type18.Union([Type18.Literal("context"), Type18.Literal("session"), Type18.Literal("model"), Type18.Literal("thinking"), Type18.Literal("auth"), Type18.Literal("quota"), Type18.Literal("transport"), Type18.Literal("unknown")])
-}, { additionalProperties: false });
-function navigatorUnavailableError(source, error, cause = source) {
-  const message = error instanceof Error ? error.message : String(error);
-  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
-}
-var prepareSchema = Type18.Object({
-  candidates: Type18.Optional(Type18.Unknown({
-    description: "\u65B9\u5411\u5019\u9009\uFF1Bcandidates[].next.role \u5FC5\u586B\uFF0Cphase \u53EF\u9009\uFF0Croute/matches/reason/command \u53EF\u9009\u4E0A\u4E0B\u6587\uFF0C\u975E\u53D7\u7406\u95F8"
-  }))
-}, { additionalProperties: true });
-var targetRoles = new Set(NAVIGATOR_TARGETS.map(({ role }) => role));
-function routeText(route) {
-  return route.map((target) => target.phase === null ? target.role : `${target.role} ${target.phase}`).join(" \u2192 ");
-}
-function targetText(target) {
-  return target.phase === null ? target.role : `${target.role} ${target.phase}`;
-}
-function oneLine(value) {
-  return value.split(/\r?\n/, 1)[0].trim();
-}
-function navigatorSubjectKey(subjectRoot, subject, provenance = "role_input") {
-  if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
-  if (provenance === "placeholder") return subjectRoot;
-  const normalized = subject.trim().replace(/\s+/g, " ");
-  if (normalized === "") return subjectRoot;
-  return `${subjectRoot}#${createHash8("sha256").update(normalized).digest("hex").slice(0, 32)}`;
-}
-function formatNavigatorReport(report) {
-  const playbookFailure = report.routePlaybookReadFailure === void 0 ? [] : [`\u8DEF\u4E66\u8BFB\u53D6\u5931\u8D25\uFF1A${oneLine(report.routePlaybookReadFailure)}`];
-  if (report.disposition === "no-advice") return playbookFailure.join("\n");
-  if (report.disposition === "unavailable") return [...playbookFailure, `\u5BFC\u822A\u4E0D\u53EF\u7528\uFF1A${oneLine(report.unavailableReason ?? "\u672A\u80FD\u5B8C\u6210\u5BFC\u822A\u51C6\u5907")}`].join("\n");
-  if (report.disposition === "arrival") return [...playbookFailure, oneLine(report.arrivalMessage ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730")].join("\n");
-  return [
-    ...playbookFailure,
-    ...report.route === void 0 ? [] : [`\u8DEF\u7EBF\uFF1A${routeText(report.route)}`],
-    `\u4E0B\u4E00\u6B65\uFF1A${targetText(report.next)}`,
-    ...report.reason === void 0 || report.reason.trim() === "" ? [] : [`\u7406\u7531\uFF1A${oneLine(report.reason)}`],
-    ...report.command === void 0 || report.command.trim() === "" ? [] : [`\u547D\u4EE4\uFF1A${oneLine(report.command)}`]
-  ].join("\n");
-}
-function settlementNavigationFromEvent(event) {
-  if (event.disposition !== "recommendation") return void 0;
-  if (event.next === void 0) return void 0;
-  return {
-    disposition: "recommendation",
-    ...event.route === void 0 ? {} : { route: event.route },
-    next: event.next,
-    ...event.reason === void 0 ? {} : { reason: event.reason },
-    ...event.command === void 0 ? {} : { command: event.command }
-  };
-}
-function appendNavigatorReportToContent(content, reportText) {
-  if (reportText === "") return content.slice();
-  const parts = content.slice();
-  for (let index = parts.length - 1; index >= 0; index -= 1) {
-    const part = parts[index];
-    if (part !== void 0 && part.type === "text" && typeof part.text === "string") {
-      parts[index] = { ...part, type: "text", text: `${part.text}
-${reportText}` };
-      return parts;
-    }
-  }
-  return [...parts, { type: "text", text: reportText }];
-}
-function decorateSettlementWithNavigation(event, presentation) {
-  if (presentation === void 0) return void 0;
-  if (settlementNavigationFromEvent(presentation.event) === void 0) return void 0;
-  const { routePlaybookReadFailure: _advisoryFailure, ...receiptReport } = presentation.report;
-  const reportText = formatNavigatorReport(receiptReport);
-  if (reportText === "") return void 0;
-  return {
-    content: appendNavigatorReportToContent(event.content, reportText),
-    details: event.details
-  };
-}
-
-// src/doctor-auditor.ts
-var DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
-var tool = createComplianceDecisionTool(
-  DOCTOR_AUDIT_TOOL_NAME,
-  "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u592A\u533B\u7F72\u5BA1\u5211\uFF09\u3002"
-);
-
-// src/judge-auditor.ts
-var JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
-var auditDecisionTool = createComplianceDecisionTool(
-  JUDGE_AUDIT_TOOL_NAME,
-  "\u63D0\u4EA4 typed pass/revise/escalate \u51B3\u8BAE\uFF08\u5927\u7406\u5BFA\u5BA1\u5211\uFF09\u3002"
-);
-
 // src/pi/known-failure.ts
 init_upstream_error_testimony();
 init_upstream_error_testimony();
 
 // src/public-cli/settlement.ts
 var NAVIGATOR_POST_ROLE_GRACE_MS = 1e4;
-function raceNavigatorGrace(work, graceMs = NAVIGATOR_POST_ROLE_GRACE_MS, sleep = (ms) => new Promise((resolve13) => setTimeout(resolve13, ms))) {
-  return new Promise((resolve13, reject) => {
+function raceNavigatorGrace(work, graceMs = NAVIGATOR_POST_ROLE_GRACE_MS, sleep = (ms) => new Promise((resolve17) => setTimeout(resolve17, ms))) {
+  return new Promise((resolve17, reject) => {
     let settled = false;
     void work.then(
       (value) => {
         if (settled) return;
         settled = true;
-        resolve13({ status: "done", value });
+        resolve17({ status: "done", value });
       },
       (error) => {
         if (settled) return;
@@ -8780,7 +10354,7 @@ function raceNavigatorGrace(work, graceMs = NAVIGATOR_POST_ROLE_GRACE_MS, sleep 
     void sleep(graceMs).then(() => {
       if (settled) return;
       settled = true;
-      resolve13({ status: "timeout" });
+      resolve17({ status: "timeout" });
     });
   });
 }
@@ -8900,23 +10474,6 @@ ${soul}
 
 // src/reviewer-role.ts
 import { Type as Type20 } from "typebox";
-
-// src/reviewer-agent.ts
-function reviewerDispatchFailureMessage(outcome) {
-  const diagnostics = [...new Set(
-    Object.values(outcome.legs).filter((leg) => leg?.status === "failed").map((leg) => leg.diagnostic.trim()).filter((diagnostic) => diagnostic.length > 0)
-  )];
-  if (diagnostics.length === 0) return "Reviewer dispatch execution failed";
-  return diagnostics.length === 1 ? diagnostics[0] : diagnostics.join("; ");
-}
-var ReviewerDispatchExecutionError = class extends Error {
-  constructor(outcome) {
-    super(reviewerDispatchFailureMessage(outcome));
-    this.outcome = outcome;
-    this.name = "ReviewerDispatchExecutionError";
-  }
-  outcome;
-};
 
 // src/reviewer-execution-ledger.ts
 function projectAcceptedDispatch(dispatch) {
@@ -9267,8 +10824,8 @@ import { Type as Type21 } from "typebox";
 // src/worker-submission-gates.ts
 init_archivist_record_entry();
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync5, lstatSync as lstatSync3, readdirSync, readFileSync as readFileSync3, rmdirSync, rmSync } from "node:fs";
-import { resolve as resolve12 } from "node:path";
+import { existsSync as existsSync7, lstatSync as lstatSync3, readdirSync as readdirSync2, readFileSync as readFileSync3, rmdirSync, rmSync } from "node:fs";
+import { resolve as resolve16 } from "node:path";
 var WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 var WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
 var WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce";
@@ -9279,7 +10836,7 @@ var HOOKS_DIR = "ak-roles-hooks";
 var HOOK_FILE = "reference-transaction";
 var PLATFORM_PREFIX = /^[A-Za-z][A-Za-z0-9_-]*:/;
 var UNFINISHED_REASON_BOUNCE_LIMIT = 2;
-function git2(cwd, args) {
+function git3(cwd, args) {
   return execFileSync2("git", args, {
     cwd,
     encoding: "utf8",
@@ -9298,7 +10855,7 @@ function statusOf(error) {
   return typeof error === "object" && error !== null && "status" in error ? error.status : void 0;
 }
 function tryGetAll(file, key) {
-  if (!existsSync5(file)) return [];
+  if (!existsSync7(file)) return [];
   try {
     const out = gitFile(file, ["--get-all", key]);
     return out.length === 0 ? [] : out.split("\n");
@@ -9308,7 +10865,7 @@ function tryGetAll(file, key) {
   }
 }
 function ownedHook(path) {
-  if (!existsSync5(path)) return false;
+  if (!existsSync7(path)) return false;
   return readFileSync3(path, "utf8").includes(HOOK_MARKER);
 }
 function escapeGitConfigValueRegex(value) {
@@ -9317,7 +10874,7 @@ function escapeGitConfigValueRegex(value) {
 function unsetOwnedHooksPath(file) {
   const owned = [];
   for (const value of tryGetAll(file, "core.hooksPath")) {
-    if (!ownedHook(resolve12(value, HOOK_FILE))) continue;
+    if (!ownedHook(resolve16(value, HOOK_FILE))) continue;
     try {
       gitFile(file, [
         "--unset-all",
@@ -9332,36 +10889,36 @@ function unsetOwnedHooksPath(file) {
   return owned;
 }
 function rmOwnedDir(dir) {
-  const hookPath = resolve12(dir, HOOK_FILE);
+  const hookPath = resolve16(dir, HOOK_FILE);
   if (!ownedHook(hookPath)) return;
   rmSync(hookPath, { force: true });
-  if (existsSync5(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
+  if (existsSync7(dir) && readdirSync2(dir).length === 0) rmdirSync(dir);
 }
 function linkedGitDirs(commonDir) {
-  const root = resolve12(commonDir, "worktrees");
-  if (!existsSync5(root)) return [];
-  return readdirSync(root).map((name) => resolve12(root, name)).filter((dir) => lstatSync3(dir).isDirectory());
+  const root = resolve16(commonDir, "worktrees");
+  if (!existsSync7(root)) return [];
+  return readdirSync2(root).map((name) => resolve16(root, name)).filter((dir) => lstatSync3(dir).isDirectory());
 }
 function uninstallPackageWorkerHooks(cwd) {
   let inside;
   try {
-    inside = git2(cwd, ["rev-parse", "--is-inside-work-tree"]);
+    inside = git3(cwd, ["rev-parse", "--is-inside-work-tree"]);
   } catch {
     return;
   }
   if (inside !== "true") return;
-  const commonDir = git2(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const commonDir = git3(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const clear = (configFile) => {
     for (const hooks of unsetOwnedHooksPath(configFile)) rmOwnedDir(hooks);
   };
-  clear(resolve12(commonDir, "config"));
-  clear(resolve12(commonDir, "config.worktree"));
-  rmOwnedDir(resolve12(commonDir, HOOKS_DIR));
-  const legacy = resolve12(commonDir, "hooks", HOOK_FILE);
+  clear(resolve16(commonDir, "config"));
+  clear(resolve16(commonDir, "config.worktree"));
+  rmOwnedDir(resolve16(commonDir, HOOKS_DIR));
+  const legacy = resolve16(commonDir, "hooks", HOOK_FILE);
   if (ownedHook(legacy)) rmSync(legacy, { force: true });
   for (const gitDir of linkedGitDirs(commonDir)) {
-    clear(resolve12(gitDir, "config.worktree"));
-    rmOwnedDir(resolve12(gitDir, HOOKS_DIR));
+    clear(resolve16(gitDir, "config.worktree"));
+    rmOwnedDir(resolve16(gitDir, HOOKS_DIR));
   }
 }
 function isRecord9(value) {
@@ -9393,7 +10950,7 @@ function readGateState(session) {
 }
 function isAncestor(cwd, ancestor, descendant) {
   try {
-    git2(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]);
+    git3(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]);
     return true;
   } catch (error) {
     if (statusOf(error) === 1) return false;
@@ -9403,14 +10960,14 @@ function isAncestor(cwd, ancestor, descendant) {
 function reliableWindow(cwd, baseline, head) {
   if (baseline !== null && !isAncestor(cwd, baseline, head)) return null;
   const range = baseline === null ? head : `${baseline}..${head}`;
-  const raw = git2(cwd, ["log", "--format=%P%x1e%s", range]);
+  const raw = git3(cwd, ["log", "--format=%P%x1e%s", range]);
   if (raw.length === 0) return [];
   return raw.split("\n").flatMap((line2) => {
-    const sep3 = line2.indexOf("");
-    if (sep3 < 0) return [];
+    const sep4 = line2.indexOf("");
+    if (sep4 < 0) return [];
     return [{
-      subject: line2.slice(sep3 + 1),
-      merge: line2.slice(0, sep3).trim().includes(" ")
+      subject: line2.slice(sep4 + 1),
+      merge: line2.slice(0, sep4).trim().includes(" ")
     }];
   });
 }
@@ -9423,9 +10980,9 @@ function createWorkerSubmissionGate() {
   let record4;
   const head = (cwd) => {
     try {
-      return git2(cwd, ["rev-parse", "HEAD"]);
+      return git3(cwd, ["rev-parse", "HEAD"]);
     } catch {
-      git2(cwd, ["rev-parse", "--git-dir"]);
+      git3(cwd, ["rev-parse", "--git-dir"]);
       return null;
     }
   };
@@ -9963,6 +11520,185 @@ ${JSON.stringify(admitted)}
   } };
 }
 
+// src/gatekeeper-role.ts
+import { Type as Type22 } from "typebox";
+var GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
+var INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
+var NOTARY_OUTPUT_TOOL = "ak_notary_output";
+var SUBJECT_TOOL = "ak_gatekeeper_subject";
+function gateSeatLabel(stage) {
+  switch (stage) {
+    case "gatekeeper":
+      return "\u95E8\u4E0B\u7701";
+    case "inspector":
+      return "\u5BDF\u9662";
+    case "notary":
+      return "\u7B26\u5B9D\u90CE";
+  }
+}
+var officerDecisionSchema = openToolObject(Type22.Object({
+  status: Type22.Unknown({ description: "pass | bounce \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
+  findings: Type22.Unknown({ description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58" })
+}));
+var gatekeeperDecisionSchema = openToolObject(Type22.Object({
+  status: Type22.Unknown({ description: "dispatch \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
+  officer: Type22.Unknown({ description: "status \u4E3A dispatch \u65F6\u4E3A inspector | notary" })
+}));
+function result(content, details) {
+  return { content: [{ type: "text", text: content }], details };
+}
+function subjectTool(subject) {
+  return {
+    name: SUBJECT_TOOL,
+    description: "\u8BFB\u53D6\u5DF2\u53D7\u7406\u5377\u5B97\uFF1B\u53EA\u4F9B\u53D6\u9605\uFF0C\u4E0D\u8BC4\u5224\u4E0D\u6539\u52A8\u3002",
+    parameters: Type22.Object({}, { additionalProperties: false }),
+    async execute() {
+      return result(JSON.stringify(subject), subject);
+    }
+  };
+}
+function createOfficerDecisionTool(name) {
+  return {
+    name,
+    description: "\u63D0\u4EA4\u4E00\u4EFD typed pass/bounce \u51B3\u8BAE\u3002",
+    parameters: officerDecisionSchema,
+    async execute(_id, args) {
+      return result(`\u5DF2\u6536 ${String(args?.status)}`, args);
+    }
+  };
+}
+function createGatekeeperOutputTool() {
+  return {
+    name: GATEKEEPER_OUTPUT_TOOL,
+    description: "\u63D0\u4EA4\u95E8\u4E0B\u7701\u6D3E\u5B98\u51B3\u5B9A\u3002",
+    parameters: gatekeeperDecisionSchema,
+    async execute(_id, args) {
+      return result(`\u5DF2\u6536 ${String(args?.status)}`, args);
+    }
+  };
+}
+async function defaultLoadSoul(role) {
+  return loadGatekeeperSessionMaterials(role);
+}
+function failureReason(error) {
+  if (error instanceof AggregateError) return error.errors.map(failureReason).join("; ");
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+function asStringArray2(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => typeof item === "string");
+}
+var MISSING_ARGUMENTS_SUBMISSION = Object.freeze({ missing: "arguments" });
+function isRecord10(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function retainedSubmission(decision) {
+  return decision === void 0 || isRecord10(decision) && Object.keys(decision).length === 0 ? MISSING_ARGUMENTS_SUBMISSION : decision;
+}
+function noUsableReleaseFailure(stage, decision) {
+  return {
+    status: "transport_failure",
+    stage,
+    reason: stage === "gatekeeper" ? "decision \u65E0\u663E\u5F0F dispatch" : "decision \u65E0\u663E\u5F0F pass/bounce",
+    submission: retainedSubmission(decision)
+  };
+}
+function readRecord(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
+  return value;
+}
+function projectProvinceDecision(decision) {
+  const record4 = readRecord(decision);
+  if (record4 === void 0) return noUsableReleaseFailure("gatekeeper", decision);
+  if (record4.status === "dispatch" && (record4.officer === "inspector" || record4.officer === "notary")) {
+    return { status: "dispatch", officer: record4.officer };
+  }
+  return noUsableReleaseFailure("gatekeeper", decision);
+}
+function projectOfficerDecision(officer, decision) {
+  const record4 = readRecord(decision);
+  if (record4 === void 0) return noUsableReleaseFailure(officer, decision);
+  if (record4.status === "bounce") {
+    return {
+      status: "bounce",
+      officer,
+      disposition: "rewrite",
+      findings: asStringArray2(record4.findings),
+      submission: retainedSubmission(decision)
+    };
+  }
+  if (record4.status === "pass") {
+    return {
+      status: "pass",
+      officer,
+      findings: asStringArray2(record4.findings)
+    };
+  }
+  return noUsableReleaseFailure(officer, decision);
+}
+async function runGatekeeper(options) {
+  const loadSoul = options.loadSoul ?? defaultLoadSoul;
+  let provinceRun;
+  try {
+    provinceRun = await executeAuditorChild({
+      context: options.context,
+      roleLabel: "Gatekeeper",
+      gateSeat: "gatekeeper",
+      systemPrompt: await loadSoul("gatekeeper"),
+      prompt: "\u5377\u5B97\u5DF2\u53D7\u7406\u3002",
+      tool: createGatekeeperOutputTool(),
+      dossierTool: subjectTool(options.subject),
+      ...options.signal === void 0 ? {} : { signal: options.signal },
+      ...options.runDirectory === void 0 ? {} : { runDirectory: options.runDirectory }
+    });
+  } catch (error) {
+    return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
+  }
+  if (provinceRun.noReceiptLifecycle !== void 0) {
+    return { status: "no_receipt", stage: "gatekeeper", reason: `${gateSeatLabel("gatekeeper")}\u672A\u4EA7\u751F\u5DF2\u63A5\u53D7\u56DE\u6267\u5373\u6563\u5C40`, facts: provinceRun.noReceiptLifecycle };
+  }
+  const province = projectProvinceDecision(provinceRun.decision);
+  if (province.status !== "dispatch") return province;
+  const officer = province.officer;
+  try {
+    const roleLabel = officer === "inspector" ? "Inspector" : "Notary";
+    const officerRun = await executeAuditorChild({
+      context: options.context,
+      roleLabel,
+      gateSeat: officer,
+      systemPrompt: await loadSoul(officer),
+      prompt: "\u5377\u5B97\u5DF2\u53D7\u7406\u3002",
+      tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
+      dossierTool: subjectTool(options.subject),
+      ...options.signal === void 0 ? {} : { signal: options.signal },
+      ...options.runDirectory === void 0 ? {} : { runDirectory: options.runDirectory }
+    });
+    if (officerRun.noReceiptLifecycle !== void 0) {
+      return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}\u672A\u4EA7\u751F\u5DF2\u63A5\u53D7\u56DE\u6267\u5373\u6563\u5C40`, facts: officerRun.noReceiptLifecycle };
+    }
+    return projectOfficerDecision(officer, officerRun.decision);
+  } catch (error) {
+    return { status: "transport_failure", stage: officer, reason: failureReason(error) };
+  }
+}
+async function requireGatekeeperPass(options) {
+  const gatekeeper = await runGatekeeper({
+    context: options.context,
+    subject: options.subject,
+    ...options.signal === void 0 ? {} : { signal: options.signal }
+  });
+  if (gatekeeper.status === "pass") return;
+  if (gatekeeper.status === "transport_failure") {
+    const error = new Error(`\u95E8\u4E0B\u7701 transport_failure\uFF08${gatekeeper.stage}\uFF09\uFF1A${gatekeeper.reason}`);
+    error.stage = gatekeeper.stage;
+    error.reason = gatekeeper.reason;
+    if (gatekeeper.submission !== void 0) error.submission = gatekeeper.submission;
+    options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
+  }
+  options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
+  throw new GatekeeperDecisionError(gatekeeper);
+}
+
 // src/role-runtime.ts
 var REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
@@ -10175,6 +11911,23 @@ var ROLE_FLAG = {
     type: "string"
   }
 };
+function formatNavigatorRoleHelp(role) {
+  const metadata = packagedRoleMetadata(role);
+  const lines = [
+    `Usage: ak-role ${role}`,
+    ROLE_FLAG.definition.description
+  ];
+  if (metadata?.inputFlag !== void 0) {
+    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
+  }
+  if (metadata?.phaseFlag !== void 0) {
+    lines.push(
+      `  --${metadata.phaseFlag} <value>    ${role} phase: ${metadata.phases.filter((p) => p !== null).join(" | ")}`
+    );
+  }
+  lines.push(`Public next-command form: ak-role ${role}`);
+  return lines.join("\n");
+}
 function abortContext(ctx) {
   ctx.abort();
 }
@@ -10479,7 +12232,7 @@ function createRoleRuntimeExtension(dependencies) {
           };
           pendingNavigatorPresentation = { event, report };
         }
-        attendance.dispose();
+        await attendance.dispose();
         void settlePromise.catch(() => void 0);
       })();
       pendingNavigatorSettlement = pending;
@@ -10505,7 +12258,7 @@ function createRoleRuntimeExtension(dependencies) {
       }
       return { action: "continue" };
     });
-    roleHost.on("before_agent_start", (event, ctx) => {
+    roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role === void 0) return;
       if (!admitted || selectedRole !== role) {
@@ -10531,7 +12284,7 @@ function createRoleRuntimeExtension(dependencies) {
               authority,
               subjectProvenance
             };
-            navigatorAttendance.setWorkContext(navigatorWorkContext);
+            await navigatorAttendance.setWorkContext(navigatorWorkContext);
           }
         }
       }
@@ -10667,7 +12420,7 @@ function createRoleRuntimeExtension(dependencies) {
         } catch {
         }
       }
-      navigatorAttendance?.dispose();
+      await navigatorAttendance?.dispose();
       navigatorAttendance = void 0;
       pendingNavigatorSettlement = void 0;
       pendingInfrastructureFailures.clear();
@@ -10912,7 +12665,7 @@ function createRoleRuntimeExtension(dependencies) {
         failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
-      navigatorAttendance?.dispose();
+      await navigatorAttendance?.dispose();
       navigatorAttendance = void 0;
       const runtime = {
         event,
@@ -10960,7 +12713,12 @@ function createRoleRuntimeExtension(dependencies) {
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           } else {
             try {
-              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(roleHost, entry.role) });
+              work = await dependencies.loadNavigatorWorkContext({
+                context: ctx,
+                role: entry.role,
+                phase: navigatorPhase(roleHost, entry.role),
+                getFlag: (name) => roleHost.getFlag(name)
+              });
               contextError = work.contextError;
             } catch (error) {
               contextError = navigatorUnavailableError("context", error);
@@ -11044,10 +12802,18 @@ function createRoleRuntimeExtension(dependencies) {
   };
 }
 
+// src/grok/role-envelope.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { mkdir as mkdir6, readFile as readFile14, writeFile as writeFile9 } from "node:fs/promises";
+import { createServer } from "node:net";
+import { appendFileSync as appendFileSync2 } from "node:fs";
+import { basename as basename8, dirname as dirname17, join as join24 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+
 // src/grok/role-turn-host.ts
-import { execFile as execFile3, spawn as spawn3 } from "node:child_process";
-import { copyFile, mkdir as mkdir3, open as open2, realpath as realpath6 } from "node:fs/promises";
-import { basename as basename6, dirname as dirname14, isAbsolute as isAbsolute6, join as join18, relative as pathRelative } from "node:path";
+import { execFile as execFile3, spawn as spawn4 } from "node:child_process";
+import { copyFile, mkdir as mkdir5, open as open2, realpath as realpath7 } from "node:fs/promises";
+import { basename as basename7, dirname as dirname16, isAbsolute as isAbsolute7, join as join23, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify as promisify3 } from "node:util";
 
@@ -11058,8 +12824,8 @@ function renderAgentStartMaterials(body, materials) {
 }
 
 // src/grok/bash-seatbelt.ts
-import { mkdir as mkdir2, writeFile as writeFile6 } from "node:fs/promises";
-import { join as join17 } from "node:path";
+import { mkdir as mkdir4, writeFile as writeFile8 } from "node:fs/promises";
+import { join as join22 } from "node:path";
 function renderGrokBashSeatbeltHookScript() {
   const reasons = Object.fromEntries(
     FIXER_BASH_FORBIDDEN_LITERALS.map((literal) => [literal, fixerBashSeatbeltDenyReason(literal)])
@@ -11087,12 +12853,12 @@ process.stdin.on("end", () => {
 `;
 }
 async function installGrokPreToolUseDeny(controlledHome) {
-  const hooksDir = join17(controlledHome, "hooks");
-  await mkdir2(hooksDir, { recursive: true });
+  const hooksDir = join22(controlledHome, "hooks");
+  await mkdir4(hooksDir, { recursive: true });
   const scriptName = "ak-bash-seatbelt.mjs";
-  const scriptPath = join17(hooksDir, scriptName);
-  await writeFile6(scriptPath, renderGrokBashSeatbeltHookScript(), { mode: 493 });
-  await writeFile6(join17(hooksDir, "ak-bash-seatbelt.json"), `${JSON.stringify({
+  const scriptPath = join22(hooksDir, scriptName);
+  await writeFile8(scriptPath, renderGrokBashSeatbeltHookScript(), { mode: 493 });
+  await writeFile8(join22(hooksDir, "ak-bash-seatbelt.json"), `${JSON.stringify({
     hooks: {
       PreToolUse: [
         {
@@ -11137,7 +12903,7 @@ function connectGrokAcpStdio(options) {
     "stdio"
   ];
   const env = options.toolset === void 0 ? options.env : { ...options.env, GROK_CONFIG: JSON.stringify({ toolset: options.toolset }) };
-  const child = spawn3(options.binary, args, { cwd: options.cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn4(options.binary, args, { cwd: options.cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = /* @__PURE__ */ new Map();
   const notificationHandlers = [];
   if (options.onNotification !== void 0) notificationHandlers.push(options.onNotification);
@@ -11200,8 +12966,8 @@ function connectGrokAcpStdio(options) {
     request(method, params) {
       if (closed) return Promise.reject(terminalError ?? acpError("acp-connection-closed", "Grok ACP connection is closed"));
       const id = ++nextId;
-      return new Promise((resolve13, reject) => {
-        pending.set(id, { resolve: resolve13, reject });
+      return new Promise((resolve17, reject) => {
+        pending.set(id, { resolve: resolve17, reject });
         child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}
 `, (error) => {
           if (error === null || error === void 0) return;
@@ -11222,7 +12988,7 @@ function connectGrokAcpStdio(options) {
       settleClosed(acpError("acp-connection-closed", "Grok ACP connection is closed"));
       child.stdin.end();
       child.kill("SIGTERM");
-      await new Promise((resolve13) => child.once("close", () => resolve13()));
+      await new Promise((resolve17) => child.once("close", () => resolve17()));
     }
   });
 }
@@ -11231,12 +12997,6 @@ function createGrokRoleTurnHost(config) {
   return {
     executeTurn(request) {
       const execution = serial.then(async () => {
-        if (request.model !== void 0 && request.model.provider !== "xai") {
-          return failure("activation", "GrokHostModelMismatch", "host-model-mismatch", {
-            provider: request.model.provider,
-            model: request.model.model
-          });
-        }
         const inspected = await config.inspect(request);
         if (inspected.privateActive.length !== 0) {
           return failure("activation", "UncontrolledGrokSession", "private-config-active", {
@@ -11349,7 +13109,7 @@ function errnoCode2(error) {
 }
 async function realpathIfPresent(path) {
   try {
-    return await realpath6(path);
+    return await realpath7(path);
   } catch (error) {
     if (errnoCode2(error) === "ENOENT") return void 0;
     throw error;
@@ -11373,8 +13133,8 @@ async function resolveHeadTreePath(topLevel, relativePath) {
   );
   const exactHits = exactOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
   if (exactHits.includes(relativePath)) return relativePath;
-  const parent = dirname14(relativePath);
-  const leaf = basename6(relativePath);
+  const parent = dirname16(relativePath);
+  const leaf = basename7(relativePath);
   if (parent !== ".") {
     const { stdout: parentOut } = await execFileAsync3(
       "git",
@@ -11392,7 +13152,7 @@ async function resolveHeadTreePath(topLevel, relativePath) {
     encoding: "utf8"
   });
   const needle = leaf.toLowerCase();
-  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename6(name).toLowerCase() === needle).map((name) => parent === "." ? basename6(name) : join18(parent, basename6(name)));
+  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename7(name).toLowerCase() === needle).map((name) => parent === "." ? basename7(name) : join23(parent, basename7(name)));
   return hits.length === 1 ? hits[0] : void 0;
 }
 async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
@@ -11405,19 +13165,19 @@ async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
     cwd: repositoryCwd,
     encoding: "utf8"
   });
-  const topLevel = await realpath6(topLevelOut.trim());
-  const parent = await realpathIfPresent(dirname14(absolutePath));
+  const topLevel = await realpath7(topLevelOut.trim());
+  const parent = await realpathIfPresent(dirname16(absolutePath));
   if (parent === void 0) return false;
-  const leaf = basename6(absolutePath);
+  const leaf = basename7(absolutePath);
   if (leaf === "" || leaf === "." || leaf === "..") return false;
-  const candidate = join18(parent, leaf);
+  const candidate = join23(parent, leaf);
   const relative3 = pathRelative(topLevel, candidate);
-  if (relative3 === "" || relative3.startsWith("..") || isAbsolute6(relative3) || relative3.includes("\0")) {
+  if (relative3 === "" || relative3.startsWith("..") || isAbsolute7(relative3) || relative3.includes("\0")) {
     return false;
   }
   const headRel = await resolveHeadTreePath(topLevel, relative3);
   if (headRel === void 0) return false;
-  const headFile = join18(topLevel, headRel);
+  const headFile = join23(topLevel, headRel);
   const { stdout: headBlobOut } = await execFileAsync3(
     "git",
     ["rev-parse", "--verify", `HEAD:${headRel}`],
@@ -11485,8 +13245,8 @@ function classifyGrokInspection(document, packageRoot, options = {}) {
   return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
 }
 async function prepareControlledGrokHome(sourceHome, controlledHome) {
-  await mkdir3(controlledHome, { recursive: true, mode: 448 });
-  await copyFile(join18(sourceHome, ".grok", "auth.json"), join18(controlledHome, "auth.json"));
+  await mkdir5(controlledHome, { recursive: true, mode: 448 });
+  await copyFile(join23(sourceHome, ".grok", "auth.json"), join23(controlledHome, "auth.json"));
 }
 async function inspectControlledGrok(options) {
   const { stdout } = await execFileAsync3(options.binary, ["inspect", "--json"], {
@@ -11533,7 +13293,7 @@ function buildGrokSkillExpansion(methodSkills, prompt) {
   return Object.freeze({
     name: parsed.name,
     location: method.path,
-    content: `References are relative to ${dirname15(method.path)}.
+    content: `References are relative to ${dirname17(method.path)}.
 
 ${method.body}`,
     userMessage: parsed.userMessage
@@ -11572,11 +13332,11 @@ function projectGrokActivationFlags(request) {
   return flags;
 }
 async function listen(server, path) {
-  await new Promise((resolve13, reject) => {
+  await new Promise((resolve17, reject) => {
     server.once("error", reject);
     server.listen(path, () => {
       server.off("error", reject);
-      resolve13();
+      resolve17();
     });
   });
 }
@@ -11597,21 +13357,22 @@ async function prepareGrokRoleEnvelope(options) {
   const handlers = /* @__PURE__ */ new Map();
   const calls = [];
   const customEntries = [];
+  const sessionEntries = [];
   const methodSkills = /* @__PURE__ */ new Map();
   let preferredTools = [];
   let rejection;
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID2();
-  await mkdir4(request.runDirectory, { recursive: true });
+  await mkdir6(request.runDirectory, { recursive: true });
   for (const method of request.methods) {
     if (method.kind !== "skill") continue;
-    const name = basename7(dirname15(method.path));
-    const raw = await readFile11(method.path, "utf8");
+    const name = basename8(dirname17(method.path));
+    const raw = await readFile14(method.path, "utf8");
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
-  let sessionFile = join19(request.runDirectory, "session", "session.jsonl");
-  await mkdir4(dirname15(sessionFile), { recursive: true });
+  let sessionFile = join24(request.runDirectory, "session", "session.jsonl");
+  await mkdir6(dirname17(sessionFile), { recursive: true });
   try {
-    await writeFile7(
+    await writeFile9(
       sessionFile,
       `${JSON.stringify({
         type: "session",
@@ -11626,25 +13387,36 @@ async function prepareGrokRoleEnvelope(options) {
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
   }
+  {
+    const raw = await readFile14(sessionFile, "utf8");
+    for (const line2 of raw.split("\n")) {
+      if (line2.trim() === "") continue;
+      const entry = JSON.parse(line2);
+      if (entry.type === "session") continue;
+      sessionEntries.push(entry);
+    }
+  }
   const context = {
     cwd: request.cwd,
     mode: "print",
     model: request.model === void 0 ? void 0 : { provider: request.model.provider },
     sessionManager: {
-      getLeafEntry: () => void 0,
+      getLeafEntry: () => sessionEntries.at(-1),
       getLeafId: () => runId,
-      getEntries: () => [],
-      getSessionDir: () => request.runDirectory,
+      getEntries: () => sessionEntries,
+      getSessionDir: () => join24(request.runDirectory, "session"),
       getSessionFile: () => sessionFile,
       getHeader: () => ({ type: "session", id: runId }),
       setSessionFile(path) {
         sessionFile = path;
       },
       appendCustomEntry(customType, data) {
+        const entry = { type: "custom", customType, data };
+        sessionEntries.push(entry);
         customEntries.push({ customType, data });
         appendFileSync2(
           sessionFile,
-          `${JSON.stringify({ type: "custom", customType, data })}
+          `${JSON.stringify(entry)}
 `,
           "utf8"
         );
@@ -11652,6 +13424,17 @@ async function prepareGrokRoleEnvelope(options) {
     },
     abort() {
     }
+  };
+  const bookCustomMessage = (customType, message) => {
+    const payload = {
+      ...message.content === void 0 ? {} : { content: message.content },
+      ...message.details === void 0 ? {} : { details: message.details }
+    };
+    const entry = { type: "custom_message", customType, ...payload, message: payload };
+    sessionEntries.push(entry);
+    customEntries.push({ customType, data: message.details ?? message.content });
+    appendFileSync2(sessionFile, `${JSON.stringify(entry)}
+`, "utf8");
   };
   const emit = async (event, value) => {
     const results = [];
@@ -11713,12 +13496,16 @@ async function prepareGrokRoleEnvelope(options) {
   const envelope = {
     host,
     appendEntry(customType, data) {
-      customEntries.push({ customType, data });
+      context.sessionManager.appendCustomEntry?.(customType, data);
     },
     async sendMessage(message) {
-      if (typeof message === "object" && message !== null && "content" in message && typeof message.content === "string") {
-        customEntries.push({ customType: "message", data: message.content });
-      }
+      if (typeof message !== "object" || message === null) return;
+      const customType = typeof message.customType === "string" ? message.customType : void 0;
+      if (customType === void 0) return;
+      bookCustomMessage(customType, {
+        ...typeof message.content === "string" ? { content: message.content } : {},
+        ...message.details === void 0 ? {} : { details: message.details }
+      });
     },
     startKeepalive() {
     },
@@ -11791,6 +13578,18 @@ async function prepareGrokRoleEnvelope(options) {
             if (tool2 === void 0) throw new Error(`Unknown AK tool: ${name}`);
             const toolCallId = randomUUID2();
             calls.push({ toolCallId, toolName: name });
+            sessionEntries.push({
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [{
+                  type: "toolCall",
+                  id: toolCallId,
+                  name,
+                  arguments: params?.arguments ?? {}
+                }]
+              }
+            });
             await emit("tool_execution_start", { toolCallId, toolName: name });
             const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} })).some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
             if (blocked) throw new Error(`AK tool blocked: ${name}`);
@@ -11833,7 +13632,11 @@ async function prepareGrokRoleEnvelope(options) {
     disposed = true;
     try {
       await emit("session_shutdown", {});
-      await new Promise((resolve13) => server.close(() => resolve13()));
+      const closeAll = server.closeAllConnections;
+      if (typeof closeAll === "function") closeAll.call(server);
+      await new Promise((resolve17, reject) => {
+        server.close((error) => error ? reject(error) : resolve17());
+      });
     } finally {
       restoreAkRoleRunDir();
     }
@@ -11852,6 +13655,7 @@ async function prepareGrokRoleEnvelope(options) {
       }
     }
     if (closure !== void 0) {
+      await emit("agent_settled", {});
       return { accepted: true };
     }
     if (rejection !== void 0) {
@@ -11873,8 +13677,14 @@ async function prepareGrokRoleEnvelope(options) {
     const record4 = value;
     if (record4.action === "transform" && typeof record4.text === "string") prompt = record4.text;
   }
+  if (typeof prompt === "string" && prompt.trim() !== "") {
+    sessionEntries.push({
+      type: "message",
+      message: { role: "user", content: prompt }
+    });
+  }
   const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
-  const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile11(path, "utf8")))).join("\n\n");
+  const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile14(path, "utf8")))).join("\n\n");
   const promptResults = await emit("before_agent_start", {
     prompt,
     systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
@@ -11910,14 +13720,14 @@ async function prepareGrokRoleEnvelope(options) {
 
 // src/grok/production-host.ts
 function resolveGrokBinary(operatorHome) {
-  return join20(operatorHome, ".grok", "bin", "grok");
+  return join25(operatorHome, ".grok", "bin", "grok");
 }
 var NO_PRODUCTION_GROK_PRIMARY_FAILURE = {
   present: false
 };
 async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, concurrentMessage) {
   try {
-    await rm4(controlledHome, { recursive: true, force: true });
+    await rm5(controlledHome, { recursive: true, force: true });
   } catch (cleanupFailure) {
     if (primaryFailure.present) {
       throw new AggregateError([primaryFailure.value, cleanupFailure], concurrentMessage, {
@@ -11931,7 +13741,7 @@ async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, c
   }
 }
 async function openProductionGrokHome(operatorHome) {
-  const controlledHome = await mkdtemp4(join20(tmpdir4(), "ak-grok-home-"));
+  const controlledHome = await mkdtemp5(join25(tmpdir5(), "ak-grok-home-"));
   try {
     await prepareControlledGrokHome(operatorHome, controlledHome);
     return controlledHome;
@@ -11979,13 +13789,20 @@ async function withProductionGrokIsolation(operatorHome, packageRoot, run) {
   if (primaryFailure.present) throw primaryFailure.value;
   return value;
 }
+var navigatorRoutePlaybookPath = fileURLToPath3(
+  new URL("../../resources/navigator-route-playbook.md", import.meta.url)
+);
 function createGrokRoleRuntimeDependencies(packageRoot) {
+  const judgeAuditor = createPiJudgeAuditor();
+  const doctorAuditor = createPiDoctorAuditor();
+  const reviewerAgent = createPerDispatchReviewerAgent({ packageRoot });
+  const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
-    loadFixPacket: (path) => readFile12(path, "utf8"),
+    loadFixPacket: (path) => readFile15(path, "utf8"),
     loadCoderSoul: () => loadMainRoleSessionMaterials("coder"),
-    loadCoderTask: (path) => readFile12(path, "utf8"),
+    loadCoderTask: (path) => readFile15(path, "utf8"),
     loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
@@ -11998,7 +13815,7 @@ function createGrokRoleRuntimeDependencies(packageRoot) {
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
-    loadMergerInput: async (path) => JSON.parse(await readFile12(path, "utf8")),
+    loadMergerInput: async (path) => JSON.parse(await readFile15(path, "utf8")),
     createMergerGitState: (repositoryRoot) => createProductionMergerGitState(repositoryRoot),
     async loadCanonicalSkillBinding(name) {
       if (name === "tdd") {
@@ -12009,19 +13826,36 @@ function createGrokRoleRuntimeDependencies(packageRoot) {
       }
       return loadCanonicalSkillBinding(name);
     },
-    // Pi-session auditors / navigator / reviewer-agent remain on the Pi host path.
-    // Live grok-build completion of those branches is #511.
-    async auditSoulCompliance() {
-      throw new Error("grok-build host-neutral soul audit is not wired");
-    },
-    async auditDoctorCompliance() {
-      throw new Error("grok-build host-neutral doctor audit is not wired");
-    }
+    // #590: four sub-legs on the shared institutional child seam (host-neutral).
+    auditSoulCompliance: (options) => judgeAuditor(options),
+    auditDoctorCompliance: (options) => doctorAuditor(options),
+    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
+    shutdownReviewerAgent: () => reviewerAgent.shutdown(),
+    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({
+      context: options.context,
+      role: options.role,
+      ...options.getFlag === void 0 ? {} : { getFlag: options.getFlag }
+    }),
+    createNavigatorAttendance: (options) => createNavigatorAttendance({
+      context: options.context,
+      role: options.role,
+      phase: options.phase,
+      subjectKey: options.subjectKey,
+      subject: options.subject,
+      authority: options.authority,
+      invocationId: options.invocationId,
+      loadSoul: () => loadMainRoleSessionMaterials("navigator"),
+      loadRoutePlaybook: () => readFile15(navigatorRoutePlaybookPath, "utf8"),
+      loadRoleHelp: async (role) => formatNavigatorRoleHelp(role),
+      createSession: navigatorSessionFactory,
+      ...options.contextError === void 0 ? {} : { contextError: options.contextError },
+      onEvent: options.onEvent
+    })
   };
 }
 async function recordGrokCapabilities(request, declaration) {
-  await writeFile8(
-    join20(request.runDirectory, "grok-capabilities.json"),
+  await writeFile10(
+    join25(request.runDirectory, "grok-capabilities.json"),
     `${JSON.stringify(declaration)}
 `,
     "utf8"
