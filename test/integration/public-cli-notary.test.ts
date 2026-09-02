@@ -195,9 +195,9 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
         return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
       }),
     });
-    assert.ok(captured.current);
-    assert.equal(captured.current.activation.role, "notary");
-    assert.deepEqual(captured.current.model, {
+    const inherited = captured.current!;
+    assert.equal(inherited.activation.role, "notary");
+    assert.deepEqual(inherited.model, {
       provider: "openai-codex",
       model: "gpt-5.6-sol",
       thinking: "low",
@@ -223,7 +223,7 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
       ).exitCode,
       0,
     );
-    captured.current = undefined;
+    const pinnedCapture: { current: RoleTurnRequest | undefined } = { current: undefined };
     await runAkRole(["notary", "--source-run", sourceRunPath], {
       home,
       packageRoot,
@@ -232,12 +232,12 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
       createRunId: () => "01a0notary-0000-7000-8000-000000000621",
       io: captureIo().io,
       roleTurnHost: createMinimalHost((request) => {
-        captured.current = request;
+        pinnedCapture.current = request;
         return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
       }),
     });
-    assert.ok(captured.current);
-    assert.deepEqual(captured.current.model, {
+    const pinned = pinnedCapture.current!;
+    assert.deepEqual(pinned.model, {
       provider: "xai",
       model: "grok-4.5",
       thinking: "high",
