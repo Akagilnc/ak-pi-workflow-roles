@@ -56,7 +56,6 @@ const TICKET_HEAVYWEIGHT = [
   "test/package/doctor-package-lifecycle.test.ts",
   "test/package/public-cli-install.test.ts",
   "test/package/public-cli-cold-matrix.test.ts",
-  "test/integration/public-cli-coder-installed-run.test.ts",
 ] as const;
 
 type ChildRecord = {
