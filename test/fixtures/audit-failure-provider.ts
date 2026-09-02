@@ -110,8 +110,9 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     // Judge draft province gate runs before auditor; script pass so MALFORMED stays on auditor.
     if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
       if (gateMode === "gatekeeper-no-dispatch") {
+        // Unusable non-dispatch/non-pass (#475). Lawful province pass is not this path (#597).
         return fauxAssistantMessage(
-          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "pass", findings: [] }),
+          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "ok-enough" }),
           { stopReason: "toolUse" },
         );
       }
