@@ -67,6 +67,22 @@ export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructu
 }
 
 /**
+ * Pull known typed evidence keys off a thrown infrastructure error onto durable
+ * details (#475 / #593). Single owner for envelope catch and role-runtime pending.
+ */
+export function extractInfrastructureFailureEvidence(error: unknown): Record<string, unknown> {
+  if (typeof error !== "object" || error === null) return {};
+  const record = error as Record<string, unknown>;
+  const evidence: Record<string, unknown> = {};
+  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS) {
+    if (!Object.hasOwn(record, key)) continue;
+    // undefined → null so JSON durable details retain the empty-candidate key.
+    evidence[key] = record[key] === undefined ? null : record[key];
+  }
+  return evidence;
+}
+
+/**
  * Base infrastructure-failure identity on durable details.
  * Only kind/source/reasonCode discriminate; extra fields are allowed and retained
  * (ADR 0040 — discriminators select the branch, they do not ban extras).

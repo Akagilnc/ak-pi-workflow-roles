@@ -72,7 +72,7 @@ import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVEN
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
-  NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
+  extractInfrastructureFailureEvidence,
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
@@ -265,6 +265,7 @@ import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-r
 export {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
+  extractInfrastructureFailureEvidence,
   hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   isDurablePackagedRoleTerminalResult,
@@ -630,18 +631,6 @@ function failInfrastructure(error: unknown, ctx: { mode: string; abort(): void }
 type PendingInfrastructureFailure = {
   readonly details: Record<string, unknown>;
 };
-
-function extractInfrastructureFailureEvidence(error: unknown): Record<string, unknown> {
-  if (typeof error !== "object" || error === null) return {};
-  const record = error as Record<string, unknown>;
-  const evidence: Record<string, unknown> = {};
-  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS) {
-    if (!Object.hasOwn(record, key)) continue;
-    // undefined → null so JSON durable details retain the empty-candidate key.
-    evidence[key] = record[key] === undefined ? null : record[key];
-  }
-  return evidence;
-}
 
 function buildPendingInfrastructureFailure(error: unknown): PendingInfrastructureFailure {
   return {

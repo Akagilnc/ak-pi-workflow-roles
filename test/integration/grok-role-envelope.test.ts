@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME, type DoctorCase } from "../../src/doctor-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import {
@@ -173,6 +174,203 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
   }
 });
 
+test("Grok typed infrastructureFailure aborts the round and closeRound returns knownFailure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-infra-fail-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorExitCode = process.exitCode;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const diagnostic = "劳务引擎 agy authentication timed out (case #593)";
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "initial", prompt: "decide" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-infra"),
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      assert.ok(prepared.abortSignal instanceof AbortSignal);
+      assert.equal(prepared.abortSignal.aborted, false);
+
+      const server = prepared.mcpServers[0] as McpServer;
+      const reply = await callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
+        infrastructureFailure: { diagnostic },
+      });
+      assert.equal(reply.error, undefined);
+      assert.equal((reply.result as { isError?: boolean })?.isError, true);
+
+      // failInfrastructure must actually abort the host context — not empty abort(){}.
+      assert.equal(prepared.abortSignal.aborted, true);
+
+      const closure = await prepared.closeRound();
+      assert.equal(closure.accepted, false);
+      assert.ok("failure" in closure, "infrastructure declaration must not fall to MissingSubmission or retry");
+      assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
+      assert.equal(closure.failure.diagnostic, diagnostic);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    // failInfrastructure stamps exitCode=1 under print mode; restore for the test process.
+    process.exitCode = priorExitCode;
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok infra abort fills knownFailure before hanging tool_result projection so closeRound cannot race MissingSubmission", async () => {
+  // #593 r3 finding 1: hostAbort must not win an empty infrastructureRoundFailure slot
+  // while tool_result projection (navigator settle) is still in flight.
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-infra-race-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorExitCode = process.exitCode;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const diagnostic = "infra abort/projection race (#593 r3)";
+    let releaseSettle!: () => void;
+    const settleHang = new Promise<void>((resolve) => {
+      releaseSettle = resolve;
+    });
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "initial", prompt: "decide" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-infra-race"),
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: join(root, "work"),
+          subject: "infra race regression",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: () => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => settleHang,
+          dispose() {},
+        }),
+      },
+    });
+    try {
+      assert.ok(prepared.abortSignal instanceof AbortSignal);
+      assert.equal(prepared.abortSignal.aborted, false);
+
+      // closeRound on abort — mirrors role-turn-host host-aborted path racing projection.
+      const closeOnAbort = new Promise<Awaited<ReturnType<typeof prepared.closeRound>>>((resolve, reject) => {
+        prepared.abortSignal!.addEventListener("abort", () => {
+          void prepared.closeRound().then(resolve, reject);
+        }, { once: true });
+      });
+
+      const server = prepared.mcpServers[0] as McpServer;
+      const mcpPromise = callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
+        infrastructureFailure: { diagnostic },
+      });
+
+      const closure = await closeOnAbort;
+      assert.equal(closure.accepted, false);
+      assert.ok("failure" in closure, "closeRound during hung projection must not fall to MissingSubmission");
+      assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
+      assert.equal(closure.failure.diagnostic, diagnostic);
+
+      releaseSettle();
+      const reply = await mcpPromise;
+      assert.equal(reply.error, undefined);
+      assert.equal((reply.result as { isError?: boolean })?.isError, true);
+    } finally {
+      releaseSettle?.();
+      await prepared.dispose?.();
+    }
+  } finally {
+    process.exitCode = priorExitCode;
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok pre-execution observation failure terminates as typed InfrastructureFailure not MissingSubmission", async () => {
+  // #593 r3 finding 2: tool_execution_start / tool_call throws must share the same
+  // non-correctable infra pathway (slot + hostAbort), not bare outer RPC only.
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-preexec-infra-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorExitCode = process.exitCode;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const diagnostic = "observation writer failed at tool_execution_start (#593 r3)";
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "initial", prompt: "decide" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-preexec-infra"),
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+        toolExecutionObservationWriter: async () => {
+          throw new Error(diagnostic);
+        },
+      },
+    });
+    try {
+      assert.ok(prepared.abortSignal instanceof AbortSignal);
+      const server = prepared.mcpServers[0] as McpServer;
+      const reply = await callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
+        judgeStatus: "continue",
+        fixSummary: "x",
+        classes: [{ name: "c", owner: "o", boundary: "b", disposition: "d" }],
+        classCount: 1,
+        note: "n",
+        evidence: "e",
+      });
+      // Structured infra reply preferred over bare RPC error; either way abort must arm.
+      assert.equal(prepared.abortSignal.aborted, true);
+
+      const closure = await prepared.closeRound();
+      assert.equal(closure.accepted, false);
+      assert.ok("failure" in closure, "pre-execution emit failure must not fall to MissingSubmission");
+      assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
+      assert.equal(closure.failure.diagnostic, diagnostic);
+      // Reply should carry structured infra when projection path is reachable.
+      if (reply.error === undefined) {
+        assert.equal((reply.result as { isError?: boolean })?.isError, true);
+      }
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    process.exitCode = priorExitCode;
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Grok MCP projection routes a correctable rejection as a structured non-pass", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-reject-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
@@ -213,6 +411,9 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       const structured = (reply.result as { structuredContent?: Record<string, unknown> })?.structuredContent;
       assert.equal(structured?.code, "coder_skill_expansion_evidence_missing");
       assert.equal((reply.result as { isError?: boolean })?.isError, true);
+      // Branded correctable must not arm hostAbort (#593 r3: slot-before-abort must not
+      // swallow bindSubmissionNonPass throws that the same session may correct).
+      assert.equal(prepared.abortSignal?.aborted, false);
       // Real envelope closeRound must surface the same correctable rejection as retry
       // so executeTurn can re-prompt in the same ACP session (P3 sole-final bounce).
       const closure = await prepared.closeRound();
@@ -740,6 +941,245 @@ test("Grok delayed sibling after terminal candidate is not early-accepted at clo
       await prepared.dispose?.();
     }
   } finally {
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries, and re-prompt succeeds in same ACP session", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-real-seam-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a6";
+    const socketPath = join(root, "mcp.sock");
+    const request = {
+      principal: {}, activation: { role: "notary", sourceRun: "/source" }, methods: [],
+      continuation: { kind: "initial", prompt: "decide" },
+      model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+      agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@notary`),
+    } as RoleTurnRequest;
+    const prompts: Array<Readonly<Record<string, unknown>>> = [];
+    let promptCount = 0;
+    let preparedInstance: import("../../src/grok/role-turn-host.ts").GrokPreparedTurn | undefined;
+    const host = createGrokRoleTurnHost({
+      sessionIdentity: {
+        load: async () => undefined,
+        bind: async () => {},
+      },
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          if (method === "session/new") return { sessionId: "real-seam-session" };
+          if (method === "session/prompt") {
+            prompts.push(params);
+            promptCount += 1;
+            const server = preparedInstance!.mcpServers[0] as McpServer;
+            if (promptCount === 1) {
+              // Round 1: non-sole submission (two terminal tool calls)
+              await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+              await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+              return { stopReason: "end_turn" };
+            }
+            if (promptCount === 2) {
+              // Round 2 (retry): sole terminal tool call
+              await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+              return { stopReason: "end_turn" };
+            }
+          }
+          if (method === "session/close") return {};
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_notary_output"] }),
+      prepare: async (req) => {
+        const prep = await prepareGrokRoleEnvelope({
+          request: req,
+          socketPath,
+          dependencies: {
+            loadJudgeSoul: async () => "JUDGE SOUL",
+            auditSoulCompliance: async () => ({ status: "pass" }),
+            loadNotarySoul: async () => "NOTARY SOUL",
+            loadNotarySourceRun: async () => ({ runDirectory: root, runId, role: "notary" }),
+            createNavigatorAttendance: () => ({
+              prepare() {},
+              setWorkContext() {},
+              warmHelp() {},
+              isPreparing: () => false,
+              settle: async () => {},
+              dispose() {},
+            }),
+          },
+        });
+        preparedInstance = prep;
+        return prep;
+      },
+    });
+
+    const result = await host.executeTurn(request);
+    assert.equal(result.code, 0);
+    assert.equal(result.knownFailure, undefined);
+    assert.equal(prompts.length, 2);
+    assert.equal((prompts[0] as { sessionId: string }).sessionId, "real-seam-session");
+    assert.equal((prompts[1] as { sessionId: string }).sessionId, "real-seam-session");
+    assert.ok(await readSealedSubmission(process.cwd(), runId, root) !== undefined);
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok MCP projection extracts typed evidence keys from failInfrastructure thrown error", async () => {
+  // Doctor has no gatekeeper-before-audit: auditCompliance throw reaches failInfrastructure
+  // with the original error, so closeRound.details must carry NAVIGATOR evidence keys.
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-infra-evidence-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorExitCode = process.exitCode;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a7";
+    const runDir = join(root, "runs", `${runId}@doctor`);
+    const casePath = join(root, "case.json");
+    const zero = { count: 0, sources: [] as string[] };
+    const patient: DoctorCase = {
+      version: 1,
+      identity: { issueNumber: 593, runsPath: join(root, "case-runs") },
+      evidence: [{
+        id: "review/session/live.jsonl",
+        kind: "session",
+        byteLength: 6,
+        contentLength: 2,
+        sha256: "abc",
+        content: "中文",
+      }],
+      cost: {
+        invocations: zero,
+        legs: zero,
+        modelApiTurns: zero,
+        outputTokens: zero,
+        toolCalls: zero,
+        retries: { ...zero, evidence: "literal run-dir naming" },
+        statuses: [],
+        commits: [],
+        sessions: [],
+        outputBytes: { ...zero, payload: "raw JSONL bytes", providerWireBytes: "unavailable" },
+      },
+    };
+    const diagnostic = "doctor audit provider unavailable with typed evidence (#593)";
+    const evidenceError = Object.assign(new Error(diagnostic), {
+      name: "InfrastructureFailure",
+      stage: "doctor-audit",
+      reason: "timeout",
+      submission: { case: patient.identity },
+      observation: "provider stream stalled",
+      candidate: null,
+    });
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "doctor", casePath }, methods: [],
+        continuation: { kind: "initial", prompt: "testify" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: runDir,
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        loadDoctorSoul: async () => "DOCTOR SOUL",
+        loadDoctorCase: async () => patient,
+        auditDoctorCompliance: async () => { throw evidenceError; },
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      assert.ok(prepared.abortSignal instanceof AbortSignal);
+      const server = prepared.mcpServers[0] as McpServer;
+      const reply = await callThroughMcp(server, DOCTOR_OUTPUT_TOOL_NAME, {
+        status: "completed",
+        case: patient.identity,
+        findings: [],
+      });
+      assert.equal(reply.error, undefined);
+      assert.equal((reply.result as { isError?: boolean })?.isError, true);
+      assert.equal(prepared.abortSignal.aborted, true);
+
+      const closure = await prepared.closeRound();
+      assert.equal(closure.accepted, false);
+      assert.ok("failure" in closure, "evidence-bearing infra throw must not fall to retry or MissingSubmission");
+      assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
+      assert.equal(closure.failure.diagnostic, diagnostic);
+      const details = closure.failure.details as Record<string, unknown> | undefined;
+      assert.ok(details !== undefined);
+      assert.equal(details.kind, "role_infrastructure_failure");
+      assert.equal(details.source, "shared-role-lifecycle");
+      assert.equal(details.reasonCode, "host_failure");
+      assert.equal(details.stage, "doctor-audit");
+      assert.equal(details.reason, "timeout");
+      assert.deepEqual(details.submission, { case: patient.identity });
+      assert.equal(details.observation, "provider stream stalled");
+      assert.equal(details.candidate, null);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    process.exitCode = priorExitCode;
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok MCP projection routes thrown correctable submission error as retry without arming infrastructure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-worker-reminder-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a8";
+    const socketPath = join(root, "mcp.sock");
+    const taskPath = join(root, "task.md");
+    await writeFile(taskPath, "TASK");
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "coder", phase: "plan", taskPath }, methods: [],
+        continuation: { kind: "initial", prompt: "decide" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@coder`),
+      } as RoleTurnRequest,
+      socketPath,
+      dependencies: {
+        loadCoderSoul: async () => "CODER SOUL",
+        loadCoderTask: async () => "implement plan",
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      const server = prepared.mcpServers[0] as McpServer;
+      // In plan phase, completed requires plan report
+      const reply = await callThroughMcp(server, CODER_OUTPUT_TOOL_NAME, { status: "completed", report: "" });
+      assert.equal(reply.error, undefined);
+      assert.equal((reply.result as { isError?: boolean })?.isError, true);
+      assert.equal(prepared.abortSignal?.aborted, false);
+
+      const closure = await prepared.closeRound();
+      assert.equal(closure.accepted, false);
+      assert.ok("retry" in closure, "thrown correctable reminder must route to retry");
+      assert.equal(closure.retry.toolCallIds.length, 1);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }

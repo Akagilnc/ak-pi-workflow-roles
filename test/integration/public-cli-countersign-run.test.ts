@@ -1,6 +1,6 @@
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
- * out via real runAkRole entry; one-shot (no resume).
+ * out via real runAkRole entry; #599 resume continues the exact session.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -477,14 +477,102 @@ test("public countersign diarist station: issue-unavailable fetcher fails typed 
   });
 });
 
-test("countersign runs are one-shot — resume is refused", async () => {
+test("ak-role resume continues countersign on the exact session", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
     const runId = "01a0sign00-0000-7000-8000-0000000000aa";
-    const result = await runAkRole(
+    // Ticket acceptance surface: interrupt first (unsealed), then resume lands a
+    // distinct sealed verdict — not a vacuous re-read of a first-run seal (#599).
+    const first = await runAkRole(
+      ["countersign", "--project", project, "裁"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            await writeFile(sessionFile, "\n", "utf8");
+            return {
+              code: 1,
+              stderr: "upstream timeout\n",
+              timedOut: true,
+              args: [...args],
+            };
+          },
+        }),
+      },
+    );
+    assert.equal(first.exitCode, 1);
+    assert.equal(first.terminal?.roleOutcome.kind, "failure");
+    assert.equal(
+      first.terminal?.roleOutcome.kind === "failure"
+        ? first.terminal.roleOutcome.cause
+        : undefined,
+      "timeout",
+    );
+
+    const coords = issuePiDurablePrincipalCoordinates({
+      cwd: project,
+      runId,
+      role: "countersign",
+      home,
+    });
+    const { io: resumeIo, stdout } = captureIo();
+    let resumeArgs: string[] | undefined;
+    const resumed = await runAkRole(["resume", runId, "再裁一次"], {
+      home,
+      packageRoot,
+      cwd: project,
+      io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          resumeArgs = [...args];
+          return scriptedCountersignSession({
+            countersignStatus: "converged",
+            note: "RESUMED-续署",
+          })(args, options);
+        },
+      }),
+    });
+    assert.equal(resumed.exitCode, 0, stdout.join("") || "countersign resume failed");
+    assert.equal(Array.isArray(resumeArgs), true);
+    assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "countersign");
+    assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
+    assert.equal(resumeArgs!.includes("再裁一次"), true);
+    assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      resumed.terminal?.roleOutcome.kind === "accepted"
+        ? resumed.terminal.roleOutcome.status
+        : undefined,
+      "converged",
+    );
+    const facts = resumed.terminal?.roleOutcome.kind === "accepted"
+      ? (resumed.terminal.roleOutcome.decisiveFacts as Record<string, unknown>)
+      : undefined;
+    assert.equal(facts?.note, "RESUMED-续署");
+  });
+});
+
+test("ak-role resume after sealed countersign presents the sealed verdict without dispatch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const runId = "01a0sign00-0000-7000-8000-0000000000ab";
+    const first = await runAkRole(
       ["countersign", "--project", project, "裁"],
       {
         home,
@@ -497,22 +585,136 @@ test("countersign runs are one-shot — resume is refused", async () => {
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: scriptedCountersignSession({
             countersignStatus: "converged",
-            note: "署",
+            note: "FIRST-署",
           }),
         }),
       },
     );
-    assert.equal(result.exitCode, 0);
+    assert.equal(first.exitCode, 0);
+    assert.equal(
+      first.terminal?.roleOutcome.kind === "accepted"
+        ? (first.terminal.roleOutcome.decisiveFacts as { note?: string }).note
+        : undefined,
+      "FIRST-署",
+    );
 
-    const { io: resumeIo } = captureIo();
-    const refused = await runAkRole(["resume", runId, "再裁一次"], {
+    let resumeDispatches = 0;
+    const { io: resumeIo, stdout } = captureIo();
+    const resumed = await runAkRole(["resume", runId, "再裁一次"], {
       home,
       packageRoot,
       cwd: project,
       io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          resumeDispatches += 1;
+          return scriptedCountersignSession({
+            countersignStatus: "continue",
+            fix: { summary: "RESUMED-封驳-must-not-land" },
+          })(args, options);
+        },
+      }),
     });
-    assert.equal(refused.exitCode, 2);
-    assert.equal(refused.terminal, undefined);
+    assert.equal(resumeDispatches, 0, "sealed resume must not dispatch a doomed turn");
+    assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      resumed.terminal?.roleOutcome.kind === "accepted"
+        ? resumed.terminal.roleOutcome.status
+        : undefined,
+      "converged",
+    );
+    const facts = resumed.terminal?.roleOutcome.kind === "accepted"
+      ? (resumed.terminal.roleOutcome.decisiveFacts as Record<string, unknown>)
+      : undefined;
+    assert.equal(facts?.note, "FIRST-署");
+    assert.notEqual(facts?.fixSummary, "RESUMED-封驳-must-not-land");
+  });
+});
+
+test("countersign resume timeout is not masked by a prior-attempt residual", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const runId = "01a0sign00-0000-7000-8000-0000000000ac";
+    const first = await runAkRole(
+      ["countersign", "--project", project, "裁"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedTerminatingToolSession({
+            role: "countersign",
+            toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+            details: { countersignStatus: "converged", note: "PRIOR-residual" },
+            isError: true,
+            acceptedText: "PRIOR-attempt-residual-error",
+          }),
+        }),
+      },
+    );
+    assert.equal(first.exitCode, 1);
+    assert.equal(first.terminal?.roleOutcome.kind, "failure");
+    assert.equal(
+      first.terminal?.roleOutcome.kind === "failure"
+        ? first.terminal.roleOutcome.cause
+        : undefined,
+      "output",
+    );
+
+    const { io: resumeIo, stdout } = captureIo();
+    const resumed = await runAkRole(["resume", runId, "再试"], {
+      home,
+      packageRoot,
+      cwd: project,
+      io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          // Append a resumed user turn; keep the prior residual so the scan
+          // boundary is exercised (production resume appends, does not wipe).
+          const prior = await readFile(sessionFile, "utf8");
+          const resumeUser = {
+            type: "message",
+            id: "user-resume",
+            parentId: null,
+            timestamp: "2026-08-30T00:01:00.000Z",
+            message: { role: "user", content: "再试", timestamp: 10 },
+          };
+          await writeFile(
+            sessionFile,
+            `${prior}${JSON.stringify(resumeUser)}\n`,
+            "utf8",
+          );
+          return {
+            code: 1,
+            stderr: "upstream timeout\n",
+            timedOut: true,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(resumed.exitCode, 1, stdout.join("") || "resume timeout path failed");
+    assert.equal(resumed.terminal?.roleOutcome.kind, "failure");
+    assert.equal(
+      resumed.terminal?.roleOutcome.kind === "failure"
+        ? resumed.terminal.roleOutcome.cause
+        : undefined,
+      "timeout",
+      "prior-attempt residual must not mask current resume timeout",
+    );
   });
 });
 

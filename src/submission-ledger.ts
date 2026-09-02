@@ -4,12 +4,7 @@ import {
 } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
-import {
-  GatekeeperDecisionError,
-  WorkerCommitReminderError,
-  WorkerPrefixReminderError,
-  WorkerUnfinishedReasonReminderError,
-} from "./submission-errors.ts";
+
 import {
   acceptedFacts,
   isTerminatingToolName,
@@ -19,7 +14,7 @@ import {
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
 import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
-import { isCorrectableSubmissionError } from "./submission-correctable-error.ts";
+import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
@@ -303,13 +298,7 @@ export function createSubmissionLedgerHost(
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (
-              isCorrectableSubmissionError(error)
-              || error instanceof GatekeeperDecisionError
-              || error instanceof WorkerCommitReminderError
-              || error instanceof WorkerPrefixReminderError
-              || error instanceof WorkerUnfinishedReasonReminderError
-            ) {
+            if (isCorrectableExecuteError(error)) {
               append({
                 type: "outcome",
                 attemptId,
