@@ -10,6 +10,7 @@ import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import { callThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
@@ -460,6 +461,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     const sameHostPrompts: Array<Readonly<Record<string, unknown>>> = [];
     let grokResumeCount = 0;
     let boundSessionId: string | undefined;
+    let preparedInstance: Awaited<ReturnType<typeof prepareGrokRoleEnvelope>> | undefined;
 
     const grokHost = createGrokRoleTurnHost({
       sessionIdentity: {
@@ -478,6 +480,17 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
           if (method === "session/prompt") {
             if (grokResumeCount === 1) transitionPrompts.push(params);
             else sameHostPrompts.push(params);
+            // Exercise production envelope MCP toolCall/toolResult path (former writeback seam).
+            assert.ok(preparedInstance !== undefined);
+            const server = preparedInstance.mcpServers[0] as GrokMcpServer;
+            // Prefer a schema-valid continue leaf so the full toolCall→result path runs;
+            // closeRound still returns 429 below (do not seal accepted).
+            await callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
+              judgeStatus: "continue",
+              fix: { summary: "dk4-writeback-probe" },
+              classes: [{ name: "c", owner: "o", boundary: "b", disposition: "d" }],
+              note: "envelope mcp path",
+            });
             return { stopReason: "end_turn" };
           }
           if (method === "session/close") return {};
@@ -487,25 +500,39 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
         async close() {},
       }),
       inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
-      prepare: async (request) => ({
-        mcpServers: [{ name: "ak-role" }],
-        systemPrompt: { body: "law", materials: [] },
-        prompt: request.continuation.prompt,
-        closeRound: async () => {
-          // Keep resumable so the same-host second resume can fire.
-          await observeTyped429ViaProductionHandler({
-            runDirectory: request.runDirectory,
-            provider: "openai-codex",
-          });
-          return {
-            accepted: false as const,
-            failure: {
-              cause: "provider" as const,
-              identity: { name: "rate_limit", code: 429 },
-            },
-          };
-        },
-      }),
+      // Production envelope owns session layout + MCP/custom paths under test for DK-4 writeback ban.
+      prepare: async (request) => {
+        const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+        const prepared = await prepareGrokRoleEnvelope({
+          request,
+          sessionFile,
+          socketPath: join(request.runDirectory, `mcp-pi-to-grok-${grokResumeCount}.sock`),
+          dependencies: {
+            loadJudgeSoul: async () => "JUDGE SOUL",
+            auditSoulCompliance: async () => ({ status: "pass" }),
+            activationTraceWriter: async () => {},
+          },
+        });
+        preparedInstance = prepared;
+        return {
+          ...prepared,
+          closeRound: async () => {
+            // Do not seal the MCP continue leaf — force typed 429 so same-host resume stays open.
+            // MCP toolCall/toolResult already ran above (former writeback candidates).
+            await observeTyped429ViaProductionHandler({
+              runDirectory: request.runDirectory,
+              provider: "openai-codex",
+            });
+            return {
+              accepted: false as const,
+              failure: {
+                cause: "provider" as const,
+                identity: { name: "rate_limit", code: 429 },
+              },
+            };
+          },
+        };
+      },
     });
 
     const grokAdapter: NamedRoleTurnHostAdapter = {
@@ -583,6 +610,8 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
       sessionRowsWithoutAttemptHistory(beforeSameHost),
       "same-host Grok resume must not write conversation rows into Pi session.jsonl",
     );
+    // Role-runtime print/json mode may arm process.exitCode on tool paths; clear for the test process.
+    process.exitCode = 0;
   });
 });
 
