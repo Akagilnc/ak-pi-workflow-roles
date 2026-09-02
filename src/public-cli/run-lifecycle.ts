@@ -16,6 +16,7 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
+import { GROK_ACP_SESSION_BINDING } from "../grok/session-identity.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -401,11 +402,13 @@ export async function markRunRunning(
   runDirectory: string,
   effectiveModel?: InvocationEffectiveModel,
   effectiveEngine?: string,
+  effectiveHost?: string,
 ): Promise<void> {
   await recordEffectiveInvocationModel(
     runDirectory,
     effectiveModel,
     effectiveEngine,
+    effectiveHost,
   );
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
@@ -1170,4 +1173,47 @@ export async function peekRoleRunRole(
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
+}
+
+/**
+ * Birth host for bare resume (#595).
+ * Prefer the typed `host` field on invocation.json; for pre-#595 runs without it,
+ * presence of session/grok-acp-session.json ⇒ grok-build, else pi.
+ * Never invents host from the live seat table.
+ */
+export async function resolveRoleRunBirthHost(
+  home: string,
+  runId: string,
+): Promise<string> {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  if (runDirectory === undefined) return "pi";
+  try {
+    const raw: unknown = JSON.parse(
+      await readFile(join(runDirectory, "invocation.json"), "utf8"),
+    );
+    if (
+      raw !== null &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      typeof (raw as { host?: unknown }).host === "string" &&
+      (raw as { host: string }).host.trim() !== ""
+    ) {
+      return (raw as { host: string }).host;
+    }
+  } catch {
+    // Fall through to legacy artifact probe.
+  }
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk !== undefined) {
+    try {
+      await readFile(
+        join(disk.principalWire.sessionDirectory, GROK_ACP_SESSION_BINDING),
+        "utf8",
+      );
+      return "grok-build";
+    } catch {
+      // Missing or unreadable binding ⇒ Pi birth.
+    }
+  }
+  return "pi";
 }
