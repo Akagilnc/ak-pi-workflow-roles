@@ -137,11 +137,13 @@ export type RoleTurnModelConfig = {
 
 /**
  * Typed cross-host resume handoff (#617 DK-4).
- * Present only when this turn's live host differs from the previous invocation host.
- * Adapters load the previous host's native records as opaque context once per transition.
+ * Present only when post-admission projects a real switch between known hosts.
+ * priorNativeRecords are opaque bytes from the previous host's native volume —
+ * adapters deliver them as context; they never re-resolve source paths.
  */
 export type RoleTurnHostTransition = {
-  readonly previousHost: string;
+  readonly previousHost: "pi" | "grok-build";
+  readonly priorNativeRecords: string;
 };
 
 /** One main-session turn request over the host-neutral execution seam. */
