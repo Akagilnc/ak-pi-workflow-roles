@@ -16,6 +16,7 @@ import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/c
 import {
   CROSS_HOST_BASH_CALL_ID,
   CROSS_HOST_BASH_MARKER,
+  CROSS_HOST_GROK_USER_MARKER,
 } from "../fixtures/cross-host-resume-provider.ts";
 import {
   argvFlagValue,
@@ -525,7 +526,8 @@ test(
 
       {
         const { io, stderr } = captureIo();
-        const grokResume = await runAkRole(["resume", runId], {
+        // Unique opaque message → Grok appends it to JSONL; settle resume stays bare.
+        const grokResume = await runAkRole(["resume", runId, CROSS_HOST_GROK_USER_MARKER], {
           packageRoot,
           home,
           agentDir,

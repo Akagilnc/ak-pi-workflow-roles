@@ -48,6 +48,7 @@ const TICKET_HEAVYWEIGHT = [
   "test/integration/public-cli-judge-run.test.ts",
   "test/integration/public-cli-judge-engine-detour.test.ts",
   "test/integration/public-cli-coder-installed-run.test.ts",
+  "test/integration/public-cli-host-axis.test.ts",
   "test/package/package-entrypoint-cold-help.integration.test.ts",
   "test/package/package-entrypoint-navigator.integration.test.ts",
   "test/package/package-entrypoint-observation.integration.test.ts",

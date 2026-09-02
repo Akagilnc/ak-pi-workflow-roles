@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, readFileSync } from "node:fs";
 import { copyFile, lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
@@ -226,8 +227,48 @@ export function appendGrokSessionJsonlEntry(
 }
 
 /**
+ * Last non-session entry id in the JSONL tree — parent for the next Pi-shaped append.
+ * Same leaf walk as settlement attempt-history / Pi custom append (#617 cross-host restore).
+ */
+function lastSessionTreeEntryId(sessionFile: string): string | null {
+  let parentId: string | null = null;
+  let text: string;
+  try {
+    text = readFileSync(sessionFile, "utf8");
+  } catch {
+    return null;
+  }
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const entry = JSON.parse(line) as { id?: unknown; type?: unknown };
+      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+    } catch {
+      // Skip corrupt lines; write path stays loud on append failure.
+    }
+  }
+  return parentId;
+}
+
+/** Tree-linked envelope shared by every Grok→JSONL message write Pi can restore. */
+function appendPiShapedSessionMessage(
+  sessionFile: string,
+  message: Readonly<Record<string, unknown>>,
+): void {
+  const timestamp = new Date().toISOString();
+  appendGrokSessionJsonlEntry(sessionFile, {
+    type: "message",
+    id: randomUUID(),
+    parentId: lastSessionTreeEntryId(sessionFile),
+    timestamp,
+    message,
+  });
+}
+
+/**
  * Append one Pi-shaped user/assistant text entry to the durable session JSONL.
  * prepare owns layout creation (`session/session.jsonl`).
+ * Must carry id/parentId so Pi `--session` restore walks the entry into LLM context.
  */
 export function appendGrokSessionMessage(
   sessionFile: string,
@@ -235,9 +276,30 @@ export function appendGrokSessionMessage(
   text: string,
 ): void {
   if (text.trim() === "") return;
-  appendGrokSessionJsonlEntry(sessionFile, {
-    type: "message",
-    message: { role, content: [{ type: "text", text }] },
+  appendPiShapedSessionMessage(sessionFile, {
+    role,
+    content: [{ type: "text", text }],
+    timestamp: Date.now(),
+  });
+}
+
+/** Append a Pi-shaped assistant toolCall leaf (tree-linked for Pi restore). */
+export function appendGrokSessionToolCall(
+  sessionFile: string,
+  toolCall: {
+    readonly id: string;
+    readonly name: string;
+    readonly arguments?: unknown;
+  },
+): void {
+  appendPiShapedSessionMessage(sessionFile, {
+    role: "assistant",
+    content: [{
+      type: "toolCall",
+      id: toolCall.id,
+      name: toolCall.name,
+      arguments: toolCall.arguments ?? {},
+    }],
   });
 }
 
@@ -252,16 +314,13 @@ export function appendGrokSessionToolResult(
     readonly isError: boolean;
   },
 ): void {
-  appendGrokSessionJsonlEntry(sessionFile, {
-    type: "message",
-    message: {
-      role: "toolResult",
-      toolCallId: toolResult.toolCallId,
-      toolName: toolResult.toolName,
-      content: toolResult.content,
-      details: toolResult.details,
-      isError: toolResult.isError,
-    },
+  appendPiShapedSessionMessage(sessionFile, {
+    role: "toolResult",
+    toolCallId: toolResult.toolCallId,
+    toolName: toolResult.toolName,
+    content: toolResult.content,
+    details: toolResult.details,
+    isError: toolResult.isError,
   });
 }
 
