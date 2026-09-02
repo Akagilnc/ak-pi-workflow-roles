@@ -22,6 +22,7 @@ import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
@@ -858,36 +859,18 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
 
     let receivedArgs: readonly string[] = [];
     // roleTurnHostFromLegacyPiRunner → createPiRoleTurnHost (real hostTransition path).
+    // Reuse #502 scriptedTerminatingToolSession for sealed accepted session shape.
+    const sealAccepted = scriptedTerminatingToolSession({
+      role: "judge",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      details: { judgeStatus: "converged" },
+    });
     const piHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args) => {
+      piRunner: async (args, options) => {
         receivedArgs = args;
-        const sessionFile = args[args.indexOf("--session") + 1]!;
-        // Seal accepted so public resume settles lawfully without a real model.
-        await writeFile(
-          sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: { judgeStatus: "converged" },
-            },
-          })}\n`,
-          "utf8",
-        );
-        return {
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-          sealedAcceptance: {
-            role: "judge" as const,
-            details: { judgeStatus: "converged" },
-          },
-        };
+        return sealAccepted(args, options);
       },
     });
 
