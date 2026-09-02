@@ -1,11 +1,12 @@
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
   executeAuditorChild,
 } from "./evidence-child-executor.ts";
 import { createAuditorDossierTool } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
+import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
 export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
@@ -72,7 +73,7 @@ export class ComplianceResponseRetentionError extends Error {
     attachDirectErrnoCode(this, options?.cause);
   }
 }
-function retainComplianceResponse(context: ExtensionContext, response: AssistantMessage): void {
+function retainComplianceResponse(context: HostContext, response: AssistantMessage): void {
   try {
     sitianReport({
       level: "event",
@@ -116,7 +117,7 @@ export type RunComplianceAuditOptions = {
   serializedInput?: string;
   roleLabel: string;
   invalidDecisionLabel: string;
-  context: ExtensionContext;
+  context: HostContext;
   /** Exact machine-owned run binding; never sourced from AK_ROLE_RUN_DIR. */
   runDirectory?: string | undefined;
   signal?: AbortSignal;

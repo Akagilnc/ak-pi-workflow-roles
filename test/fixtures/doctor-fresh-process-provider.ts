@@ -7,6 +7,7 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { navigatorChildOrUndefined } from "../helpers/navigator-child-fixture.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -32,27 +33,33 @@ export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Prom
     captured = true;
     writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
   };
-  faux.setResponses([
-    (context: Context) => {
-      capture(context);
+  // Deterministic dispatch by real tool names: Navigator institutional child may
+  // consume a turn before Doctor output/audit (#590).
+  const respond = (context: Context) => {
+    const navigator = navigatorChildOrUndefined(context, { role: "doctor", phase: null });
+    if (navigator !== undefined) return navigator;
+    capture(context);
+    const names = context.tools?.map((tool) => tool.name) ?? [];
+    if (names.includes(DOCTOR_AUDIT_TOOL_NAME)) {
       return fauxAssistantMessage(
         fauxToolCall(
-          DOCTOR_OUTPUT_TOOL_NAME,
-          { status: "completed", case: { issueNumber, runsPath }, findings: [] },
-          { id: "doctor-output" },
+          DOCTOR_AUDIT_TOOL_NAME,
+          { status: "pass", violations: [], conflicts: [], decisionGate: null },
+          { id: "doctor-audit" },
         ),
         { stopReason: "toolUse" },
       );
-    },
-    fauxAssistantMessage(
+    }
+    return fauxAssistantMessage(
       fauxToolCall(
-        DOCTOR_AUDIT_TOOL_NAME,
-        { status: "pass", violations: [], conflicts: [], decisionGate: null },
-        { id: "doctor-audit" },
+        DOCTOR_OUTPUT_TOOL_NAME,
+        { status: "completed", case: { issueNumber, runsPath }, findings: [] },
+        { id: "doctor-output" },
       ),
       { stopReason: "toolUse" },
-    ),
-  ]);
+    );
+  };
+  faux.setResponses(Array.from({ length: 8 }, () => respond));
 
   const model = faux.getModel();
   const provider: Provider = {
