@@ -34,10 +34,10 @@ import {
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "../submission-errors.ts";
-import { isCorrectableSubmissionError } from "../submission-correctable-error.ts";
+import { isCorrectableExecuteError } from "../submission-correctable-error.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
-  NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
+  extractInfrastructureFailureEvidence,
 } from "../navigator-invocation-identity.ts";
 
 type Handler = HostEventRegistration[1];
@@ -269,16 +269,6 @@ export async function prepareGrokRoleEnvelope(options: {
 
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
-  function extractInfrastructureFailureEvidence(error: unknown): Record<string, unknown> {
-    if (typeof error !== "object" || error === null) return {};
-    const record = error as Record<string, unknown>;
-    const evidence: Record<string, unknown> = {};
-    for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS) {
-      if (!Object.hasOwn(record, key)) continue;
-      evidence[key] = record[key] === undefined ? null : record[key];
-    }
-    return evidence;
-  }
   /** Correctable non-pass must arm the existing rejection state so closeRound returns retry. */
   function rememberProjectedRejection(details: unknown, toolCallId: string): void {
     if (typeof details !== "object" || details === null) return;
@@ -409,14 +399,8 @@ export async function prepareGrokRoleEnvelope(options: {
             } catch (error) {
               const diagnostic = error instanceof Error ? error.message : String(error);
               const content: ContentPart[] = [{ type: "text", text: diagnostic }];
-              const isCorrectable = isCorrectableSubmissionError(error)
-                || error instanceof GatekeeperDecisionError
-                || error instanceof WorkerCommitReminderError
-                || error instanceof WorkerPrefixReminderError
-                || error instanceof WorkerUnfinishedReasonReminderError;
-
               let details: Record<string, unknown>;
-              if (isCorrectable) {
+              if (isCorrectableExecuteError(error)) {
                 if (error instanceof GatekeeperDecisionError) {
                   details = { ...error.result };
                 } else if (
