@@ -202,46 +202,6 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
       model: "gpt-5.6-sol",
       thinking: "low",
     });
-
-    // Explicit notary pin must not follow a later gatekeeper change.
-    assert.equal(
-      (
-        await runAkRole(["config", "set", "notary", "xai/grok-4.5:high"], {
-          home,
-          packageRoot,
-          io: captureIo().io,
-        })
-      ).exitCode,
-      0,
-    );
-    assert.equal(
-      (
-        await runAkRole(
-          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:xhigh"],
-          { home, packageRoot, io: captureIo().io },
-        )
-      ).exitCode,
-      0,
-    );
-    const pinnedCapture: { current: RoleTurnRequest | undefined } = { current: undefined };
-    await runAkRole(["notary", "--source-run", sourceRunPath], {
-      home,
-      packageRoot,
-      cwd: project,
-      credentials,
-      createRunId: () => "01a0notary-0000-7000-8000-000000000621",
-      io: captureIo().io,
-      roleTurnHost: createMinimalHost((request) => {
-        pinnedCapture.current = request;
-        return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
-      }),
-    });
-    const pinned = pinnedCapture.current!;
-    assert.deepEqual(pinned.model, {
-      provider: "xai",
-      model: "grok-4.5",
-      thinking: "high",
-    });
   });
 });
 

@@ -20,7 +20,6 @@ import {
   parseModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
-  seatModelOnly,
   setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
@@ -768,27 +767,77 @@ function renderRoles(seats: readonly EffectiveSeat[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-function renderPersistentSeatModel(selection: {
-  provider?: string;
-  model?: string;
-  thinking?: PublicThinkingLevel;
-}): string {
-  const model = seatModelOnly(selection);
-  return model === undefined ? "-" : formatModelSpec(model);
+/**
+ * #620 typed config display row: effective model/source (roles 同投影) plus disk
+ * engine/host residuals. Presentation formats these fields; tests assert the
+ * projection, not TSV layout.
+ */
+export type ConfigDisplaySeat = {
+  readonly seat: EffectiveSeat["seat"];
+  readonly source: EffectiveSeat["source"];
+  readonly selection: EffectiveSeat["selection"];
+  readonly engine?: string;
+  readonly host?: string;
+};
+
+/**
+ * Typed projection consumed by `ak-role config` show/get (#620).
+ * Model/source come solely from resolveEffectiveSeat; engine/host stay disk residuals.
+ */
+export function projectConfigSeatDisplay(
+  config: PublicCliConfig,
+  seat: EffectiveSeat["seat"],
+  credentials: CredentialProviders,
+): ConfigDisplaySeat {
+  const effective = resolveEffectiveSeat(config, seat, credentials);
+  const disk = config.seats[seat];
+  return {
+    seat,
+    source: effective.source,
+    selection: effective.selection,
+    ...(disk?.engine === undefined ? {} : { engine: disk.engine }),
+    ...(disk?.host === undefined ? {} : { host: disk.host }),
+  };
 }
 
-function renderConfig(config: PublicCliConfig): string {
-  const lines: string[] = ["seat\tmodel\tengine\thost"];
-  const keys = Object.keys(config.seats) as (keyof typeof config.seats)[];
-  if (keys.length === 0) {
+export function projectConfigDisplaySeats(
+  config: PublicCliConfig,
+  credentials: CredentialProviders,
+): readonly ConfigDisplaySeat[] {
+  const keys = new Set<EffectiveSeat["seat"]>(
+    Object.keys(config.seats) as EffectiveSeat["seat"][],
+  );
+  // Once any seat exists, province officers stay visible so inheritance is readable.
+  if (keys.size > 0) {
+    keys.add("gatekeeper");
+    keys.add("inspector");
+    keys.add("notary");
+  }
+  return [...keys]
+    .filter((seat) => isPublicConfigurableSeat(seat))
+    .sort()
+    .map((seat) => projectConfigSeatDisplay(config, seat, credentials));
+}
+
+function renderConfigDisplaySeat(row: ConfigDisplaySeat): string {
+  const model =
+    row.selection === undefined ? "-" : formatModelSpec(row.selection);
+  const engine = row.engine === undefined ? "-" : row.engine;
+  const host = row.host === undefined ? "-" : row.host;
+  return `${row.seat}\t${row.source}\t${model}\t${engine}\t${host}`;
+}
+
+function renderConfig(
+  config: PublicCliConfig,
+  credentials: CredentialProviders,
+): string {
+  const lines: string[] = ["seat\tsource\tmodel\tengine\thost"];
+  const rows = projectConfigDisplaySeats(config, credentials);
+  if (rows.length === 0) {
     lines.push("(empty)");
   } else {
-    for (const seat of keys.sort()) {
-      const selection = config.seats[seat];
-      if (selection === undefined) continue;
-      const engine = selection.engine === undefined ? "-" : selection.engine;
-      const host = selection.host === undefined ? "-" : selection.host;
-      lines.push(`${seat}\t${renderPersistentSeatModel(selection)}\t${engine}\t${host}`);
+    for (const row of rows) {
+      lines.push(renderConfigDisplaySeat(row));
     }
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
@@ -801,6 +850,7 @@ async function runConfigCommand(
   home: string,
   packageRoot: string,
   io: CliIo,
+  credentials: CredentialProviders,
 ): Promise<number> {
   if (args.length === 0 || args[0] === "get" || args[0] === "list" || args[0] === "show") {
     const config = await loadAndValidateConfig(home, packageRoot);
@@ -808,17 +858,12 @@ async function runConfigCommand(
       if (!isPublicConfigurableSeat(args[1])) {
         throw new CliUsageError(`unknown configurable seat: ${args[1]}`);
       }
-      const selection = config.seats[args[1]];
-      if (selection === undefined) {
-        io.stdout(`${args[1]}\t(unconfigured)\n`);
-      } else {
-        const engine = selection.engine === undefined ? "-" : selection.engine;
-        const host = selection.host === undefined ? "-" : selection.host;
-        io.stdout(`${args[1]}\t${renderPersistentSeatModel(selection)}\t${engine}\t${host}\n`);
-      }
+      io.stdout(
+        `${renderConfigDisplaySeat(projectConfigSeatDisplay(config, args[1], credentials))}\n`,
+      );
       return 0;
     }
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, credentials));
     return 0;
   }
 
@@ -847,7 +892,7 @@ async function runConfigCommand(
       config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, credentials));
     return 0;
   }
 
@@ -869,7 +914,7 @@ async function runConfigCommand(
       seat,
     );
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, credentials));
     return 0;
   }
 
@@ -887,7 +932,7 @@ async function runConfigCommand(
       throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, credentials));
     return 0;
   }
 
@@ -911,7 +956,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, credentials));
     return 0;
   }
 
@@ -933,7 +978,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, credentials));
     return 0;
   }
 
@@ -966,7 +1011,7 @@ async function runConfigCommand(
     let config = await loadAndValidateConfig(home, packageRoot);
     config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, credentials));
     return 0;
   }
 
@@ -1058,8 +1103,17 @@ export async function runAkRole(
     }
 
     if (parsed.command === "config") {
+      const credentials =
+        env.credentials ??
+        (await loadCredentialProviders(resolveAgentDir(env, home)));
       return {
-        exitCode: await runConfigCommand(parsed.args, home, env.packageRoot, io),
+        exitCode: await runConfigCommand(
+          parsed.args,
+          home,
+          env.packageRoot,
+          io,
+          credentials,
+        ),
       };
     }
 

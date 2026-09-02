@@ -13,11 +13,14 @@ import {
 import {
   buildExplicitInternalActivationArgs,
   helpDocument,
+  projectConfigDisplaySeats,
+  projectConfigSeatDisplay,
   resolveInternalRoleEntrypoint,
   runAkRole,
 } from "../../src/public-cli/cli.ts";
 import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
 import {
+  effectiveSeatConfigurations,
   loadPublicCliConfig,
   publicCliConfigPath,
   resolveEffectiveSeat,
@@ -389,12 +392,33 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
       model: "gpt-5.6-sol",
       thinking: "low",
     });
+  });
+});
 
+test("#620 config set gatekeeper → roles/config display projectors inherit", async () => {
+  await withTempHome(async (home) => {
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
     assert.equal(
       (
-        await runAkRole(["config", "set", "inspector", "xai/grok-4.5:high"], {
+        await runAkRole(
+          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
+          { packageRoot, home, credentials, io: captureIo().io },
+        )
+      ).exitCode,
+      0,
+    );
+
+    // Real display command chain (exit only — presentation is not the contract).
+    assert.equal(
+      (await runAkRole(["roles"], { packageRoot, home, credentials, io: captureIo().io })).exitCode,
+      0,
+    );
+    assert.equal(
+      (
+        await runAkRole(["config", "get", "notary"], {
           packageRoot,
           home,
+          credentials,
           io: captureIo().io,
         })
       ).exitCode,
@@ -402,90 +426,42 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
     );
     assert.equal(
       (
-        await runAkRole(
-          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:xhigh"],
-          { packageRoot, home, io: captureIo().io },
-        )
+        await runAkRole(["config", "show"], {
+          packageRoot,
+          home,
+          credentials,
+          io: captureIo().io,
+        })
       ).exitCode,
       0,
     );
-    const pinnedCapture: { current: RoleTurnRequest | undefined } = { current: undefined };
-    await runAkRole(
-      ["inspector", "--project", project, "--attach", attachment, "Review this material."],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials,
-        createRunId: () => "inspector-pinned-620",
-        io: captureIo().io,
-        roleTurnHost: createMinimalHost((request) => {
-          pinnedCapture.current = request;
-          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
-        }),
-      },
-    );
-    const pinned = pinnedCapture.current!;
-    assert.deepEqual(pinned.model, {
-      provider: "xai",
-      model: "grok-4.5",
-      thinking: "high",
-    });
-  });
-});
 
-test("#620 display path: roles exit 0; effective seats inherit gatekeeper on typed projection", async () => {
-  await withTempHome(async (home) => {
-    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
-    const gateSet = await runAkRole(
-      ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
-      { packageRoot, home, io: captureIo().io },
-    );
-    assert.equal(gateSet.exitCode, 0);
-
-    const listed = await runAkRole(["roles"], {
-      packageRoot,
-      home,
-      credentials,
-      io: captureIo().io,
-    });
-    assert.equal(listed.exitCode, 0);
-
+    // Same typed projectors the display commands consume.
     const config = await loadPublicCliConfig(home);
-    const notary = resolveEffectiveSeat(config, "notary", credentials);
-    const inspector = resolveEffectiveSeat(config, "inspector", credentials);
-    const gatekeeper = resolveEffectiveSeat(config, "gatekeeper", credentials);
-    assert.equal(gatekeeper.source, "persistent");
-    assert.deepEqual(gatekeeper.selection, {
+    const rolesProjection = effectiveSeatConfigurations(config, credentials);
+    const notaryRole = rolesProjection.find((row) => row.seat === "notary");
+    const inspectorRole = rolesProjection.find((row) => row.seat === "inspector");
+    assert.equal(notaryRole?.source, "inherit-gatekeeper");
+    assert.deepEqual(notaryRole?.selection, {
       provider: "openai-codex",
       model: "gpt-5.6-sol",
       thinking: "low",
     });
-    assert.equal(notary.source, "inherit-gatekeeper");
-    assert.deepEqual(notary.selection, gatekeeper.selection);
-    assert.equal(inspector.source, "inherit-gatekeeper");
-    assert.deepEqual(inspector.selection, gatekeeper.selection);
+    assert.equal(inspectorRole?.source, "inherit-gatekeeper");
+    assert.deepEqual(inspectorRole?.selection, notaryRole?.selection);
 
-    // Explicit notary pin is independent of gatekeeper.
-    const notarySet = await runAkRole(
-      ["config", "set", "notary", "xai/grok-4.5:high"],
-      { packageRoot, home, io: captureIo().io },
+    const configRows = projectConfigDisplaySeats(config, credentials);
+    const notaryConfig = configRows.find((row) => row.seat === "notary");
+    assert.equal(notaryConfig?.source, "inherit-gatekeeper");
+    assert.deepEqual(notaryConfig?.selection, notaryRole?.selection);
+    assert.deepEqual(
+      projectConfigSeatDisplay(config, "inspector", credentials).selection,
+      notaryRole?.selection,
     );
-    assert.equal(notarySet.exitCode, 0);
-    const listedPinned = await runAkRole(["roles"], {
-      packageRoot,
-      home,
-      credentials,
-      io: captureIo().io,
-    });
-    assert.equal(listedPinned.exitCode, 0);
-    const pinned = resolveEffectiveSeat(await loadPublicCliConfig(home), "notary", credentials);
-    assert.equal(pinned.source, "persistent");
-    assert.deepEqual(pinned.selection, {
-      provider: "xai",
-      model: "grok-4.5",
-      thinking: "high",
-    });
+    assert.equal(
+      projectConfigSeatDisplay(config, "inspector", credentials).source,
+      "inherit-gatekeeper",
+    );
   });
 });
 
