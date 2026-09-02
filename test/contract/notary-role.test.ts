@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   NOTARY_OUTPUT_TOOL_NAME,
+  notaryDecisiveFacts,
   projectLawfulNotaryOutput,
   retainNotarySubmission,
+  validateRecordedNotaryOutput,
 } from "../../src/notary-contracts.ts";
 import {
   createNotaryRoleRuntime,
@@ -45,6 +47,53 @@ test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is
   assert.equal(projectLawfulNotaryOutput(null), undefined);
   const raw = { status: "maybe", note: "not an explicit release" };
   assert.deepEqual(retainNotarySubmission(raw), raw);
+});
+
+/**
+ * #621 acceptance surface — mechanical typed keys only (status + named findings).
+ * Fixture findings are clause pointers the role leg already produced; this seam
+ * must retain them so bounce/pass can name the clause without free-text scraping.
+ */
+test("#621 notaryDecisiveFacts retains bounce/pass status and named findings", () => {
+  const scenarios = [
+    {
+      label: "rebuild-session-without-quote",
+      output: {
+        status: "bounce" as const,
+        findings: ["Scope 2 重建会话：票面无陛下原话"],
+      },
+    },
+    {
+      label: "adr-name-without-key",
+      output: {
+        status: "bounce" as const,
+        findings: ["ADR 0077 名主张统一格式：无绑定 key"],
+      },
+    },
+    {
+      label: "misaligned-but-both-quoted",
+      output: {
+        status: "pass" as const,
+        findings: ["判词与票面对不上但两者均有原话：不对齐不归符宝郎"],
+      },
+    },
+    {
+      label: "dk3-three-axes-quoted",
+      output: {
+        status: "pass" as const,
+        findings: [],
+      },
+    },
+  ] as const;
+
+  for (const scenario of scenarios) {
+    const recorded = validateRecordedNotaryOutput(scenario.output);
+    assert.equal(recorded.status, scenario.output.status, scenario.label);
+    const facts = notaryDecisiveFacts(recorded);
+    assert.equal(facts.status, scenario.output.status, scenario.label);
+    assert.equal(facts.officer, "notary", scenario.label);
+    assert.deepEqual(facts.findings, scenario.output.findings, scenario.label);
+  }
 });
 
 test("projectNotaryBoundFromFlags + ticket reader: blank unbound; valid binds; invalid throws", () => {
