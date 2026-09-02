@@ -16,12 +16,12 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import {
   installPackedArtifactIntoPiNpm,
+  machineLedgerHome,
   packageRoot,
   piCli,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
-import { withPackageMachineHomeGuard } from "../helpers/package-machine-home-guard.ts";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -148,8 +148,8 @@ test(
     await withHermeticHome(
       { prefix: "ak-public-cli-coder-chain-" },
       async ({ home }) => {
-      // Cold-installed coder chain: blank host seats so only this run's limit/seats apply.
-      await withPackageMachineHomeGuard({ blankSeats: true }, async (guard) => {
+        // #604: hermetic home = package user profile (test preload); fresh seats.
+        const ledgerHome = machineLedgerHome(home);
         const piAgentDir = resolve(home, ".pi", "agent");
         await mkdir(piAgentDir, { recursive: true });
         await writeFile(
@@ -182,8 +182,6 @@ test(
         const project = resolve(home, bookDirName);
         await mkdir(project, { recursive: true });
         seedGitProject(project);
-        const trackedBookKey = resolveBookKeyFromGit(project);
-        guard.trackBook(trackedBookKey);
 
         const providerPath = resolve(
           packageRoot,
@@ -245,7 +243,7 @@ test(
         );
 
         const bookKey = resolveBookKeyFromGit(project);
-        const runsRoot = join(guard.ledgerHome, "books", bookKey, "runs");
+        const runsRoot = join(ledgerHome, "books", bookKey, "runs");
         const { readdir } = await import("node:fs/promises");
         const runDirs = await readdir(runsRoot);
         const coderRun = runDirs.find((name) => name.endsWith("@coder"));
@@ -382,10 +380,9 @@ test(
         );
         assert.ok(closureEntry, "session must retain accepted Coder closure");
         assert.equal((closureEntry as any).data?.details?.status, "completed");
-        const sealed = await readSealedSubmission(project, runId, guard.packageHome);
+        const sealed = await readSealedSubmission(project, runId, home);
         assert.ok(sealed, "sealed submission must be recorded");
         assert.equal(sealed.status, "completed");
-      });
       },
     );
   },
