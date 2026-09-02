@@ -319,8 +319,8 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
         });
       }
 
-      // Explicit resume takes engine from the config seat (engine axis is role
-      // commands only on argv); #453 requires a persistent model before engine.
+      // Explicit resume takes engine from the config seat (#617 seat table);
+      // #453 requires a persistent model before engine.
       {
         const { io, stderr } = captureIo();
         await runAkRole(["config", "set", seat, "xai/grok-4.5:high"], { packageRoot, home, io });

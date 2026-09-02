@@ -265,14 +265,18 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             });
           }
           const continuation = request.continuation;
+          // Same-host grok resume reuses the durable ACP binding via session/load.
+          // Cross-host rebuild (#617 DK-1): missing binding ⇒ session/new from the
+          // shared session/session.jsonl true source, then bind the new ACP id.
           const resumedSessionId = continuation.kind === "resume"
             ? await config.sessionIdentity.load(request.principal)
             : undefined;
-          if (continuation.kind === "resume" && resumedSessionId === undefined) {
-            return failure("session", "GrokAcpSessionFailure", "session-binding-missing");
-          }
+          const openMethod =
+            continuation.kind === "resume" && resumedSessionId !== undefined
+              ? "session/load"
+              : "session/new";
           const session = await connection.request(
-            continuation.kind === "resume" ? "session/load" : "session/new",
+            openMethod,
             {
               ...(resumedSessionId === undefined ? {} : { sessionId: resumedSessionId }),
               cwd: request.cwd,
@@ -284,7 +288,9 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           if (sessionId === undefined || sessionId === "") {
             return failure("session", "GrokAcpSessionFailure", "session-id-missing");
           }
-          if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
+          if (continuation.kind === "initial" || resumedSessionId === undefined) {
+            await config.sessionIdentity.bind(request.principal, sessionId);
+          }
           let prompt = prepared.prompt;
           const abortSignal = prepared.abortSignal;
           const activeConnection = connection;

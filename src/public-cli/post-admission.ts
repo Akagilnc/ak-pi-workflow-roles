@@ -19,7 +19,6 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
-import { resolveResumeModel } from "./turn-request.ts";
 import {
   missingCredentialPreDispatchFailure,
   postRunMissingCredentialFailure,
@@ -67,7 +66,7 @@ export type PostAdmissionEnv = {
   roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   engine?: string;
-  /** Effective main-session host for this run — recorded as birth host (#595). */
+  /** Effective main-session host for this run (#595 admission / #617 resume seat). */
   host?: string;
   credentials?: CredentialProviders;
   timeoutMs?: number;
@@ -489,9 +488,8 @@ export async function runPostAdmissionManualResume<
   terminal?: T;
 }> {
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
-  // Single seam: explicit env model wins; otherwise restore admitted.model
-  // (including thinking) so a model-less manual resume reuses the recorded model.
-  const effectiveModel = resolveResumeModel(env.model, admitted.model);
+  // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
+  const effectiveModel = env.model;
   const shouldPresent =
     adapters.shouldPresentSettled ??
     ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));

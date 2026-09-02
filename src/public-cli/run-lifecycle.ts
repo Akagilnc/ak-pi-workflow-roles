@@ -1297,10 +1297,11 @@ export async function peekRoleRunRole(
 }
 
 /**
- * Birth host for bare resume (#595).
- * Prefer the typed `host` field on invocation.json; for pre-#595 runs without it,
+ * Recorded host on a run's invocation page (#595 provenance).
+ * Prefer the typed `host` field; for pre-#595 runs without it,
  * presence of session/grok-acp-session.json ⇒ grok-build, else pi.
- * Never invents host from the live seat table.
+ * #617: resume host selection no longer consults this — live seat table owns it.
+ * Kept for dossier/legacy readers that still need the recorded birth host.
  */
 export async function resolveRoleRunBirthHost(
   home: string,

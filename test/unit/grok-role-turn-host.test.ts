@@ -356,6 +356,45 @@ test("grok session identity is bound by its authority and decoded for resume", a
   }]);
 });
 
+/** #617 DK-1: missing ACP binding on resume rebuilds via session/new + bind. */
+test("resume without ACP binding rebuilds session via session/new and binds", async () => {
+  const localIds = new WeakMap<object, string>();
+  const principal = {};
+  const sessionCalls: string[] = [];
+  const host = createGrokRoleTurnHost({
+    sessionIdentity: {
+      async load(p: object) { return localIds.get(p); },
+      async bind(p: object, sessionId: string) { localIds.set(p, sessionId); },
+    },
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method) {
+        sessionCalls.push(method);
+        if (method === "initialize") return {};
+        if (method === "session/new") return { sessionId: "rebuilt-s1" };
+        if (method === "session/load") return { sessionId: "should-not-load" };
+        if (method === "session/prompt") return { stopReason: "end_turn" };
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(async () => ({ accepted: true })),
+  });
+
+  const result = await host.executeTurn({
+    ...request,
+    principal,
+    continuation: { kind: "resume", prompt: "cross-host rebuild" },
+  } as RoleTurnRequest);
+  assert.equal(result.code, 0);
+  assert.equal(result.knownFailure, undefined);
+  assert.equal(sessionCalls.includes("session/load"), false);
+  assert.equal(sessionCalls.includes("session/new"), true);
+  assert.equal(localIds.get(principal), "rebuilt-s1");
+});
+
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
   const host = createGrokRoleTurnHost({
     sessionIdentity,

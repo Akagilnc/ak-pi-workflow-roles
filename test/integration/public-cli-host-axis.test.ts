@@ -118,10 +118,28 @@ test("notary model clear preserves independent host and engine residual axes", a
   assert.equal((await loadPublicCliConfig(home)).seats.notary, undefined);
 }));
 
-test("resume refuses --host structurally", async () => homeTest(async (home) => {
-  const result = await runAkRole(["resume", "--host", "pi", "run"], base(home, [adapter("pi", [])]));
-  assert.equal(result.exitCode, 2);
-}));
+test("resume accepts --host and selects that host adapter", async () => {
+  await withHermeticHome({ prefix: "ak-resume-host-flag-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-resume-host-flag";
+    await seedResumableJudge({ home, project, runId });
+
+    const selected: string[] = [];
+    const { io } = captureIo();
+    await runAkRole(["resume", "--host", "grok-build", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials,
+      io,
+      principalAuthority: piDurablePrincipalAuthority,
+      hostAdapters: [adapter("pi", selected), adapter("grok-build", selected)],
+    });
+    assert.deepEqual(selected, ["grok-build"], "resume --host must select the flagged host");
+  });
+});
 
 /** Production composition root (no hostAdapters injection) — #580 / #522 merge precondition. */
 const productionBase = (home: string, roleTurnHost?: RoleTurnHost) => ({
@@ -209,7 +227,7 @@ test("grok-build selection and execution have no provider restriction", async ()
   }
 }));
 
-/** #595: birth host is a typed invocation field; bare resume follows it, not the live seat table. */
+/** #595: birth host is a typed invocation field at admission. */
 test("admission writes typed birth host onto invocation.json", async () => homeTest(async (home) => {
   const selected: string[] = [];
   await configureJudge(home, "grok-build");
@@ -273,8 +291,9 @@ async function seedResumableJudge(input: {
   });
 }
 
-test("bare resume follows birth host when seat table drifts to another host", async () => {
-  await withHermeticHome({ prefix: "ak-birth-host-resume-" }, async ({ home }) => {
+/** #617 DK-3: bare resume follows the live seat table host, not birth host. */
+test("bare resume follows live seat table host when it drifts from birth host", async () => {
+  await withHermeticHome({ prefix: "ak-seat-host-resume-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -283,17 +302,31 @@ test("bare resume follows birth host when seat table drifts to another host", as
     await seedResumableJudge({ home, project, runId });
 
     const books = await readdir(join(home, ".ak-roles", "books"));
-    const inv = JSON.parse(
-      await readFile(
-        join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`, "invocation.json"),
-        "utf8",
-      ),
-    ) as { host?: unknown };
+    const invPath = join(
+      home,
+      ".ak-roles",
+      "books",
+      books[0]!,
+      "runs",
+      `${runId}@judge`,
+      "invocation.json",
+    );
+    const inv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
     assert.equal(inv.host, "pi");
 
     {
-      const { io } = captureIo();
-      await runAkRole(["config", "set-host", "judge", "grok-build"], { packageRoot, home, io });
+      const { io, stderr } = captureIo();
+      // set-host requires a persistent model row first.
+      const setModel = await runAkRole(
+        ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+        { packageRoot, home, io },
+      );
+      assert.equal(setModel.exitCode, 0, stderr.join(""));
+      const setHost = await runAkRole(
+        ["config", "set-host", "judge", "grok-build"],
+        { packageRoot, home, io },
+      );
+      assert.equal(setHost.exitCode, 0, stderr.join(""));
     }
 
     // Contract under test: which host adapter resume selects — not terminal success.
@@ -308,12 +341,19 @@ test("bare resume follows birth host when seat table drifts to another host", as
       principalAuthority: piDurablePrincipalAuthority,
       hostAdapters: [adapter("pi", selected), adapter("grok-build", selected)],
     });
-    assert.deepEqual(selected, ["pi"], "bare resume must keep birth host pi despite seat table grok-build");
+    assert.deepEqual(
+      selected,
+      ["grok-build"],
+      "bare resume must follow seat table grok-build despite birth host pi",
+    );
+
+    const after = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
+    assert.equal(after.host, "grok-build", "resume must record the live seat host on invocation");
   });
 });
 
-test("legacy run without host field: ACP binding ⇒ grok-build birth, else pi", async () => {
-  await withHermeticHome({ prefix: "ak-birth-host-legacy-" }, async ({ home }) => {
+test("legacy run without host field: bare resume still follows live seat table", async () => {
+  await withHermeticHome({ prefix: "ak-seat-host-legacy-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -321,18 +361,7 @@ test("legacy run without host field: ACP binding ⇒ grok-build birth, else pi",
     await seedResumableJudge({
       home,
       project,
-      runId: "run-legacy-pi",
-      afterTurn: async (runDirectory) => {
-        const invPath = join(runDirectory, "invocation.json");
-        const inv = JSON.parse(await readFile(invPath, "utf8")) as Record<string, unknown>;
-        delete inv.host;
-        await writeFile(invPath, `${JSON.stringify(inv, null, 2)}\n`, "utf8");
-      },
-    });
-    await seedResumableJudge({
-      home,
-      project,
-      runId: "run-legacy-grok",
+      runId: "run-legacy-no-host",
       afterTurn: async (runDirectory, sessionDirectory) => {
         await writeFile(
           join(sessionDirectory, "grok-acp-session.json"),
@@ -346,22 +375,35 @@ test("legacy run without host field: ACP binding ⇒ grok-build birth, else pi",
       },
     });
 
-    for (const [runId, expected] of [
-      ["run-legacy-pi", "pi"],
-      ["run-legacy-grok", "grok-build"],
-    ] as const) {
-      const selected: string[] = [];
-      const { io } = captureIo();
-      await runAkRole(["resume", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials,
-        io,
-        principalAuthority: piDurablePrincipalAuthority,
-        hostAdapters: [adapter("pi", selected), adapter("grok-build", selected)],
-      });
-      assert.deepEqual(selected, [expected], `${runId} legacy birth host`);
+    {
+      const { io, stderr } = captureIo();
+      const setModel = await runAkRole(
+        ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+        { packageRoot, home, io },
+      );
+      assert.equal(setModel.exitCode, 0, stderr.join(""));
+      const setHost = await runAkRole(
+        ["config", "set-host", "judge", "grok-build"],
+        { packageRoot, home, io },
+      );
+      assert.equal(setHost.exitCode, 0, stderr.join(""));
     }
+
+    const selected: string[] = [];
+    const { io } = captureIo();
+    await runAkRole(["resume", "run-legacy-no-host"], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials,
+      io,
+      principalAuthority: piDurablePrincipalAuthority,
+      hostAdapters: [adapter("pi", selected), adapter("grok-build", selected)],
+    });
+    assert.deepEqual(
+      selected,
+      ["grok-build"],
+      "legacy missing host field must not pin resume to inferred birth host",
+    );
   });
 });
