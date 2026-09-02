@@ -4,6 +4,10 @@
  * home. This guard uses a cross-process lock, durable on-disk backup, saves/restores
  * public-cli.json and removes test-owned book directories so the host ledger is
  * not left dirty.
+ *
+ * Crash contract: backup file is the recovery source. On entry under the lock,
+ * any leftover backup from a killed prior holder is restored before a new backup
+ * is taken — never overwrite a surviving backup with a blanked table.
  */
 import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
@@ -30,6 +34,17 @@ export type PackageMachineHomeGuardOptions = {
   readonly blankSeats?: boolean;
 };
 
+function lockHolderAlive(pidText: string): boolean {
+  const pid = Number.parseInt(pidText.trim().split(/\r?\n/, 1)[0] ?? "", 10);
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function acquireCrossProcessLock(
   lockPath: string,
   timeoutMs = 60_000,
@@ -43,26 +58,40 @@ async function acquireCrossProcessLock(
       await handle.writeFile(`${process.pid}\n${Date.now()}\n`, "utf8");
       break;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        if (Date.now() - start > timeoutMs) {
-          throw new Error(`Timed out waiting for lock at ${lockPath} after ${timeoutMs}ms`);
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      // Dead holder left the lock behind — clear and retry once the pid is gone.
+      try {
+        const holder = await readFile(lockPath, "utf8");
+        if (!lockHolderAlive(holder)) {
+          await rm(lockPath, { force: true });
+          continue;
         }
-        await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
-      } else {
-        throw error;
+      } catch {
+        // raced with holder release or unreadable lock; fall through to retry
       }
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(`Timed out waiting for lock at ${lockPath} after ${timeoutMs}ms`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
     }
   }
   return async () => {
     try {
-      if (handle) {
-        await handle.close();
-      }
-    } catch {}
-    try {
-      await rm(lockPath, { force: true });
-    } catch {}
+      await handle?.close();
+    } catch {
+      // best-effort close before unlinking
+    }
+    await rm(lockPath, { force: true });
   };
+}
+
+async function readOptionalUtf8(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 export async function withPackageMachineHomeGuard<T>(
@@ -89,17 +118,22 @@ export async function withPackageMachineHomeGuard<T>(
 
   const releaseLock = await acquireCrossProcessLock(lockPath);
   const trackedBooks = new Set<string>();
-  let priorConfigExisted = false;
+  /** True when a host config existed (or was recovered) and must be restored. */
+  let restoreFromBackup = false;
 
   try {
-    try {
-      const priorConfig = await readFile(configPath, "utf8");
-      priorConfigExisted = true;
-      // Durable on-disk backup before any mutate
+    // Crash recovery: leftover backup is the last known-good host table.
+    // Restore it before taking a new backup so a blanked table cannot become "prior".
+    const staleBackup = await readOptionalUtf8(backupPath);
+    if (staleBackup !== undefined) {
+      await writeFile(configPath, staleBackup, "utf8");
+    }
+
+    const priorConfig = await readOptionalUtf8(configPath);
+    if (priorConfig !== undefined) {
       await writeFile(backupPath, priorConfig, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      // No config existed initially; ensure stale backup is cleared
+      restoreFromBackup = true;
+    } else {
       await rm(backupPath, { force: true });
     }
 
@@ -122,13 +156,13 @@ export async function withPackageMachineHomeGuard<T>(
       for (const bookKey of trackedBooks) {
         await rm(join(ledgerHome, "books", bookKey), { recursive: true, force: true });
       }
-      if (priorConfigExisted) {
-        try {
-          const backupBytes = await readFile(backupPath, "utf8");
+      if (restoreFromBackup) {
+        const backupBytes = await readOptionalUtf8(backupPath);
+        if (backupBytes === undefined) {
+          // Backup missing mid-flight: leave configPath as-is rather than delete host seats.
+        } else {
           await writeFile(configPath, backupBytes, "utf8");
           await rm(backupPath, { force: true });
-        } catch {
-          // If backup read failed, preserve configPath
         }
       } else {
         await rm(configPath, { force: true });
