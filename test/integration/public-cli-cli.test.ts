@@ -23,10 +23,12 @@ import {
   resolveEffectiveSeat,
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
+  createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
@@ -339,26 +341,130 @@ test("config persistence round-trips across processes on the typed seat face", a
   });
 });
 
-test("#620 roles shows inherit-gatekeeper for unset notary/inspector", async () => {
+test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRequest.model", async () => {
   await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project);
+    execFileSync("git", ["init", "-b", "main"], { cwd: project, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "inspector@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Inspector Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
+      cwd: project,
+      stdio: "ignore",
+    });
+    const attachment = join(project, "material.txt");
+    await writeFile(attachment, "frozen review material", "utf8");
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
+
+    assert.equal(
+      (
+        await runAkRole(
+          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
+          { packageRoot, home, io: captureIo().io },
+        )
+      ).exitCode,
+      0,
+    );
+
+    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
+    await runAkRole(
+      ["inspector", "--project", project, "--attach", attachment, "Review this material."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        createRunId: () => "inspector-inherit-620",
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          captured.current = request;
+          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+        }),
+      },
+    );
+    assert.ok(captured.current);
+    assert.equal(captured.current.activation.role, "inspector");
+    assert.deepEqual(captured.current.model, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "low",
+    });
+
+    assert.equal(
+      (
+        await runAkRole(["config", "set", "inspector", "xai/grok-4.5:high"], {
+          packageRoot,
+          home,
+          io: captureIo().io,
+        })
+      ).exitCode,
+      0,
+    );
+    assert.equal(
+      (
+        await runAkRole(
+          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:xhigh"],
+          { packageRoot, home, io: captureIo().io },
+        )
+      ).exitCode,
+      0,
+    );
+    captured.current = undefined;
+    await runAkRole(
+      ["inspector", "--project", project, "--attach", attachment, "Review this material."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        createRunId: () => "inspector-pinned-620",
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          captured.current = request;
+          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+        }),
+      },
+    );
+    assert.ok(captured.current);
+    assert.deepEqual(captured.current.model, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
+  });
+});
+
+test("#620 display path: roles exit 0; effective seats inherit gatekeeper on typed projection", async () => {
+  await withTempHome(async (home) => {
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
     const gateSet = await runAkRole(
       ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
       { packageRoot, home, io: captureIo().io },
     );
     assert.equal(gateSet.exitCode, 0);
 
-    const roles = captureIo();
     const listed = await runAkRole(["roles"], {
       packageRoot,
       home,
-      credentials: { "openai-codex": true, xai: true },
-      io: roles.io,
+      credentials,
+      io: captureIo().io,
     });
     assert.equal(listed.exitCode, 0);
-    const body = roles.stdout.join("");
-    assert.match(body, /^notary\tcallable\tinherit-gatekeeper\topenai-codex\/gpt-5\.6-sol:low$/m);
-    assert.match(body, /^inspector\tcallable\tinherit-gatekeeper\topenai-codex\/gpt-5\.6-sol:low$/m);
-    assert.match(body, /^gatekeeper\tautomatic\tpersistent\topenai-codex\/gpt-5\.6-sol:low$/m);
+
+    const config = await loadPublicCliConfig(home);
+    const notary = resolveEffectiveSeat(config, "notary", credentials);
+    const inspector = resolveEffectiveSeat(config, "inspector", credentials);
+    const gatekeeper = resolveEffectiveSeat(config, "gatekeeper", credentials);
+    assert.equal(gatekeeper.source, "persistent");
+    assert.deepEqual(gatekeeper.selection, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "low",
+    });
+    assert.equal(notary.source, "inherit-gatekeeper");
+    assert.deepEqual(notary.selection, gatekeeper.selection);
+    assert.equal(inspector.source, "inherit-gatekeeper");
+    assert.deepEqual(inspector.selection, gatekeeper.selection);
 
     // Explicit notary pin is independent of gatekeeper.
     const notarySet = await runAkRole(
@@ -366,18 +472,20 @@ test("#620 roles shows inherit-gatekeeper for unset notary/inspector", async () 
       { packageRoot, home, io: captureIo().io },
     );
     assert.equal(notarySet.exitCode, 0);
-    const rolesPinned = captureIo();
     const listedPinned = await runAkRole(["roles"], {
       packageRoot,
       home,
-      credentials: { "openai-codex": true, xai: true },
-      io: rolesPinned.io,
+      credentials,
+      io: captureIo().io,
     });
     assert.equal(listedPinned.exitCode, 0);
-    assert.match(
-      rolesPinned.stdout.join(""),
-      /^notary\tcallable\tpersistent\txai\/grok-4\.5:high$/m,
-    );
+    const pinned = resolveEffectiveSeat(await loadPublicCliConfig(home), "notary", credentials);
+    assert.equal(pinned.source, "persistent");
+    assert.deepEqual(pinned.selection, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
   });
 });
 
