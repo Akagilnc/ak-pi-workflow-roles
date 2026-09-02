@@ -7,19 +7,45 @@
  * fixtures that resolve through $HOME cannot touch the host ~/.pi tree.
  * Explicit options.home wins over that default.
  *
+ * #612: the default home is process-owned — created under temp and removed on
+ * process exit. Callers that pass options.home own that path themselves.
+ *
  * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
  * @returns {NodeJS.ProcessEnv}
  */
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /** Per-process default temp HOME for this test run (Scope 1). Not exported. */
 let defaultTestHome;
+let defaultTestHomeCleanupRegistered = false;
+
+function registerDefaultTestHomeCleanup() {
+  if (defaultTestHomeCleanupRegistered) return;
+  defaultTestHomeCleanupRegistered = true;
+  process.on("exit", () => {
+    if (defaultTestHome === undefined) return;
+    try {
+      rmSync(defaultTestHome, { recursive: true, force: true });
+    } catch (error) {
+      // Exit-phase best-effort: still land the real cause on stderr before death.
+      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      try {
+        process.stderr.write(
+          `[test-process-env] failed to remove default test home ${defaultTestHome}: ${detail}\n`,
+        );
+      } catch {
+        // stderr may already be closed during process teardown
+      }
+    }
+  });
+}
 
 function defaultIsolatedTestHome() {
   if (defaultTestHome === undefined) {
     defaultTestHome = mkdtempSync(join(tmpdir(), "ak-roles-test-home-"));
+    registerDefaultTestHomeCleanup();
   }
   return defaultTestHome;
 }

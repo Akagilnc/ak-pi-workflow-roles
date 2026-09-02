@@ -26,6 +26,7 @@ import {
   analystIssuePagePath,
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -183,82 +184,98 @@ async function withBookScopeWorld<T>(
     readonly bookKey: string;
   }) => Promise<T>,
 ): Promise<T> {
+  // Each temp root is owned by a registered cleanup before the next fallible step.
   const home = await mkdtemp(join(tmpdir(), "analyst-399-home-"));
-  const mainRoot = await mkdtemp(join(tmpdir(), "analyst-399-main-"));
   const previousHome = process.env.HOME;
-  process.env.HOME = home;
-  let worktreeRoot = "";
-  let worktree2Root = "";
-  try {
-    execFileSync("git", ["init"], { cwd: mainRoot });
-    execFileSync("git", ["branch", "-M", "main"], { cwd: mainRoot });
-    await writeFile(join(mainRoot, "README.md"), "399\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: mainRoot });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: mainRoot },
-    );
+  let mainRoot = "";
+  let worktreeParent1 = "";
+  let worktreeParent2 = "";
+  return withPrimaryAwareCleanup(
+    async () => {
+      process.env.HOME = home;
+      mainRoot = await mkdtemp(join(tmpdir(), "analyst-399-main-"));
+      execFileSync("git", ["init"], { cwd: mainRoot });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: mainRoot });
+      await writeFile(join(mainRoot, "README.md"), "399\n", "utf8");
+      execFileSync("git", ["add", "README.md"], { cwd: mainRoot });
+      execFileSync(
+        "git",
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        { cwd: mainRoot },
+      );
 
-    worktreeRoot = join(await mkdtemp(join(tmpdir(), "analyst-399-wt1-")), "wt");
-    worktree2Root = join(await mkdtemp(join(tmpdir(), "analyst-399-wt2-")), "wt");
-    execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
-    execFileSync("git", ["worktree", "add", worktree2Root, "-b", "wt2"], { cwd: mainRoot });
+      // Own each parent immediately after allocation (not after both succeed).
+      worktreeParent1 = await mkdtemp(join(tmpdir(), "analyst-399-wt1-"));
+      worktreeParent2 = await mkdtemp(join(tmpdir(), "analyst-399-wt2-"));
+      const worktreeRoot = join(worktreeParent1, "wt");
+      const worktree2Root = join(worktreeParent2, "wt");
+      execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
+      execFileSync("git", ["worktree", "add", worktree2Root, "-b", "wt2"], { cwd: mainRoot });
 
-    const bookKey = basename(mainRoot);
-    const bookDir = join(home, ".ak-roles", "books", bookKey);
-    await mkdir(join(bookDir, "runs"), { recursive: true });
+      const bookKey = basename(mainRoot);
+      const bookDir = join(home, ".ak-roles", "books", bookKey);
+      await mkdir(join(bookDir, "runs"), { recursive: true });
 
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_MAIN_NO_TICKET,
-      role: "coder",
-      projectRoot: mainRoot,
-    });
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_WORKTREE_TICKET_A,
-      role: "judge",
-      projectRoot: worktreeRoot,
-      ticketNumber: TICKET_A,
-    });
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_MAIN_TICKET_A,
-      role: "fixer",
-      projectRoot: mainRoot,
-      ticketNumber: TICKET_A,
-    });
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_MAIN_TICKET_B,
-      role: "reviewer",
-      projectRoot: mainRoot,
-      ticketNumber: TICKET_B,
-    });
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_WT2_NO_TICKET,
-      role: "coder",
-      projectRoot: worktree2Root,
-    });
-    await writeDamagedRun({
-      bookDir,
-      runId: RUN_DAMAGED,
-      role: "doctor",
-      projectRoot: mainRoot,
-      ticketNumber: TICKET_A,
-    });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_MAIN_NO_TICKET,
+        role: "coder",
+        projectRoot: mainRoot,
+      });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_WORKTREE_TICKET_A,
+        role: "judge",
+        projectRoot: worktreeRoot,
+        ticketNumber: TICKET_A,
+      });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_MAIN_TICKET_A,
+        role: "fixer",
+        projectRoot: mainRoot,
+        ticketNumber: TICKET_A,
+      });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_MAIN_TICKET_B,
+        role: "reviewer",
+        projectRoot: mainRoot,
+        ticketNumber: TICKET_B,
+      });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_WT2_NO_TICKET,
+        role: "coder",
+        projectRoot: worktree2Root,
+      });
+      await writeDamagedRun({
+        bookDir,
+        runId: RUN_DAMAGED,
+        role: "doctor",
+        projectRoot: mainRoot,
+        ticketNumber: TICKET_A,
+      });
 
-    return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    await rm(home, { recursive: true, force: true });
-    await rm(mainRoot, { recursive: true, force: true });
-    if (worktreeRoot) await rm(worktreeRoot, { recursive: true, force: true }).catch(() => undefined);
-    if (worktree2Root) await rm(worktree2Root, { recursive: true, force: true }).catch(() => undefined);
-  }
+      return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
+    },
+    async () => {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    },
+    async () => {
+      await rm(home, { recursive: true, force: true });
+    },
+    async () => {
+      if (mainRoot) await rm(mainRoot, { recursive: true, force: true });
+    },
+    async () => {
+      if (worktreeParent1) await rm(worktreeParent1, { recursive: true, force: true });
+    },
+    async () => {
+      if (worktreeParent2) await rm(worktreeParent2, { recursive: true, force: true });
+    },
+  );
 }
 
 // D1
@@ -376,105 +393,128 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
 // D4
 test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-399-nongit-home-"));
-  const nonGit = await mkdtemp(join(tmpdir(), "analyst-399-nongit-cwd-"));
   const previousHome = process.env.HOME;
-  process.env.HOME = home;
   const previousCwd = process.cwd();
-  try {
-    await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
-    const before = await countAnalystFiles(home);
-    process.chdir(nonGit);
-    const { io, stderr } = captureIo();
-    const result = await runAkRole(["analyst"], { packageRoot, home, io });
-    assert.notEqual(result.exitCode, 0);
-    assert.match(stderr.join(""), /git repository|common-dir|inside a repository/i);
-    const after = await countAnalystFiles(home);
-    assert.equal(after, before);
-  } finally {
-    process.chdir(previousCwd);
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    await rm(home, { recursive: true, force: true });
-    await rm(nonGit, { recursive: true, force: true });
-  }
+  let nonGit = "";
+  await withPrimaryAwareCleanup(
+    async () => {
+      process.env.HOME = home;
+      nonGit = await mkdtemp(join(tmpdir(), "analyst-399-nongit-cwd-"));
+      await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
+      const before = await countAnalystFiles(home);
+      process.chdir(nonGit);
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(["analyst"], { packageRoot, home, io });
+      assert.notEqual(result.exitCode, 0);
+      assert.match(stderr.join(""), /git repository|common-dir|inside a repository/i);
+      const after = await countAnalystFiles(home);
+      assert.equal(after, before);
+    },
+    async () => {
+      process.chdir(previousCwd);
+    },
+    async () => {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    },
+    async () => {
+      await rm(home, { recursive: true, force: true });
+    },
+    async () => {
+      if (nonGit) await rm(nonGit, { recursive: true, force: true });
+    },
+  );
 });
 
 // D5
 test("D5 analyst #399 two books ticket 181: pages distinct by book identity", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-399-d5-home-"));
-  const repoA = await mkdtemp(join(tmpdir(), "analyst-399-d5-a-"));
-  const repoB = await mkdtemp(join(tmpdir(), "analyst-399-d5-b-"));
   const previousHome = process.env.HOME;
-  process.env.HOME = home;
   const previousCwd = process.cwd();
-  try {
-    for (const repo of [repoA, repoB]) {
-      execFileSync("git", ["init"], { cwd: repo });
-      await writeFile(join(repo, "README.md"), "x\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: repo });
-      execFileSync(
-        "git",
-        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-        { cwd: repo },
+  let repoA = "";
+  let repoB = "";
+  await withPrimaryAwareCleanup(
+    async () => {
+      process.env.HOME = home;
+      repoA = await mkdtemp(join(tmpdir(), "analyst-399-d5-a-"));
+      repoB = await mkdtemp(join(tmpdir(), "analyst-399-d5-b-"));
+      for (const repo of [repoA, repoB]) {
+        execFileSync("git", ["init"], { cwd: repo });
+        await writeFile(join(repo, "README.md"), "x\n", "utf8");
+        execFileSync("git", ["add", "README.md"], { cwd: repo });
+        execFileSync(
+          "git",
+          ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+          { cwd: repo },
+        );
+        const bookKey = basename(repo);
+        const bookDir = join(home, ".ak-roles", "books", bookKey);
+        await mkdir(join(bookDir, "runs"), { recursive: true });
+        await writeReadableRun({
+          bookDir,
+          runId: `019ff000-91${bookKey.slice(-2)}-7000-8000-0000000009c1`.slice(0, 36).padEnd(36, "0"),
+          role: "coder",
+          projectRoot: repo,
+          ticketNumber: TICKET_CROSS,
+        });
+      }
+
+      process.chdir(repoA);
+      const a = captureIo();
+      assert.equal(
+        (await runAkRole(["analyst", "--ticket", String(TICKET_CROSS)], { packageRoot, home, io: a.io }))
+          .exitCode,
+        0,
+        a.stderr.join(""),
       );
-      const bookKey = basename(repo);
-      const bookDir = join(home, ".ak-roles", "books", bookKey);
-      await mkdir(join(bookDir, "runs"), { recursive: true });
-      await writeReadableRun({
-        bookDir,
-        runId: `019ff000-91${bookKey.slice(-2)}-7000-8000-0000000009c1`.slice(0, 36).padEnd(36, "0"),
-        role: "coder",
-        projectRoot: repo,
-        ticketNumber: TICKET_CROSS,
-      });
-    }
+      const pageA = (JSON.parse(a.stdout.join("")) as { page: AnalystIssueMetricsPage; pagePath: string });
 
-    process.chdir(repoA);
-    const a = captureIo();
-    assert.equal(
-      (await runAkRole(["analyst", "--ticket", String(TICKET_CROSS)], { packageRoot, home, io: a.io }))
-        .exitCode,
-      0,
-      a.stderr.join(""),
-    );
-    const pageA = (JSON.parse(a.stdout.join("")) as { page: AnalystIssueMetricsPage; pagePath: string });
+      process.chdir(repoB);
+      const b = captureIo();
+      assert.equal(
+        (await runAkRole(["analyst", "--ticket", String(TICKET_CROSS)], { packageRoot, home, io: b.io }))
+          .exitCode,
+        0,
+        b.stderr.join(""),
+      );
+      const pageB = (JSON.parse(b.stdout.join("")) as { page: AnalystIssueMetricsPage; pagePath: string });
 
-    process.chdir(repoB);
-    const b = captureIo();
-    assert.equal(
-      (await runAkRole(["analyst", "--ticket", String(TICKET_CROSS)], { packageRoot, home, io: b.io }))
-        .exitCode,
-      0,
-      b.stderr.join(""),
-    );
-    const pageB = (JSON.parse(b.stdout.join("")) as { page: AnalystIssueMetricsPage; pagePath: string });
-
-    assert.equal(pageA.page.issueNumber, TICKET_CROSS);
-    assert.equal(pageB.page.issueNumber, TICKET_CROSS);
-    assert.notEqual(pageA.page.bookKey, pageB.page.bookKey);
-    assert.notEqual(pageA.pagePath, pageB.pagePath);
-    assert.equal(
-      pageA.pagePath,
-      analystIssuePagePath(join(home, ".ak-roles"), {
-        bookKey: pageA.page.bookKey,
-        issueNumber: TICKET_CROSS,
-      }),
-    );
-    assert.equal(
-      pageB.pagePath,
-      analystIssuePagePath(join(home, ".ak-roles"), {
-        bookKey: pageB.page.bookKey,
-        issueNumber: TICKET_CROSS,
-      }),
-    );
-  } finally {
-    process.chdir(previousCwd);
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    await rm(home, { recursive: true, force: true });
-    await rm(repoA, { recursive: true, force: true });
-    await rm(repoB, { recursive: true, force: true });
-  }
+      assert.equal(pageA.page.issueNumber, TICKET_CROSS);
+      assert.equal(pageB.page.issueNumber, TICKET_CROSS);
+      assert.notEqual(pageA.page.bookKey, pageB.page.bookKey);
+      assert.notEqual(pageA.pagePath, pageB.pagePath);
+      assert.equal(
+        pageA.pagePath,
+        analystIssuePagePath(join(home, ".ak-roles"), {
+          bookKey: pageA.page.bookKey,
+          issueNumber: TICKET_CROSS,
+        }),
+      );
+      assert.equal(
+        pageB.pagePath,
+        analystIssuePagePath(join(home, ".ak-roles"), {
+          bookKey: pageB.page.bookKey,
+          issueNumber: TICKET_CROSS,
+        }),
+      );
+    },
+    async () => {
+      process.chdir(previousCwd);
+    },
+    async () => {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    },
+    async () => {
+      await rm(home, { recursive: true, force: true });
+    },
+    async () => {
+      if (repoA) await rm(repoA, { recursive: true, force: true });
+    },
+    async () => {
+      if (repoB) await rm(repoB, { recursive: true, force: true });
+    },
+  );
 });
 
 // D6
