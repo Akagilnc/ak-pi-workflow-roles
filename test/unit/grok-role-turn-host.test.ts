@@ -262,7 +262,7 @@ test("installed seatbelt hook denies the representative dangerous command and al
   }
 });
 
-test("executeTurn resume rebuilds via session/new after settle scrubs residual AK seatbelt hooks", async () => {
+test("executeTurn resume after settle scrubs residual AK seatbelt hooks and session/load", async () => {
   // #594 F1: residual AK hooks under controlled home must not survive settle into the
   // next executeTurn. Inspect goes through real inspectControlledGrok → classifyGrokInspection
   // (faux binary reports filesystem hooks the way grok inspect does — source.type=user).
@@ -946,4 +946,3 @@ test("grok host keeps session/close failure loud after typed round acceptance", 
     await rm(root, { recursive: true, force: true });
   }
 });
-

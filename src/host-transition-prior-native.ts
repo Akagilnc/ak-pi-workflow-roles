@@ -19,7 +19,7 @@ function isEnoent(error: unknown): boolean {
 }
 
 /** Read Pi native session file bytes exactly. ENOENT → undefined; empty file → "". */
-export async function readPiNativeSessionRecords(sessionFile: string): Promise<string | undefined> {
+async function readPiNativeSessionRecords(sessionFile: string): Promise<string | undefined> {
   try {
     return await readFile(sessionFile, "utf8");
   } catch (error) {
@@ -28,8 +28,12 @@ export async function readPiNativeSessionRecords(sessionFile: string): Promise<s
   }
 }
 
-/** Read Grok native updates.jsonl under runDirectory/grok-home exactly. ENOENT tree → undefined. */
-export async function readGrokNativeSessionRecords(runDirectory: string): Promise<string | undefined> {
+/**
+ * Sole Grok native volume for a run: the single updates.jsonl under grok-home/sessions
+ * when exactly one exists. Multiple session dirs are out of this projector's contract
+ * (no unordered multi-file join). ENOENT / zero files → undefined.
+ */
+async function readGrokNativeSessionRecords(runDirectory: string): Promise<string | undefined> {
   const grokSessionsDir = join(runDirectory, "grok-home", "sessions");
   let encodedCwds;
   try {
@@ -38,22 +42,26 @@ export async function readGrokNativeSessionRecords(runDirectory: string): Promis
     if (isEnoent(error)) return undefined;
     throw error;
   }
-  const files: string[] = [];
+  const updatesPaths: string[] = [];
   for (const cwdEntry of encodedCwds) {
     if (!cwdEntry.isDirectory()) continue;
     const sessionDirs = await readdir(join(grokSessionsDir, cwdEntry.name), { withFileTypes: true });
     for (const sessEntry of sessionDirs) {
       if (!sessEntry.isDirectory()) continue;
-      const updatesFile = join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl");
-      try {
-        files.push(await readFile(updatesFile, "utf8"));
-      } catch (error) {
-        if (!isEnoent(error)) throw error;
-      }
+      updatesPaths.push(join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl"));
     }
   }
-  if (files.length === 0) return undefined;
-  return files.join("");
+  if (updatesPaths.length === 0) return undefined;
+  if (updatesPaths.length !== 1) {
+    // Ambiguous multi-session tree: no silent join. Caller sees empty prior records.
+    return undefined;
+  }
+  try {
+    return await readFile(updatesPaths[0]!, "utf8");
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
+  }
 }
 
 /**
