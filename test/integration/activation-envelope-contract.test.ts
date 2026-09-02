@@ -1103,6 +1103,8 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
       home, ".ak-roles", "books", resolveBookKeyFromGit(packageRoot), "runs", "fixer-act", "session",
     );
     await mkdir(sessionDirectory, { recursive: true });
+    // #620: this file is on HEAVYWEIGHT_MANIFEST (concurrency=2). Focused ~4.4s;
+    // ordinary-tier full-suite contended past 15s localTimeout — schedule, don't pad.
     const result = await runPiSubprocess([
       "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
       "--session-dir", sessionDirectory,
