@@ -435,14 +435,19 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
       let effectiveRequest = request;
-      if (request.continuation.kind === "resume") {
+      // #617 DK-4: opaque Grok context only on typed host transition from grok-build.
+      if (
+        request.continuation.kind === "resume"
+        && request.hostTransition?.previousHost === "grok-build"
+      ) {
         const priorGrok = await readPriorGrokContext(request.runDirectory);
         if (priorGrok !== undefined && priorGrok.length > 0) {
           effectiveRequest = {
             ...request,
             continuation: {
               ...request.continuation,
-              prompt: `[Prior session context (grok)]:\n${priorGrok}\n\n${request.continuation.prompt}`,
+              // Raw prior native bytes precede the continuation prompt; no locked label contract.
+              prompt: `${priorGrok}\n\n${request.continuation.prompt}`,
             },
           };
         }

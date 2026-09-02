@@ -286,8 +286,13 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
 
           let priorPiContext: string | undefined;
           if (continuation.kind === "resume") {
-            // #617 DK-4: prior Pi native bytes are opaque context only — never projected or written back.
-            priorPiContext = await readPriorPiNativeContext(request.runDirectory);
+            // #617 DK-4: opaque Pi context only on typed host transition from a non-Grok host.
+            if (
+              request.hostTransition !== undefined
+              && request.hostTransition.previousHost !== "grok-build"
+            ) {
+              priorPiContext = await readPriorPiNativeContext(request.runDirectory);
+            }
             const boundSessionId = await config.sessionIdentity.load(request.principal);
             if (boundSessionId !== undefined && boundSessionId !== "") {
               // Same-host Grok resume reuses native ACP session via session/load.
@@ -301,7 +306,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
                 ? loaded.sessionId
                 : boundSessionId;
             } else {
-              // Unbound resume (cross-host Pi→Grok or lost binding): session/new + bind.
+              // Unbound resume (cross-host or lost binding): session/new + bind.
               const session = await connection.request(
                 "session/new",
                 {
@@ -379,9 +384,14 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               const promptParts: Array<Record<string, unknown>> = [];
               if (deliverPriorContext && priorPiContext !== undefined) {
                 deliverPriorContext = false;
+                // Structured opaque resource — not a GrokRebuild schema; raw native bytes only.
                 promptParts.push({
-                  type: "text",
-                  text: `[Prior session context (pi)]:\n${priorPiContext}`,
+                  type: "resource",
+                  resource: {
+                    uri: "ak-role:prior-native/pi",
+                    mimeType: "application/x-ak-prior-native",
+                    text: priorPiContext,
+                  },
                 });
               }
               promptParts.push({ type: "text", text: prompt });
