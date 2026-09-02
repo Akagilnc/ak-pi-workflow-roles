@@ -49,8 +49,6 @@ import {
   withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
-import { packageMachineHome } from "../../src/activation-ledger-topology.ts";
-
 const FACTORY = "ak-roles:";
 const OWNED_MARKER = "ak-roles: worker-submission-gates reference-transaction";
 
@@ -63,25 +61,29 @@ function configureGitUser(cwd: string): void {
   git(cwd, ["config", "user.name", "Gate Test"]);
 }
 
+/**
+ * #604: bare arm keeps in-memory bounce (no parent) but sitian must not fall
+ * through to the real machine home. Fixture owns a temp package home and passes
+ * it into createWorkerSubmissionGate({ home }) — explicit injection, not post-rm.
+ */
 async function withTempGit<T>(
-  fn: (root: string) => Promise<T> | T,
+  fn: (root: string, home: string) => Promise<T> | T,
   options?: { seed?: boolean },
 ): Promise<T> {
-  // Gate bounce state is in-memory when arm() has no parent. Sitian still falls
-  // through to packageMachineHome with bookKey=basename(root); clean that book
-  // in finally so #604 real-home isolation holds without durable-resume side effects.
-  const root = await mkdtemp(join(tmpdir(), "ak-worker-gate-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-worker-gate-home-"));
+  const root = await mkdtemp(join(home, "repo-"));
   git(root, ["init", "-b", "main"]);
   configureGitUser(root);
   if (options?.seed !== false) git(root, ["commit", "--allow-empty", "-m", "seed"]);
-  const bookKey = root.split("/").filter(Boolean).at(-1)!;
-  const leakedBook = join(packageMachineHome(), ".ak-roles", "books", bookKey);
   try {
-    return await fn(root);
+    return await fn(root, home);
   } finally {
-    await rm(root, { recursive: true, force: true });
-    await rm(leakedBook, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
   }
+}
+
+function bareGate(home: string) {
+  return createWorkerSubmissionGate({ home });
 }
 
 function plantOwnedHooks(cwd: string): { hooksDir: string; hookPath: string } {
@@ -127,8 +129,8 @@ async function scrubPlanted(
   }
 }
 
-function armThenCommit(cwd: string, message: string) {
-  const gate = createWorkerSubmissionGate();
+function armThenCommit(cwd: string, home: string, message: string) {
+  const gate = bareGate(home);
   gate.arm(cwd);
   git(cwd, ["commit", "--allow-empty", "-m", message]);
   return gate;
@@ -166,10 +168,10 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
 });
 
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
-  await withTempGit(async (root) => {
+  await withTempGit(async (root, home) => {
     const bare = await mkdtemp(join(tmpdir(), "ak-worker-gate-bare-"));
     try {
-      const gate = createWorkerSubmissionGate();
+      const gate = bareGate(home);
       gate.arm(root);
       for (const status of ["planned", "refused"] as const) {
         assert.doesNotThrow(() => gate.assertAcceptable(status), status);
@@ -184,16 +186,16 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
           error.code === "worker_commit_reminder",
       );
       assert.doesNotThrow(() => gate.assertAcceptable("completed"));
-      const g2 = createWorkerSubmissionGate();
+      const g2 = bareGate(home);
       g2.arm(root);
       assert.throws(() => g2.assertAcceptable("partially_completed"), WorkerCommitReminderError);
       git(root, ["commit", "--allow-empty", "-m", `${FACTORY} work`]);
-      assert.doesNotThrow(() => armThenCommit(root, `${FACTORY} more`).assertAcceptable("completed"));
+      assert.doesNotThrow(() => armThenCommit(root, home, `${FACTORY} more`).assertAcceptable("completed"));
 
-      assert.throws(() => createWorkerSubmissionGate().arm(bare), /not a git repository/);
+      assert.throws(() => bareGate(home).arm(bare), /not a git repository/);
 
-      await withTempGit(async (unborn) => {
-        const g = createWorkerSubmissionGate();
+      await withTempGit(async (unborn, unbornHome) => {
+        const g = bareGate(unbornHome);
         g.arm(unborn);
         assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
       }, { seed: false });
@@ -204,8 +206,8 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
 });
 
 test("② missing prefix bounces once then confirm; open set + merge exempt; unreliable window skipped; status matrix free", async () => {
-  await withTempGit(async (root) => {
-    const missing = armThenCommit(root, "forgot the platform prefix");
+  await withTempGit(async (root, home) => {
+    const missing = armThenCommit(root, home, "forgot the platform prefix");
     assert.throws(
       () => missing.assertAcceptable("completed"),
       (error: unknown) =>
@@ -221,14 +223,14 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
       `${FACTORY} factory sample`,
     ]) {
       assert.doesNotThrow(
-        () => armThenCommit(root, subject).assertAcceptable("completed"),
+        () => armThenCommit(root, home, subject).assertAcceptable("completed"),
         subject,
       );
     }
 
     // Merge commit exempt (GitHub merge shape, unprefixed subject).
-    await withTempGit(async (mergeRepo) => {
-      const g = createWorkerSubmissionGate();
+    await withTempGit(async (mergeRepo, mergeHome) => {
+      const g = bareGate(mergeHome);
       g.arm(mergeRepo);
       git(mergeRepo, ["checkout", "-b", "topic"]);
       git(mergeRepo, ["commit", "--allow-empty", "-m", `${FACTORY} topic tip`]);
@@ -239,7 +241,7 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
     });
 
     // planned / refused / unfinished never fire gate ②.
-    const free = armThenCommit(root, "still missing prefix");
+    const free = armThenCommit(root, home, "still missing prefix");
     assert.doesNotThrow(() => free.assertAcceptable("planned"));
     assert.doesNotThrow(() => free.assertAcceptable("refused"));
     assert.doesNotThrow(() =>
@@ -247,8 +249,8 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
     );
 
     // baseline tip not ancestor of HEAD → unreliable → no prefix bounce.
-    await withTempGit(async (unrelated) => {
-      const g = createWorkerSubmissionGate();
+    await withTempGit(async (unrelated, unrelatedHome) => {
+      const g = bareGate(unrelatedHome);
       g.arm(unrelated);
       git(unrelated, ["checkout", "--orphan", "other"]);
       git(unrelated, ["commit", "--allow-empty", "-m", "orphan tip without prefix"]);
@@ -256,15 +258,15 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
     });
 
     // Unborn positive: null baseline → first unprefixed commit → bounce once → confirm.
-    await withTempGit(async (unbornPos) => {
-      const g = armThenCommit(unbornPos, "first commit no prefix");
+    await withTempGit(async (unbornPos, unbornHome) => {
+      const g = armThenCommit(unbornPos, unbornHome, "first commit no prefix");
       assert.throws(() => g.assertAcceptable("completed"), WorkerPrefixReminderError);
       assert.doesNotThrow(() => g.assertAcceptable("completed"));
     }, { seed: false });
 
     // Unborn negative: zero commits → gate ① only.
-    await withTempGit(async (unbornNeg) => {
-      const g = createWorkerSubmissionGate();
+    await withTempGit(async (unbornNeg, unbornHome) => {
+      const g = bareGate(unbornHome);
       g.arm(unbornNeg);
       assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
       assert.doesNotThrow(() => g.assertAcceptable("completed"));
@@ -273,10 +275,10 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
 });
 
 test("arm stops writing hooks and idempotently uninstalls package-owned traces only", async () => {
-  await withTempGit(async (root) => {
-    await withTempGit(async (stranger) => {
+  await withTempGit(async (root, home) => {
+    await withTempGit(async (stranger, _strangerHome) => {
       const beforeLocal = git(root, ["config", "--local", "--list"]);
-      createWorkerSubmissionGate().arm(root);
+      bareGate(home).arm(root);
       assert.equal(git(root, ["config", "--local", "--list"]), beforeLocal);
       assert.equal(hooksPathOf(root), undefined);
       const gitDir = git(root, ["rev-parse", "--path-format=absolute", "--git-dir"]);
@@ -285,11 +287,11 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const { hooksDir, hookPath } = plantOwnedHooks(root);
       assert.ok(existsSync(hookPath));
       const worktreeConfigBefore = git(root, ["config", "--local", "--get", "extensions.worktreeConfig"]);
-      createWorkerSubmissionGate().arm(root);
+      bareGate(home).arm(root);
       assert.equal(hooksPathOf(root), undefined);
       assert.equal(existsSync(hooksDir), false);
       assert.equal(git(root, ["config", "--local", "--get", "extensions.worktreeConfig"]), worktreeConfigBefore);
-      assert.doesNotThrow(() => createWorkerSubmissionGate().arm(root));
+      assert.doesNotThrow(() => bareGate(home).arm(root));
 
       // Unmarked same-named dir must survive; hooksPath to non-owned dir stays.
       const foreignDir = join(gitDir, "ak-roles-hooks");
@@ -298,7 +300,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       writeFileSync(foreignHook, "#!/bin/sh\n# foreign hook body\nexit 0\n", "utf8");
       git(root, ["config", "extensions.worktreeConfig", "true"]);
       git(root, ["config", "--worktree", "core.hooksPath", foreignDir]);
-      createWorkerSubmissionGate().arm(root);
+      bareGate(home).arm(root);
       assert.ok(existsSync(foreignHook), "unmarked same-named dir must survive");
       assert.equal(hooksPathOf(root), foreignDir);
       git(root, ["config", "--worktree", "--unset", "core.hooksPath"]);
@@ -309,7 +311,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const mixed = plantOwnedHooks(root);
       const sibling = join(mixed.hooksDir, "user-extra-hook");
       writeFileSync(sibling, "#!/bin/sh\n# not package-owned\nexit 0\n", "utf8");
-      createWorkerSubmissionGate().arm(root);
+      bareGate(home).arm(root);
       assert.equal(hooksPathOf(root), undefined);
       assert.equal(existsSync(mixed.hookPath), false, "owned hook file must be removed");
       assert.ok(existsSync(sibling), "unmarked sibling file must survive");
@@ -329,7 +331,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
         new Set([multiOwned.hooksDir, foreignMultiDir]),
         "precondition: owned + foreign multi-value hooksPath",
       );
-      createWorkerSubmissionGate().arm(root);
+      bareGate(home).arm(root);
       assert.deepEqual(
         hooksPathsOf(root),
         [foreignMultiDir],
@@ -346,7 +348,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const mainWtConfig = join(commonDir, "config.worktree");
       writeFileSync(mainWtConfig, `[core]\n\tbare = false\n\tworktree = ${root}\n`, "utf8");
       plantOwnedHooks(root);
-      createWorkerSubmissionGate().arm(root);
+      bareGate(home).arm(root);
       const preserved = readFileSync(mainWtConfig, "utf8");
       assert.match(preserved, /bare\s*=\s*false/);
       assert.ok(preserved.includes(`worktree = ${root}`));
@@ -356,7 +358,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const wt = join(root, "wt-linked");
       git(root, ["worktree", "add", wt, "HEAD"]);
       const plantedWt = plantOwnedHooks(wt);
-      createWorkerSubmissionGate().arm(root);
+      bareGate(home).arm(root);
       assert.equal(hooksPathOf(wt), undefined);
       assert.equal(existsSync(plantedWt.hooksDir), false);
 
@@ -368,7 +370,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const escapeLink = join(worktreesRoot, "symlink-escape");
       symlinkSync(strangerGitDir, escapeLink);
       try {
-        createWorkerSubmissionGate().arm(root);
+        bareGate(home).arm(root);
         assert.equal(
           hooksPathOf(stranger),
           plantedStranger.hooksDir,
@@ -383,7 +385,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       }
 
       // Unrelated repo out of discoverable range (no symlink entry).
-      createWorkerSubmissionGate().arm(root);
+      bareGate(home).arm(root);
       assert.equal(hooksPathOf(stranger), plantedStranger.hooksDir);
       assert.ok(existsSync(plantedStranger.hookPath));
 
@@ -391,7 +393,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const unreadable = plantOwnedHooks(root);
       chmodSync(unreadable.hookPath, 0o000);
       try {
-        assert.throws(() => createWorkerSubmissionGate().arm(root), /EACCES|permission denied/i);
+        assert.throws(() => bareGate(home).arm(root), /EACCES|permission denied/i);
         assert.equal(
           hooksPathOf(root),
           unreadable.hooksDir,
@@ -405,7 +407,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const undeletable = plantOwnedHooks(root);
       chmodSync(undeletable.hooksDir, 0o555);
       try {
-        assert.throws(() => createWorkerSubmissionGate().arm(root), /EACCES|permission denied/i);
+        assert.throws(() => bareGate(home).arm(root), /EACCES|permission denied/i);
       } finally {
         await scrubPlanted(root, undeletable);
       }

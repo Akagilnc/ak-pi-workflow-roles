@@ -218,7 +218,18 @@ function reliableWindow(
   });
 }
 
-export function createWorkerSubmissionGate(): {
+export type CreateWorkerSubmissionGateOptions = {
+  /**
+   * Explicit package home for sitian writes when no parent session is armed.
+   * Existing injection point on sitianReport — does not change fallback when omitted
+   * (path-derive from parent, else package machine home). #604 Scope 2.
+   */
+  readonly home?: string;
+};
+
+export function createWorkerSubmissionGate(
+  options: CreateWorkerSubmissionGateOptions = {},
+): {
   arm(cwd: string, parent?: WorkerSubmissionGateParent): void;
   assertAcceptable(status: string, details?: unknown): void;
 } {
@@ -230,6 +241,8 @@ export function createWorkerSubmissionGate(): {
   let record: SessionManager | undefined;
   /** Parent session file retained so every gate sitian write path-derives the same ledger home. */
   let sessionParent: string | undefined;
+  const explicitHome =
+    typeof options.home === "string" && options.home.length > 0 ? options.home : undefined;
   const head = (cwd: string): string | null => {
     try {
       return git(cwd, ["rev-parse", "HEAD"]);
@@ -244,6 +257,7 @@ export function createWorkerSubmissionGate(): {
       kind: "gate",
       cwd,
       ...(sessionParent === undefined ? {} : { sessionParent }),
+      ...(explicitHome === undefined ? {} : { home: explicitHome }),
       payload,
       source: "worker-submission-gates",
     });

@@ -1,12 +1,14 @@
 /**
- * #604 F2: shortest real cross-process proofs for the machine-home guard.
+ * #604 F2/F3: shortest real cross-process proofs for the machine-home guard.
  * - Two competitors cannot occupy the critical section at once.
- * - Killed holder leaves stale lock/backup; next entry restores original config bytes.
+ * - Crashed holder (process.exit inside section, not SIGKILL) leaves stale
+ *   lock/backup; next entry restores original config bytes OR absence.
+ * - Multiple stale reclaimers serialize; none deletes a successor's lock.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +38,10 @@ async function readOptional(path: string): Promise<string | undefined> {
   }
 }
 
-function spawnWorker(args: string[]): {
+function spawnWorker(
+  args: string[],
+  envExtra?: Record<string, string>,
+): {
   child: ReturnType<typeof spawn>;
   done: Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }>;
 } {
@@ -45,7 +50,7 @@ function spawnWorker(args: string[]): {
     ["--import", "tsx", workerPath, ...args],
     {
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: envExtra === undefined ? process.env : { ...process.env, ...envExtra },
     },
   );
   let stderr = "";
@@ -140,41 +145,31 @@ test("machine-home guard: two cross-process competitors never overlap critical s
   }
 });
 
-test("machine-home guard: killed holder restores original config bytes on next entry", async () => {
-  const coordDir = await mkdtemp(join(tmpdir(), "ak-guard-kill-"));
+test("machine-home guard: crash-exit holder restores original config bytes on next entry", async () => {
+  const coordDir = await mkdtemp(join(tmpdir(), "ak-guard-crash-"));
   const packageHome = packageMachineHome();
   const { configPath, lockPath, backupPath } = residuePaths(packageHome);
   const prior = await readOptional(configPath);
   const priorSha = prior === undefined ? null : sha256(prior);
   try {
-    const { child, done } = spawnWorker(["hold-and-mutate", coordDir]);
+    const { done } = spawnWorker(["hold-and-mutate-exit", coordDir]);
     await waitForFile(join(coordDir, "inside"));
-    // Config must have been mutated under the lock.
-    const mid = await readOptional(configPath);
-    assert.ok(mid !== undefined && mid.includes("akGuardProbe"));
-    if (priorSha !== null) {
-      assert.notEqual(sha256(mid), priorSha);
-    }
-    // Hard-kill before finally: lock + backup residue must still recover.
-    const killedPromise = done;
-    child.kill("SIGKILL");
-    const killed = await killedPromise;
-    assert.ok(
-      killed.signal === "SIGKILL" || killed.code !== 0,
-      `expected kill termination, got code=${String(killed.code)} signal=${String(killed.signal)} stderr=${killed.stderr}`,
-    );
+    const crashed = await done;
+    assert.equal(crashed.signal, null, "must not use signal kill");
+    assert.equal(crashed.code, 99, `expected crash exit 99, stderr=${crashed.stderr}`);
 
-    // Next entry recovers via leftover backup and leaves host bytes identical.
+    // Residue must remain so the next entry can recover.
+    assert.equal(await pathExists(lockPath), true, "stale lock remains after crash exit");
+    assert.equal(await pathExists(backupPath), true, "backup remains after crash exit");
+
+    const mid = await readOptional(configPath);
+    assert.ok(mid !== undefined && mid.includes("akGuardProbe"), "crash left mutated config");
+
+    // Next entry recovers via leftover backup (presence or absence).
     await withPackageMachineHomeGuard(async () => {
       const inside = await readOptional(configPath);
       if (priorSha === null) {
-        // No prior host config: recovery may leave empty seats from child mutate
-        // only until we finish; finally deletes when restoreFromBackup is false
-        // after stale backup path. Stale backup from child should restore prior
-        // absence by rewriting then... child had prior undefined → no backup →
-        // parent sees mutated file as prior. Accept any value here; final check
-        // below is authoritative when prior existed.
-        assert.ok(inside !== undefined);
+        assert.equal(inside, undefined, "absence backup restored missing config before scenario");
       } else {
         assert.equal(sha256(inside!), priorSha, "stale backup restored before scenario");
       }
@@ -184,18 +179,123 @@ test("machine-home guard: killed holder restores original config bytes on next e
     assert.equal(
       after === undefined ? null : sha256(after),
       priorSha,
-      "host public-cli.json restored after killed holder",
+      "host public-cli.json restored after crashed holder",
     );
     assert.equal(await pathExists(lockPath), false, "no lock residue");
     assert.equal(await pathExists(backupPath), false, "no backup residue");
   } finally {
     await rm(coordDir, { recursive: true, force: true });
-    // Belt: if prior existed and something failed, try one more guard restore.
+    // Belt: one more restore if prior existed and something failed mid-test.
     if (priorSha !== null) {
       const now = await readOptional(configPath);
       if (now === undefined || sha256(now) !== priorSha) {
         await withPackageMachineHomeGuard(async () => undefined);
       }
+    } else {
+      const now = await readOptional(configPath);
+      if (now !== undefined && now.includes("akGuardProbe")) {
+        await withPackageMachineHomeGuard(async () => undefined);
+      }
     }
+  }
+});
+
+test("machine-home guard: absence-coded backup restores missing config after crash exit", async () => {
+  // Hermetic package home: prior config is genuinely absent; crash must not leave
+  // a seat table behind after the next entry restores the absence-coded backup.
+  const hermeticHome = await mkdtemp(join(tmpdir(), "ak-guard-absent-home-"));
+  const coordDir = await mkdtemp(join(tmpdir(), "ak-guard-absent-"));
+  const { configPath, lockPath, backupPath } = residuePaths(hermeticHome);
+  const envExtra = { AK_GUARD_PACKAGE_HOME: hermeticHome };
+  try {
+    assert.equal(await readOptional(configPath), undefined, "precondition: no config");
+
+    const { done } = spawnWorker(["hold-and-mutate-exit", coordDir], envExtra);
+    await waitForFile(join(coordDir, "inside"));
+    const crashed = await done;
+    assert.equal(crashed.signal, null, "must not use signal kill");
+    assert.equal(crashed.code, 99, `stderr=${crashed.stderr}`);
+    assert.ok(await pathExists(configPath), "crash created config");
+    assert.ok(await pathExists(lockPath), "stale lock remains");
+    const backup = await readOptional(backupPath);
+    assert.ok(backup?.startsWith("A"), `backup encodes absence, got ${JSON.stringify(backup)}`);
+
+    await withPackageMachineHomeGuard({ packageHome: hermeticHome }, async () => {
+      assert.equal(
+        await readOptional(configPath),
+        undefined,
+        "absence restored before nested scenario",
+      );
+    });
+
+    assert.equal(await readOptional(configPath), undefined, "config remains absent");
+    assert.equal(await pathExists(lockPath), false);
+    assert.equal(await pathExists(backupPath), false);
+  } finally {
+    await rm(coordDir, { recursive: true, force: true });
+    await rm(hermeticHome, { recursive: true, force: true });
+  }
+});
+
+test("machine-home guard: concurrent stale reclaimers serialize; successor lock survives", async () => {
+  // Hermetic package home so multi-reclaim never plants locks on the host seat table.
+  const hermeticHome = await mkdtemp(join(tmpdir(), "ak-guard-reclaim-home-"));
+  const coordDir = await mkdtemp(join(tmpdir(), "ak-guard-reclaim-"));
+  const { configPath, lockPath, backupPath } = residuePaths(hermeticHome);
+  const seedConfig = `${JSON.stringify({ seats: { seed: true }, tag: "reclaim-prior" }, null, 2)}\n`;
+  await mkdir(join(hermeticHome, ".ak-roles"), { recursive: true });
+  await writeFile(configPath, seedConfig, "utf8");
+  const priorSha = sha256(seedConfig);
+  const envExtra = { AK_GUARD_PACKAGE_HOME: hermeticHome };
+
+  // Plant a stale lock from a definitely-dead pid with unique payload.
+  const deadPid = 2 ** 22 + (randomBytes(2).readUInt16BE(0) % 100_000);
+  const stalePayload = `${deadPid}\n0\nstale-${randomBytes(4).toString("hex")}\n`;
+  await writeFile(lockPath, stalePayload, "utf8");
+
+  try {
+    const a = spawnWorker(["reclaim-stale", coordDir, "r1"], envExtra);
+    const b = spawnWorker(["reclaim-stale", coordDir, "r2"], envExtra);
+    const c = spawnWorker(["reclaim-stale", coordDir, "r3"], envExtra);
+    const results = await Promise.all([a.done, b.done, c.done]);
+    for (const result of results) {
+      assert.equal(result.code, 0, `reclaimer failed: ${result.stderr}`);
+    }
+
+    const logText = await readFile(join(coordDir, "reclaim.jsonl"), "utf8");
+    const events = logText
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { id: string; event: string; t: number });
+    assert.equal(events.filter((e) => e.event === "entered").length, 3);
+    assert.equal(events.filter((e) => e.event === "left").length, 3);
+
+    const byId = new Map<string, { enter?: number; exit?: number }>();
+    for (const event of events) {
+      const row = byId.get(event.id) ?? {};
+      if (event.event === "entered") row.enter = event.t;
+      if (event.event === "left") row.exit = event.t;
+      byId.set(event.id, row);
+    }
+    const intervals = [...byId.values()].map((row) => {
+      assert.ok(typeof row.enter === "number" && typeof row.exit === "number");
+      return { enter: row.enter, exit: row.exit };
+    });
+    intervals.sort((x, y) => x.enter - y.enter);
+    for (let i = 0; i < intervals.length - 1; i += 1) {
+      assert.ok(
+        intervals[i]!.exit <= intervals[i + 1]!.enter,
+        `reclaim overlap: ${JSON.stringify(intervals)}`,
+      );
+    }
+
+    const after = await readOptional(configPath);
+    assert.equal(sha256(after!), priorSha, "config bytes unchanged after multi-reclaim");
+    assert.equal(await pathExists(lockPath), false, "no lock residue after multi-reclaim");
+    assert.equal(await pathExists(backupPath), false, "no backup residue after multi-reclaim");
+  } finally {
+    await rm(coordDir, { recursive: true, force: true });
+    await rm(hermeticHome, { recursive: true, force: true });
   }
 });
