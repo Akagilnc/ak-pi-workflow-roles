@@ -51,8 +51,10 @@ function cleanSelection(model?: { provider?: string; model?: string; thinking?: 
 }
 
 /**
- * Resolve effective per-seat institutional selections (#518 §2 Hop 1):
+ * Resolve effective per-seat institutional selections (#518 §2 Hop 1; #620):
  * - gatekeeper / inspector / notary: seat override > gatekeeper override > parent effective
+ *   (direct `ak-role notary|inspector` and `roles` share the same first two steps via
+ *   resolveEffectiveSeat; parent effective applies on the province path only)
  * - auditor / evidenceChild: parent effective
  * - navigator: explicit config seat only. Navigator model authority stays
  *   `navigator-model.json`; the page never carries a parent-inherited navigator

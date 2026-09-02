@@ -200,8 +200,11 @@ test("startup model candidates follow #11 package defaults per seat", () => {
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ]);
+  // #620: subordinate province officers have no package startup — inherit gatekeeper instead.
   assert.deepEqual(publicStartupCandidates("inspector"), []);
-  for (const seat of ["coder", "fixer", "collector", "doctor", "merger", "notary"] as const) {
+  assert.deepEqual(publicStartupCandidates("notary"), []);
+  assert.deepEqual(publicStartupCandidates("gatekeeper"), []);
+  for (const seat of ["coder", "fixer", "collector", "doctor", "merger"] as const) {
     assert.deepEqual(publicStartupCandidates(seat), [
       { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
       { provider: "xai", model: "grok-4.5", thinking: "high" },

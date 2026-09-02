@@ -112,11 +112,9 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ],
-  notary: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  // #453: automatic gate seats have no startup default — unset means inherit parent.
+  // #620: subordinate officers inherit gatekeeper; no package startup model.
+  notary: [],
+  // #453/#620: gatekeeper unset inherits audited session (province path only).
   gatekeeper: [],
   inspector: [],
   navigator: [
