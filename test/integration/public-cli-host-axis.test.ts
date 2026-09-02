@@ -397,6 +397,18 @@ function extractPriorNativeResource(
   return undefined;
 }
 
+/** Structured JSONL rows minus public-cli settlement attempt_history (typed, not conversation). */
+function sessionRowsWithoutAttemptHistory(raw: string): unknown[] {
+  const rows: unknown[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    const entry = JSON.parse(line) as { type?: unknown; customType?: unknown };
+    if (entry.type === "custom" && entry.customType === "ak_run_attempt_history") continue;
+    rows.push(entry);
+  }
+  return rows;
+}
+
 /**
  * #617 DK-4 public tracer: ak-role resume Pi→Grok hands prior Pi native bytes once on
  * host transition; source Pi volume unchanged; same-host Grok resume does not re-inject.
@@ -531,16 +543,17 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     assert.equal(typeof prior?.text, "string");
     assert.ok(String(prior?.text).includes(PI_PRIOR_MARKER), "transition must deliver prior Pi native bytes");
 
-    // Prior native seed survives; public-cli may append attempt_history, but Grok must not
-    // strip or rewrite the prior marker line (no conversation writeback into Pi JSONL).
+    // DK-4: after subtracting settlement attempt_history, Pi JSONL conversation rows must be
+    // byte-identical structured equals — Grok must not append message/tool/custom conversation.
     const afterTransition = await readFile(piSessionFile, "utf8");
-    assert.ok(afterTransition.includes(PI_PRIOR_MARKER));
-    assert.ok(
-      afterTransition.includes(piBefore.trim().split("\n").find((line) => line.includes(PI_PRIOR_MARKER))!),
-      "Grok leg must leave the prior Pi native marker line intact",
+    assert.deepEqual(
+      sessionRowsWithoutAttemptHistory(afterTransition),
+      sessionRowsWithoutAttemptHistory(piBefore),
+      "Grok leg must not write conversation/tool rows back into Pi session.jsonl",
     );
 
-    // 2. Same-host Grok resume: no re-injection.
+    // 2. Same-host Grok resume: no re-injection and still no Pi writeback.
+    const beforeSameHost = afterTransition;
     {
       const { io, stderr } = captureIo();
       const second = await runAkRole(["resume", runId], {
@@ -564,7 +577,12 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
       undefined,
       "same-host Grok resume must not re-inject prior Pi native resource",
     );
-    assert.ok((await readFile(piSessionFile, "utf8")).includes(PI_PRIOR_MARKER));
+    const afterSameHost = await readFile(piSessionFile, "utf8");
+    assert.deepEqual(
+      sessionRowsWithoutAttemptHistory(afterSameHost),
+      sessionRowsWithoutAttemptHistory(beforeSameHost),
+      "same-host Grok resume must not write conversation rows into Pi session.jsonl",
+    );
   });
 });
 
