@@ -133,9 +133,7 @@ const PUBLIC_ROLE_RECORDS = [
 const ONE_SHOT_ROLES = [
   "collector",
   "doctor",
-  "notary",
-  "countersign",
-  "gleaner-left"
+  "notary"
 ];
 const PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
 function packagedRoleMetadata(role) {
