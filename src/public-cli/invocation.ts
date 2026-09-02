@@ -999,13 +999,22 @@ export type AdmitJudgeInvocationOptions = {
   model?: InvocationEffectiveModel;
 };
 
+export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
+  correlationId?: string;
+};
+
 /**
- * Atomically admit a Judge Role run: freeze Attachments, persist the request,
- * and reserve session placement under the #78 ledger book.
+ * Shared instruction-seat admission for Judge and Inspector: project check,
+ * principal/placement issue, attachment freeze, ticket extract, admitted-request
+ * and invocation ledger write. CorrelationId is projected only when supplied
+ * (Inspector). Countersign keeps its own path for ticket-override specialty.
  */
-export async function admitJudgeInvocation(
-  options: AdmitJudgeInvocationOptions,
-): Promise<AdmittedJudgeInvocation> {
+async function admitStandardMaterialInvocation<
+  R extends "judge" | "inspector",
+>(
+  role: R,
+  options: AdmitJudgeInvocationOptions & { correlationId?: string },
+): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
   // Empty project override must not reach resolve("") → cwd (silent default).
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
@@ -1022,7 +1031,7 @@ export async function admitJudgeInvocation(
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
-    role: "judge",
+    role,
     home: options.home,
   });
   const attachmentsDirectory = join(runDirectory, "attachments");
@@ -1034,17 +1043,22 @@ export async function admitJudgeInvocation(
     attachmentsDirectory,
   );
   const ticketFields = ticketAdmissionFields(ticketNumber);
+  const correlationFields =
+    options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId };
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
-    role: "judge" as const,
+    role,
     runId,
     bookKey,
     projectRoot,
     runDirectory,
     principal,
     ...ticketFields,
+    ...correlationFields,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -1060,10 +1074,14 @@ export async function admitJudgeInvocation(
     sessionDirectory,
     sessionFile,
   });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+  await writeRoleInvocationLedger(
+    { ...admitted, sessionDirectory, sessionFile },
+    admitted.role,
+    options.model,
+  );
 
   return {
-    role: "judge",
+    role,
     runId,
     bookKey,
     projectRoot,
@@ -1074,7 +1092,28 @@ export async function admitJudgeInvocation(
     principal,
     admittedRequestPath,
     ...ticketFields,
+    ...correlationFields,
   };
+}
+
+/**
+ * Atomically admit a Judge Role run: freeze Attachments, persist the request,
+ * and reserve session placement under the #78 ledger book.
+ */
+export async function admitJudgeInvocation(
+  options: AdmitJudgeInvocationOptions,
+): Promise<AdmittedJudgeInvocation> {
+  return admitStandardMaterialInvocation("judge", options);
+}
+
+/**
+ * Admit a direct Inspector (察院) run: freeze attachments, persist the request,
+ * and reserve session placement. Same instruction-seat face as Judge (#568).
+ */
+export async function admitInspectorInvocation(
+  options: AdmitInspectorInvocationOptions,
+): Promise<AdmittedInspectorInvocation> {
+  return admitStandardMaterialInvocation("inspector", options);
 }
 
 /** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
@@ -1099,89 +1138,6 @@ export function buildJudgeTransportPrompt(
   engineMaterial?: EngineSessionMaterial,
 ): string {
   return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
-export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
-  correlationId?: string;
-};
-
-/**
- * Admit a direct Inspector (察院) run: freeze attachments, persist the request,
- * and reserve session placement. Same instruction-seat face as Judge (#568).
- */
-export async function admitInspectorInvocation(
-  options: AdmitInspectorInvocationOptions,
-): Promise<AdmittedInspectorInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "inspector",
-    home: options.home,
-  });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
-
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
-
-  const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "inspector" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    ...ticketFields,
-    instruction,
-    instructionEmpty,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-
-  return {
-    role: "inspector",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    ...ticketFields,
-    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
-  };
 }
 
 export function buildInspectorTransportPrompt(

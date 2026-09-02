@@ -48,11 +48,3 @@ export const INSPECTOR_TOOL_SPEC = {
   promptSnippet: "察院终局回执",
   parameters: inspectorOutputSchema,
 } as const;
-
-export function projectInspectorReceipt(parameters: unknown) {
-  return {
-    content: [{ type: "text" as const, text: INSPECTOR_ACCEPTED_TEXT }],
-    details: parameters,
-    terminate: true as const,
-  };
-}
