@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { packageRoot, piCli, withColdInstalledPackage } from "../helpers/pi-test-harness.ts";
+import { withPackageMachineHomeGuard } from "../helpers/package-machine-home-guard.ts";
 import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
 
 function seedProject(project: string): void {
@@ -24,11 +25,16 @@ async function runPackagedTracer(marker: string): Promise<{
 }> {
   const home = await mkdtemp(join(tmpdir(), `ak-dossier-${marker}-`));
   try {
+    // #604: real ak-role bin ignores process.env.HOME — guard host seats + track book.
+    return await withPackageMachineHomeGuard({ blankSeats: true }, async (guard) => {
     return await withColdInstalledPackage(home, async ({ fixture, installedRoot: rawRoot }) => {
       const installedRoot = await realpath(rawRoot);
-      const project = join(home, "work");
+      // Unique book key per tracer so parallel A/B cannot cross-adopt runs under machine home.
+      const project = join(home, `work-${marker}`);
       await mkdir(project, { recursive: true });
       seedProject(project);
+      const bookKey = resolveBookKeyFromGit(project);
+      guard.trackBook(bookKey);
       const attachment = join(home, "evidence.txt");
       await writeFile(attachment, `attachment-${marker}\n`);
       const agentDir = join(home, ".pi", "agent");
@@ -72,9 +78,9 @@ async function runPackagedTracer(marker: string): Promise<{
       assert.equal(result.localTimeout, false, result.stderr);
       assert.equal(result.code, 0, result.stderr);
 
-      const runsRoot = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs");
+      const runsRoot = join(guard.ledgerHome, "books", bookKey, "runs");
       const runName = (await readdir(runsRoot)).find((name) => name.endsWith("@judge"));
-      assert.ok(runName);
+      assert.ok(runName, `expected @judge run under ${runsRoot}`);
       const runDirectory = join(runsRoot, runName);
       const invocation = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as Record<string, unknown>;
       const launchArgs = JSON.parse(await readFile(launchArgsPath, "utf8")) as string[];
@@ -107,6 +113,7 @@ async function runPackagedTracer(marker: string): Promise<{
       assert.equal(readPaths.length, 3);
       assert.ok(readPaths[2].startsWith(`${join(runDirectory, "attachments")}/`));
       return { runDirectory, installedRoot, trace };
+    });
     });
   } finally {
     await rm(home, { recursive: true, force: true });
