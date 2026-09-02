@@ -1,8 +1,8 @@
 /**
  * #526 / #600 / #617: engine field stays effective across the initial / auto-resume /
  * explicit-resume typed request for all seven resumable seats; resume also
- * projects engine onto invocation.json and continuation material coordinates.
- * Engine present→absent resume clears invocation.engine (authoritative seat axis).
+ * projects engine onto invocation.json. Engine present→absent resume clears
+ * invocation.engine (authoritative seat axis).
  *
  * Drives the real public entry (`runAkRole`) with the minimal host-neutral host
  * (`createMinimalHost`) so the proof exercises the production composition root.
@@ -11,9 +11,8 @@
  * - Explicit: all seven resumable seats (+ countersign / gleaner-left).
  * - Unset: engine-bearing run → unset-engine → resume clears invocation.engine.
  *
- * No argv flag assertions — typed `request.engine`, invocation.engine, and
- * structured material coordinates on the resume continuation prompt only.
- * Zero assertions on free-prose handbook wording / layout (ADR 0073).
+ * Contract surface is typed only: `request.engine` and `invocation.engine`.
+ * Zero free-text / continuation-prompt oracle (anchoring constitution).
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -27,7 +26,6 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { resolveEngineMaterialPath } from "../../src/package-resources/engine-material.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -47,6 +45,50 @@ const ENGINE = "kimi";
 
 type CoreSeat = "judge" | "coder" | "fixer" | "reviewer" | "merger";
 type Seat = CoreSeat | "countersign" | "gleaner-left";
+
+/** Seat → terminating tool + accepted details (single table, no nested ternaries). */
+const SEAT_TERMINAL: Record<
+  Seat,
+  { readonly toolName: string; readonly details: Record<string, unknown> }
+> = {
+  judge: { toolName: JUDGE_OUTPUT_TOOL_NAME, details: { judgeStatus: "converged" } },
+  coder: { toolName: CODER_OUTPUT_TOOL_NAME, details: { status: "completed", report: "engine proof" } },
+  fixer: {
+    toolName: FIXER_OUTPUT_TOOL_NAME,
+    details: {
+      status: "completed",
+      report: "engine proof",
+      classResults: [{
+        name: "engine-resume",
+        disposition: "completed",
+        searchScope: "engine-resume",
+        exceptions: [],
+        commitSha: "0".repeat(40),
+      }],
+    },
+  },
+  reviewer: {
+    toolName: REVIEWER_OUTPUT_TOOL_NAME,
+    details: {
+      status: "completed",
+      version: 2,
+      outcomes: { standards: { status: "pass", findings: [] }, spec: { status: "pass", findings: [] } },
+      reports: { standards: "ok", spec: "ok" },
+    },
+  },
+  merger: {
+    toolName: MERGER_OUTPUT_TOOL_NAME,
+    details: { status: "escalate", attemptId: "", diagnosis: "need escalate", report: "merger proof" },
+  },
+  countersign: {
+    toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+    details: { countersignStatus: "converged" },
+  },
+  "gleaner-left": {
+    toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    details: { status: "completed", findings: [] },
+  },
+};
 
 /**
  * Materialize the durable principal's Pi session file at its authoritative
@@ -72,49 +114,9 @@ async function seedTerminalSession(input: {
   runDirectory: string;
 }): Promise<void> {
   const { seat, sessionFile, cwd, home, runId, runDirectory } = input;
-  const toolName =
-    seat === "judge"
-      ? JUDGE_OUTPUT_TOOL_NAME
-      : seat === "coder"
-        ? CODER_OUTPUT_TOOL_NAME
-        : seat === "fixer"
-          ? FIXER_OUTPUT_TOOL_NAME
-          : seat === "reviewer"
-            ? REVIEWER_OUTPUT_TOOL_NAME
-            : seat === "merger"
-              ? MERGER_OUTPUT_TOOL_NAME
-              : seat === "countersign"
-                ? COUNTERSIGN_OUTPUT_TOOL_NAME
-                : GLEANER_LEFT_OUTPUT_TOOL_NAME;
+  const { toolName, details: baseDetails } = SEAT_TERMINAL[seat];
   const details =
-    seat === "judge"
-      ? { judgeStatus: "converged" }
-      : seat === "reviewer"
-        ? {
-            status: "completed",
-            version: 2,
-            outcomes: { standards: { status: "pass", findings: [] }, spec: { status: "pass", findings: [] } },
-            reports: { standards: "ok", spec: "ok" },
-          }
-        : seat === "merger"
-          ? { status: "escalate", attemptId: runId, diagnosis: "need escalate", report: "merger proof" }
-          : seat === "fixer"
-            ? {
-                status: "completed",
-                report: "engine proof",
-                classResults: [{
-                  name: "engine-resume",
-                  disposition: "completed" as const,
-                  searchScope: "engine-resume",
-                  exceptions: [],
-                  commitSha: "0".repeat(40),
-                }],
-              }
-            : seat === "countersign"
-              ? { countersignStatus: "converged" }
-              : seat === "gleaner-left"
-                ? { status: "completed", findings: [] }
-                : { status: "completed", report: "engine proof" };
+    seat === "merger" ? { ...baseDetails, attemptId: runId } : baseDetails;
   const entries = [];
   if (seat === "merger") {
     const skillPath = join(packageRoot, "resources/methods/resolving-merge-conflicts/SKILL.md");
@@ -165,7 +167,7 @@ function baseArgs(seat: Seat, project: string): string[] {
     case "merger":
       return ["merger", "--project", project, "engine detour proof"];
     case "countersign":
-      // Unbound ticket: diarist does not re-resolve; resume still carries engine material.
+      // Unbound ticket: diarist does not re-resolve; resume still carries engine.
       return ["countersign", "--project", project, "engine detour proof"];
     case "gleaner-left":
       return ["gleaner-left", "--project", project, "--base", "HEAD", "engine detour proof"];
@@ -194,6 +196,13 @@ async function seedMergeProject(project: string): Promise<void> {
   } catch {
     // Conflict is expected; the merge remains in progress.
   }
+}
+
+async function readInvocationEngine(runDirectory: string): Promise<unknown> {
+  const invocation = JSON.parse(
+    await readFile(join(runDirectory, "invocation.json"), "utf8"),
+  ) as Record<string, unknown>;
+  return invocation.engine;
 }
 
 test("engine stays effective on the initial typed request for all resumable seats", async () => {
@@ -235,12 +244,10 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       await runAkRole(["config", "set-auto-resume-limit", "2"], { packageRoot, home, io });
     }
 
-    const engineMaterialPath = resolveEngineMaterialPath(packageRoot, ENGINE);
     const seats: Seat[] = ["judge", "coder", "fixer", "reviewer", "merger"];
     for (const seat of seats) {
       if (seat === "merger") await seedMergeProject(project);
       const captured: Array<string | undefined> = [];
-      const capturedPrompts: string[] = [];
       let first = true;
       const { io } = captureIo();
       await runAkRole([...baseArgs(seat, project), "engine auto proof", "--engine", ENGINE], {
@@ -253,9 +260,6 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
         principalAuthority: piDurablePrincipalAuthority,
         roleTurnHost: createMinimalHost(async (request) => {
           captured.push(request.engine);
-          if (request.continuation.kind === "resume" || request.continuation.kind === "initial") {
-            capturedPrompts.push(request.continuation.prompt);
-          }
           if (first) {
             first = false;
             // Resumability gates (loop + resume load) require the principal session
@@ -288,18 +292,6 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       assert.ok(
         captured.every((e) => e === ENGINE),
         `${seat}: every auto-resume typed request keeps effective engine`,
-      );
-      assert.ok(capturedPrompts.length >= 2, `${seat}: auto-resume must capture resume prompt`);
-      const autoPrompt = capturedPrompts[1]!;
-      assert.match(
-        autoPrompt,
-        new RegExp(`- engine: ${ENGINE}`),
-        `${seat}: auto-resume continuation must carry engine name coordinate`,
-      );
-      assert.equal(
-        autoPrompt.includes(engineMaterialPath),
-        true,
-        `${seat}: auto-resume continuation must carry packaged engine material path`,
       );
     }
   });
@@ -360,11 +352,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
           await runAkRole(["config", "set-engine", seat, ENGINE], { packageRoot, home, io });
           assert.equal(stderr.join(""), "");
         }
-        // Explicit resume must carry engine onto typed request, continuation
-        // material coordinates, and invocation.json (seat table is the axis).
-        const engineMaterialPath = resolveEngineMaterialPath(packageRoot, ENGINE);
         let resumedEngine: string | undefined;
-        let resumedPrompt: string | undefined;
         let resumedInvocationEngine: unknown;
         {
           const { io, stdout, stderr } = captureIo();
@@ -377,14 +365,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
             principalAuthority: piDurablePrincipalAuthority,
             roleTurnHost: createMinimalHost(async (request) => {
               resumedEngine = request.engine;
-              resumedPrompt =
-                request.continuation.kind === "resume" || request.continuation.kind === "initial"
-                  ? request.continuation.prompt
-                  : undefined;
-              const invocation = JSON.parse(
-                await readFile(join(request.runDirectory, "invocation.json"), "utf8"),
-              ) as Record<string, unknown>;
-              resumedInvocationEngine = invocation.engine;
+              resumedInvocationEngine = await readInvocationEngine(request.runDirectory);
               const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
               await seedTerminalSession({
                 seat,
@@ -400,21 +381,6 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
           assert.equal(resumed.exitCode, 0, stdout.join("") + "\n[stderr] " + stderr.join(""));
         }
         assert.equal(resumedEngine, ENGINE, `${seat}: explicit resume must re-project engine`);
-        assert.equal(
-          typeof resumedPrompt,
-          "string",
-          `${seat}: explicit resume must carry a continuation prompt`,
-        );
-        assert.match(
-          resumedPrompt as string,
-          new RegExp(`- engine: ${ENGINE}`),
-          `${seat}: resume continuation must carry engine name coordinate`,
-        );
-        assert.equal(
-          (resumedPrompt as string).includes(engineMaterialPath),
-          true,
-          `${seat}: resume continuation must carry packaged engine material path`,
-        );
         assert.equal(
           resumedInvocationEngine,
           ENGINE,
@@ -469,7 +435,6 @@ test("explicit resume clears invocation.engine when the live seat has no engine"
 
     let resumedEngine: string | undefined = "sentinel";
     let resumedInvocationEngine: unknown = "sentinel";
-    let resumedPrompt: string | undefined;
     {
       const { io, stdout, stderr } = captureIo();
       const resumed = await runAkRole(["resume", runId], {
@@ -481,14 +446,7 @@ test("explicit resume clears invocation.engine when the live seat has no engine"
         principalAuthority: piDurablePrincipalAuthority,
         roleTurnHost: createMinimalHost(async (request) => {
           resumedEngine = request.engine;
-          resumedPrompt =
-            request.continuation.kind === "resume" || request.continuation.kind === "initial"
-              ? request.continuation.prompt
-              : undefined;
-          const invocation = JSON.parse(
-            await readFile(join(request.runDirectory, "invocation.json"), "utf8"),
-          ) as Record<string, unknown>;
-          resumedInvocationEngine = invocation.engine;
+          resumedInvocationEngine = await readInvocationEngine(request.runDirectory);
           const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
           await seedTerminalSession({
             seat: "judge",
@@ -508,12 +466,6 @@ test("explicit resume clears invocation.engine when the live seat has no engine"
       resumedInvocationEngine,
       undefined,
       "invocation.engine must be cleared when live seat has no engine",
-    );
-    assert.equal(typeof resumedPrompt, "string");
-    assert.equal(
-      (resumedPrompt as string).includes(`- engine: ${ENGINE}`),
-      false,
-      "continuation must not carry engine material when seat has none",
     );
   });
 });

@@ -797,8 +797,39 @@ test("Grok accepted closeRound books navigator attendance onto parent session fo
         .map((line) => JSON.parse(line) as {
           type?: string;
           customType?: string;
-          message?: { details?: unknown };
+          message?: {
+            role?: string;
+            details?: unknown;
+            toolCallId?: string;
+            toolName?: string;
+            isError?: boolean;
+            content?: Array<{ type?: string; id?: string; name?: string; arguments?: unknown }>;
+          };
         });
+      // #617 DK-1: Grok MCP tool path writes paired toolCall + toolResult onto JSONL.
+      // Role conclusion on toolCall.arguments; projected toolResult.details is the pair leaf.
+      const toolCall = entries.find((row) =>
+        row.type === "message"
+        && row.message?.role === "assistant"
+        && Array.isArray(row.message.content)
+        && row.message.content.some((part) => part.type === "toolCall" && part.name === NOTARY_OUTPUT_TOOL_NAME),
+      );
+      assert.ok(toolCall, "Grok MCP must book assistant toolCall leaf");
+      const callPart = toolCall!.message!.content!.find((part) => part.type === "toolCall")!;
+      assert.equal(
+        (callPart.arguments as { status?: unknown } | undefined)?.status,
+        "pass",
+      );
+      const toolResult = entries.find((row) =>
+        row.type === "message"
+        && row.message?.role === "toolResult"
+        && row.message.toolCallId === callPart.id
+        && row.message.toolName === NOTARY_OUTPUT_TOOL_NAME,
+      );
+      assert.ok(toolResult, "Grok MCP must book paired toolResult leaf");
+      assert.equal(toolResult!.message?.isError, false);
+      assert.equal(typeof toolResult!.message?.details, "object");
+      assert.notEqual(toolResult!.message?.details, null);
       const attendance = entries.find(
         (row) => row.type === "custom_message" && row.customType === "ak-navigator-attendance",
       );
