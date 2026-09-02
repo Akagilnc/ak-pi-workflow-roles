@@ -28,8 +28,16 @@ function registerDefaultTestHomeCleanup() {
     if (defaultTestHome === undefined) return;
     try {
       rmSync(defaultTestHome, { recursive: true, force: true });
-    } catch {
-      // Best-effort on exit: process is dying; residue is observable by #612 tracers.
+    } catch (error) {
+      // Exit-phase best-effort: still land the real cause on stderr before death.
+      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      try {
+        process.stderr.write(
+          `[test-process-env] failed to remove default test home ${defaultTestHome}: ${detail}\n`,
+        );
+      } catch {
+        // stderr may already be closed during process teardown
+      }
     }
   });
 }
