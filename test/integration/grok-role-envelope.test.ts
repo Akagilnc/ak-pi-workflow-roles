@@ -216,6 +216,60 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
   }
 });
 
+test("Grok typed infrastructureFailure aborts the round and closeRound returns knownFailure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-infra-fail-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorExitCode = process.exitCode;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const diagnostic = "劳务引擎 agy authentication timed out (case #593)";
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "initial", prompt: "decide" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-infra"),
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      assert.ok(prepared.abortSignal instanceof AbortSignal);
+      assert.equal(prepared.abortSignal.aborted, false);
+
+      const server = prepared.mcpServers[0] as McpServer;
+      const reply = await callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
+        infrastructureFailure: { diagnostic },
+      });
+      assert.equal(reply.error, undefined);
+      assert.equal((reply.result as { isError?: boolean })?.isError, true);
+
+      // failInfrastructure must actually abort the host context — not empty abort(){}.
+      assert.equal(prepared.abortSignal.aborted, true);
+
+      const closure = await prepared.closeRound();
+      assert.equal(closure.accepted, false);
+      assert.ok("failure" in closure, "infrastructure declaration must not fall to MissingSubmission or retry");
+      assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
+      assert.equal(closure.failure.diagnostic, diagnostic);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    // failInfrastructure stamps exitCode=1 under print mode; restore for the test process.
+    process.exitCode = priorExitCode;
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Grok MCP projection routes a correctable rejection as a structured non-pass", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-reject-"));
   const priorHome = process.env.HOME;
