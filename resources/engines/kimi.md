@@ -1,6 +1,6 @@
 # kimi engine method material
 
-This file is packaged technical material for the optional `kimi` labor engine
+This file is packaged technical material for the `kimi` labor engine
 (Kimi Code CLI on the host).
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path

@@ -20,7 +20,7 @@ import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dis
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
+import { buildResumeContinuationPrompt, RESUME_TRANSPORT_ENVELOPE, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { packageRoot, withHermeticHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
@@ -378,6 +378,133 @@ test("retained auditor failure is bound to the latest parent resume attempt", as
     ];
     await writeFile(join(childDir, "child.jsonl"), childEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     assert.equal(await readBoundAuditorKnownFailure(sessionFile), undefined);
+  });
+});
+// #600 / 8e767152: engine-axis resume appends handbook prose after the transport
+// token. Settlement must still ignore that envelope so first-attempt auditor
+// retentionFailure/compliance is not dropped as stale.
+test("engine-suffixed resume envelope keeps first-attempt auditor retention bound", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    const engineResumePrompt = buildResumeContinuationPrompt({
+      packageRoot,
+      engine: "kimi",
+    });
+    assert.notEqual(engineResumePrompt, RESUME_TRANSPORT_ENVELOPE);
+    assert.equal(engineResumePrompt.startsWith(`${RESUME_TRANSPORT_ENVELOPE}\n`), true);
+
+    const shapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
+      // text-string form (message.content string)
+      { label: "content-string", message: { role: "user", content: engineResumePrompt } },
+      // message.text string form
+      { label: "text-string", message: { role: "user", text: engineResumePrompt } },
+      // real pi content-array form
+      {
+        label: "content-array",
+        message: { role: "user", content: [{ type: "text", text: engineResumePrompt }] },
+      },
+    ];
+
+    for (const shape of shapes) {
+      await writeFile(sessionFile, [
+        { type: "session", id: "parent-session" },
+        { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
+        {
+          type: "message",
+          id: "attempt-first",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "This operation was aborted",
+            provider: "openai-codex",
+            model: "faux-1",
+          },
+        },
+        { type: "message", id: `resume-${shape.label}`, message: shape.message },
+        {
+          type: "message",
+          id: "attempt-retry",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "retry without retention",
+            provider: "openai-codex",
+            model: "faux-1",
+          },
+        },
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+      await writeFile(join(childDir, "child.jsonl"), [
+        { type: "session", id: "child-session", parentSession: sessionFile },
+        {
+          type: "custom",
+          customType: "ak_auditor_parent_attempt_binding",
+          data: {
+            version: 1,
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-first",
+            },
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "WebSocket error",
+            provider: "openai-codex",
+            model: "faux-1",
+          },
+        },
+        {
+          type: "custom",
+          customType: "ak_auditor_compliance_failure",
+          data: {
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-first",
+            },
+            failure: {
+              cause: "provider",
+              diagnostic: "WebSocket error",
+              identity: { name: "faux-1", code: "openai-codex" },
+              details: {
+                provider: "openai-codex",
+                model: "faux-1",
+                retentionFailure: {
+                  name: "ComplianceResponseRetentionError",
+                  cause: { code: "EISDIR" },
+                },
+              },
+            },
+          },
+        },
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+      const known = await readBoundAuditorKnownFailure(sessionFile);
+      assert.deepEqual(
+        known,
+        {
+          cause: "provider",
+          diagnostic: "WebSocket error",
+          identity: { name: "faux-1", code: "openai-codex" },
+          details: {
+            provider: "openai-codex",
+            model: "faux-1",
+            retentionFailure: {
+              name: "ComplianceResponseRetentionError",
+              cause: { code: "EISDIR" },
+            },
+          },
+        },
+        `${shape.label}: engine-suffixed resume envelope must not stale first-attempt auditor retention`,
+      );
+    }
   });
 });
 test("bound auditor assistant supplies primary when secondary enrichment is absent", async () => {
