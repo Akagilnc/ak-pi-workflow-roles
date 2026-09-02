@@ -382,9 +382,9 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
         }),
       },
     );
-    assert.ok(captured.current);
-    assert.equal(captured.current.activation.role, "inspector");
-    assert.deepEqual(captured.current.model, {
+    const inherited = captured.current!;
+    assert.equal(inherited.activation.role, "inspector");
+    assert.deepEqual(inherited.model, {
       provider: "openai-codex",
       model: "gpt-5.6-sol",
       thinking: "low",
@@ -409,7 +409,7 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
       ).exitCode,
       0,
     );
-    captured.current = undefined;
+    const pinnedCapture: { current: RoleTurnRequest | undefined } = { current: undefined };
     await runAkRole(
       ["inspector", "--project", project, "--attach", attachment, "Review this material."],
       {
@@ -420,13 +420,13 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
         createRunId: () => "inspector-pinned-620",
         io: captureIo().io,
         roleTurnHost: createMinimalHost((request) => {
-          captured.current = request;
+          pinnedCapture.current = request;
           return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
         }),
       },
     );
-    assert.ok(captured.current);
-    assert.deepEqual(captured.current.model, {
+    const pinned = pinnedCapture.current!;
+    assert.deepEqual(pinned.model, {
       provider: "xai",
       model: "grok-4.5",
       thinking: "high",
