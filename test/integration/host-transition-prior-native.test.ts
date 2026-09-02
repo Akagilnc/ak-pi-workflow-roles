@@ -58,6 +58,19 @@ test("grok-build→pi with multiple updates.jsonl yields empty priorNativeRecord
       previousHost: "grok-build",
       priorNativeRecords: "",
     });
+
+    // One real updates.jsonl plus a residual empty session dir still keeps the sole file.
+    await rm(join(b, "updates.jsonl"));
+    const sole = await projectHostTransitionPriorNative({
+      previousHost: "grok-build",
+      liveHost: "pi",
+      runDirectory,
+      piSessionFile: join(runDirectory, "session", "session.jsonl"),
+    });
+    assert.deepEqual(sole, {
+      previousHost: "grok-build",
+      priorNativeRecords: "{\"a\":1}\n",
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

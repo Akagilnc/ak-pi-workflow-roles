@@ -42,26 +42,27 @@ async function readGrokNativeSessionRecords(runDirectory: string): Promise<strin
     if (isEnoent(error)) return undefined;
     throw error;
   }
-  const updatesPaths: string[] = [];
+  const presentUpdates: string[] = [];
   for (const cwdEntry of encodedCwds) {
     if (!cwdEntry.isDirectory()) continue;
     const sessionDirs = await readdir(join(grokSessionsDir, cwdEntry.name), { withFileTypes: true });
     for (const sessEntry of sessionDirs) {
       if (!sessEntry.isDirectory()) continue;
-      updatesPaths.push(join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl"));
+      const updatesFile = join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl");
+      try {
+        // Only present updates.jsonl files count — residual empty session dirs are not candidates.
+        presentUpdates.push(await readFile(updatesFile, "utf8"));
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
+      }
     }
   }
-  if (updatesPaths.length === 0) return undefined;
-  if (updatesPaths.length !== 1) {
-    // Ambiguous multi-session tree: no silent join. Caller sees empty prior records.
+  if (presentUpdates.length === 0) return undefined;
+  if (presentUpdates.length !== 1) {
+    // Ambiguous multi-file tree: no silent join. Caller sees empty prior records.
     return undefined;
   }
-  try {
-    return await readFile(updatesPaths[0]!, "utf8");
-  } catch (error) {
-    if (isEnoent(error)) return undefined;
-    throw error;
-  }
+  return presentUpdates[0]!;
 }
 
 /**
