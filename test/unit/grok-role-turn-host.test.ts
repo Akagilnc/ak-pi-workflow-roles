@@ -31,6 +31,16 @@ const sessionIds = new WeakMap<object, string>();
 const sessionIdentity: GrokSessionIdentityAuthority = {
   async load(principal) { return sessionIds.get(principal as object); },
   async bind(principal, sessionId) { sessionIds.set(principal as object, sessionId); },
+  resolveSessionFile(principal) {
+    const record = principal as { sessionFile?: unknown; sessionDirectory?: unknown };
+    if (typeof record.sessionFile === "string" && record.sessionFile.trim() !== "") {
+      return record.sessionFile;
+    }
+    if (typeof record.sessionDirectory === "string" && record.sessionDirectory.trim() !== "") {
+      return join(record.sessionDirectory, "session.jsonl");
+    }
+    return join("/run", "session", "session.jsonl");
+  },
 };
 
 function turnRequest(input: {
@@ -301,6 +311,7 @@ process.stdout.write(JSON.stringify({
       sessionIdentity: {
         async load(p: object) { return sessionIds.get(p); },
         async bind(p: object, sessionId: string) { sessionIds.set(p, sessionId); },
+        resolveSessionFile: sessionIdentity.resolveSessionFile,
       },
       recordCapabilities: async () => {},
       connect: async () => ({
@@ -364,6 +375,7 @@ test("grok resume reuses native ACP session via session/load when an ACP binding
       sessionIdentity: {
         async load() { return "bound-s1"; },
         async bind() {},
+        resolveSessionFile: sessionIdentity.resolveSessionFile,
       },
       recordCapabilities: async () => {},
       connect: async () => ({
@@ -417,6 +429,7 @@ test("grok resume injects prior Pi native resource only on typed host transition
         sessionIdentity: {
           async load() { return undefined; },
           async bind() {},
+          resolveSessionFile: sessionIdentity.resolveSessionFile,
         },
         recordCapabilities: async () => {},
         connect: async () => ({

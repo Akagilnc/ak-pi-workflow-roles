@@ -561,6 +561,16 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
             async bind(principal, sessionId) {
               sessionIds.set(principal, sessionId);
             },
+            resolveSessionFile(principal) {
+              const record = principal as { sessionFile?: unknown; sessionDirectory?: unknown };
+              if (typeof record.sessionFile === "string" && record.sessionFile.trim() !== "") {
+                return record.sessionFile;
+              }
+              if (typeof record.sessionDirectory === "string" && record.sessionDirectory.trim() !== "") {
+                return join(record.sessionDirectory, "session.jsonl");
+              }
+              return join(request.runDirectory, "session", "session.jsonl");
+            },
           },
           recordCapabilities: async () => {},
           connect: async () => ({
@@ -783,6 +793,7 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
       sessionIdentity: {
         load: async () => undefined,
         bind: async () => {},
+        resolveSessionFile: () => join(request.runDirectory, "session", "session.jsonl"),
       },
       recordCapabilities: async () => {},
       connect: async () => ({

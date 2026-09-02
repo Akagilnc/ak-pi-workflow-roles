@@ -84,6 +84,8 @@ export type GrokCapabilityDeclaration = Readonly<{
 export type GrokSessionIdentityAuthority = Readonly<{
   load(principal: RoleTurnRequest["principal"]): Promise<string | undefined>;
   bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;
+  /** Durable principal session path for layout ownership / isAvailable — not a rebuild source (#617 DK-4). */
+  resolveSessionFile(principal: RoleTurnRequest["principal"]): string;
 }>;
 
 export type GrokRoleTurnHostConfig = Readonly<{
