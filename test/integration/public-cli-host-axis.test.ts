@@ -118,6 +118,27 @@ test("notary model clear preserves independent host and engine residual axes", a
   assert.equal((await loadPublicCliConfig(home)).seats.notary, undefined);
 }));
 
+// #522 host/engine independence + #568 public Inspector: same residual contract as notary.
+test("inspector model clear preserves independent host and engine residual axes", async () => homeTest(async (home) => {
+  const env = base(home, []);
+  await runAkRole(["config", "set", "inspector", "xai/grok-4.5"], env);
+  await runAkRole(["config", "set-host", "inspector", "grok-build"], env);
+  await runAkRole(["config", "set-engine", "inspector", "cc"], env);
+  await runAkRole(["config", "unset", "inspector"], env);
+  assert.deepEqual((await loadPublicCliConfig(home)).seats.inspector, {
+    host: "grok-build",
+    engine: "cc",
+  });
+
+  await runAkRole(["config", "unset-engine", "inspector"], env);
+  assert.deepEqual((await loadPublicCliConfig(home)).seats.inspector, { host: "grok-build" });
+  await runAkRole(["config", "set-engine", "inspector", "cc"], env);
+  await runAkRole(["config", "unset-host", "inspector"], env);
+  assert.deepEqual((await loadPublicCliConfig(home)).seats.inspector, { engine: "cc" });
+  await runAkRole(["config", "unset-engine", "inspector"], env);
+  assert.equal((await loadPublicCliConfig(home)).seats.inspector, undefined);
+}));
+
 test("resume refuses --host structurally", async () => homeTest(async (home) => {
   const result = await runAkRole(["resume", "--host", "pi", "run"], base(home, [adapter("pi", [])]));
   assert.equal(result.exitCode, 2);
