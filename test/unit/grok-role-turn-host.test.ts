@@ -18,9 +18,9 @@ import {
   classifyGrokInspection,
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
-  extractGrokRebuildHistory,
   formatGrokRebuildHistoryContext,
   inspectControlledGrok,
+  projectGrokRebuildHistory,
   type GrokAcpConnection,
   type GrokPreparedTurn,
 } from "../../src/grok/role-turn-host.ts";
@@ -373,24 +373,45 @@ test("grok resume always session/new and rebinds even when an ACP binding exists
   }
 });
 
-/** #617 DK-1: resume delivers session.jsonl history via embeddedContext, never blank session/new alone. */
-test("resume rebuilds from session.jsonl history into the ACP prompt", async () => {
+/**
+ * #617 DK-1: resume projects full structured JSONL history (user/assistant text +
+ * toolCall.arguments + toolResult.details) into ACP embeddedContext — never text-only.
+ * Fixture is a real Pi-shaped escalate→resume chain (frozen 471 volume).
+ */
+test("resume rebuilds Pi-shaped toolCall/toolResult history into the ACP prompt", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-jsonl-rebuild-"));
   try {
+    const fixtureSession = join(
+      packageRoot,
+      "test/fixtures/471-resume-chain/01a03c71-4710-7000-8000-escalate-resume01@judge/session/session.jsonl",
+    );
+    const prior = await readFile(fixtureSession, "utf8");
+    const projected = projectGrokRebuildHistory(prior);
+    const toolCalls = projected.filter((t) => t.kind === "toolCall");
+    const toolResults = projected.filter((t) => t.kind === "toolResult");
+    assert.ok(toolCalls.length >= 2, "fixture must retain assistant toolCall leaves");
+    assert.ok(toolResults.length >= 2, "fixture must retain paired toolResult leaves");
+    const escalateCall = toolCalls.find(
+      (t) => t.kind === "toolCall" && t.name === "ak_judge_output"
+        && typeof t.arguments === "object" && t.arguments !== null
+        && (t.arguments as { judgeStatus?: unknown }).judgeStatus === "escalate",
+    );
+    assert.ok(escalateCall, "toolCall.arguments must keep judgeStatus=escalate");
+    const escalateResult = toolResults.find(
+      (t) => t.kind === "toolResult" && t.toolName === "ak_judge_output"
+        && typeof t.details === "object" && t.details !== null
+        && (t.details as { judgeStatus?: unknown }).judgeStatus === "escalate",
+    );
+    assert.ok(escalateResult, "toolResult.details must keep judgeStatus=escalate");
+    assert.equal(
+      escalateResult && escalateCall && escalateResult.toolCallId === escalateCall.id,
+      true,
+      "toolResult must pair to its toolCall id",
+    );
+
     const runDirectory = join(root, "run");
     const sessionDir = join(runDirectory, "session");
     await mkdir(sessionDir, { recursive: true });
-    const prior = [
-      JSON.stringify({ type: "session", version: 3, id: "run-x", cwd: "/work" }),
-      JSON.stringify({
-        type: "message",
-        message: { role: "user", content: [{ type: "text", text: "prior-user-secret-617" }] },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: { role: "assistant", content: [{ type: "text", text: "prior-assistant-ack" }] },
-      }),
-    ].join("\n") + "\n";
     await writeFile(join(sessionDir, "session.jsonl"), prior, "utf8");
 
     const prompts: unknown[] = [];
@@ -440,16 +461,16 @@ test("resume rebuilds from session.jsonl history into the ACP prompt", async () 
       | undefined;
     assert.equal(textPart?.text, "continue-now");
     assert.equal(resourcePart?.resource?.uri, "context://ak-role/session-history");
-    assert.equal(resourcePart?.resource?.text?.includes("prior-user-secret-617"), true);
-    assert.equal(resourcePart?.resource?.text?.includes("prior-assistant-ack"), true);
-
-    // Pure helpers stay aligned with the host delivery shape.
-    const turns = extractGrokRebuildHistory(prior);
-    assert.deepEqual(
-      turns.map((t) => t.role),
-      ["user", "assistant"],
+    // Host delivers the same projector output — structured fields, not text-only.
+    assert.equal(resourcePart?.resource?.text, formatGrokRebuildHistoryContext(projected));
+    assert.equal(
+      resourcePart?.resource?.text?.includes(JSON.stringify(escalateCall!.arguments)),
+      true,
     );
-    assert.equal(formatGrokRebuildHistoryContext(turns).includes("prior-user-secret-617"), true);
+    assert.equal(
+      resourcePart?.resource?.text?.includes(JSON.stringify(escalateResult!.details)),
+      true,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

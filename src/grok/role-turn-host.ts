@@ -70,14 +70,33 @@ export function grokSessionJsonlPath(runDirectory: string): string {
 }
 
 /**
- * Extract provider-visible conversation turns from session/session.jsonl.
- * User/assistant text only — tool plumbing stays host-local. Used to rebuild a
- * fresh ACP session so JSONL, not the Grok ACP binding, is the history authority.
+ * Structured rebuild turns projected from session/session.jsonl (#617 DK-1).
+ * Role conclusions live on toolCall.arguments and toolResult.details — text alone is lossy.
  */
-export function extractGrokRebuildHistory(
-  sessionJsonl: string,
-): readonly { readonly role: "user" | "assistant"; readonly text: string }[] {
-  const turns: Array<{ role: "user" | "assistant"; text: string }> = [];
+export type GrokRebuildTurn =
+  | { readonly kind: "user"; readonly text: string }
+  | { readonly kind: "assistant"; readonly text: string }
+  | {
+      readonly kind: "toolCall";
+      readonly id: string;
+      readonly name: string;
+      readonly arguments: unknown;
+    }
+  | {
+      readonly kind: "toolResult";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly details: unknown;
+      readonly isError: boolean;
+    };
+
+/**
+ * Authoritative session→rebuild projector. JSONL is the sole history authority:
+ * user/assistant text plus toolCall.arguments and toolResult.details survive so
+ * cross-host resume keeps role conclusions (Pi-shaped and Grok-shaped pairs).
+ */
+export function projectGrokRebuildHistory(sessionJsonl: string): readonly GrokRebuildTurn[] {
+  const turns: GrokRebuildTurn[] = [];
   for (const line of sessionJsonl.split("\n")) {
     if (line.trim() === "") continue;
     let entry: Record<string, unknown>;
@@ -89,17 +108,65 @@ export function extractGrokRebuildHistory(
     if (entry.type !== "message" || typeof entry.message !== "object" || entry.message === null) {
       continue;
     }
-    const message = entry.message as { role?: unknown; content?: unknown };
-    if (message.role !== "user" && message.role !== "assistant") continue;
+    const message = entry.message as {
+      role?: unknown;
+      content?: unknown;
+      toolCallId?: unknown;
+      toolName?: unknown;
+      details?: unknown;
+      isError?: unknown;
+    };
+    if (message.role === "toolResult") {
+      if (typeof message.toolCallId !== "string" || message.toolCallId.trim() === "") continue;
+      const toolName =
+        typeof message.toolName === "string" && message.toolName.trim() !== ""
+          ? message.toolName
+          : "unknown";
+      turns.push({
+        kind: "toolResult",
+        toolCallId: message.toolCallId,
+        toolName,
+        details: message.details ?? null,
+        isError: message.isError === true,
+      });
+      continue;
+    }
+    if (message.role === "user") {
+      const text = extractMessageText(message.content);
+      if (text !== undefined) turns.push({ kind: "user", text });
+      continue;
+    }
+    if (message.role !== "assistant") continue;
     const text = extractMessageText(message.content);
-    if (text === undefined || text.trim() === "") continue;
-    turns.push({ role: message.role, text });
+    if (text !== undefined) turns.push({ kind: "assistant", text });
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (typeof part !== "object" || part === null) continue;
+      const record = part as {
+        type?: unknown;
+        id?: unknown;
+        name?: unknown;
+        arguments?: unknown;
+      };
+      if (record.type !== "toolCall") continue;
+      if (typeof record.id !== "string" || record.id.trim() === "") continue;
+      if (typeof record.name !== "string" || record.name.trim() === "") continue;
+      turns.push({
+        kind: "toolCall",
+        id: record.id,
+        name: record.name,
+        arguments: record.arguments ?? {},
+      });
+    }
   }
   return turns;
 }
 
 function extractMessageText(content: unknown): string | undefined {
-  if (typeof content === "string") return content;
+  if (typeof content === "string") {
+    const trimmed = content.trim();
+    return trimmed === "" ? undefined : trimmed;
+  }
   if (!Array.isArray(content)) return undefined;
   const parts: string[] = [];
   for (const part of content) {
@@ -115,12 +182,25 @@ function extractMessageText(content: unknown): string | undefined {
   return joined === "" ? undefined : joined;
 }
 
-/** Format JSONL-derived history for ACP embeddedContext (promptCapabilities.embeddedContext). */
+/** Format projected history for ACP embeddedContext (provider-facing bytes). */
 export function formatGrokRebuildHistoryContext(
-  turns: readonly { readonly role: "user" | "assistant"; readonly text: string }[],
+  turns: readonly GrokRebuildTurn[],
 ): string {
   if (turns.length === 0) return "";
-  return turns.map((turn) => `${turn.role}:\n${turn.text}`).join("\n\n");
+  return turns
+    .map((turn) => {
+      switch (turn.kind) {
+        case "user":
+          return `user:\n${turn.text}`;
+        case "assistant":
+          return `assistant:\n${turn.text}`;
+        case "toolCall":
+          return `assistant toolCall ${turn.name} id=${turn.id}:\n${JSON.stringify(turn.arguments)}`;
+        case "toolResult":
+          return `toolResult ${turn.toolName} toolCallId=${turn.toolCallId} isError=${turn.isError}:\n${JSON.stringify(turn.details)}`;
+      }
+    })
+    .join("\n\n");
 }
 
 /** Build session/prompt content: continuation text + optional JSONL history resource. */
@@ -144,10 +224,22 @@ export function buildGrokResumePromptContent(
   return content;
 }
 
+/** Append one durable message entry; ENOENT is a no-op for faux-prepare unit fixtures. */
+export function appendGrokSessionJsonlEntry(
+  sessionFile: string,
+  entry: Readonly<Record<string, unknown>>,
+): void {
+  try {
+    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
+
 /**
- * Append one Pi-shaped message entry to the durable session JSONL (books true source).
- * prepare owns layout creation (`session/session.jsonl`); when that file is absent
- * (unit fixtures with a faux prepare) the append is a no-op so ACP turns still run.
+ * Append one Pi-shaped user/assistant text entry to the durable session JSONL.
+ * prepare owns layout creation (`session/session.jsonl`).
  */
 export function appendGrokSessionMessage(
   sessionFile: string,
@@ -155,19 +247,34 @@ export function appendGrokSessionMessage(
   text: string,
 ): void {
   if (text.trim() === "") return;
-  try {
-    appendFileSync(
-      sessionFile,
-      `${JSON.stringify({
-        type: "message",
-        message: { role, content: [{ type: "text", text }] },
-      })}\n`,
-      "utf8",
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
+  appendGrokSessionJsonlEntry(sessionFile, {
+    type: "message",
+    message: { role, content: [{ type: "text", text }] },
+  });
+}
+
+/** Append a Pi-shaped toolResult pair leaf so JSONL rebuild keeps role conclusions. */
+export function appendGrokSessionToolResult(
+  sessionFile: string,
+  toolResult: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly content: unknown;
+    readonly details: unknown;
+    readonly isError: boolean;
+  },
+): void {
+  appendGrokSessionJsonlEntry(sessionFile, {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolCallId: toolResult.toolCallId,
+      toolName: toolResult.toolName,
+      content: toolResult.content,
+      details: toolResult.details,
+      isError: toolResult.isError,
+    },
+  });
 }
 
 export type GrokCapabilityDeclaration = Readonly<{
@@ -388,7 +495,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             try {
               const raw = await readFile(sessionFile, "utf8");
               rebuildHistoryContext = formatGrokRebuildHistoryContext(
-                extractGrokRebuildHistory(raw),
+                projectGrokRebuildHistory(raw),
               );
             } catch (error) {
               if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

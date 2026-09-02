@@ -24,6 +24,7 @@ import {
 } from "../role-runtime.ts";
 import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import {
+  appendGrokSessionToolResult,
   createGrokRoleTurnHost,
   type GrokPreparedTurn,
   type GrokRoleTurnHostConfig,
@@ -399,6 +400,26 @@ export async function prepareGrokRoleEnvelope(options: {
         isError: "isError" in value && value.isError === true,
       };
     }
+    // Pair toolResult onto durable JSONL with the prior toolCall leaf (#617 DK-1).
+    const toolResultEntry = {
+      type: "message",
+      message: {
+        role: "toolResult" as const,
+        toolCallId,
+        toolName,
+        content: projected.content,
+        details: projected.details,
+        isError: projected.isError,
+      },
+    };
+    sessionEntries.push(toolResultEntry);
+    appendGrokSessionToolResult(sessionFile, {
+      toolCallId,
+      toolName,
+      content: projected.content,
+      details: projected.details,
+      isError: projected.isError,
+    });
     if (projected.isError) {
       rememberInfrastructureFailure(projected.details, projected.content);
       rememberProjectedRejection(projected.details, toolCallId);
