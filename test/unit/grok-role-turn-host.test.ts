@@ -18,6 +18,8 @@ import {
   classifyGrokInspection,
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
+  extractGrokRebuildHistory,
+  formatGrokRebuildHistoryContext,
   inspectControlledGrok,
   type GrokAcpConnection,
   type GrokPreparedTurn,
@@ -221,7 +223,7 @@ test("installed seatbelt hook denies the representative dangerous command and al
   }
 });
 
-test("executeTurn resume reaches session/load after settle scrubs residual AK seatbelt hooks", async () => {
+test("executeTurn resume rebuilds via session/new after settle scrubs residual AK seatbelt hooks", async () => {
   // #594 F1: residual AK hooks under controlled home must not survive settle into the
   // next executeTurn. Inspect goes through real inspectControlledGrok → classifyGrokInspection
   // (faux binary reports filesystem hooks the way grok inspect does — source.type=user).
@@ -318,81 +320,139 @@ process.stdout.write(JSON.stringify({
     });
     assert.equal(resumeResult.code, 0);
     assert.equal(resumeResult.knownFailure, undefined);
-    const load = sessionCalls.find(([method]) => method === "session/load");
-    assert.equal(load?.[0], "session/load");
-    assert.equal((load?.[1] as { sessionId?: string } | undefined)?.sessionId, "resume-s1");
+    // #617: resume never session/load — JSONL rebuild via session/new + rebind.
+    assert.equal(sessionCalls.some(([method]) => method === "session/load"), false);
+    const resumeOpen = sessionCalls.filter(([method]) => method === "session/new");
+    assert.ok(resumeOpen.length >= 2, "initial + resume must both session/new");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("grok session identity is bound by its authority and decoded for resume", async () => {
-  const durableRequest = { ...request, principal: {} } as RoleTurnRequest;
-  const sessionCalls: Array<[string, unknown]> = [];
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method, params) {
-        sessionCalls.push([method, params]);
-        if (method === "session/new") return { sessionId: "durable-s1" };
-        return method === "session/prompt" ? { stopReason: "end_turn" } : {};
+test("grok resume always session/new and rebinds even when an ACP binding exists", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-rebind-"));
+  try {
+    const runDirectory = join(root, "run");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const principal = {};
+    const bound: string[] = [];
+    const sessionCalls: Array<[string, unknown]> = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity: {
+        async load() { return "stale-binding-id"; },
+        async bind(_p, sessionId) { bound.push(sessionId); },
       },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(async () => ({ accepted: true })),
-  });
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          sessionCalls.push([method, params]);
+          if (method === "session/new") return { sessionId: "fresh-s1" };
+          if (method === "session/load") return { sessionId: "should-not-load" };
+          return method === "session/prompt" ? { stopReason: "end_turn" } : {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: true })),
+    });
 
-  await host.executeTurn(durableRequest);
-  await host.executeTurn({ ...durableRequest, continuation: { kind: "resume", prompt: "again" } });
-  const load = sessionCalls.find(([method]) => method === "session/load");
-  assert.deepEqual(load, ["session/load", {
-    sessionId: "durable-s1",
-    cwd: "/work",
-    mcpServers: [{}],
-    _meta: { systemPromptOverride: "law", yoloMode: false },
-  }]);
+    const result = await host.executeTurn({
+      ...request,
+      principal,
+      runDirectory,
+      continuation: { kind: "resume", prompt: "again" },
+    } as RoleTurnRequest);
+    assert.equal(result.code, 0);
+    assert.equal(sessionCalls.some(([m]) => m === "session/load"), false);
+    const opened = sessionCalls.find(([m]) => m === "session/new");
+    assert.equal(opened?.[0], "session/new");
+    assert.deepEqual(bound, ["fresh-s1"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
-/** #617 DK-1: missing ACP binding on resume rebuilds via session/new + bind. */
-test("resume without ACP binding rebuilds session via session/new and binds", async () => {
-  const localIds = new WeakMap<object, string>();
-  const principal = {};
-  const sessionCalls: string[] = [];
-  const host = createGrokRoleTurnHost({
-    sessionIdentity: {
-      async load(p: object) { return localIds.get(p); },
-      async bind(p: object, sessionId: string) { localIds.set(p, sessionId); },
-    },
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        sessionCalls.push(method);
-        if (method === "initialize") return {};
-        if (method === "session/new") return { sessionId: "rebuilt-s1" };
-        if (method === "session/load") return { sessionId: "should-not-load" };
-        if (method === "session/prompt") return { stopReason: "end_turn" };
-        return {};
-      },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(async () => ({ accepted: true })),
-  });
+/** #617 DK-1: resume delivers session.jsonl history via embeddedContext, never blank session/new alone. */
+test("resume rebuilds from session.jsonl history into the ACP prompt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-jsonl-rebuild-"));
+  try {
+    const runDirectory = join(root, "run");
+    const sessionDir = join(runDirectory, "session");
+    await mkdir(sessionDir, { recursive: true });
+    const prior = [
+      JSON.stringify({ type: "session", version: 3, id: "run-x", cwd: "/work" }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: [{ type: "text", text: "prior-user-secret-617" }] },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: [{ type: "text", text: "prior-assistant-ack" }] },
+      }),
+    ].join("\n") + "\n";
+    await writeFile(join(sessionDir, "session.jsonl"), prior, "utf8");
 
-  const result = await host.executeTurn({
-    ...request,
-    principal,
-    continuation: { kind: "resume", prompt: "cross-host rebuild" },
-  } as RoleTurnRequest);
-  assert.equal(result.code, 0);
-  assert.equal(result.knownFailure, undefined);
-  assert.equal(sessionCalls.includes("session/load"), false);
-  assert.equal(sessionCalls.includes("session/new"), true);
-  assert.equal(localIds.get(principal), "rebuilt-s1");
+    const prompts: unknown[] = [];
+    const bound: string[] = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity: {
+        async load() { return "old-binding"; },
+        async bind(_p, id) { bound.push(id); },
+      },
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          if (method === "initialize") return {};
+          if (method === "session/new") return { sessionId: "rebuilt-from-jsonl" };
+          if (method === "session/load") return { sessionId: "must-not-load" };
+          if (method === "session/prompt") {
+            prompts.push(params);
+            return { stopReason: "end_turn" };
+          }
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => ({
+        ...prepared(async () => ({ accepted: true })),
+        prompt: "continue-now",
+      }),
+    });
+
+    const result = await host.executeTurn({
+      ...request,
+      runDirectory,
+      continuation: { kind: "resume", prompt: "continue-now" },
+    } as RoleTurnRequest);
+    assert.equal(result.code, 0);
+    assert.deepEqual(bound, ["rebuilt-from-jsonl"]);
+    assert.equal(prompts.length, 1);
+    const promptParams = prompts[0] as { prompt?: unknown[] };
+    const parts = promptParams.prompt ?? [];
+    const textPart = parts.find((p) => typeof p === "object" && p !== null && (p as { type?: string }).type === "text") as
+      | { text?: string }
+      | undefined;
+    const resourcePart = parts.find((p) => typeof p === "object" && p !== null && (p as { type?: string }).type === "resource") as
+      | { resource?: { text?: string; uri?: string } }
+      | undefined;
+    assert.equal(textPart?.text, "continue-now");
+    assert.equal(resourcePart?.resource?.uri, "context://ak-role/session-history");
+    assert.equal(resourcePart?.resource?.text?.includes("prior-user-secret-617"), true);
+    assert.equal(resourcePart?.resource?.text?.includes("prior-assistant-ack"), true);
+
+    // Pure helpers stay aligned with the host delivery shape.
+    const turns = extractGrokRebuildHistory(prior);
+    assert.deepEqual(
+      turns.map((t) => t.role),
+      ["user", "assistant"],
+    );
+    assert.equal(formatGrokRebuildHistoryContext(turns).includes("prior-user-secret-617"), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {

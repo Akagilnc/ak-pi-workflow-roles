@@ -421,11 +421,13 @@ export async function markRunAdmitted(
 
 /**
  * Shared dispatch execution seam: record the effective launch model (initial or
- * resume override) and effective engine onto invocation.json when known, then
- * transition to running.
+ * resume override) and the authoritative seat engine/host onto invocation.json,
+ * then transition to running.
  * Role runners must not coordinate lifecycle ledger writes themselves.
- * Engine is write-if-present only — omit leaves any existing key untouched;
- * resume paths that carry a seat engine must pass it so the ledger stays current.
+ * Engine axis is authoritative here (#617): present string is written; omit/undefined
+ * clears any prior engine key so unset-engine + resume does not keep a stale value.
+ * (Non-authoritative partial updates still use recordEffectiveInvocationModel directly
+ * with `engine: undefined` to preserve.)
  */
 export async function markRunRunning(
   runDirectory: string,
@@ -436,7 +438,8 @@ export async function markRunRunning(
   await recordEffectiveInvocationModel(
     runDirectory,
     effectiveModel,
-    effectiveEngine,
+    // Authoritative seat projection: absent engine ⇒ null (delete).
+    effectiveEngine === undefined ? null : effectiveEngine,
     effectiveHost,
   );
   const current = await readRoleRunStateDisk(runDirectory);
@@ -1294,4 +1297,3 @@ export async function peekRoleRunRole(
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }
-

@@ -365,18 +365,19 @@ async function writeRoleInvocationLedger(
 }
 
 /**
- * Merge the effective launch model (and optional initial engine) onto the
- * existing invocation identity page (resume / temporary override path — same
- * field shape as admission write).
+ * Merge the effective launch model / engine / host onto the existing invocation
+ * identity page (resume / temporary override path — same field shape as admission).
  * Bare model clears any prior thinking key so absence stays honest.
- * Engine is write-if-present only: undefined leaves any existing key untouched
- * (partial markRunRunning updates must not erase engine provenance).
- * Host is write-if-present only the same way (#595 / #617).
+ *
+ * Engine axis (#617 Scope 1): `string` writes, `null` deletes (authoritative seat
+ * projection when the live table has no engine), `undefined` preserves any existing
+ * key for non-authoritative partial updates.
+ * Host stays write-if-present (`string` only).
  */
 export async function recordEffectiveInvocationModel(
   runDirectory: string,
   model?: InvocationEffectiveModel,
-  engine?: string,
+  engine?: string | null,
   host?: string,
 ): Promise<void> {
   const ledgerPath = join(runDirectory, "invocation.json");
@@ -394,7 +395,9 @@ export async function recordEffectiveInvocationModel(
       next.thinking = model.thinking;
     }
   }
-  if (engine !== undefined) {
+  if (engine === null) {
+    delete next.engine;
+  } else if (engine !== undefined) {
     next.engine = engine;
   }
   if (host !== undefined) {
