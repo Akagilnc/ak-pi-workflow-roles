@@ -16853,8 +16853,18 @@ var init_typed_provider_http = __esm({
 // src/public-cli/run-lifecycle.ts
 import { chmod, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join11 } from "node:path";
-function selectResumeContinuationPrompt(message) {
-  return message !== void 0 ? message : RESUME_TRANSPORT_ENVELOPE;
+function selectResumeContinuationPrompt(message, engineMaterial) {
+  const base = message !== void 0 ? message : RESUME_TRANSPORT_ENVELOPE;
+  return appendEngineSessionMaterial([base], engineMaterial).join("\n");
+}
+function buildResumeContinuationPrompt(options) {
+  return selectResumeContinuationPrompt(
+    options.message,
+    engineSessionMaterialFromOptions({
+      ...options.engine === void 0 ? {} : { engine: options.engine },
+      packageRoot: options.packageRoot
+    })
+  );
 }
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
@@ -17525,6 +17535,7 @@ var init_run_lifecycle = __esm({
     init_cli_errors();
     init_typed_provider_http();
     init_typed_provider_http();
+    init_engine_material();
     init_config2();
     init_invocation();
     V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
@@ -25901,7 +25912,7 @@ async function runPostAdmissionResumable(input) {
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
-    dispatch: (request, lease, isFirst, attemptIo) => dispatchPostAdmissionTurn({
+    dispatch: (request, lease, _isFirst, attemptIo) => dispatchPostAdmissionTurn({
       admitted,
       env: {
         ...env,
@@ -25911,12 +25922,13 @@ async function runPostAdmissionResumable(input) {
       request,
       lease,
       adapters,
-      ...isFirst && effectiveEngine !== void 0 ? { effectiveEngine } : {}
+      // #600: every attempt (initial + auto-resume) writes seat engine when present.
+      ...effectiveEngine === void 0 ? {} : { effectiveEngine }
     })
   });
 }
 async function runPostAdmissionManualResume(input) {
-  const { admitted, env, io, request, adapters } = input;
+  const { admitted, env, io, request, adapters, effectiveEngine } = input;
   const effectiveModel = resolveResumeModel(env.model, admitted.model);
   let lease;
   try {
@@ -25938,7 +25950,8 @@ async function runPostAdmissionManualResume(input) {
     io,
     request,
     lease,
-    adapters
+    adapters,
+    ...effectiveEngine === void 0 ? {} : { effectiveEngine }
   });
   if (result2.terminal !== void 0) {
     result2.terminal.autoResumeCount = 0;
@@ -26064,7 +26077,10 @@ async function runPublicCoder(argv, env, io, parseCoderArgv2) {
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
         kind: "resume",
-        prompt: selectResumeContinuationPrompt()
+        prompt: buildResumeContinuationPrompt({
+          packageRoot: env.packageRoot,
+          ...env.engine === void 0 ? {} : { engine: env.engine }
+        })
       }
     }),
     adapters: coderAdapters(methodProvenance),
@@ -26117,7 +26133,11 @@ async function runPublicCoderResume(request, env, io) {
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message)
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...env.engine === void 0 ? {} : { engine: env.engine },
+        ...request.message === void 0 ? {} : { message: request.message }
+      })
     }
   });
   return await runPostAdmissionManualResume({
@@ -26125,7 +26145,8 @@ async function runPublicCoderResume(request, env, io) {
     env,
     io,
     request: turnRequest,
-    adapters: coderAdapters(methodProvenance)
+    adapters: coderAdapters(methodProvenance),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_coder_run = __esm({
@@ -28066,7 +28087,10 @@ async function runPublicFixer(argv, env, io, parseFixerArgv2) {
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
         kind: "resume",
-        prompt: selectResumeContinuationPrompt()
+        prompt: buildResumeContinuationPrompt({
+          packageRoot: env.packageRoot,
+          ...env.engine === void 0 ? {} : { engine: env.engine }
+        })
       }
     }),
     adapters: fixerAdapters(env.packageRoot, methodMaterial),
@@ -28112,7 +28136,11 @@ async function runPublicFixerResume(request, env, io) {
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message)
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...env.engine === void 0 ? {} : { engine: env.engine },
+        ...request.message === void 0 ? {} : { message: request.message }
+      })
     }
   });
   return await runPostAdmissionManualResume({
@@ -28120,7 +28148,8 @@ async function runPublicFixerResume(request, env, io) {
     env,
     io,
     request: turnRequest,
-    adapters: fixerAdapters(env.packageRoot, methodMaterial)
+    adapters: fixerAdapters(env.packageRoot, methodMaterial),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_fixer_run = __esm({
@@ -28288,7 +28317,10 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
         kind: "resume",
-        prompt: selectResumeContinuationPrompt()
+        prompt: buildResumeContinuationPrompt({
+          packageRoot: env.packageRoot,
+          ...env.engine === void 0 ? {} : { engine: env.engine }
+        })
       }
     }),
     adapters: judgeAdapters(),
@@ -28317,7 +28349,11 @@ async function runPublicResume(request, env, io) {
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message)
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...env.engine === void 0 ? {} : { engine: env.engine },
+        ...request.message === void 0 ? {} : { message: request.message }
+      })
     }
   });
   return await runPostAdmissionManualResume({
@@ -28325,7 +28361,8 @@ async function runPublicResume(request, env, io) {
     env,
     io,
     request: turnRequest,
-    adapters: judgeAdapters()
+    adapters: judgeAdapters(),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_judge_run = __esm({
@@ -28562,7 +28599,10 @@ async function runPublicMerger(argv, env, io, parseMergerArgv2) {
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
         kind: "resume",
-        prompt: selectResumeContinuationPrompt()
+        prompt: buildResumeContinuationPrompt({
+          packageRoot: env.packageRoot,
+          ...env.engine === void 0 ? {} : { engine: env.engine }
+        })
       }
     }),
     adapters: mergerAdapters(env.packageRoot, methodMaterial),
@@ -28609,7 +28649,11 @@ async function runPublicMergerResume(request, env, io) {
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message)
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...env.engine === void 0 ? {} : { engine: env.engine },
+        ...request.message === void 0 ? {} : { message: request.message }
+      })
     }
   });
   return await runPostAdmissionManualResume({
@@ -28617,7 +28661,8 @@ async function runPublicMergerResume(request, env, io) {
     env,
     io,
     request: turnRequest,
-    adapters: mergerAdapters(env.packageRoot, methodMaterial)
+    adapters: mergerAdapters(env.packageRoot, methodMaterial),
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
   });
 }
 var init_merger_run = __esm({
@@ -28755,7 +28800,10 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
       ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
       continuation: {
         kind: "resume",
-        prompt: selectResumeContinuationPrompt()
+        prompt: buildResumeContinuationPrompt({
+          packageRoot: env.packageRoot,
+          ...env.engine === void 0 ? {} : { engine: env.engine }
+        })
       }
     }),
     adapters: reviewerAdapters(env.packageRoot, methodMaterial),
@@ -28801,7 +28849,11 @@ async function runPublicReviewerResume(request, env, io) {
     ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message)
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...env.engine === void 0 ? {} : { engine: env.engine },
+        ...request.message === void 0 ? {} : { message: request.message }
+      })
     }
   });
   return await runPostAdmissionManualResume({
@@ -28809,6 +28861,7 @@ async function runPublicReviewerResume(request, env, io) {
     env,
     io,
     request: turnRequest,
+    ...env.engine === void 0 ? {} : { effectiveEngine: env.engine },
     adapters: reviewerAdapters(env.packageRoot, methodMaterial)
   });
 }

@@ -26,7 +26,7 @@ import {
 import {
   loadResumableReviewerRun,
   markRunAdmitted,
-  selectResumeContinuationPrompt,
+  buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
@@ -216,7 +216,10 @@ export async function runPublicReviewer(
           : { correlationId: admitted.correlationId ?? env.correlationId }),
         continuation: {
           kind: "resume",
-          prompt: selectResumeContinuationPrompt(),
+          prompt: buildResumeContinuationPrompt({
+            packageRoot: env.packageRoot,
+            ...(env.engine === undefined ? {} : { engine: env.engine }),
+          }),
         },
       }),
     adapters: reviewerAdapters(env.packageRoot, methodMaterial),
@@ -280,7 +283,11 @@ export async function runPublicReviewerResume(
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message),
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
   });
 
@@ -289,6 +296,7 @@ export async function runPublicReviewerResume(
     env,
     io,
     request: turnRequest,
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
     adapters: reviewerAdapters(env.packageRoot, methodMaterial),
   });
 }

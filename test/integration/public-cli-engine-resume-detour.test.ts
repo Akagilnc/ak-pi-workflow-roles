@@ -1,6 +1,7 @@
 /**
- * #526 standards-1 residual proof: engine field stays effective across the
- * initial / auto-resume / explicit-resume typed request for all five resumable seats.
+ * #526 / #600: engine field stays effective across the initial / auto-resume /
+ * explicit-resume typed request for all five resumable seats; resume also
+ * projects engine onto invocation.json and continuation material coordinates.
  *
  * Drives the real public entry (`runAkRole`) with the minimal host-neutral host
  * (`createMinimalHost`) so the proof exercises the production composition root.
@@ -9,10 +10,13 @@
  * - Auto: asserted across all five resumable seats (initial + auto-resume payloads).
  * - Explicit: asserted across all five resumable seats (`ak-role resume <runId>`).
  *
- * No argv flag assertions — only typed `request.engine`.
+ * No argv flag assertions — typed `request.engine`, invocation.engine, and
+ * structured material coordinates on the resume continuation prompt only.
+ * Zero assertions on free-prose handbook wording / layout (ADR 0073).
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +26,7 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { resolveEngineMaterialPath } from "../../src/package-resources/engine-material.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -212,10 +217,12 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       await runAkRole(["config", "set-auto-resume-limit", "2"], { packageRoot, home, io });
     }
 
+    const engineMaterialPath = resolveEngineMaterialPath(packageRoot, ENGINE);
     const seats: Seat[] = ["judge", "coder", "fixer", "reviewer", "merger"];
     for (const seat of seats) {
       if (seat === "merger") await seedMergeProject(project);
       const captured: Array<string | undefined> = [];
+      const capturedPrompts: string[] = [];
       let first = true;
       const { io } = captureIo();
       await runAkRole([...baseArgs(seat, project), "engine auto proof", "--engine", ENGINE], {
@@ -228,6 +235,9 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
         principalAuthority: piDurablePrincipalAuthority,
         roleTurnHost: createMinimalHost(async (request) => {
           captured.push(request.engine);
+          if (request.continuation.kind === "resume" || request.continuation.kind === "initial") {
+            capturedPrompts.push(request.continuation.prompt);
+          }
           if (first) {
             first = false;
             // Resumability gates (loop + resume load) require the principal session
@@ -260,6 +270,18 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       assert.ok(
         captured.every((e) => e === ENGINE),
         `${seat}: every auto-resume typed request keeps effective engine`,
+      );
+      assert.ok(capturedPrompts.length >= 2, `${seat}: auto-resume must capture resume prompt`);
+      const autoPrompt = capturedPrompts[1]!;
+      assert.match(
+        autoPrompt,
+        new RegExp(`- engine: ${ENGINE}`),
+        `${seat}: auto-resume continuation must carry engine name coordinate`,
+      );
+      assert.equal(
+        autoPrompt.includes(engineMaterialPath),
+        true,
+        `${seat}: auto-resume continuation must carry packaged engine material path`,
       );
     }
   });
@@ -306,8 +328,12 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
         await runAkRole(["config", "set-engine", seat, ENGINE], { packageRoot, home, io });
         assert.equal(stderr.join(""), "");
       }
-      // Explicit resume must carry the engine onto the resumed typed request.
+      // Explicit resume must carry engine onto typed request, continuation
+      // material coordinates, and invocation.json (seat table is the axis).
+      const engineMaterialPath = resolveEngineMaterialPath(packageRoot, ENGINE);
       let resumedEngine: string | undefined;
+      let resumedPrompt: string | undefined;
+      let resumedInvocationEngine: unknown;
       {
         const { io, stdout, stderr } = captureIo();
         const resumed = await runAkRole(["resume", runId], {
@@ -319,6 +345,14 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
           principalAuthority: piDurablePrincipalAuthority,
           roleTurnHost: createMinimalHost(async (request) => {
             resumedEngine = request.engine;
+            resumedPrompt =
+              request.continuation.kind === "resume" || request.continuation.kind === "initial"
+                ? request.continuation.prompt
+                : undefined;
+            const invocation = JSON.parse(
+              await readFile(join(request.runDirectory, "invocation.json"), "utf8"),
+            ) as Record<string, unknown>;
+            resumedInvocationEngine = invocation.engine;
             const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
             await seedTerminalSession({
               seat,
@@ -334,6 +368,26 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
         assert.equal(resumed.exitCode, 0, stdout.join("") + "\n[stderr] " + stderr.join(""));
       }
       assert.equal(resumedEngine, ENGINE, `${seat}: explicit resume must re-project engine`);
+      assert.equal(
+        typeof resumedPrompt,
+        "string",
+        `${seat}: explicit resume must carry a continuation prompt`,
+      );
+      assert.match(
+        resumedPrompt as string,
+        new RegExp(`- engine: ${ENGINE}`),
+        `${seat}: resume continuation must carry engine name coordinate`,
+      );
+      assert.equal(
+        (resumedPrompt as string).includes(engineMaterialPath),
+        true,
+        `${seat}: resume continuation must carry packaged engine material path`,
+      );
+      assert.equal(
+        resumedInvocationEngine,
+        ENGINE,
+        `${seat}: explicit resume must write engine onto invocation.json`,
+      );
     }
   });
 });

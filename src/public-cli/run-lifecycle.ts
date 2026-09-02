@@ -28,6 +28,11 @@ export {
 } from "../typed-provider-http.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
+import {
+  appendEngineSessionMaterial,
+  engineSessionMaterialFromOptions,
+  type EngineSessionMaterial,
+} from "../package-resources/engine-material.ts";
 import { THINKING_LEVELS } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
@@ -104,12 +109,35 @@ export type PublicResumeRequest = {
 };
 
 /**
- * Unique continuation-prompt selector for manual/auto resume (#471).
- * Message present → return bytes unchanged; absent → package transport envelope.
- * Zero parse, zero classify, zero narrow.
+ * Unique continuation-prompt selector for manual/auto resume (#471 / #600).
+ * Message present → base bytes unchanged; absent → package transport envelope.
+ * When engine material is present, append structured engine coordinates (same
+ * delivery as initial transport prompts). Zero parse, zero classify, zero narrow.
  */
-export function selectResumeContinuationPrompt(message?: string): string {
-  return message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
+export function selectResumeContinuationPrompt(
+  message?: string,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const base = message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
+  return appendEngineSessionMaterial([base], engineMaterial).join("\n");
+}
+
+/**
+ * Resume continuation with engine material resolved from the seat env (#600).
+ * Seat table / invocation engine axis rides the same prompt seam as initial runs.
+ */
+export function buildResumeContinuationPrompt(options: {
+  packageRoot: string;
+  engine?: string;
+  message?: string;
+}): string {
+  return selectResumeContinuationPrompt(
+    options.message,
+    engineSessionMaterialFromOptions({
+      ...(options.engine === undefined ? {} : { engine: options.engine }),
+      packageRoot: options.packageRoot,
+    }),
+  );
 }
 
 const RUN_STATE_FILE = "run-state.json";
@@ -391,11 +419,11 @@ export async function markRunAdmitted(
 
 /**
  * Shared dispatch execution seam: record the effective launch model (initial or
- * resume override) and optional initial effective engine onto invocation.json
- * when known, then transition to running.
+ * resume override) and effective engine onto invocation.json when known, then
+ * transition to running.
  * Role runners must not coordinate lifecycle ledger writes themselves.
- * Engine is write-if-present only — callers that omit it (resume paths)
- * never touch the engine key.
+ * Engine is write-if-present only — omit leaves any existing key untouched;
+ * resume paths that carry a seat engine must pass it so the ledger stays current.
  */
 export async function markRunRunning(
   runDirectory: string,
