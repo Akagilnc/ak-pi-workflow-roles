@@ -1,6 +1,6 @@
 # hermes engine method material
 
-This file is packaged technical material for the optional `hermes` labor
+This file is packaged technical material for the `hermes` labor
 engine (Hermes Agent CLI on the host; current owner directive routes the
 free-tier labor leg through it). Sourced from the official CLI reference
 (hermes-agent.nousresearch.com/docs/reference/cli-commands, read 2026-08-28)

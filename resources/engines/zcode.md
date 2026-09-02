@@ -1,6 +1,6 @@
 # zcode engine method material
 
-This file is packaged technical material for the optional `zcode` labor engine
+This file is packaged technical material for the `zcode` labor engine
 (Z.AI ZCode agent runtime on the host, GLM Coding Plan models).
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path

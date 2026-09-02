@@ -447,7 +447,7 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
-    dispatch: (request, lease, isFirst, attemptIo) =>
+    dispatch: (request, lease, _isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,
         env: {
@@ -458,7 +458,8 @@ export async function runPostAdmissionResumable<
         request,
         lease,
         adapters,
-        ...(isFirst && effectiveEngine !== undefined ? { effectiveEngine } : {}),
+        // #600: every attempt (initial + auto-resume) writes seat engine when present.
+        ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       }),
   });
 }
@@ -475,12 +476,14 @@ export async function runPostAdmissionManualResume<
   io: CliIo;
   request: RoleTurnRequest;
   adapters: PostAdmissionAdapters<A, T>;
+  /** Seat-table engine axis on resume (#600); written onto invocation.json when present. */
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted?: A;
   terminal?: T;
 }> {
-  const { admitted, env, io, request, adapters } = input;
+  const { admitted, env, io, request, adapters, effectiveEngine } = input;
   // Single seam: explicit env model wins; otherwise restore admitted.model
   // (including thinking) so a model-less manual resume reuses the recorded model.
   const effectiveModel = resolveResumeModel(env.model, admitted.model);
@@ -506,6 +509,7 @@ export async function runPostAdmissionManualResume<
     request,
     lease,
     adapters,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
