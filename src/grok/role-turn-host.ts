@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, open, realpath } from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -610,10 +610,68 @@ export function classifyGrokInspection(
   return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
 }
 
-/** Copy only Grok's authentication authority into an otherwise isolated home. */
+/** AK Fixer PreToolUse seatbelt files written under controlled GROK_HOME/hooks. */
+export const AK_BASH_SEATBELT_HOOK_FILES = ["ak-bash-seatbelt.json", "ak-bash-seatbelt.mjs"] as const;
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+
+/** Refuse symlink roots so copy/rm never follow a redirected controlled home (#594 F4). */
+export async function assertControlledGrokHomeIsRealDirectory(controlledHome: string): Promise<void> {
+  let st;
+  try {
+    st = await lstat(controlledHome);
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+  if (st.isSymbolicLink()) {
+    throw new Error(`controlled grok home must not be a symlink: ${controlledHome}`);
+  }
+  if (!st.isDirectory()) {
+    throw new Error(`controlled grok home must be a real directory: ${controlledHome}`);
+  }
+}
+
+/** Refuse a symlink credential destination before copy or scrub (#594 F4). */
+export async function assertControlledGrokAuthIsNotSymlink(authPath: string): Promise<void> {
+  let st;
+  try {
+    st = await lstat(authPath);
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+  if (st.isSymbolicLink()) {
+    throw new Error(`controlled grok auth must not be a symlink: ${authPath}`);
+  }
+}
+
+/** Remove AK seatbelt hook residue while leaving sessions/ intact (#594 F1). */
+export async function scrubAkBashSeatbeltHooks(controlledHome: string): Promise<void> {
+  const hooksDir = join(controlledHome, "hooks");
+  for (const name of AK_BASH_SEATBELT_HOOK_FILES) {
+    await rm(join(hooksDir, name), { force: true });
+  }
+}
+
+/**
+ * Copy only Grok's authentication authority into an otherwise isolated home.
+ * Refuses symlink home/auth destinations (no follow). Scrubs crash-window residual
+ * auth.json and AK seatbelt hooks before the copy so the next inspect cannot see
+ * either residue (#594 F1/F3/F4).
+ */
 export async function prepareControlledGrokHome(sourceHome: string, controlledHome: string): Promise<void> {
+  await assertControlledGrokHomeIsRealDirectory(controlledHome);
   await mkdir(controlledHome, { recursive: true, mode: 0o700 });
-  await copyFile(join(sourceHome, ".grok", "auth.json"), join(controlledHome, "auth.json"));
+  await assertControlledGrokHomeIsRealDirectory(controlledHome);
+  const authPath = join(controlledHome, "auth.json");
+  await assertControlledGrokAuthIsNotSymlink(authPath);
+  // Crash-window residue: prior auth.json may still sit in the retained ledger.
+  await rm(authPath, { force: true });
+  await scrubAkBashSeatbeltHooks(controlledHome);
+  await copyFile(join(sourceHome, ".grok", "auth.json"), authPath);
 }
 
 /** First-party structured inspection under the exact environment used by ACP. */

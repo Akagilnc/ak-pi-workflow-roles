@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -440,6 +440,154 @@ test("persistent bare provider/model stores as-is without inventing thinking", a
       false,
     );
     assert.equal(formatModelSpec(effective.selection!), "kimi-coding/k3-256k");
+  });
+});
+
+// #592: shared public-cli.json may carry seat keys a newer CLI wrote that this
+// build does not know. Read path skips them; known seats still resolve.
+test("load skips unknown seat keys without failing the shared config", async () => {
+  await withTempHome(async (home) => {
+    const path = publicCliConfigPath(home);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      `${JSON.stringify(
+        {
+          seats: {
+            judge: {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+            // Seat key no build of this package ever ships — stands in for a
+            // newer-line row (e.g. countersign before this build knew it).
+            "future-seat-from-newer-cli": {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const loaded = await loadPublicCliConfig(home);
+    assert.deepEqual(loaded.seats.judge, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(loaded.seats, "future-seat-from-newer-cli"),
+      false,
+    );
+
+    const credentials: CredentialProviders = {
+      "openai-codex": true,
+      xai: false,
+    };
+    const effective = resolveEffectiveSeat(loaded, "judge", credentials);
+    assert.equal(effective.source, "persistent");
+    assert.deepEqual(effective.selection, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
+
+    // Unknown key must not appear among effective seats this CLI owns.
+    const all = effectiveSeatConfigurations(loaded, credentials);
+    assert.equal(
+      all.some((entry) => (entry.seat as string) === "future-seat-from-newer-cli"),
+      false,
+    );
+    assert.equal(all.find((entry) => entry.seat === "judge")?.source, "persistent");
+  });
+});
+
+// #592 write-path: unknown seat rows must survive load→set→save the same way
+// #422 keeps sibling top-level keys — shared-file neighbor lines must not be
+// silently erased by any config write from this build.
+test("unknown seat rows survive set→save without entering resolve/enum", async () => {
+  await withTempHome(async (home) => {
+    const path = publicCliConfigPath(home);
+    await mkdir(dirname(path), { recursive: true });
+    const foreignRow = {
+      provider: "openai-codex",
+      model: "gpt-future",
+      thinking: "high",
+      // Extra field a newer line may write; must round-trip byte-faithful as JSON value.
+      futureAxis: "keep-me",
+    };
+    await writeFile(
+      path,
+      `${JSON.stringify(
+        {
+          seats: {
+            judge: {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+            "future-seat-from-newer-cli": foreignRow,
+          },
+          autoResumeLimit: 4,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    let config = await loadPublicCliConfig(home);
+    // Read consumption still skips unknown seats from the owned seats map.
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(config.seats, "future-seat-from-newer-cli"),
+      false,
+    );
+
+    // Real write path used by `config set`: mutate a known seat, then save.
+    config = setPersistentSeatConfig(config, "judge", {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "medium",
+    });
+    await savePublicCliConfig(config, home);
+
+    const raw = JSON.parse(await readFile(path, "utf8")) as {
+      seats: Record<string, unknown>;
+      autoResumeLimit?: number;
+      unknownSeats?: unknown;
+    };
+    // Disk shape stays seats-only for foreign rows — no parallel top-level dump.
+    assert.equal(Object.prototype.hasOwnProperty.call(raw, "unknownSeats"), false);
+    assert.deepEqual(raw.seats["future-seat-from-newer-cli"], foreignRow);
+    assert.deepEqual(raw.seats.judge, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "medium",
+    });
+    // #422 sibling must still survive the same write.
+    assert.equal(raw.autoResumeLimit, 4);
+
+    const reloaded = await loadPublicCliConfig(home);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(reloaded.seats, "future-seat-from-newer-cli"),
+      false,
+    );
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
+    assert.equal(
+      effectiveSeatConfigurations(reloaded, credentials).some(
+        (entry) => (entry.seat as string) === "future-seat-from-newer-cli",
+      ),
+      false,
+    );
+    assert.equal(
+      resolveEffectiveSeat(reloaded, "judge", credentials).source,
+      "persistent",
+    );
   });
 });
 

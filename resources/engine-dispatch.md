@@ -1,6 +1,6 @@
 # Engine labor dispatch (shared across all engines)
 
-This note is the single source for **how labor is dispatched** to any optional
+This note is the single source for **how labor is dispatched** to any selected
 engine. Every per-engine note under `resources/engines/<name>.md` covers only
 that engine's CLI technical parameters (executable, flags, output formats,
 host-measured constraints); it must not restate or contradict the dispatch
@@ -25,17 +25,20 @@ themselves. Stuffing large bodies into argv/prompt is the verified cause of
 
 ## Process shape
 
-- When the package detour tool is available, start exactly one subprocess per
-  labor invocation through it, with argv assembled from the engine note plus
-  these dispatch rules; return the stdout labor content to the same role
-  session for the existing typed submission path.
+- Once an engine is selected, start exactly one subprocess per labor
+  invocation by calling that engine's local CLI, with argv assembled from the
+  engine note plus these dispatch rules; return the stdout labor content to
+  the same role session for the existing typed submission path. Read the
+  engine note and invoke the CLI it documents (bash or equivalent is the
+  ordinary path; a package detour tool is only another way to reach the same
+  CLI when the session already has one).
 - One labor turn = one process (not one process for the whole role run).
 
 ## Failure handling
 
-Once an engine is selected, the detour is mandatory: you MUST actually invoke
-that engine CLI. On any spawn, auth, quota, model-id, stream-stall,
+Once an engine is selected, invoking that engine CLI is mandatory: you MUST
+actually run it. On any spawn, auth, quota, model-id, stream-stall,
 connection-drop, or other engine-process failure, return the typed failure and
-STOP — the run fails. In-seat labor after a detour failure is FORBIDDEN, and so
-is skipping the detour to work in-seat. Zero invocations is a violation, not a
-fallback. Do not silently swap to another engine id.
+STOP — the run fails. In-seat labor after an engine-process failure is
+FORBIDDEN, and so is skipping the engine CLI to work in-seat. Zero invocations
+is a violation, not a fallback. Do not silently swap to another engine id.
