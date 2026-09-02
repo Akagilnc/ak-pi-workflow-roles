@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -279,4 +279,32 @@ test("public CLI dispatch-resume entrypoint refreshes institutional resolution f
       thinking: "low",
     });
   });
+});
+
+test("readInstitutionalSeatSelection reasons: missing-page, missing-seat, corrupted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-inst-reason-"));
+  try {
+    await assert.rejects(
+      () => readInstitutionalSeatSelection(join(root, "absent"), "navigator"),
+      (error: unknown) => error instanceof InstitutionalResolutionError && error.reason === "missing-page",
+    );
+    const runDirectory = join(root, "run");
+    await mkdir(runDirectory);
+    await writeFile(join(runDirectory, "institutional-resolution.json"), "{not-json\n", "utf8");
+    await assert.rejects(
+      () => readInstitutionalSeatSelection(runDirectory, "navigator"),
+      (error: unknown) => error instanceof InstitutionalResolutionError && error.reason === "corrupted",
+    );
+    await writeFile(
+      join(runDirectory, "institutional-resolution.json"),
+      `${JSON.stringify({ version: 1, seats: { auditor: { provider: "p", model: "m" } } })}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      () => readInstitutionalSeatSelection(runDirectory, "navigator"),
+      (error: unknown) => error instanceof InstitutionalResolutionError && error.reason === "missing-seat",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
