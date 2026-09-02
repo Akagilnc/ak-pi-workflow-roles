@@ -6,6 +6,7 @@ import type {
   PublicCliConfig,
   SeatModelConfig,
 } from "./public-cli/config.ts";
+import { seatModelOnly } from "./public-cli/registry.ts";
 
 export const INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json" as const;
 
@@ -66,36 +67,25 @@ function cleanSelection(model?: { provider?: string; model?: string; thinking?: 
   };
 }
 
-/** Disk province seat → SeatModelConfig without widening thinking past PublicThinkingLevel. */
-function configuredSeatModel(
-  config: PublicCliConfig,
-  seat: GateOfficerSeat,
-): SeatModelConfig | undefined {
-  const row = config.seats[seat];
-  if (row?.provider === undefined || row.model === undefined) return undefined;
-  return row.thinking === undefined
-    ? { provider: row.provider, model: row.model }
-    : { provider: row.provider, model: row.model, thinking: row.thinking };
-}
-
 /**
  * Authority for configured province-officer model+source (#453/#620):
  * own persistent > gatekeeper persistent > unconfigured.
  * Shared by resolveInstitutionalSeatSelections (plus parent fallback),
  * resolveEffectiveSeat subordinate branch, and roles/config display.
+ * Model-axis projection stays seatModelOnly (single implementation in registry).
  */
 export function resolveConfiguredProvinceOfficer(
   config: PublicCliConfig,
   officer: GateOfficerSeat,
 ): ConfiguredProvinceOfficerResolution {
-  const ownModel = configuredSeatModel(config, officer);
+  const ownModel = seatModelOnly(config.seats[officer]);
   if (ownModel !== undefined) {
     return { selection: ownModel, source: "persistent" };
   }
   if (officer === "gatekeeper") {
     return { source: "unconfigured" };
   }
-  const gatekeeperModel = configuredSeatModel(config, "gatekeeper");
+  const gatekeeperModel = seatModelOnly(config.seats.gatekeeper);
   if (gatekeeperModel !== undefined) {
     return { selection: gatekeeperModel, source: "inherit-gatekeeper" };
   }
@@ -126,7 +116,7 @@ export function resolveInstitutionalSeatSelections(
     resolveConfiguredProvinceOfficer(config, "notary").selection ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
-  const navigator = cleanSelection(config.seats?.navigator);
+  const navigator = cleanSelection(seatModelOnly(config.seats?.navigator));
 
   return {
     version: 1,

@@ -13,12 +13,15 @@ import {
   isAutomaticConfigurableSeat,
   isPublicCallableRole,
   isPublicConfigurableSeat,
+  seatModelOnly,
   type ModelRef,
   type PublicCallableRole,
   type PublicConfigurableSeat,
   type PublicThinkingLevel,
   publicStartupCandidates,
 } from "./registry.ts";
+
+export { seatModelOnly };
 
 /** Province officers that may carry a persistent model override (#453). */
 export const GATE_OFFICER_SEATS = [
@@ -302,19 +305,6 @@ export function setAutoResumeLimit(
   limit: number,
 ): PublicCliConfig {
   return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
-}
-
-/**
- * Strip optional engine so activation model argv never sees the engine axis.
- * Engine-only residual (model cleared) yields undefined — not a model override.
- */
-export function seatModelOnly(
-  seat: PersistentSeatConfig | undefined,
-): SeatModelConfig | undefined {
-  if (seat?.provider === undefined || seat.model === undefined) return undefined;
-  return seat.thinking === undefined
-    ? { provider: seat.provider, model: seat.model }
-    : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
 }
 
 /**

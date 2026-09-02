@@ -72,6 +72,19 @@ export type ModelRef = {
 };
 
 /**
+ * Model-axis projection: incomplete seat row → undefined; else provider/model[/thinking].
+ * Single implementation for config, institutional resolution, and display (#620).
+ */
+export function seatModelOnly(
+  seat: { provider?: string; model?: string; thinking?: PublicThinkingLevel } | undefined,
+): ModelRef | undefined {
+  if (seat?.provider === undefined || seat.model === undefined) return undefined;
+  return seat.thinking === undefined
+    ? { provider: seat.provider, model: seat.model }
+    : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
+}
+
+/**
  * Package startup candidates (#11): Codex family first, then Grok 4.5.
  * Selection among candidates is credential-driven at resolve time.
  */
