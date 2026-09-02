@@ -42,12 +42,14 @@ function prepared(
   closeRound: GrokPreparedTurn["closeRound"],
   mcpServers: Readonly<Record<string, unknown>>[] = [{}],
   materials: readonly unknown[] = [],
+  extras: { abortSignal?: AbortSignal } = {},
 ): GrokPreparedTurn {
   return {
     mcpServers,
     systemPrompt: { body: "law", materials },
     prompt: "decide",
     closeRound,
+    ...(extras.abortSignal === undefined ? {} : { abortSignal: extras.abortSignal }),
   };
 }
 
@@ -498,6 +500,136 @@ test("grok host delivers a typed rejection and resubmits in the same ACP session
   assert.equal(prompts.length, 2);
   assert.equal((prompts[0] as { sessionId: string }).sessionId, "retry-session");
   assert.equal((prompts[1] as { sessionId: string }).sessionId, "retry-session");
+});
+
+test("grok host aborts a hanging session/prompt when prepare abortSignal fires", async () => {
+  const cancels: unknown[] = [];
+  const closes: string[] = [];
+  const abort = new AbortController();
+  const knownFailure = {
+    cause: "output" as const,
+    identity: { name: "InfrastructureFailure", code: "role-infrastructure-failure" },
+    diagnostic: "engine auth timed out",
+  };
+  let releasePrompt: (() => void) | undefined;
+  const promptHang = new Promise<Readonly<Record<string, unknown>>>((resolve) => {
+    releasePrompt = () => resolve({ stopReason: "end_turn" });
+  });
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method) {
+        if (method === "session/new") return { sessionId: "abort-session" };
+        if (method === "session/prompt") return promptHang;
+        return {};
+      },
+      notify(method, params) { cancels.push([method, params]); },
+      async close() { closes.push("close"); },
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(
+      async () => ({ accepted: false, failure: knownFailure }),
+      [{}],
+      [],
+      { abortSignal: abort.signal },
+    ),
+  });
+
+  const turn = host.executeTurn(request);
+  // Let session/prompt start hanging, then fire the envelope abort (infra declaration path).
+  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  abort.abort();
+  const result = await Promise.race([
+    turn,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("#593: abortSignal did not terminate hanging session/prompt")), 1000);
+    }),
+  ]);
+  assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
+  assert.deepEqual(cancels, [["session/cancel", { sessionId: "abort-session" }]]);
+  assert.deepEqual(closes, ["close"]);
+  // Hang resolver must not be required for loud terminal.
+  releasePrompt?.();
+});
+
+test("grok host does not send session/prompt when abortSignal is already aborted", async () => {
+  const promptCalls: unknown[] = [];
+  const knownFailure = {
+    cause: "output" as const,
+    identity: { name: "InfrastructureFailure", code: "pre-aborted" },
+    diagnostic: "already aborted",
+  };
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method, params) {
+        if (method === "session/new") return { sessionId: "pre-aborted-session" };
+        if (method === "session/prompt") {
+          promptCalls.push(params);
+          return { stopReason: "end_turn" };
+        }
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(
+      async () => ({ accepted: false, failure: knownFailure }),
+      [{}],
+      [],
+      { abortSignal: AbortSignal.abort() },
+    ),
+  });
+
+  const result = await host.executeTurn(request);
+  assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
+  assert.equal(promptCalls.length, 0, "session/prompt must not be sent when already aborted");
+});
+
+test("grok host drains late in-flight prompt rejection after abort wins race", async () => {
+  const abort = new AbortController();
+  const knownFailure = {
+    cause: "output" as const,
+    identity: { name: "InfrastructureFailure", code: "in-flight-aborted" },
+    diagnostic: "infra failure",
+  };
+  let rejectPrompt: ((err: Error) => void) | undefined;
+  const promptPromise = new Promise<Readonly<Record<string, unknown>>>((_, reject) => {
+    rejectPrompt = reject;
+  });
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method) {
+        if (method === "session/new") return { sessionId: "drain-session" };
+        if (method === "session/prompt") return promptPromise;
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(
+      async () => ({ accepted: false, failure: knownFailure }),
+      [{}],
+      [],
+      { abortSignal: abort.signal },
+    ),
+  });
+
+  const turn = host.executeTurn(request);
+  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  abort.abort();
+  const result = await turn;
+  assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
+  // Rejecting late after abort won race must be safely drained without unhandled rejection
+  rejectPrompt?.(new Error("late ACP socket disconnect"));
 });
 
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
