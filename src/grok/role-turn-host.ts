@@ -216,12 +216,6 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
   return {
     executeTurn(request) {
       const execution = serial.then(async (): Promise<RoleTurnResult> => {
-        if (request.model !== undefined && request.model.provider !== "xai") {
-          return failure("activation", "GrokHostModelMismatch", "host-model-mismatch", {
-            provider: request.model.provider,
-            model: request.model.model,
-          });
-        }
         const inspected = await config.inspect(request);
         if (inspected.privateActive.length !== 0) {
           return failure("activation", "UncontrolledGrokSession", "private-config-active", {

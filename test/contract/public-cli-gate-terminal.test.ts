@@ -10,6 +10,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
  *   1. normal dispatch + officer findings; non-empty reason kept as written
  *   2. seat reduction without written reason (reason key absent)
  *   3. no-gate → gate omitted
+ *   3b. lawful province pass → accepted Terminal stays; gate omitted (#597)
  *   4. damaged auditor-roles → must not wash to "no gate"
  *   5. ordinary controlled failure still projects accepted gate facts
  *   6. no_receipt projects accepted gate facts
@@ -331,6 +332,41 @@ test("public CLI omits gate when no auditor-roles gate ran", async () => {
     );
     assert.equal(terminal.gate, undefined);
   }, { prefix: "ak-gate-no-gate-" });
+});
+
+test("public CLI keeps accepted Terminal when auditor-roles holds lawful province pass", async () => {
+  // #597: province pass is a lawful non-dispatch release — zero paired rounds,
+  // gate omitted, accepted submission remains terminal (never exit 1 / unrecognized).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { terminal, exitCode } = await runJudgePublic({
+      home,
+      project,
+      runId: "run-gate-province-pass",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      seedSession: async (sessionDir) => {
+        await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
+        const auditorDir = join(sessionDir, "auditor-roles");
+        await mkdir(auditorDir, { recursive: true });
+        await writeFile(
+          join(auditorDir, "d01_gatekeeper_province_pass.jsonl"),
+          gateToolSessionJsonl({
+            id: "province-pass",
+            startedAt: iso(0),
+            endedAt: iso(1_000),
+            toolName: "ak_gatekeeper_output",
+            args: { status: "pass", reason: "no officer needed" },
+          }),
+          "utf8",
+        );
+      },
+    });
+    assert.equal(exitCode, 0);
+    assert.equal(terminal.roleOutcome.kind, "accepted");
+    assert.equal(terminal.gate, undefined);
+  }, { prefix: "ak-gate-province-pass-" });
 });
 
 test("public CLI does not wash damaged auditor-roles into no-gate", async () => {
