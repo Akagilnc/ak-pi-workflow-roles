@@ -257,10 +257,9 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       stdout: retentionIo.stdout,
       stderr: retentionIo.stderr,
       expectedCause: "provider",
-      diagnosticIncludes: "WebSocket error",
     });
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
-    assert.equal(retentionArtifact.details?.errorMessage?.includes("WebSocket error") || retentionArtifact.diagnostic?.includes("WebSocket error"), true);
+    // Typed 500 contract only — no free-text oracle on SDK/HTTP body (#590).
     assert.equal(retentionArtifact.details?.httpStatus, 500);
     assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
     assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");

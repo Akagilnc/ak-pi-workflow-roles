@@ -233,8 +233,8 @@ async function executeEvidenceChild(workspace, prompt, context, options = {}) {
       ...options.credentialScratchParent === void 0 ? {} : { parentDirectory: options.credentialScratchParent }
     },
     async (childConfigDir) => {
-      const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
-      const { createRecordSession } = await import("./archivist-record-entry.ts");
+      const { openPiInstitutionalSession } = await import("./pi/in-process-session.js");
+      const { createRecordSession } = await import("./archivist-record-entry.js");
       const engineName = engineNameFromEnv();
       const engineMaterial = engineName === void 0 ? void 0 : options.packageRoot === void 0 || options.packageRoot.trim() === "" ? Object.freeze({ name: engineName }) : engineSessionMaterialFromOptions({
         engine: engineName,
@@ -330,7 +330,7 @@ function auditorSeatKey(gateSeat) {
   return gateSeat ?? "auditor";
 }
 async function executeAuditorChild(options) {
-  const { createRecordSession } = await import("./archivist-record-entry.ts");
+  const { createRecordSession } = await import("./archivist-record-entry.js");
   const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
   if (runDirectory === void 0) {
     throw new Error(`${options.roleLabel} requires a run directory carrying the institutional resolution page`);
@@ -380,7 +380,7 @@ async function executeAuditorChild(options) {
       kind: "auditor-roles",
       ...parentSessionManager === void 0 ? {} : { parent: parentSessionManager }
     });
-    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    const { openPiInstitutionalSession } = await import("./pi/in-process-session.js");
     const evidenceToolFailures = /* @__PURE__ */ new Map();
     const wrappedDossierTool = {
       ...options.dossierTool,
@@ -690,7 +690,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     let selection = resolved.selection;
     let thinkingLevel = resolved.thinkingLevel;
     let configuredLabel = resolved.configuredLabel;
-    const { createRecordSession } = await import("./archivist-record-entry.ts");
+    const { createRecordSession } = await import("./archivist-record-entry.js");
     const sessionManager = createRecordSession({
       cwd: context.cwd,
       kind: "navigator",
@@ -726,7 +726,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
         }
       }
     };
-    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    const { openPiInstitutionalSession } = await import("./pi/in-process-session.js");
     let opened;
     try {
       opened = await openPiInstitutionalSession({

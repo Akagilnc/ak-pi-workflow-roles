@@ -686,7 +686,14 @@ async function openPiInstitutionalSession(options) {
     const childRegistry = new ModelRegistry(childRuntime);
     const childProvider = typeof childRegistry.getProvider === "function" ? childRegistry.getProvider(selection.provider) : void 0;
     const foundModel = typeof childRegistry.find === "function" ? childRegistry.find(selection.provider, selection.model) : void 0;
-    const providerDefaultModel = childProvider?.getModels?.()[0];
+    const withTypedReason = (error, reason) => Object.assign(error, { reason });
+    if (childProvider === void 0) {
+      throw withTypedReason(
+        new Error(`${label} model is unavailable: ${selection.provider}/${selection.model}`),
+        "model"
+      );
+    }
+    const providerDefaultModel = childProvider.getModels?.()[0];
     const fallbackApi = providerDefaultModel?.api ?? childProvider?.api ?? (selection.provider === "openai-codex" ? "openai-codex-responses" : "openai-completions");
     const modelToUse = foundModel ?? {
       id: selection.model,
@@ -700,7 +707,6 @@ async function openPiInstitutionalSession(options) {
       contextWindow: 128e3,
       maxTokens: 16384
     };
-    const withTypedReason = (error, reason) => Object.assign(error, { reason });
     let resolution;
     if (typeof childRegistry.getProviderAuth === "function") {
       resolution = await childRegistry.getProviderAuth(selection.provider).catch((error) => {
@@ -994,10 +1000,11 @@ async function openPiInstitutionalSession(options) {
         });
       }
     }
+    const requestedThinking = options.selection.thinking === "max" ? "max" : "off";
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      thinkingLevel: options.selection.thinking ?? "off",
+      thinkingLevel: requestedThinking,
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -1007,6 +1014,15 @@ async function openPiInstitutionalSession(options) {
       ...options.toolsAllowlist === void 0 ? {} : { tools: options.toolsAllowlist },
       ...customTools.length === 0 ? {} : { customTools }
     });
+    if (requestedThinking === "max" && session.thinkingLevel !== "max") {
+      session.dispose();
+      throw withTypedReason(
+        new Error(
+          `${label} thinking level max is unavailable for ${selection.provider}/${selection.model}`
+        ),
+        "thinking"
+      );
+    }
     const listeners = /* @__PURE__ */ new Set();
     const accumulatedUsage = emptyUsage();
     let lastEmittedAssistant;
@@ -13340,6 +13356,15 @@ async function prepareGrokRoleEnvelope(options) {
     );
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
+  }
+  {
+    const raw = await readFile13(sessionFile, "utf8");
+    for (const line2 of raw.split("\n")) {
+      if (line2.trim() === "") continue;
+      const entry = JSON.parse(line2);
+      if (entry.type === "session") continue;
+      sessionEntries.push(entry);
+    }
   }
   const context = {
     cwd: request.cwd,

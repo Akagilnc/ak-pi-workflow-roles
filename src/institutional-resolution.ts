@@ -53,7 +53,11 @@ function cleanSelection(model?: { provider?: string; model?: string; thinking?: 
 /**
  * Resolve effective per-seat institutional selections (#518 §2 Hop 1):
  * - gatekeeper / inspector / notary: seat override > gatekeeper override > parent effective
- * - auditor / evidenceChild / navigator: seat override (navigator) > parent effective
+ * - auditor / evidenceChild: parent effective
+ * - navigator: explicit config seat only. Navigator model authority stays
+ *   `navigator-model.json`; the page never carries a parent-inherited navigator
+ *   seat, so host-neutral transport cannot shadow that setting (#590 Out of Scope:
+ *   席位表／模型路由变更归 owner 域).
  */
 export function resolveInstitutionalSeatSelections(
   config: PublicCliConfig,
@@ -71,9 +75,7 @@ export function resolveInstitutionalSeatSelections(
   const notary = ownNotary ?? ownGatekeeper ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
-  // Navigator: explicit config seat wins; otherwise parent effective so public runs
-  // carry a page seat without ambient parent ExtensionContext (#590).
-  const navigator = ownNavigator ?? parentSelection;
+  const navigator = ownNavigator;
 
   return {
     version: 1,

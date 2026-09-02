@@ -45,14 +45,15 @@ test("selection priority shortest boundary: seat override > gatekeeper fallback 
   assert.deepEqual(page3.seats.gatekeeper, parentSelection);
   assert.deepEqual(page3.seats.auditor, parentSelection);
   assert.deepEqual(page3.seats.evidenceChild, parentSelection);
-  assert.deepEqual(page3.seats.navigator, parentSelection);
+  // Navigator never inherits parent effective — model authority stays navigator-model.json.
+  assert.equal(page3.seats.navigator, undefined);
 
   // Auditor / evidenceChild always inherit parent effective — never seat override.
-  // Navigator: explicit config seat wins over parent effective (#590).
+  // Navigator: only an explicit config seat is projected onto the page (#590).
   const page4 = resolveInstitutionalSeatSelections(emptyConfig(), parentSelection);
   assert.deepEqual(page4.seats.auditor, parentSelection);
   assert.deepEqual(page4.seats.evidenceChild, parentSelection);
-  assert.deepEqual(page4.seats.navigator, parentSelection);
+  assert.equal(page4.seats.navigator, undefined);
 
   const page5 = resolveInstitutionalSeatSelections({
     seats: {

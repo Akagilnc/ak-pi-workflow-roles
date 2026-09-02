@@ -18629,7 +18629,7 @@ function resolveInstitutionalSeatSelections(config, parentEffectiveModel) {
   const notary = ownNotary ?? ownGatekeeper ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
-  const navigator = ownNavigator ?? parentSelection;
+  const navigator = ownNavigator;
   return {
     version: 1,
     seats: {
