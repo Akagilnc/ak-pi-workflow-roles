@@ -18,7 +18,7 @@ import {
 import {
   loadResumableJudgeRun,
   markRunAdmitted,
-  selectResumeContinuationPrompt,
+  buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -151,7 +151,10 @@ export async function runPublicJudge(
           : { correlationId: admitted.correlationId ?? env.correlationId }),
         continuation: {
           kind: "resume",
-          prompt: selectResumeContinuationPrompt(),
+          prompt: buildResumeContinuationPrompt({
+            packageRoot: env.packageRoot,
+            ...(env.engine === undefined ? {} : { engine: env.engine }),
+          }),
         },
       }),
     adapters: judgeAdapters(),
@@ -197,7 +200,11 @@ export async function runPublicResume(
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message),
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
   });
 
@@ -207,6 +214,7 @@ export async function runPublicResume(
     io,
     request: turnRequest,
     adapters: judgeAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 

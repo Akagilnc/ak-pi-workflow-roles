@@ -1,6 +1,6 @@
 # ox-alpha engine method material
 
-This file is packaged technical material for the optional `ox-alpha` labor
+This file is packaged technical material for the `ox-alpha` labor
 engine (OpenRouter stealth preview model, reached via OpenCode CLI).
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path
