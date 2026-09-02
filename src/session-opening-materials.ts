@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  INSPECTOR_SESSION_MATERIALS,
   NOTARY_SESSION_MATERIALS,
   PUBLIC_ROLE_RECORDS,
   type PackagedRole,
@@ -84,12 +85,7 @@ export const GATEKEEPER_SESSION_MATERIALS = {
     "souls/quality-law.md",
     "souls/gate-output-guide.md",
   ],
-  inspector: [
-    "CLAUDE.md",
-    "souls/inspector.md",
-    "souls/quality-law.md",
-    "souls/gate-output-guide.md",
-  ],
+  inspector: INSPECTOR_SESSION_MATERIALS,
   notary: NOTARY_SESSION_MATERIALS,
 } as const;
 

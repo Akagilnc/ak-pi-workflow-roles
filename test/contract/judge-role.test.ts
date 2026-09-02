@@ -50,6 +50,7 @@ import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
+  createInspectorRoleRuntime,
   createRoleRuntimeExtension,
   type JudgeVerdict,
 } from "../../src/role-runtime.ts";
@@ -655,6 +656,31 @@ async function startJudge(
     return { harness, tool };
   });
 }
+
+test("shared runtime activates Inspector soul and executes its terminating receipt tool", async () => {
+  const tools = new Map<string, { name: string; execute: Function }>();
+  const roleHost = {
+    registerTool(tool: { name: string; execute: Function }) { tools.set(tool.name, tool); },
+    on() {},
+    getAllTools() { return [{ name: INSPECTOR_OUTPUT_TOOL }, { name: "bash" }]; },
+  };
+  const runtime = createInspectorRoleRuntime(
+    roleHost as never,
+    { loadSoul: async () => "INSPECTOR LAW" },
+  );
+  await runtime.activate();
+  const tool = tools.get(INSPECTOR_OUTPUT_TOOL);
+  assert.ok(tool);
+  const receipt = await tool.execute(
+    "inspector-call",
+    { status: "bounce", findings: ["missing public-seam proof"] },
+    undefined,
+    undefined,
+    {},
+  );
+  assert.equal(receipt.terminate, true);
+  assert.deepEqual(receipt.details, { status: "bounce", findings: ["missing public-seam proof"] });
+});
 
 test("stable factory registers the complete typed role flag set and stays inert without a role", async () => {
   let loads = 0;

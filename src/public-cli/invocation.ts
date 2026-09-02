@@ -131,6 +131,10 @@ export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
   readonly baseRevision: string;
 };
 
+export type AdmittedInspectorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "inspector";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -211,6 +215,7 @@ export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCountersignInvocation
   | AdmittedGleanerLeftInvocation
+  | AdmittedInspectorInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -539,6 +544,7 @@ export type ParseInstructionArgvResult = {
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
 export type ParseJudgeArgvResult = ParseInstructionArgvResult;
 export type ParseCountersignArgvResult = ParseInstructionArgvResult;
+export type ParseInspectorArgvResult = ParseInstructionArgvResult;
 
 /** Positive ticket number shared by countersign/notary/analyst faces. */
 export function parsePositiveTicketNumber(
@@ -559,7 +565,7 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign",
+  owner: "judge" | "countersign" | "inspector",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -797,6 +803,10 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
 
 export function parseCountersignArgv(args: readonly string[]): ParseCountersignArgvResult {
   return parseInstructionArgv(args, "countersign");
+}
+
+export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvResult {
+  return parseInstructionArgv(args, "inspector");
 }
 
 /**
@@ -1062,7 +1072,7 @@ export async function admitJudgeInvocation(
   };
 }
 
-/** Shared prompt transport for instruction-seat roles (judge/countersign). */
+/** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
 function buildInstructionTransportPrompt(
   admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
   engineMaterial?: EngineSessionMaterial,
@@ -1081,6 +1091,96 @@ function buildInstructionTransportPrompt(
 /** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+
+export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
+  correlationId?: string;
+};
+
+/**
+ * Admit a direct Inspector (察院) run: freeze attachments, persist the request,
+ * and reserve session placement. Same instruction-seat face as Judge (#568).
+ */
+export async function admitInspectorInvocation(
+  options: AdmitInspectorInvocationOptions,
+): Promise<AdmittedInspectorInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const runId = (options.createRunId ?? uuidv7)();
+  const {
+    principal,
+    sessionDirectory,
+    sessionFile,
+    runDirectory,
+    ledgerHome,
+    bookKey,
+  } = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: projectRoot,
+    runId,
+    role: "inspector",
+    home: options.home,
+  });
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
+    options.attachmentPaths,
+    attachmentsDirectory,
+  );
+  const ticketFields = ticketAdmissionFields(ticketNumber);
+
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "inspector" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    principal,
+    ...ticketFields,
+    instruction,
+    instructionEmpty,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory,
+    sessionFile,
+  });
+  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+
+  return {
+    role: "inspector",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    principal,
+    admittedRequestPath,
+    ...ticketFields,
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+  };
+}
+
+export function buildInspectorTransportPrompt(
+  admitted: AdmittedInspectorInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   return buildInstructionTransportPrompt(admitted, engineMaterial);

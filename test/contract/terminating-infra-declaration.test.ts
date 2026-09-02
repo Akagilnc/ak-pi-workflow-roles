@@ -21,6 +21,7 @@ import { mergerOutputSchema } from "../../src/merger-contracts.ts";
 import { notaryOutputSchema } from "../../src/notary-contracts.ts";
 import { countersignVerdictSchema } from "../../src/countersign-role.ts";
 import { gleanerLeftOutputSchema } from "../../src/gleaner-left-role.ts";
+import { inspectorOutputSchema } from "../../src/inspector-role.ts";
 
 const TERMINATING_ROLE_SCHEMAS = [
   ["Judge", judgeVerdictSchema],
@@ -33,6 +34,7 @@ const TERMINATING_ROLE_SCHEMAS = [
   ["Notary", notaryOutputSchema],
   ["Countersign", countersignVerdictSchema],
   ["Gleaner-Left", gleanerLeftOutputSchema],
+  ["Inspector", inspectorOutputSchema],
 ] as const;
 
 type Declared = {
