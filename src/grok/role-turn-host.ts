@@ -36,6 +36,12 @@ export type GrokPreparedTurn = Readonly<{
   systemPrompt: { readonly body: string; readonly materials: readonly unknown[] };
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
+  /**
+   * Host abort signal armed by envelope `context.abort()` (failInfrastructure).
+   * executeTurn races session/prompt against this so typed infra declarations
+   * terminate even when ACP never resolves (#593).
+   */
+  abortSignal?: AbortSignal;
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
   closeRound(): Promise<
     | { readonly accepted: true }
@@ -280,15 +286,62 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           }
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
           let prompt = prepared.prompt;
-          for (let attempt = 0; attempt < 8; attempt += 1) {
-            const result = await connection.request("session/prompt", {
-              sessionId,
-              prompt: [{ type: "text", text: prompt }],
+          const abortSignal = prepared.abortSignal;
+          const activeConnection = connection;
+          /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
+          const promptOrAbort = async (
+            params: Readonly<Record<string, unknown>>,
+          ): Promise<Readonly<Record<string, unknown>>> => {
+            const promptRequest = activeConnection.request("session/prompt", params);
+            if (abortSignal === undefined) return promptRequest;
+            if (abortSignal.aborted) {
+              // Prefer closeRound's typed failure over a bare abort race winner.
+              throw Object.assign(new Error("Grok host aborted"), { code: "host-aborted" });
+            }
+            return new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
+              const onAbort = (): void => {
+                reject(Object.assign(new Error("Grok host aborted"), { code: "host-aborted" }));
+              };
+              abortSignal.addEventListener("abort", onAbort, { once: true });
+              promptRequest.then(
+                (value) => {
+                  abortSignal.removeEventListener("abort", onAbort);
+                  resolve(value);
+                },
+                (error) => {
+                  abortSignal.removeEventListener("abort", onAbort);
+                  reject(error);
+                },
+              );
             });
+          };
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            let result: Readonly<Record<string, unknown>>;
+            try {
+              result = await promptOrAbort({
+                sessionId,
+                prompt: [{ type: "text", text: prompt }],
+              });
+            } catch (error) {
+              // Envelope abort (typed infra declaration): closeRound owns the failure record.
+              if (
+                typeof error === "object"
+                && error !== null
+                && (error as { code?: unknown }).code === "host-aborted"
+              ) {
+                const closure = await prepared.closeRound();
+                if ("failure" in closure) {
+                  return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+                }
+                return failure("session", "HostAborted", "host-aborted", { sessionId });
+              }
+              throw error;
+            }
             if (result.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
-            // session/prompt resolution is the sole typed round boundary before seal.
+            // session/prompt resolution is the sole typed round boundary before seal
+            // when the turn ends without host abort; abort path closes above.
             const closure = await prepared.closeRound();
             if (closure.accepted) {
               // Wait for ACP's typed close acknowledgement before tearing down the
