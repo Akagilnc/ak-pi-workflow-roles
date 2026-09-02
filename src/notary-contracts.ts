@@ -111,17 +111,12 @@ export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
   return projected;
 }
 
-/**
- * Machine-facing facts from an accepted 符宝郎 release.
- * #621: retain named findings so bounce/pass can point at the clause on typed keys
- * (mirrors inspectorDecisiveFacts; count-only dropped the 点名条款 surface).
- */
 export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknown> {
   const status = String(output.status);
   const facts: Record<string, unknown> = { status, officer: "notary" };
   if (status === "pass" || status === "bounce") {
     const findings = (output as { findings?: unknown }).findings;
-    if (findings !== undefined) facts.findings = findings;
+    facts.findingsCount = Array.isArray(findings) ? findings.length : 0;
   }
   if (status === "bounce") {
     facts.disposition = "rewrite";

@@ -158,58 +158,6 @@ test("scripted officer bounce projects rewrite disposition and loads that office
   });
 });
 
-/**
- * #621 acceptance — 大理寺闸 (gatekeeper→notary) projects bounce/pass + named
- * clause findings on typed officer keys. Fixtures are role-leg findings pointers.
- */
-test("#621 gatekeeper→notary projects named findings for bounce and pass", async () => {
-  const scenarios = [
-    {
-      status: "bounce" as const,
-      findings: ["Scope 2 重建会话：票面无陛下原话"],
-    },
-    {
-      status: "bounce" as const,
-      findings: ["ADR 0077 名主张统一格式：无绑定 key"],
-    },
-    {
-      status: "pass" as const,
-      findings: ["判词与票面对不上但两者均有原话：不对齐不归符宝郎"],
-    },
-    {
-      status: "pass" as const,
-      findings: [] as string[],
-    },
-  ] as const;
-
-  for (const scenario of scenarios) {
-    await withParent(async (context, faux) => {
-      const submission = { status: scenario.status, findings: [...scenario.findings] };
-      faux.setResponses([
-        completion([
-          { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "notary" } },
-        ], []),
-        completion([
-          { tool: NOTARY_OUTPUT_TOOL, args: submission },
-        ], []),
-      ]);
-      const result = await runGatekeeper({
-        context,
-        runDirectory: context.runDirectory,
-        subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
-      });
-      assert.equal(result.status, scenario.status);
-      if (result.status === "bounce" || result.status === "pass") {
-        assert.equal(result.officer, "notary");
-        assert.deepEqual(result.findings, scenario.findings);
-      }
-      if (result.status === "bounce") {
-        assert.equal(result.disposition, "rewrite");
-      }
-    });
-  }
-});
-
 test("Gatekeeper maps non-dispatch submission to transport_failure with original retained", async () => {
   await withParent(async (context, faux) => {
     const badSubmission = { status: "incomplete", reason: "missing completion evidence" };
