@@ -7,6 +7,7 @@ import { createInterface } from "node:readline";
 import test from "node:test";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME, type DoctorCase } from "../../src/doctor-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import {
@@ -32,7 +33,6 @@ import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { seatSelection, writeInstitutionalSeatTable } from "../helpers/institutional-seat-table.ts";
 
 type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
 
@@ -828,7 +828,9 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
   }
 });
 
-test("Grok MCP projection extracts typed evidence keys from thrown InfrastructureFailure", async () => {
+test("Grok MCP projection extracts typed evidence keys from failInfrastructure thrown error", async () => {
+  // Doctor has no gatekeeper-before-audit: auditCompliance throw reaches failInfrastructure
+  // with the original error, so closeRound.details must carry NAVIGATOR evidence keys.
   const root = await mkdtemp(join(tmpdir(), "ak-grok-infra-evidence-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
@@ -837,36 +839,66 @@ test("Grok MCP projection extracts typed evidence keys from thrown Infrastructur
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a7";
-    const runDir = join(root, "runs", `${runId}@judge`);
-    await mkdir(runDir, { recursive: true });
-    await writeInstitutionalSeatTable(runDir, {
-      gatekeeper: seatSelection("xai", "grok-4.5"),
-    });
-    const diagnostic = "Gate failure with typed evidence";
+    const runDir = join(root, "runs", `${runId}@doctor`);
+    const casePath = join(root, "case.json");
+    const zero = { count: 0, sources: [] as string[] };
+    const patient: DoctorCase = {
+      version: 1,
+      identity: { issueNumber: 593, runsPath: join(root, "case-runs") },
+      evidence: [{
+        id: "review/session/live.jsonl",
+        kind: "session",
+        byteLength: 6,
+        contentLength: 2,
+        sha256: "abc",
+        content: "中文",
+      }],
+      cost: {
+        invocations: zero,
+        legs: zero,
+        modelApiTurns: zero,
+        outputTokens: zero,
+        toolCalls: zero,
+        retries: { ...zero, evidence: "literal run-dir naming" },
+        statuses: [],
+        commits: [],
+        sessions: [],
+        outputBytes: { ...zero, payload: "raw JSONL bytes", providerWireBytes: "unavailable" },
+      },
+    };
+    const diagnostic = "doctor audit provider unavailable with typed evidence (#593)";
     const evidenceError = Object.assign(new Error(diagnostic), {
-      stage: "judge-eval",
+      name: "InfrastructureFailure",
+      stage: "doctor-audit",
       reason: "timeout",
-      submission: { verdict: "pending" },
+      submission: { case: patient.identity },
+      observation: "provider stream stalled",
+      candidate: null,
     });
     const prepared = await prepareGrokRoleEnvelope({
       request: {
-        principal: {}, activation: { role: "judge" }, methods: [],
-        continuation: { kind: "initial", prompt: "decide" },
+        principal: {}, activation: { role: "doctor", casePath }, methods: [],
+        continuation: { kind: "initial", prompt: "testify" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
         agentDir: join(root, "agent"), runDirectory: runDir,
       } as RoleTurnRequest,
       socketPath: join(root, "mcp.sock"),
       dependencies: {
         loadJudgeSoul: async () => "JUDGE SOUL",
-        auditSoulCompliance: async () => { throw evidenceError; },
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        loadDoctorSoul: async () => "DOCTOR SOUL",
+        loadDoctorCase: async () => patient,
+        auditDoctorCompliance: async () => { throw evidenceError; },
         activationTraceWriter: async () => {},
       },
     });
     try {
       assert.ok(prepared.abortSignal instanceof AbortSignal);
       const server = prepared.mcpServers[0] as McpServer;
-      const reply = await callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
-        judgeStatus: "continue",
+      const reply = await callThroughMcp(server, DOCTOR_OUTPUT_TOOL_NAME, {
+        status: "completed",
+        case: patient.identity,
+        findings: [],
       });
       assert.equal(reply.error, undefined);
       assert.equal((reply.result as { isError?: boolean })?.isError, true);
@@ -874,14 +906,19 @@ test("Grok MCP projection extracts typed evidence keys from thrown Infrastructur
 
       const closure = await prepared.closeRound();
       assert.equal(closure.accepted, false);
-      assert.ok("failure" in closure);
+      assert.ok("failure" in closure, "evidence-bearing infra throw must not fall to retry or MissingSubmission");
       assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
-      const diagnostic = closure.failure.diagnostic;
-      assert.equal(typeof diagnostic, "string");
-      assert.ok((diagnostic as string).includes("Gatekeeper authentication failed"));
+      assert.equal(closure.failure.diagnostic, diagnostic);
       const details = closure.failure.details as Record<string, unknown> | undefined;
-      assert.equal(details?.stage, "gatekeeper");
-      assert.ok(typeof details?.reason === "string" && details.reason.includes("Gatekeeper authentication failed"));
+      assert.ok(details !== undefined);
+      assert.equal(details.kind, "role_infrastructure_failure");
+      assert.equal(details.source, "shared-role-lifecycle");
+      assert.equal(details.reasonCode, "host_failure");
+      assert.equal(details.stage, "doctor-audit");
+      assert.equal(details.reason, "timeout");
+      assert.deepEqual(details.submission, { case: patient.identity });
+      assert.equal(details.observation, "provider stream stalled");
+      assert.equal(details.candidate, null);
     } finally {
       await prepared.dispose?.();
     }
