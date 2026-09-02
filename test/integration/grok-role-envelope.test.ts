@@ -17,6 +17,8 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
+import { uuidv7 } from "../../src/uuidv7.ts";
 import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import {
   issuePiDurablePrincipalCoordinates,
@@ -619,7 +621,9 @@ test("Grok prepare keeps existing durable session history on resume", async () =
   try {
     const runDirectory = join(root, "runs", "resume-run");
     const sessionPath = join(runDirectory, "session", "session.jsonl");
+    const subjectKey = join(root, "work");
     await mkdir(join(runDirectory, "session"), { recursive: true });
+    const priorInvocationId = uuidv7();
     const priorHeader = JSON.stringify({
       type: "session",
       version: 3,
@@ -627,13 +631,25 @@ test("Grok prepare keeps existing durable session history on resume", async () =
       timestamp: "2026-01-01T00:00:00.000Z",
       cwd: process.cwd(),
     });
+    // Unfinished marker: same role/phase/subjectKey, no packaged terminal after it.
+    const priorMarker = JSON.stringify({
+      type: "custom",
+      customType: NAVIGATOR_INVOCATION_ENTRY,
+      data: {
+        invocationId: priorInvocationId,
+        role: "judge",
+        phase: null,
+        subjectKey,
+      },
+    });
     const priorHistory = JSON.stringify({
       type: "message",
       message: { role: "assistant", content: [{ type: "text", text: "prior turn" }] },
     });
-    const priorBytes = `${priorHeader}\n${priorHistory}\n`;
+    const priorBytes = `${priorHeader}\n${priorMarker}\n${priorHistory}\n`;
     await writeFile(sessionPath, priorBytes, "utf8");
 
+    let resumedInvocationId: string | undefined;
     const prepared = await prepareGrokRoleEnvelope({
       request: {
         principal: {}, activation: { role: "judge" }, methods: [],
@@ -646,10 +662,37 @@ test("Grok prepare keeps existing durable session history on resume", async () =
         loadJudgeSoul: async () => "JUDGE SOUL",
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey,
+          subject: "resume work",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: (options) => {
+          resumedInvocationId = options.invocationId;
+          return {
+            prepare() {},
+            setWorkContext() {},
+            warmHelp() {},
+            isPreparing: () => false,
+            settle: async () => {},
+            dispose() {},
+          };
+        },
       },
     });
     try {
-      assert.equal(await readFile(sessionPath, "utf8"), priorBytes);
+      // Bytes preserved through the seeded history; lifecycle may append only after.
+      const after = await readFile(sessionPath, "utf8");
+      assert.ok(after.startsWith(priorBytes), "resume must keep every prior durable byte");
+      // Shared lifecycle reuses the unfinished marker — no second mint.
+      assert.equal(resumedInvocationId, priorInvocationId);
+      const markerRows = after
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as { type?: string; customType?: string })
+        .filter((row) => row.type === "custom" && row.customType === NAVIGATOR_INVOCATION_ENTRY);
+      assert.equal(markerRows.length, 1, "unfinished resume must not re-mint ak-navigator-invocation");
     } finally {
       await prepared.dispose?.();
     }

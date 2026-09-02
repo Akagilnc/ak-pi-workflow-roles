@@ -13,7 +13,6 @@ import test from "node:test";
 
 import {
   type Context,
-  createAssistantMessageEventStream,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
@@ -538,48 +537,35 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
                 ? `${model.provider}/${model.id}:max`
                 : `${model.provider}/${model.id}`;
             await writeNavigatorModelSetting(setting, resolve(agentDir, "navigator-model.json"));
+            // Institutional Navigator child resolves auth/stream via agentDir models.json
+            // mock HTTP (not the parent session provider). Script navigator failures on
+            // the faux response queue so the mock server mirrors typed HTTP status /
+            // transport diagnostics into the child (#590 host-neutral path).
             const streamFailure = scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport";
-            const provider = streamFailure
-              ? {
-                ...faux.provider,
-                getModels() { return [model]; },
-                stream(requestModel: typeof model, streamContext: Context, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-                  const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-                  if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-                    return faux.provider.stream(requestModel, streamContext, options as never);
-                  }
-                  const stream = createAssistantMessageEventStream();
-                  const human = scenario.name === "transport"
-                    ? {
-                      ...fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic }),
-                      diagnostics: [{
-                        type: "provider_transport_failure",
-                        timestamp: Date.now(),
-                        error: { message: diagnostic, code: "transport_error" },
-                      }],
-                    }
-                    : fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
-                  queueMicrotask(() => {
-                    void (async () => {
-                      if ("status" in scenario) {
-                        await options?.onResponse?.({ status: scenario.status, headers: {} }, requestModel);
-                      }
-                      stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
-                      stream.push({ type: "error", reason: "error", error: human });
-                    })();
-                  });
-                  return stream;
-                },
-                streamSimple(requestModel: typeof model, streamContext: Context, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-                  return this.stream(requestModel, streamContext, options);
-                },
-              }
-              : undefined;
             const response = (context: Context) => {
               const names = context.tools?.map((tool) => tool.name) ?? [];
               const province = scriptJudgeProvincePass(names);
               if (province !== undefined) return province;
               if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+                if (streamFailure) {
+                  const base = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
+                  if (scenario.name === "transport") {
+                    return {
+                      ...base,
+                      diagnostics: [{
+                        type: "provider_transport_failure",
+                        timestamp: Date.now(),
+                        error: { message: diagnostic, code: "transport_error" },
+                      }],
+                    };
+                  }
+                  return {
+                    ...base,
+                    ...("status" in scenario
+                      ? { statusCode: scenario.status, status: scenario.status }
+                      : {}),
+                  };
+                }
                 return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
               }
               if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
@@ -587,7 +573,7 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
             };
             faux.setResponses(Array.from({ length: 10 }, () => response));
             await withAgentDirProviderFixture(faux, agentDir, () =>
-              withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, modelsPath: null, ...(provider === undefined ? {} : { provider }), additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+              withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
               await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
               const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
               assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");

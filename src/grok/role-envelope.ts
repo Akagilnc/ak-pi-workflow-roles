@@ -150,6 +150,9 @@ export async function prepareGrokRoleEnvelope(options: {
 
   // Durable principal layout matches public-cli settlement (session/session.jsonl).
   // Create the header only when absent; resume must keep every prior byte and append.
+  // Session JSONL is the sole durable books true source: hydrate in-memory entries
+  // from existing bytes so shared lifecycle getEntries sees unfinished markers/history
+  // (#590 grok-resume-session-hydration).
   let sessionFile = join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
   try {
@@ -166,6 +169,16 @@ export async function prepareGrokRoleEnvelope(options: {
     );
   } catch (error) {
     if ((error as { code?: unknown }).code !== "EEXIST") throw error;
+  }
+  {
+    const raw = await readFile(sessionFile, "utf8");
+    for (const line of raw.split("\n")) {
+      if (line.trim() === "") continue;
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      // Header is owned by getHeader(); Pi getEntries excludes it.
+      if (entry.type === "session") continue;
+      sessionEntries.push(entry);
+    }
   }
   const context: HostContext = {
     cwd: request.cwd,

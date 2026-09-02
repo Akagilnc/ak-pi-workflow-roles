@@ -1452,6 +1452,11 @@ export async function withInstitutionalProviderFixture<T>(
   process.env.PI_CODING_AGENT_DIR = tempAgentDir;
   try {
     const modelsPath = resolve(tempAgentDir, "models.json");
+    const model = faux.getModel() as {
+      id: string;
+      reasoning?: boolean;
+      thinkingLevelMap?: Record<string, string>;
+    };
     await writeFile(modelsPath, JSON.stringify({
       providers: {
         [faux.provider.id]: {
@@ -1459,10 +1464,15 @@ export async function withInstitutionalProviderFixture<T>(
           api: "openai-completions",
           apiKey: "test",
           models: [{
-            id: faux.getModel().id,
-            name: faux.getModel().id,
+            id: model.id,
+            name: model.id,
             api: "openai-completions",
-            reasoning: false,
+            // Preserve faux model reasoning / thinking map so institutional
+            // children honor Navigator :max the same way the parent session does.
+            reasoning: model.reasoning === true,
+            ...(model.thinkingLevelMap === undefined
+              ? {}
+              : { thinkingLevelMap: model.thinkingLevelMap }),
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 128000,
@@ -1519,19 +1529,29 @@ export async function seedAgentDirModelsJsonFromFaux(
               baseUrl: mock.baseUrl,
               api: "openai-completions",
               apiKey: "test",
-              models: [
-                {
-                  id: faux.getModel().id,
-                  name: faux.getModel().id,
+              models: (() => {
+                const model = faux.getModel() as {
+                  id: string;
+                  reasoning?: boolean;
+                  thinkingLevelMap?: Record<string, string>;
+                };
+                return [{
+                  id: model.id,
+                  name: model.id,
                   api: "openai-completions",
-                  reasoning: false,
+                  // Preserve faux model reasoning / thinking map so institutional
+                  // children honor Navigator :max the same way the parent session does.
+                  reasoning: model.reasoning === true,
+                  ...(model.thinkingLevelMap === undefined
+                    ? {}
+                    : { thinkingLevelMap: model.thinkingLevelMap }),
                   input: ["text"],
                   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                   contextWindow: 128000,
                   maxTokens: 16384,
                   compat: { requiresToolResultName: true },
-                },
-              ],
+                }];
+              })(),
             },
           },
         },
