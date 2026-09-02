@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -218,6 +218,8 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
     seedGitProject(project);
 
     const runId = "01a0glean00-0000-7000-8000-0000000000aa";
+    // Ticket acceptance surface: interrupt first (unsealed), then resume lands a
+    // distinct sealed 弹章 — not a vacuous re-read of a first-run seal (#599).
     const first = await runAkRole(
       ["gleaner-left", "--project", project, "--base", "HEAD"],
       {
@@ -229,15 +231,28 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedGleanerLeftSession({
-            status: "completed",
-            findings: [],
-          }),
+          piRunner: async (args) => {
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            await writeFile(sessionFile, "\n", "utf8");
+            return {
+              code: 1,
+              stderr: "upstream timeout\n",
+              timedOut: true,
+              args: [...args],
+            };
+          },
         }),
       },
     );
-    assert.equal(first.exitCode, 0);
-    assert.equal(first.terminal?.roleOutcome.role, "gleaner-left");
+    assert.equal(first.exitCode, 1);
+    assert.equal(first.terminal?.roleOutcome.kind, "failure");
+    assert.equal(
+      first.terminal?.roleOutcome.kind === "failure"
+        ? first.terminal.roleOutcome.cause
+        : undefined,
+      "timeout",
+    );
 
     const coords = issuePiDurablePrincipalCoordinates({
       cwd: project,
@@ -262,7 +277,7 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
             findings: [
               {
                 pointer: "src/packaged-role-registry.ts:146",
-                statement: "resume ban revoked",
+                statement: "RESUMED-弹章",
               },
             ],
           })(args, options);
@@ -274,11 +289,165 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
     assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "gleaner-left");
     assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
     assert.equal(resumed.terminal?.roleOutcome.role, "gleaner-left");
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? resumed.terminal.roleOutcome.status
         : undefined,
       "completed",
+    );
+    const facts = resumed.terminal?.roleOutcome.kind === "accepted"
+      ? (resumed.terminal.roleOutcome.decisiveFacts as Record<string, unknown>)
+      : undefined;
+    const findings = facts?.findings as readonly { pointer?: string; statement?: string }[] | undefined;
+    assert.equal(findings?.[0]?.statement, "RESUMED-弹章");
+  });
+});
+
+test("ak-role resume after sealed gleaner-left presents the sealed 弹章 without dispatch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const runId = "01a0glean00-0000-7000-8000-0000000000ab";
+    const first = await runAkRole(
+      ["gleaner-left", "--project", project, "--base", "HEAD"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedGleanerLeftSession({
+            status: "completed",
+            findings: [
+              {
+                pointer: "src/packaged-role-registry.ts:22",
+                statement: "FIRST-弹章",
+              },
+            ],
+          }),
+        }),
+      },
+    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.kind, "accepted");
+
+    let resumeDispatches = 0;
+    const { io, stdout } = captureIo();
+    const resumed = await runAkRole(["resume", runId], {
+      home,
+      packageRoot,
+      cwd: project,
+      io,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          resumeDispatches += 1;
+          return scriptedGleanerLeftSession({
+            status: "completed",
+            findings: [
+              {
+                pointer: "src/packaged-role-registry.ts:146",
+                statement: "RESUMED-must-not-land",
+              },
+            ],
+          })(args, options);
+        },
+      }),
+    });
+    assert.equal(resumeDispatches, 0, "sealed resume must not dispatch a doomed turn");
+    assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed gleaner-left resume failed");
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    const facts = resumed.terminal?.roleOutcome.kind === "accepted"
+      ? (resumed.terminal.roleOutcome.decisiveFacts as Record<string, unknown>)
+      : undefined;
+    const findings = facts?.findings as readonly { statement?: string }[] | undefined;
+    assert.equal(findings?.[0]?.statement, "FIRST-弹章");
+  });
+});
+
+test("gleaner-left resume timeout is not masked by a prior-attempt residual", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const runId = "01a0glean00-0000-7000-8000-0000000000ac";
+    const first = await runAkRole(
+      ["gleaner-left", "--project", project, "--base", "HEAD"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedTerminatingToolSession({
+            role: "gleaner-left",
+            toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+            details: { status: "completed", findings: [] },
+            isError: true,
+            acceptedText: "PRIOR-attempt-residual-error",
+          }),
+        }),
+      },
+    );
+    assert.equal(first.exitCode, 1);
+    assert.equal(
+      first.terminal?.roleOutcome.kind === "failure"
+        ? first.terminal.roleOutcome.cause
+        : undefined,
+      "output",
+    );
+
+    const { io, stdout } = captureIo();
+    const resumed = await runAkRole(["resume", runId], {
+      home,
+      packageRoot,
+      cwd: project,
+      io,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          const prior = await readFile(sessionFile, "utf8");
+          const resumeUser = {
+            type: "message",
+            id: "user-resume",
+            parentId: null,
+            timestamp: "2026-08-30T00:01:00.000Z",
+            message: { role: "user", content: "resume", timestamp: 10 },
+          };
+          await writeFile(
+            sessionFile,
+            `${prior}${JSON.stringify(resumeUser)}\n`,
+            "utf8",
+          );
+          return {
+            code: 1,
+            stderr: "upstream timeout\n",
+            timedOut: true,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(resumed.exitCode, 1, stdout.join("") || "resume timeout path failed");
+    assert.equal(
+      resumed.terminal?.roleOutcome.kind === "failure"
+        ? resumed.terminal.roleOutcome.cause
+        : undefined,
+      "timeout",
+      "prior-attempt residual must not mask current resume timeout",
     );
   });
 });

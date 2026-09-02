@@ -465,6 +465,9 @@ export async function runPostAdmissionResumable<
 
 /**
  * Shared post-admission manual resume path: acquire writer lease and dispatch turn.
+ * When the submission ledger is already sealed, project that accepted terminal
+ * idempotently — do not dispatch a doomed turn that would append
+ * post-seal-anomaly and erase the sealed read (#599; keep #416 open load).
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
@@ -484,6 +487,32 @@ export async function runPostAdmissionManualResume<
   // Single seam: explicit env model wins; otherwise restore admitted.model
   // (including thinking) so a model-less manual resume reuses the recorded model.
   const effectiveModel = resolveResumeModel(env.model, admitted.model);
+  const shouldPresent =
+    adapters.shouldPresentSettled ??
+    ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
+
+  // Sealed accepted receipt only — audit_escalation / residual failure must not
+  // short-circuit; those still need a real continuation turn.
+  try {
+    const existing = await adapters.trySettle(admitted, env.principalAuthority);
+    if (
+      existing !== undefined &&
+      existing.roleOutcome.kind === "accepted" &&
+      shouldPresent(existing)
+    ) {
+      (existing as { autoResumeCount?: number }).autoResumeCount = 0;
+      io.stdout(formatTerminalResult(existing));
+      return {
+        exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
+        admitted,
+        terminal: existing,
+      };
+    }
+  } catch {
+    // Pre-dispatch settle failure is not proof of seal; fall through to dispatch
+    // so the attempt path can settle or fail honestly.
+  }
+
   let lease: RunWriterLease;
   try {
     lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
