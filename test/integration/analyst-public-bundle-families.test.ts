@@ -28,8 +28,9 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { fixtureHome, withBusinessRepo } from "../helpers/analyst-fixture-kit.ts";
-import { withPackageMachineHomeGuard } from "../helpers/package-machine-home-guard.ts";
-import { seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { machineLedgerHome, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
+import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const BOOK = "fixture-book";
@@ -47,9 +48,9 @@ type PageWithMetricFamilies = AnalystIssueMetricsPage & {
  * plus #446 gate-cycles without a sibling analyst-metric-families/ directory
  * next to the bin.
  *
- * #604: cold bin uses packageMachineHome (ignores process.env.HOME). Seed a
- * unique book under the machine ledger via the cross-process guard, and run
- * the bin from a temp git cwd whose basename is that book key — no HOME seam.
+ * #604: cold bin uses packageMachineHome (ignores process.env.HOME). Point a
+ * temporary user profile at an explicit temp home via test-process preload so
+ * books/config never enter the operator's real machine home.
  */
 test("public ak-role bundle assembles B1-B4 + gate-cycles metric families without sibling family dir", async () => {
   const buildUrl = pathToFileURL(join(packageRoot, "scripts/build-package.mjs")).href;
@@ -63,56 +64,59 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   const binDir = await mkdtemp(join("/tmp", "analyst-bundle-bin-"));
   const binPath = join(binDir, "main.js");
   const project = await mkdtemp(join("/tmp", "analyst-bundle-cwd-"));
+  const profileHome = await mkdtemp(join("/tmp", "analyst-bundle-profile-"));
   await withBusinessRepo(async () => {
-    await withPackageMachineHomeGuard(async (guard) => {
+    try {
+      const previousCwd = process.cwd();
+      process.chdir(packageRoot);
       try {
-        const previousCwd = process.cwd();
-        process.chdir(packageRoot);
-        try {
-          await buildPublicAkRoleBin(binPath);
-        } finally {
-          process.chdir(previousCwd);
-        }
-        // Prove the shipped layout has no sibling family tree next to the bin.
-        await rm(join(binDir, "analyst-metric-families"), {
-          recursive: true,
-          force: true,
-        });
-
-        seedGitRepository(project);
-        const bookKey = basename(project);
-        guard.trackBook(bookKey);
-        const srcBook = join(fixtureHome, "books", BOOK);
-        const dstBook = join(guard.ledgerHome, "books", bookKey);
-        await cp(srcBook, dstBook, { recursive: true });
-
-        const result = execFileSync(
-          process.execPath,
-          [binPath, "analyst"],
-          {
-            cwd: project,
-            encoding: "utf8",
-            // Cold bin has no HOME override — package home is the machine home.
-            env: process.env,
-          },
-        );
-        assert.match(result, /analyst-issue-metrics|"mode"\s*:\s*"issue"/);
-        const pagePath = analystIssuePagePath(guard.ledgerHome, { bookKey });
-        const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
-        assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
-        assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
-        assert.ok(page.acceptanceSuccessRework, "B3 must be reachable from public bundle");
-        assert.ok(page.roundTimeline, "B4 must be reachable from public bundle");
-        assert.ok(page.gateCycles, "gate-cycles must be reachable from public bundle");
-        assert.equal(page.legWallClock.kind, "analyst-leg-wall-clock");
-        assert.equal(page.b2FrameBucketsActions.kind, "analyst-b2-frame-buckets-actions");
-        assert.equal(page.acceptanceSuccessRework.kind, "analyst-acceptance-success-rework");
-        assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
-        assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
+        await buildPublicAkRoleBin(binPath);
       } finally {
-        await rm(binDir, { recursive: true, force: true });
-        await rm(project, { recursive: true, force: true });
+        process.chdir(previousCwd);
       }
-    });
+      // Prove the shipped layout has no sibling family tree next to the bin.
+      await rm(join(binDir, "analyst-metric-families"), {
+        recursive: true,
+        force: true,
+      });
+
+      seedGitRepository(project);
+      const bookKey = basename(project);
+      const ledgerHome = machineLedgerHome(profileHome);
+      const srcBook = join(fixtureHome, "books", BOOK);
+      const dstBook = join(ledgerHome, "books", bookKey);
+      await cp(srcBook, dstBook, { recursive: true });
+
+      const env = withTestUserProfileEnv(
+        isolatedTestProcessEnv({ home: profileHome }),
+        profileHome,
+      );
+      const result = execFileSync(
+        process.execPath,
+        [binPath, "analyst"],
+        {
+          cwd: project,
+          encoding: "utf8",
+          env,
+        },
+      );
+      assert.match(result, /analyst-issue-metrics|"mode"\s*:\s*"issue"/);
+      const pagePath = analystIssuePagePath(ledgerHome, { bookKey });
+      const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
+      assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
+      assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
+      assert.ok(page.acceptanceSuccessRework, "B3 must be reachable from public bundle");
+      assert.ok(page.roundTimeline, "B4 must be reachable from public bundle");
+      assert.ok(page.gateCycles, "gate-cycles must be reachable from public bundle");
+      assert.equal(page.legWallClock.kind, "analyst-leg-wall-clock");
+      assert.equal(page.b2FrameBucketsActions.kind, "analyst-b2-frame-buckets-actions");
+      assert.equal(page.acceptanceSuccessRework.kind, "analyst-acceptance-success-rework");
+      assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
+      assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
+    } finally {
+      await rm(binDir, { recursive: true, force: true });
+      await rm(project, { recursive: true, force: true });
+      await rm(profileHome, { recursive: true, force: true });
+    }
   });
 });
