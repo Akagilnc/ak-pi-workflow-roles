@@ -507,14 +507,14 @@ test("D6 analyst #399 unmatched ticket: honest empty page, no full-book fallback
 
 // D7
 test("D7 analyst #399 damaged invocation/session stays unreadable (loud exclusion)", async () => {
-  await withBookScopeWorld(async ({ mainRoot, bookKey }) => {
+  await withBookScopeWorld(async ({ home, mainRoot, bookKey }) => {
     const result = await runAnalyst({
       mode: "issue",
       bookKey,
       projectRoot: mainRoot,
       ticketNumber: TICKET_A,
       issueNumber: TICKET_A,
-    });
+    }, { home });
     assert.ok(result.page.unreadable.some((u) => u.runId === RUN_DAMAGED));
     assert.equal(result.page.legs.some((l) => l.runId === RUN_DAMAGED), false);
   });
@@ -522,12 +522,12 @@ test("D7 analyst #399 damaged invocation/session stays unreadable (loud exclusio
 
 // library API: book scope without path filter
 test("analyst #399 library bookKey scope: whole book includes worktree runs", async () => {
-  await withBookScopeWorld(async ({ mainRoot, bookKey }) => {
+  await withBookScopeWorld(async ({ home, mainRoot, bookKey }) => {
     const result = await runAnalyst({
       mode: "issue",
       bookKey,
       projectRoot: mainRoot,
-    });
+    }, { home });
     const runIds = result.page.legs.map((leg) => leg.runId).sort();
     assert.deepEqual(
       runIds,

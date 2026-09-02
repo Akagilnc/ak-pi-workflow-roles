@@ -147,7 +147,7 @@ test("analyst public CLI sweep: one typed attach → pages+index match runAnalys
     const attachPath = join(attachDir, "sweep-input.json");
     await writeFile(attachPath, `${JSON.stringify(VALID_SWEEP_INPUT)}\n`);
 
-    const oracle = await runAnalyst(VALID_SWEEP_INPUT);
+    const oracle = await runAnalyst(VALID_SWEEP_INPUT, { home });
     await rm(join(ledgerHome, "analyst"), { recursive: true, force: true });
 
     const { io, stdout, stderr } = captureIo();

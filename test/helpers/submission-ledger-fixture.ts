@@ -40,7 +40,13 @@ async function driveLedgerProducer(input: {
       handlers.set(event, handler);
     },
   } as RoleHost;
-  createSubmissionLedgerHost(host, new Map([[toolName, input.role]])).registerTool({
+  createSubmissionLedgerHost(
+    host,
+    new Map([[toolName, input.role]]),
+    undefined,
+    undefined,
+    input.home === undefined ? undefined : { home: input.home },
+  ).registerTool({
     name: toolName,
     label: "output",
     description: "",

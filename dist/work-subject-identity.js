@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import {
+  homeFromRunDirectory,
   physicalPathIdentity,
   physicallyContainedIn,
   resolveActivationLedgerHome
@@ -20,7 +21,15 @@ function workIdentityFromCwd(cwd) {
   return void 0;
 }
 function isMachineLedgerSessionPath(sessionPath) {
-  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
+  if (physicallyContainedIn(resolveActivationLedgerHome(), sessionPath)) {
+    return true;
+  }
+  try {
+    const home = homeFromRunDirectory(sessionPath);
+    return physicallyContainedIn(resolveActivationLedgerHome(() => home), sessionPath);
+  } catch {
+    return false;
+  }
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {

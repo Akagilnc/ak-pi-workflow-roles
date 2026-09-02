@@ -46,6 +46,7 @@ import {
 } from "../../src/public-cli/registry.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
+import { withPackageMachineHomeGuard } from "../helpers/package-machine-home-guard.ts";
 import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
 /** Required package-owned method trees shipped in the release artifact. */
@@ -309,6 +310,7 @@ async function installFromTarball(
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
   await withHermeticHome({ prefix: "ak-cold-matrix-" }, async ({ home }) => {
+  await withPackageMachineHomeGuard(async (guard) => {
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
     const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
@@ -328,11 +330,18 @@ test("one cold install exercises all public roles plus automatic Navigator gates
 
     await writeFile(
       resolve(piAgentDir, "auth.json"),
-      JSON.stringify({ "openai-codex": { type: "oauth", access: "test" } }),
+      JSON.stringify({
+        "openai-codex": { type: "oauth", access: "test" },
+        xai: { type: "api-key", access: "test" },
+        "kimi-coding": { type: "api-key", access: "test" },
+      }),
       "utf8",
     );
 
-    const project = resolve(home, "work");
+    // #604: real ak-role bin writes ledger/config under passwd home; unique book key.
+    const bookKey = `work-604-${Date.now().toString(36)}`;
+    guard.trackBook(bookKey);
+    const project = resolve(home, bookKey);
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     execFileSync(
@@ -626,7 +635,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
         cwd: project,
         runId: sourceRunId,
         role: "judge",
-        home,
+        home: guard.packageHome,
       });
       await mkdir(coords.sessionDirectory, { recursive: true });
       const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
@@ -798,6 +807,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
     const realBin = await realpath(installed.akRoleBin);
     assert.equal(realBin.includes(installed.npmRoot), true);
     assert.equal(realBin.includes(join("dist", "public-cli", "main.js")), true);
+  });
   });
 });
 

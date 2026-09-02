@@ -217,11 +217,11 @@ test("analyst B2 kernel: out-of-frame tool intervals clip so tool+model ≡ wall
 });
 
 test("analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)", async () => {
-  await withTempHome(async () => {
+  await withTempHome(async (home) => {
     const result = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
-    });
+    }, { home });
 
     const section = b2Section(result.page);
     assert.equal(section.kind, "analyst-b2-frame-buckets-actions");

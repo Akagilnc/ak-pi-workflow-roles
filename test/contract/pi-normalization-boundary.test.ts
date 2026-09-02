@@ -70,6 +70,7 @@ test("Boundary Tracer 1: Duplicate processing of raw session returns same pointe
     const pointers1 = await normalizePiSessionAttempt({
       sessionFile,
       cwd: project,
+      home,
       subject: { runId: "run-dup-1", attemptId: "att-1" },
     });
     assert.equal(pointers1.length, 2, "Produces tool-call and attempt summary pointers");
@@ -81,6 +82,7 @@ test("Boundary Tracer 1: Duplicate processing of raw session returns same pointe
     const pointers2 = await normalizePiSessionAttempt({
       sessionFile,
       cwd: project,
+      home,
       subject: { runId: "run-dup-1", attemptId: "att-1" },
     });
 
@@ -136,6 +138,7 @@ test("Boundary Tracer 2: Fault injection covering both torn-tail substates and R
     const pointersA1 = await normalizePiSessionAttempt({
       sessionFile: sessionFileA,
       cwd: project,
+      home,
       subject: { runId: "run-fault-a" },
     });
     const toolRecordFileA = pointersA1[0]!.recordFile;
@@ -157,6 +160,7 @@ test("Boundary Tracer 2: Fault injection covering both torn-tail substates and R
       level: "event",
       kind: "tool-call",
       cwd: project,
+      home,
       subject: { runId: "run-fault-a" },
       identity: "sess-fault-a:call-short",
       payload: { toolName: "bash", toolCallId: "call-short" },
@@ -196,6 +200,7 @@ test("Boundary Tracer 2: Fault injection covering both torn-tail substates and R
     const pointersB1 = await normalizePiSessionAttempt({
       sessionFile: sessionFileB,
       cwd: project,
+      home,
       subject: { runId: "run-fault-b" },
     });
     const toolRecordFileB = pointersB1[0]!.recordFile;
@@ -208,6 +213,7 @@ test("Boundary Tracer 2: Fault injection covering both torn-tail substates and R
       level: "event",
       kind: "tool-call",
       cwd: project,
+      home,
       subject: { runId: "run-fault-b" },
       identity: "sess-fault-b:call-after-bad",
       payload: { toolName: "read_file" },
@@ -257,6 +263,7 @@ test("Normalization failure negative case: unparseable session frame produces no
     const pointers = await normalizePiSessionAttempt({
       sessionFile,
       cwd: project,
+      home,
       subject: { runId: "run-bad-1" },
     });
 

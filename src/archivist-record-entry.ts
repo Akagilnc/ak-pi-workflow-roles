@@ -14,6 +14,7 @@ import {
   activationBookDirectory,
   ensureRealDirectoryTree,
   errorText,
+  homeFromRunDirectory,
   pathContainedIn,
   physicallyContainedIn,
   resolveActivationLedgerHome,
@@ -137,7 +138,19 @@ function assertRecentFinalFileUnderSessionDir(
 export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  const ledgerHome = resolveActivationLedgerHome();
+  // Prefer the parent principal's home so nests stay beside the admitted run
+  // (explicit env.home / hermetic fixtures). Never follow process.env.HOME (#604).
+  let ledgerHome: string;
+  if (typeof parentFile === "string" && parentFile.length > 0) {
+    try {
+      const derived = homeFromRunDirectory(parentFile);
+      ledgerHome = resolveActivationLedgerHome(() => derived);
+    } catch {
+      ledgerHome = resolveActivationLedgerHome();
+    }
+  } else {
+    ledgerHome = resolveActivationLedgerHome();
+  }
 
   let sessionDir: string;
   let parentSession: string | undefined;

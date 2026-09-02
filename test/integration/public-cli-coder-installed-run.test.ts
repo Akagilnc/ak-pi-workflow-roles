@@ -21,6 +21,7 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
+import { withPackageMachineHomeGuard } from "../helpers/package-machine-home-guard.ts";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -147,6 +148,7 @@ test(
     await withHermeticHome(
       { prefix: "ak-public-cli-coder-chain-" },
       async ({ home }) => {
+      await withPackageMachineHomeGuard(async (guard) => {
         const piAgentDir = resolve(home, ".pi", "agent");
         await mkdir(piAgentDir, { recursive: true });
         await writeFile(
@@ -175,9 +177,12 @@ test(
           (error: NodeJS.ErrnoException) => error.code === "ENOENT",
         );
 
-        const project = resolve(home, "work");
+        const bookDirName = `work-604-${Date.now().toString(36)}`;
+        const project = resolve(home, bookDirName);
         await mkdir(project, { recursive: true });
         seedGitProject(project);
+        const trackedBookKey = resolveBookKeyFromGit(project);
+        guard.trackBook(trackedBookKey);
 
         const providerPath = resolve(
           packageRoot,
@@ -239,7 +244,7 @@ test(
         );
 
         const bookKey = resolveBookKeyFromGit(project);
-        const runsRoot = join(home, ".ak-roles", "books", bookKey, "runs");
+        const runsRoot = join(guard.ledgerHome, "books", bookKey, "runs");
         const { readdir } = await import("node:fs/promises");
         const runDirs = await readdir(runsRoot);
         const coderRun = runDirs.find((name) => name.endsWith("@coder"));
@@ -376,9 +381,10 @@ test(
         );
         assert.ok(closureEntry, "session must retain accepted Coder closure");
         assert.equal((closureEntry as any).data?.details?.status, "completed");
-        const sealed = await readSealedSubmission(project, runId, home);
+        const sealed = await readSealedSubmission(project, runId, guard.packageHome);
         assert.ok(sealed, "sealed submission must be recorded");
         assert.equal(sealed.status, "completed");
+      });
       },
     );
   },

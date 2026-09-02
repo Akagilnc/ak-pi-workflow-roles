@@ -158,14 +158,14 @@ function expectedRow(input: {
 
 test("analyst changedLines rejects non-finite negatives at issue and sweep boundaries", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       await assert.rejects(
         () =>
           runAnalyst({
             mode: "issue",
             projectRoot: ISSUE_ALPHA,
             changedLines: -3,
-          }),
+          }, { home }),
         /changedLines must be a finite non-negative number/,
       );
       await assert.rejects(
@@ -174,7 +174,7 @@ test("analyst changedLines rejects non-finite negatives at issue and sweep bound
             mode: "issue",
             projectRoot: ISSUE_ALPHA,
             changedLines: Number.POSITIVE_INFINITY,
-          }),
+          }, { home }),
         /changedLines must be a finite non-negative number/,
       );
       await assert.rejects(
@@ -182,7 +182,7 @@ test("analyst changedLines rejects non-finite negatives at issue and sweep bound
           runAnalyst({
             mode: "sweep",
             mergedPullRequests: [{ projectRoot: ISSUE_ALPHA, changedLines: -1 }],
-          }),
+          }, { home }),
         /changedLines must be a finite non-negative number/,
       );
       // 0 remains lawful typed 空缺.
@@ -190,7 +190,7 @@ test("analyst changedLines rejects non-finite negatives at issue and sweep bound
         mode: "issue",
         projectRoot: ISSUE_ALPHA,
         changedLines: 0,
-      });
+      }, { home });
       assert.deepEqual(zero.page.changedLines, { status: "absent" });
       assert.deepEqual(zero.page.msPerKLines, { status: "absent" });
     });
@@ -249,7 +249,7 @@ test("analyst session span with inverted timestamps is page-local unreadable", a
       const result = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_ALPHA,
-      });
+      }, { home });
       assert.equal(result.page.legs.length, 0);
       assert.equal(result.page.totalElapsedMs, 0);
       assert.equal(result.page.unreadableCount, 1);
@@ -294,7 +294,7 @@ test("analyst live run-state is not classified as terminal no-receipt", async ()
       const result = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_ALPHA,
-      });
+      }, { home });
       // Live run is omitted entirely — not a leg, not unreadable death.
       assert.equal(
         result.page.legs.some((leg) => leg.runId === C1_ALPHA_RUN),
@@ -347,7 +347,7 @@ test("analyst reads publisher durable error.settlement fallback as terminal fail
       const result = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_ALPHA,
-      });
+      }, { home });
       assert.equal(
         result.page.legs.some((leg) => leg.runId === C1_ALPHA_RUN),
         true,

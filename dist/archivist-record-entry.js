@@ -8,6 +8,7 @@ import {
   activationBookDirectory,
   ensureRealDirectoryTree,
   errorText,
+  homeFromRunDirectory,
   pathContainedIn,
   physicallyContainedIn,
   resolveActivationLedgerHome
@@ -76,7 +77,17 @@ function assertRecentFinalFileUnderSessionDir(sessionDir, recentFile) {
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  const ledgerHome = resolveActivationLedgerHome();
+  let ledgerHome;
+  if (typeof parentFile === "string" && parentFile.length > 0) {
+    try {
+      const derived = homeFromRunDirectory(parentFile);
+      ledgerHome = resolveActivationLedgerHome(() => derived);
+    } catch {
+      ledgerHome = resolveActivationLedgerHome();
+    }
+  } else {
+    ledgerHome = resolveActivationLedgerHome();
+  }
   let sessionDir;
   let parentSession;
   if (options.subject !== void 0) {

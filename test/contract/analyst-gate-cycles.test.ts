@@ -260,7 +260,7 @@ test("analyst gate-cycles via runAnalyst: historical 7-round + zero-round siblin
     const result = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
-    });
+    }, { home });
     const section = gateSection(result.page);
 
     const gateLeg = section.legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
@@ -296,7 +296,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
     const current = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
-    });
+    }, { home });
     const currentLeg = gateSection(current.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
     assert.ok(currentLeg);
     assert.deepEqual(currentLeg.rounds, [
@@ -315,7 +315,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
     const rejected = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
-    });
+    }, { home });
     const rejectedLeg = gateSection(rejected.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
     assert.ok(rejectedLeg);
     assert.equal(rejectedLeg.roundCount, 1, "rejected/no-result terminals must not form rounds");
@@ -344,11 +344,12 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
 async function assertAuditorRolesUnreadable(
   reasonPattern: RegExp,
   label: string,
+  home: string,
 ): Promise<void> {
   const result = await runAnalyst({
     mode: "issue",
     projectRoot: ISSUE_PROJECT_ROOT,
-  });
+  }, { home });
   const entry = result.page.unreadable.find((row) => row.runId === GATE_JUDGE_RUN);
   assert.ok(entry, `${label}: judge leg must be page-local unreadable`);
   assert.deepEqual(entry.missingSources, ["auditor-roles"]);
@@ -379,7 +380,7 @@ test("analyst gate-cycles via runAnalyst: accepted non-dispatch Gatekeeper statu
     const result = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
-    });
+    }, { home });
 
     assert.ok(
       result.page.unreadable.some((row) => row.runId === GATE_JUDGE_RUN),
@@ -394,12 +395,12 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await mkdir(auditorDir, { recursive: true });
     // Completed-by-terminator malformed line — canonical reader must not under-count.
     await writeFile(join(auditorDir, "broken.jsonl"), "{bad}\n", "utf8");
-    await assertAuditorRolesUnreadable(/malformed JSONL record/, "malformed JSONL");
+    await assertAuditorRolesUnreadable(/malformed JSONL record/, "malformed JSONL", home);
 
     // Plain file at auditor-roles path is damaged topology (ENOTDIR), not lawful zero.
     await rm(auditorDir, { recursive: true, force: true });
     await writeFile(auditorDir, "not-a-directory\n", "utf8");
-    await assertAuditorRolesUnreadable(/ENOTDIR/, "ENOTDIR topology");
+    await assertAuditorRolesUnreadable(/ENOTDIR/, "ENOTDIR topology", home);
 
     // Accepted gate receipt with inverted span must not silently omit the volume.
     await rm(auditorDir, { recursive: true, force: true });
@@ -415,7 +416,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
       }),
       "utf8",
     );
-    await assertAuditorRolesUnreadable(/unusable timestamp span/, "inverted span");
+    await assertAuditorRolesUnreadable(/unusable timestamp span/, "inverted span", home);
 
     // Accepted gate receipt with blank status — shape refusal wash is forbidden.
     await rm(auditorDir, { recursive: true, force: true });
@@ -431,7 +432,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
       }),
       "utf8",
     );
-    await assertAuditorRolesUnreadable(/missing usable status/, "blank status");
+    await assertAuditorRolesUnreadable(/missing usable status/, "blank status", home);
 
     // Accepted dispatch with unknown officer arg.
     await rm(auditorDir, { recursive: true, force: true });
@@ -447,7 +448,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
       }),
       "utf8",
     );
-    await assertAuditorRolesUnreadable(/missing or unknown officer/, "unknown officer");
+    await assertAuditorRolesUnreadable(/missing or unknown officer/, "unknown officer", home);
 
     // Accepted dispatch tool whose status is not the dispatch terminal.
     await rm(auditorDir, { recursive: true, force: true });
@@ -463,7 +464,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
       }),
       "utf8",
     );
-    await assertAuditorRolesUnreadable(/non-dispatch status/, "non-dispatch status");
+    await assertAuditorRolesUnreadable(/non-dispatch status/, "non-dispatch status", home);
   });
 });
 
@@ -476,7 +477,7 @@ test("analyst gate-cycles via runAnalyst cohort: merges byOfficer from ensured p
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
       issueNumber: 446,
-    });
+    }, { home });
     assert.equal(issue.page.issueNumber, 446);
     const bookKey = issue.page.bookKey;
     assert.equal(typeof bookKey, "string");
@@ -499,7 +500,7 @@ test("analyst gate-cycles via runAnalyst cohort: merges byOfficer from ensured p
           ],
         },
       ],
-    });
+    }, { home });
 
     assert.equal(result.mode, "cohort");
     const withGates = result.groups[0]!;

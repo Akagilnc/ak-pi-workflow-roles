@@ -103,10 +103,27 @@ import {
   realpathSync as realpathSync2,
   statSync
 } from "node:fs";
-import { homedir } from "node:os";
+import { userInfo } from "node:os";
 import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, join as join2, relative, resolve as resolve2, sep } from "node:path";
-function resolveActivationLedgerHome(home = () => process.env.HOME ?? homedir()) {
-  const processHome = home();
+function packageMachineHome() {
+  return resolve2(userInfo().homedir);
+}
+function homeFromRunDirectory(runDirectory) {
+  const marker = `${sep}.ak-roles${sep}`;
+  const idx = runDirectory.indexOf(marker);
+  if (idx !== -1) {
+    return runDirectory.slice(0, idx);
+  }
+  const altMarker = ".ak-roles";
+  const altIdx = runDirectory.indexOf(altMarker);
+  if (altIdx !== -1) {
+    const candidate = runDirectory.slice(0, altIdx);
+    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
+}
+function resolveActivationLedgerHome(home) {
+  const processHome = typeof home === "string" ? home : home?.() ?? packageMachineHome();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute2(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
@@ -15802,7 +15819,20 @@ function resolveSitianRecordPathInLedger(input, ledgerHome) {
   return { sessionDir, recordFile, ledgerHome };
 }
 function resolveSitianRecordPath(input) {
-  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
+  let ledgerHome;
+  if (input.home !== void 0 && input.home.length > 0) {
+    ledgerHome = resolveActivationLedgerHome(() => input.home);
+  } else if (input.sessionParent !== void 0 && input.sessionParent.length > 0) {
+    try {
+      const home = homeFromRunDirectory(input.sessionParent);
+      ledgerHome = resolveActivationLedgerHome(() => home);
+    } catch {
+      ledgerHome = resolveActivationLedgerHome();
+    }
+  } else {
+    ledgerHome = resolveActivationLedgerHome();
+  }
+  return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 function appendSitianRecord(input) {
   try {
@@ -18705,23 +18735,6 @@ function effectiveModelLedgerFields(model) {
     ...model.thinking === void 0 ? {} : { thinking: model.thinking }
   };
 }
-function homeFromRunDirectory(runDirectory) {
-  const marker = `${sep3}.ak-roles${sep3}`;
-  const idx = runDirectory.indexOf(marker);
-  if (idx !== -1) {
-    return runDirectory.slice(0, idx);
-  }
-  const altMarker = ".ak-roles";
-  const altIdx = runDirectory.indexOf(altMarker);
-  if (altIdx !== -1) {
-    const candidate = runDirectory.slice(0, altIdx);
-    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
-  }
-  if (typeof process.env.HOME === "string" && process.env.HOME.length > 0) {
-    return process.env.HOME;
-  }
-  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
-}
 async function writeRoleInvocationLedger(source, role, effectiveModel) {
   const identity = {
     role,
@@ -21545,7 +21558,7 @@ async function readOwnedSubmissionRecords(cwd, runId, home) {
   const { records: records2 } = await readSitianRecords(file);
   return {
     file,
-    owned: records2.filter((record4) => typeof record4.subject === "object" && record4.subject?.runId === runId)
+    owned: records2.filter((record4) => typeof record4.subject === "object" && record4.subject !== null && record4.subject.runId === runId)
   };
 }
 async function readSealedSubmission(cwd, runId, home) {
@@ -26272,7 +26285,7 @@ var init_collector_run = __esm({
 import { createHash as createHash5 } from "node:crypto";
 import { existsSync as existsSync7, readdirSync as readdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync3, statSync as statSync2 } from "node:fs";
 import { basename as basename7, join as join23, resolve as resolve8 } from "node:path";
-import { homedir as homedir2 } from "node:os";
+import { homedir } from "node:os";
 function extractCornerQuotes(text, minLength = DEFAULT_QUOTE_MIN) {
   const out = [];
   const re = /「([^」]+)」/g;
@@ -26375,7 +26388,7 @@ function isNotificationRow(type, text) {
   return false;
 }
 function readCcSessionBlocks(options) {
-  const root = options.projectsRoot ?? join23(homedir2(), ".claude", "projects");
+  const root = options.projectsRoot ?? join23(homedir(), ".claude", "projects");
   if (!existsSync7(root)) return [];
   const blocks = [];
   const dirs = /* @__PURE__ */ new Set();
@@ -26955,6 +26968,7 @@ function appendTicketProvenanceEntry(input) {
     identity,
     subject,
     cwd: input.cwd,
+    ...input.home === void 0 ? {} : { home: input.home },
     host: input.host ?? "diarist",
     source: input.source ?? "diarist",
     payload: input.entry,
@@ -26964,12 +26978,13 @@ function appendTicketProvenanceEntry(input) {
     } : void 0
   });
 }
-function resolveTicketProvenanceVolume(ticketNumber, cwd) {
+function resolveTicketProvenanceVolume(ticketNumber, cwd, home) {
   const path = resolveSitianRecordPath({
     level: "event",
     kind: TICKET_PROVENANCE_KIND,
     subject: ticketProvenanceSubject(ticketNumber),
-    cwd
+    cwd,
+    ...home === void 0 ? {} : { home }
   });
   return {
     recordFile: path.recordFile,
@@ -26978,8 +26993,8 @@ function resolveTicketProvenanceVolume(ticketNumber, cwd) {
     offeredWatermarkFile: join25(path.sessionDir, TICKET_PROVENANCE_OFFERED_WATERMARK)
   };
 }
-function readOfferedIdentities(ticketNumber, cwd) {
-  const { offeredWatermarkFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+function readOfferedIdentities(ticketNumber, cwd, home) {
+  const { offeredWatermarkFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   if (!existsSync9(offeredWatermarkFile)) return /* @__PURE__ */ new Set();
   let text;
   try {
@@ -27020,9 +27035,10 @@ function recordOfferedIdentities(input) {
   if (input.identities.length === 0) return;
   const { volumeDir, offeredWatermarkFile } = resolveTicketProvenanceVolume(
     input.ticketNumber,
-    input.cwd
+    input.cwd,
+    input.home
   );
-  const already = new Set(readOfferedIdentities(input.ticketNumber, input.cwd));
+  const already = new Set(readOfferedIdentities(input.ticketNumber, input.cwd, input.home));
   const rows = [];
   for (const identity of input.identities) {
     if (identity.length === 0 || already.has(identity)) continue;
@@ -27034,8 +27050,8 @@ function recordOfferedIdentities(input) {
   mkdirSync3(volumeDir, { recursive: true });
   appendFileSync2(offeredWatermarkFile, rows.join(""), "utf8");
 }
-async function readTicketProvenance(ticketNumber, cwd) {
-  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+async function readTicketProvenance(ticketNumber, cwd, home) {
+  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   const { records: records2 } = await readSitianRecords(recordFile);
   const entries = [];
   const diagnostics = [];
@@ -27113,8 +27129,8 @@ function renderTicketProvenanceMarkdown(input) {
   }
   return lines.join("\n");
 }
-function ensureTicketProvenanceVolume(ticketNumber, cwd) {
-  const volume = resolveTicketProvenanceVolume(ticketNumber, cwd);
+function ensureTicketProvenanceVolume(ticketNumber, cwd, home) {
+  const volume = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   mkdirSync3(volume.volumeDir, { recursive: true });
   if (!existsSync9(volume.recordFile)) {
     writeFileSync(volume.recordFile, "", "utf8");
@@ -27144,6 +27160,7 @@ function appendTicketProvenanceDiagnostic(input) {
     identity,
     subject,
     cwd: input.cwd,
+    ...input.home === void 0 ? {} : { home: input.home },
     host: input.host ?? "diarist",
     source: input.source ?? "diarist-diagnostic",
     payload: input.diagnostic
@@ -27154,6 +27171,7 @@ function appendCollectorFailureDiagnostic(input) {
   return appendTicketProvenanceDiagnostic({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
+    ...input.home === void 0 ? {} : { home: input.home },
     source: "diarist-collector-fail",
     diagnostic: {
       recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
@@ -27168,6 +27186,7 @@ function appendIssueSourceFailureDiagnostic(input) {
   return appendTicketProvenanceDiagnostic({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
+    ...input.home === void 0 ? {} : { home: input.home },
     source: "diarist-issue-source",
     diagnostic: {
       recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
@@ -27183,6 +27202,7 @@ function appendQuoteVerifyFailureDiagnostic(input) {
   return appendTicketProvenanceDiagnostic({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
+    ...input.home === void 0 ? {} : { home: input.home },
     source: "diarist-quote-verify",
     diagnostic: {
       recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
@@ -27193,7 +27213,7 @@ function appendQuoteVerifyFailureDiagnostic(input) {
   });
 }
 function writeTicketProvenanceHumanView(input) {
-  const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
+  const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
   const md = renderTicketProvenanceMarkdown({
     ticketNumber: input.ticketNumber,
     entries: input.entries
@@ -27301,8 +27321,8 @@ function resolveDiaristGithubOrigin(projectRoot) {
   if (remoteUrl.length === 0) return void 0;
   return parseGitHubOriginRemote(remoteUrl);
 }
-async function loadSeenEntryIdentities(ticketNumber, cwd) {
-  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+async function loadSeenEntryIdentities(ticketNumber, cwd, home) {
+  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   const { records: records2 } = await readSitianRecords(recordFile);
   const seen = /* @__PURE__ */ new Set();
   for (const record4 of records2) {
@@ -27310,7 +27330,7 @@ async function loadSeenEntryIdentities(ticketNumber, cwd) {
       seen.add(record4.identity);
     }
   }
-  for (const identity of readOfferedIdentities(ticketNumber, cwd)) {
+  for (const identity of readOfferedIdentities(ticketNumber, cwd, home)) {
     seen.add(identity);
   }
   return seen;
@@ -27353,7 +27373,8 @@ function faceTextForAnchors(face) {
   return parts.join("\n");
 }
 async function runDiarist(input) {
-  const volumePaths = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
+  const homeOpt = input.home === void 0 ? {} : { home: input.home };
+  const volumePaths = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
   const anchorText = faceTextForAnchors(input.issueFace);
   const anchors = buildDiaristAnchors({
     ticketNumber: input.ticketNumber,
@@ -27361,7 +27382,7 @@ async function runDiarist(input) {
   });
   const rawBlocks = await loadSourceBlocks(input);
   const safeguarded = mechanicalSafeguardPipeline(rawBlocks);
-  const seen = await loadSeenEntryIdentities(input.ticketNumber, input.cwd);
+  const seen = await loadSeenEntryIdentities(input.ticketNumber, input.cwd, input.home);
   const fresh = safeguarded.filter(
     (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block))
   );
@@ -27390,6 +27411,7 @@ async function runDiarist(input) {
       appendCollectorFailureDiagnostic({
         ticketNumber: input.ticketNumber,
         cwd: input.cwd,
+        ...homeOpt,
         collectorError
       });
     }
@@ -27411,6 +27433,7 @@ async function runDiarist(input) {
         const ptr2 = appendQuoteVerifyFailureDiagnostic({
           ticketNumber: input.ticketNumber,
           cwd: input.cwd,
+          ...homeOpt,
           cause: projected.cause
         });
         pointers.push(ptr2);
@@ -27419,6 +27442,7 @@ async function runDiarist(input) {
       const ptr = appendTicketProvenanceEntry({
         ticketNumber: input.ticketNumber,
         cwd: input.cwd,
+        ...homeOpt,
         entry: projected.entry,
         source: "diarist"
       });
@@ -27430,15 +27454,17 @@ async function runDiarist(input) {
     recordOfferedIdentities({
       ticketNumber: input.ticketNumber,
       cwd: input.cwd,
+      ...homeOpt,
       identities: fresh.map(
         (block) => blockEntryIdentity(input.ticketNumber, block)
       )
     });
   }
-  const volume = await readTicketProvenance(input.ticketNumber, input.cwd);
+  const volume = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
   const humanViewFile = writeTicketProvenanceHumanView({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
+    ...homeOpt,
     entries: volume.entries
   });
   return {
@@ -27762,9 +27788,16 @@ async function resolveCountersignTicketBinding(admitted, env) {
 async function runCountersignDiaristStation(admitted, env) {
   if (admitted.ticketNumber === void 0) return void 0;
   const issueFace = await loadBoundIssueFace(admitted);
+  let home;
+  try {
+    home = homeFromRunDirectory(admitted.runDirectory);
+  } catch {
+    home = void 0;
+  }
   const result2 = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
+    ...home === void 0 ? {} : { home },
     issueFace,
     sessionCwds: [admitted.projectRoot, env.cwd],
     ...env.packageRoot === void 0 ? {} : { packageRoot: env.packageRoot }
@@ -27772,9 +27805,16 @@ async function runCountersignDiaristStation(admitted, env) {
   return result2;
 }
 function persistIssueSourceFailure(admitted, ticketNumber, error) {
+  let home;
+  try {
+    home = homeFromRunDirectory(admitted.runDirectory);
+  } catch {
+    home = void 0;
+  }
   appendIssueSourceFailureDiagnostic({
     ticketNumber,
     cwd: admitted.projectRoot,
+    ...home === void 0 ? {} : { home },
     cause: error.message,
     reason: error.reason
   });
@@ -29482,7 +29522,9 @@ async function classifyScopedRun(input) {
   };
 }
 async function scanAnalystIssueRuns(input) {
-  const ledgerHome = resolveActivationLedgerHome();
+  const ledgerHome = resolveActivationLedgerHome(
+    input.home === void 0 ? void 0 : () => input.home
+  );
   const scopeTicketNumber = input.ticketNumber;
   const booksRoot = join30(ledgerHome, "books");
   let wholeBook = false;
@@ -30547,7 +30589,9 @@ function resolveIssueBookKey(input) {
   return resolveAnalystBookKey(input.projectRoot);
 }
 async function readOrComputeAnalystIssuePage(input, options) {
-  const ledgerHome = resolveActivationLedgerHome();
+  const ledgerHome = resolveActivationLedgerHome(
+    options?.home === void 0 ? void 0 : () => options.home
+  );
   const projectRoot = physicalPathIdentity(input.projectRoot);
   const bookKey = resolveIssueBookKey(input);
   const issueNumber = input.ticketNumber ?? input.issueNumber;
@@ -30574,7 +30618,7 @@ async function readOrComputeAnalystIssuePage(input, options) {
     }
   }
   try {
-    return await runAnalystIssueMode(input, void 0, options?.scanProjectRoot);
+    return await runAnalystIssueMode(input, void 0, options?.scanProjectRoot, options?.home);
   } catch (error) {
     if (error instanceof AnalystIssueComputeError) throw error;
     throw new AnalystIssueComputeError({
@@ -30585,17 +30629,20 @@ async function readOrComputeAnalystIssuePage(input, options) {
     });
   }
 }
-async function runAnalystIssueMode(input, precomputedScan, scanProjectRoot) {
+async function runAnalystIssueMode(input, precomputedScan, scanProjectRoot, home) {
   assertAnalystChangedLinesInput(input.changedLines);
-  const ledgerHome = resolveActivationLedgerHome();
+  const ledgerHome = resolveActivationLedgerHome(
+    home === void 0 ? void 0 : () => home
+  );
   const projectRoot = input.projectRoot;
   const ticketNumber = "ticketNumber" in input ? input.ticketNumber : void 0;
   const inputBookKey = "bookKey" in input && typeof input.bookKey === "string" && input.bookKey.trim() !== "" ? input.bookKey : void 0;
   const scan = precomputedScan ?? (inputBookKey !== void 0 ? await scanAnalystIssueRuns({
     bookKey: inputBookKey,
     ...scanProjectRoot === void 0 ? {} : { projectRoot: scanProjectRoot },
-    ...ticketNumber === void 0 ? {} : { ticketNumber }
-  }) : ticketNumber === void 0 ? await scanAnalystIssueRuns({ projectRoot }) : await scanAnalystIssueRuns({ projectRoot, ticketNumber }));
+    ...ticketNumber === void 0 ? {} : { ticketNumber },
+    ...home === void 0 ? {} : { home }
+  }) : ticketNumber === void 0 ? await scanAnalystIssueRuns({ projectRoot, ...home === void 0 ? {} : { home } }) : await scanAnalystIssueRuns({ projectRoot, ticketNumber, ...home === void 0 ? {} : { home } }));
   const issueNumber = "issueNumber" in input ? input.issueNumber : void 0;
   const bookKey = resolveIssueBookKey({
     ...inputBookKey === void 0 ? {} : { bookKey: inputBookKey },
@@ -30620,18 +30667,22 @@ async function runAnalystIssueMode(input, precomputedScan, scanProjectRoot) {
   }
   return { mode: "issue", page, pagePath };
 }
-async function runAnalystSweepMode(input) {
-  const ledgerHome = resolveActivationLedgerHome();
+async function runAnalystSweepMode(input, home) {
+  const ledgerHome = resolveActivationLedgerHome(
+    home === void 0 ? void 0 : () => home
+  );
   const issuePages = [];
   for (const entry of input.mergedPullRequests) {
-    issuePages.push(await runAnalystIssueMode(entry));
+    issuePages.push(await runAnalystIssueMode(entry, void 0, void 0, home));
   }
   const upserts = issuePages.map((result2) => rowFromIssueMetricsPage(result2.page));
   const { index, indexPath } = await mergeAnalystLibraryIndexRows(ledgerHome, upserts);
   return { mode: "sweep", issuePages, index, indexPath };
 }
-async function runAnalystModelGroupsMode(input) {
-  const ledgerHome = resolveActivationLedgerHome();
+async function runAnalystModelGroupsMode(input, home) {
+  const ledgerHome = resolveActivationLedgerHome(
+    home === void 0 ? void 0 : () => home
+  );
   const runs = [];
   const unreadable = [];
   const seen = /* @__PURE__ */ new Set();
@@ -30643,7 +30694,7 @@ async function runAnalystModelGroupsMode(input) {
     projectRoots.push(identity);
   }
   for (const projectRoot of projectRoots) {
-    const scan = await scanAnalystIssueRuns({ projectRoot });
+    const scan = await scanAnalystIssueRuns({ projectRoot, ...home === void 0 ? {} : { home } });
     runs.push(...scan.runs);
     unreadable.push(...scan.unreadable);
     const bookKey = resolveIssueBookKey({ projectRoot });
@@ -30659,7 +30710,7 @@ async function runAnalystModelGroupsMode(input) {
         throw new AnalystIssueComputeError({ bookKey, projectRoot, cause: error });
       }
       try {
-        await runAnalystIssueMode({ mode: "issue", projectRoot }, scan);
+        await runAnalystIssueMode({ mode: "issue", projectRoot }, scan, void 0, home);
       } catch (computeError) {
         if (computeError instanceof AnalystIssueComputeError) throw computeError;
         throw new AnalystIssueComputeError({ bookKey, projectRoot, cause: computeError });
@@ -30674,12 +30725,14 @@ async function runAnalystModelGroupsMode(input) {
   });
   return { mode: "model-groups", page };
 }
-async function runAnalyst(input) {
+async function runAnalyst(input, options) {
   if (input.mode === "sweep") {
-    return runAnalystSweepMode(input);
+    return runAnalystSweepMode(input, options?.home);
   }
   if (input.mode === "cohort") {
-    const ledgerHome = resolveActivationLedgerHome();
+    const ledgerHome = resolveActivationLedgerHome(
+      options?.home === void 0 ? void 0 : () => options.home
+    );
     return runAnalystCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
       const realBookKey = bookKey !== void 0 && !isSyntheticAnalystBookKey(bookKey) ? bookKey : void 0;
       const ensured = await readOrComputeAnalystIssuePage({
@@ -30688,14 +30741,14 @@ async function runAnalyst(input) {
         issueNumber,
         ticketNumber: issueNumber,
         ...realBookKey === void 0 ? {} : { bookKey: realBookKey }
-      }, { scanProjectRoot: projectRoot });
+      }, { scanProjectRoot: projectRoot, ...options?.home === void 0 ? {} : { home: options.home } });
       return ensured.page;
     });
   }
   if (input.mode === "model-groups") {
-    return runAnalystModelGroupsMode(input);
+    return runAnalystModelGroupsMode(input, options?.home);
   }
-  return runAnalystIssueMode(input);
+  return runAnalystIssueMode(input, void 0, void 0, options?.home);
 }
 var AnalystIssueComputeError, analystSweepModeInputSchema;
 var init_analyst_entry = __esm({
@@ -30832,12 +30885,14 @@ async function buildAnalystSweepModeInputFromAttachmentPaths(attachmentPaths) {
 async function runPublicAnalyst(argv, _env, io, parseAnalystArgv2) {
   try {
     const parsed = parseAnalystArgv2(argv);
-    const ledgerHome = resolveActivationLedgerHome();
+    const ledgerHome = resolveActivationLedgerHome(
+      _env.home === void 0 ? void 0 : () => _env.home
+    );
     if (parsed.query === "sweep") {
       const input2 = await buildAnalystSweepModeInputFromAttachmentPaths(
         parsed.attachmentPaths
       );
-      const result3 = await runAnalyst(input2);
+      const result3 = await runAnalyst(input2, { home: _env.home });
       io.stdout(`${JSON.stringify(result3, null, 2)}
 `);
       return { exitCode: 0 };
@@ -30863,13 +30918,13 @@ async function runPublicAnalyst(argv, _env, io, parseAnalystArgv2) {
             issues: parsed.groups[1].issues.map(resolveIssue)
           }
         ]
-      });
+      }, { home: _env.home });
       io.stdout(`${JSON.stringify(result3, null, 2)}
 `);
       return { exitCode: 0 };
     }
     const input = await buildAnalystIssueModeInputFromPublicArgv(parsed, ledgerHome);
-    const result2 = await readOrComputeAnalystIssuePage(input);
+    const result2 = await readOrComputeAnalystIssuePage(input, { home: _env.home });
     io.stdout(`${JSON.stringify(result2, null, 2)}
 `);
     return { exitCode: 0 };
@@ -30922,7 +30977,6 @@ __export(cli_exports, {
   runAkRole: () => runAkRole
 });
 import { realpath as realpath6 } from "node:fs/promises";
-import { homedir as homedir3 } from "node:os";
 import { join as join32 } from "node:path";
 function takePublicGlobalFlag(argv, index, options) {
   const tokens = argv.slice(index);
@@ -31044,7 +31098,7 @@ function defaultIo() {
   };
 }
 function resolveHome(env) {
-  return env.home ?? process.env.HOME ?? homedir3();
+  return env.home ?? packageMachineHome();
 }
 function resolveAgentDir(env, home) {
   return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join32(home, ".pi", "agent");
@@ -31904,6 +31958,7 @@ var init_cli = __esm({
   "src/public-cli/cli.ts"() {
     "use strict";
     init_durable_principal();
+    init_activation_ledger_topology();
     init_engine_material();
     init_config2();
     init_cli_errors();

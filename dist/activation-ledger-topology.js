@@ -4,7 +4,7 @@ import {
   realpathSync,
   statSync
 } from "node:fs";
-import { homedir } from "node:os";
+import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 class ActivationLedgerError extends Error {
   code = "AK_ACTIVATION_LEDGER";
@@ -16,8 +16,25 @@ class ActivationLedgerError extends Error {
     this.name = "ActivationLedgerError";
   }
 }
-function resolveActivationLedgerHome(home = () => process.env.HOME ?? homedir()) {
-  const processHome = home();
+function packageMachineHome() {
+  return resolve(userInfo().homedir);
+}
+function homeFromRunDirectory(runDirectory) {
+  const marker = `${sep}.ak-roles${sep}`;
+  const idx = runDirectory.indexOf(marker);
+  if (idx !== -1) {
+    return runDirectory.slice(0, idx);
+  }
+  const altMarker = ".ak-roles";
+  const altIdx = runDirectory.indexOf(altMarker);
+  if (altIdx !== -1) {
+    const candidate = runDirectory.slice(0, altIdx);
+    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
+}
+function resolveActivationLedgerHome(home) {
+  const processHome = typeof home === "string" ? home : home?.() ?? packageMachineHome();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
@@ -232,6 +249,8 @@ export {
   ensureRealDirectoryTree,
   errnoCode,
   errorText,
+  homeFromRunDirectory,
+  packageMachineHome,
   pathContainedIn,
   physicalPathIdentity,
   physicallyContainedIn,
