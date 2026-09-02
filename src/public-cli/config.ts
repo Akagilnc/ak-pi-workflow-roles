@@ -427,10 +427,13 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   for (const [key, raw] of Object.entries(
     record.seats as Record<string, unknown>,
   )) {
-    if (!(PUBLIC_CONFIGURABLE_SEATS as readonly string[]).includes(key)) {
-      throw new Error(`unknown configurable seat in config: ${key}`);
+    // #592: shared machine-wide public-cli.json may hold seat rows a newer CLI
+    // wrote. Skip unknown keys on read — this build only consumes seats it owns.
+    // Unknown field-level keys on known seats keep their existing tolerance.
+    if (!isPublicConfigurableSeat(key)) {
+      continue;
     }
-    seats[key as PublicConfigurableSeat] = parseSeatModelConfig(raw, key);
+    seats[key] = parseSeatModelConfig(raw, key);
   }
   return {
     seats,
