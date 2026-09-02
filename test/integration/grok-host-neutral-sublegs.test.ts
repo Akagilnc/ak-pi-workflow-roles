@@ -106,6 +106,11 @@ async function withGrokRoot<T>(run: (ctx: {
   }
 }
 
+test("production Grok deps: public inspector loads its packaged session materials", async () => {
+  const deps = createGrokRoleRuntimeDependencies(packageRoot);
+  assert.equal(typeof await deps.loadInspectorSoul!(), "string");
+});
+
 test("production Grok deps: judge soul audit institutional child returns typed pass", async () => {
   await withGrokRoot(async ({ root, runDirectory, deps }) => {
     const faux = fauxProvider({ provider: "grok-judge-leg", api: "openai-completions" });
