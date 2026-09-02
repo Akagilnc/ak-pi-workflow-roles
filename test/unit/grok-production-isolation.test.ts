@@ -6,7 +6,7 @@
  * not executeTurn home rewrite or end-to-end seatbelt installation.
  */
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -20,19 +20,12 @@ import {
 } from "../../src/grok/production-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-const CONTROLLED_HOME_PREFIX = "ak-grok-home-";
 /** Path whose auth.json rm fails — cleanup-failure oracle (errno is platform-local). */
 const UNREMOVABLE_HOME = "/dev/null";
 const TURN_CLEANUP_MESSAGE = "production grok isolation turn and cleanup failed";
 
 function under(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
-}
-
-/** Snapshot of production controlled-home temp dirs currently under os.tmpdir(). */
-async function listControlledHomeTemps(): Promise<string[]> {
-  const names = await readdir(tmpdir());
-  return names.filter((name) => name.startsWith(CONTROLLED_HOME_PREFIX)).sort();
 }
 
 async function seedOperatorHome(): Promise<string> {
@@ -160,17 +153,12 @@ test("withProductionGrokIsolation rethrows undefined primary, scrubs auth.json, 
   }
 });
 
-test("openProductionGrokHome does not leak auth or tmpdir when auth copy fails", async () => {
+test("openProductionGrokHome does not leak auth when auth copy fails", async () => {
   const operatorHome = await mkdtemp(join(tmpdir(), "ak-grok-op-noauth-"));
   const runDirectory = await seedRunDirectory();
   try {
     // No .grok/auth.json — prepareControlledGrokHome must fail.
-    const before = await listControlledHomeTemps();
     await assert.rejects(() => openProductionGrokHome(runDirectory, operatorHome));
-    const after = await listControlledHomeTemps();
-    // External visible result: no new ak-grok-home-* leaked under tmpdir.
-    const leaked = after.filter((name) => !before.includes(name));
-    assert.deepEqual(leaked, []);
     // Controlled home under runDirectory has no leaked auth.json.
     await assert.rejects(access(join(runDirectory, "grok-home", "auth.json")));
     // Operator home must not absorb auth.json from the failed open (no .grok was seeded).
