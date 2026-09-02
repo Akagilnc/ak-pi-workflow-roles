@@ -1,20 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { loadCollectorManifest } from "../../src/collector-config.ts";
-
-/** #612: fixture roots are create-and-delete. */
-async function withTempRoot<T>(prefix: string, fn: (root: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  try {
-    return await fn(root);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("request identities preserve non-empty caller strings without legacy leg-id format limits", async () => {
   await withTempRoot("collector-request-id-", async (root) => {

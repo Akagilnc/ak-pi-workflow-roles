@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, DoctorSubmissionContractError, validateDoctorOutput, validateDoctorSubmissionShape } from "../../src/doctor-contracts.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
@@ -17,16 +17,6 @@ const rows = [
 /** Machine ledger home runs root: `.../.ak-roles/books/<book>/issues/<issue>/runs`. */
 function homeRuns(root: string, issue: number, book = "demo-book"): string {
   return join(root, ".ak-roles", "books", book, "issues", String(issue), "runs");
-}
-
-/** #612: book/run fixture roots are create-and-delete. */
-async function withTempRoot<T>(prefix: string, fn: (root: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  try {
-    return await fn(root);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 }
 
 test("one retained runs directory yields an independently cited single-case cost report", async () => {

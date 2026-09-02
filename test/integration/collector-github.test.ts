@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   createGhApiRunner,
@@ -48,19 +49,20 @@ async function withPathGhStub<T>(
   scriptBody: string,
   run: (binDir: string) => Promise<T>,
 ): Promise<T> {
-  const binDir = await mkdtemp(join(tmpdir(), "ak-gh-bin-"));
-  const ghPath = join(binDir, "gh");
-  await writeFile(ghPath, scriptBody, "utf8");
-  await chmod(ghPath, 0o755);
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${binDir}:${previousPath ?? ""}`;
-  try {
-    return await run(binDir);
-  } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
-    await rm(binDir, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-gh-bin-", async (binDir) => {
+    const ghPath = join(binDir, "gh");
+    await writeFile(ghPath, scriptBody, "utf8");
+    await chmod(ghPath, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    return withPrimaryAwareCleanup(
+      () => run(binDir),
+      async () => {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+      },
+    );
+  });
 }
 
 test("runtime receipt is formed solely from observed typed identity groups", async () => {
@@ -187,8 +189,7 @@ test("final-page HTTP 429 fails pagination loudly", async () => {
 
 test("default createGhApiRunner spawns executable gh on PATH hermetically", async () => {
   // Real spawn once for argv + --include frame parse; scenario matrix lives in-process elsewhere.
-  const logRoot = await mkdtemp(join(tmpdir(), "ak-gh-log-"));
-  try {
+  await withTempRoot("ak-gh-log-", async (logRoot) => {
     const logPath = join(logRoot, "args.log");
     const script = `#!/usr/bin/env bash
 set -euo pipefail
@@ -204,9 +205,7 @@ printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"colle
       assert.match(log, /api --hostname github.com --include/);
       assert.doesNotMatch(log, / \| |&&/);
     });
-  } finally {
-    await rm(logRoot, { recursive: true, force: true });
-  }
+  });
 });
 
 test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start failures propagate", async () => {
@@ -882,8 +881,7 @@ exit 1
 });
 
 test("R11 hung gh child aborted through runner settles once and kills child", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "ak-gh-hang-"));
-  try {
+  await withTempRoot("ak-gh-hang-", async (stateDir) => {
     const pidFile = join(stateDir, "pid.txt");
     const script = `#!/usr/bin/env bash
 set -euo pipefail
@@ -927,9 +925,7 @@ exec sleep 30
       }
       assert.fail("hung gh child must be killed");
     });
-  } finally {
-    await rm(stateDir, { recursive: true, force: true });
-  }
+  });
 });
 
 test("R11 observe abort through ledger does not certify a snapshot", async () => {

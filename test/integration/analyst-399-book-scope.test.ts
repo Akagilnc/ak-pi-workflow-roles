@@ -26,6 +26,7 @@ import {
   analystIssuePagePath,
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -189,80 +190,91 @@ async function withBookScopeWorld<T>(
   process.env.HOME = home;
   let worktreeRoot = "";
   let worktree2Root = "";
-  try {
-    execFileSync("git", ["init"], { cwd: mainRoot });
-    execFileSync("git", ["branch", "-M", "main"], { cwd: mainRoot });
-    await writeFile(join(mainRoot, "README.md"), "399\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: mainRoot });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: mainRoot },
-    );
+  return withPrimaryAwareCleanup(
+    async () => {
+      execFileSync("git", ["init"], { cwd: mainRoot });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: mainRoot });
+      await writeFile(join(mainRoot, "README.md"), "399\n", "utf8");
+      execFileSync("git", ["add", "README.md"], { cwd: mainRoot });
+      execFileSync(
+        "git",
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        { cwd: mainRoot },
+      );
 
-    // Own the parent temp roots so cleanup removes them (not only the nested wt/).
-    const worktreeParent1 = await mkdtemp(join(tmpdir(), "analyst-399-wt1-"));
-    const worktreeParent2 = await mkdtemp(join(tmpdir(), "analyst-399-wt2-"));
-    worktreeRoot = join(worktreeParent1, "wt");
-    worktree2Root = join(worktreeParent2, "wt");
-    execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
-    execFileSync("git", ["worktree", "add", worktree2Root, "-b", "wt2"], { cwd: mainRoot });
+      // Own the parent temp roots so cleanup removes them (not only the nested wt/).
+      const worktreeParent1 = await mkdtemp(join(tmpdir(), "analyst-399-wt1-"));
+      const worktreeParent2 = await mkdtemp(join(tmpdir(), "analyst-399-wt2-"));
+      worktreeRoot = join(worktreeParent1, "wt");
+      worktree2Root = join(worktreeParent2, "wt");
+      execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
+      execFileSync("git", ["worktree", "add", worktree2Root, "-b", "wt2"], { cwd: mainRoot });
 
-    const bookKey = basename(mainRoot);
-    const bookDir = join(home, ".ak-roles", "books", bookKey);
-    await mkdir(join(bookDir, "runs"), { recursive: true });
+      const bookKey = basename(mainRoot);
+      const bookDir = join(home, ".ak-roles", "books", bookKey);
+      await mkdir(join(bookDir, "runs"), { recursive: true });
 
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_MAIN_NO_TICKET,
-      role: "coder",
-      projectRoot: mainRoot,
-    });
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_WORKTREE_TICKET_A,
-      role: "judge",
-      projectRoot: worktreeRoot,
-      ticketNumber: TICKET_A,
-    });
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_MAIN_TICKET_A,
-      role: "fixer",
-      projectRoot: mainRoot,
-      ticketNumber: TICKET_A,
-    });
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_MAIN_TICKET_B,
-      role: "reviewer",
-      projectRoot: mainRoot,
-      ticketNumber: TICKET_B,
-    });
-    await writeReadableRun({
-      bookDir,
-      runId: RUN_WT2_NO_TICKET,
-      role: "coder",
-      projectRoot: worktree2Root,
-    });
-    await writeDamagedRun({
-      bookDir,
-      runId: RUN_DAMAGED,
-      role: "doctor",
-      projectRoot: mainRoot,
-      ticketNumber: TICKET_A,
-    });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_MAIN_NO_TICKET,
+        role: "coder",
+        projectRoot: mainRoot,
+      });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_WORKTREE_TICKET_A,
+        role: "judge",
+        projectRoot: worktreeRoot,
+        ticketNumber: TICKET_A,
+      });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_MAIN_TICKET_A,
+        role: "fixer",
+        projectRoot: mainRoot,
+        ticketNumber: TICKET_A,
+      });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_MAIN_TICKET_B,
+        role: "reviewer",
+        projectRoot: mainRoot,
+        ticketNumber: TICKET_B,
+      });
+      await writeReadableRun({
+        bookDir,
+        runId: RUN_WT2_NO_TICKET,
+        role: "coder",
+        projectRoot: worktree2Root,
+      });
+      await writeDamagedRun({
+        bookDir,
+        runId: RUN_DAMAGED,
+        role: "doctor",
+        projectRoot: mainRoot,
+        ticketNumber: TICKET_A,
+      });
 
-    return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    await rm(home, { recursive: true, force: true });
-    await rm(mainRoot, { recursive: true, force: true });
-    // Remove the mkdtemp parent (…/analyst-399-wtN-XXXX), not only nested wt/.
-    if (worktreeRoot) await rm(dirname(worktreeRoot), { recursive: true, force: true }).catch(() => undefined);
-    if (worktree2Root) await rm(dirname(worktree2Root), { recursive: true, force: true }).catch(() => undefined);
-  }
+      return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
+    },
+    async () => {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    },
+    async () => {
+      await rm(home, { recursive: true, force: true });
+    },
+    async () => {
+      await rm(mainRoot, { recursive: true, force: true });
+    },
+    async () => {
+      // Remove the mkdtemp parent (…/analyst-399-wtN-XXXX), not only nested wt/.
+      if (worktreeRoot) await rm(dirname(worktreeRoot), { recursive: true, force: true });
+    },
+    async () => {
+      if (worktree2Root) await rm(dirname(worktree2Root), { recursive: true, force: true });
+    },
+  );
 }
 
 // D1
