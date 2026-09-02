@@ -1,7 +1,7 @@
 /**
  * Public Gleaner-Left Role run: admit (instruction may be empty; --base required)
  * → shared post-admission coordinator → settle Terminal result (#502 / ADR 0067).
- * One-shot: 只上弹章, 无 resume.
+ * #599: manual resume continues the exact session; 只上弹章.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -13,10 +13,16 @@ import {
   type ParseGleanerLeftArgvResult,
 } from "./invocation.ts";
 import {
+  runPostAdmissionManualResume,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  loadResumableGleanerLeftRun,
+  markRunAdmitted,
+  selectResumeContinuationPrompt,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleGleanerLeftTerminalResult,
@@ -111,10 +117,69 @@ export async function runPublicGleanerLeft(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleGleanerLeftTerminalResult(admitted, authority),
-      shouldPresentSettled: () => true,
-    },
+    adapters: gleanerLeftAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function gleanerLeftAdapters() {
+  return {
+    trySettle: (admitted: AdmittedGleanerLeftInvocation, authority: DurablePrincipalAuthority) =>
+      trySettleGleanerLeftTerminalResult(admitted, authority),
+    shouldPresentSettled: () => true,
+  };
+}
+
+/**
+ * Resume a previously admitted Gleaner-Left run (#599 / DK-3).
+ * Restores role/base/session identity; model override is temporary.
+ */
+export async function runPublicGleanerLeftResume(
+  request: PublicResumeRequest,
+  env: GleanerLeftRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedGleanerLeftInvocation;
+  terminal?: TerminalResult;
+}> {
+  let loaded;
+  try {
+    loaded = await loadResumableGleanerLeftRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  const { admitted } = loaded;
+  const turnRequest = buildGleanerLeftTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message),
+    },
+  });
+
+  return await runPostAdmissionManualResume({
+    admitted,
+    env,
+    io,
+    request: turnRequest,
+    adapters: gleanerLeftAdapters(),
   });
 }
