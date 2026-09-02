@@ -21,7 +21,6 @@ const entries = [
 /**
  * Public ak-role CLI bundle (ADR 0052): one bin, no peer-runtime import required
  * for roles/config/help discovery. package.json#bin → dist/public-cli/main.js.
- * Exported so package tests can prove the committed artifact matches source.
  */
 export async function buildPublicAkRoleBin(
   outfile = "dist/public-cli/main.js",
