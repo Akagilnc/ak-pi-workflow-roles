@@ -1,36 +1,21 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
-import {
-  createGrokRoleTurnHost,
-  openGrokSessionAppendCursor,
-  type GrokRebuildHistoryResource,
-} from "../../src/grok/role-turn-host.ts";
+import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
-import {
-  CROSS_HOST_BASH_CALL_ID,
-  CROSS_HOST_BASH_MARKER,
-  CROSS_HOST_GROK_USER_MARKER,
-} from "../fixtures/cross-host-resume-provider.ts";
-import {
-  argvFlagValue,
-  createMinimalHost,
-  roleTurnHostFromLegacyPiRunner,
-} from "../helpers/role-turn-host-fixture.ts";
-import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import {
-  packageRoot,
-  runPiSubprocess,
-  withHermeticHome,
-} from "../helpers/pi-test-harness.ts";
+import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
 const io = { stdout() {}, stderr() {} };
@@ -392,279 +377,129 @@ test("bare resume follows live seat table host when it drifts from birth host", 
   });
 });
 
-const CROSS_HOST_PROVIDER = resolve(
-  packageRoot,
-  "test/fixtures/cross-host-resume-provider.ts",
-);
-const CROSS_HOST_MODEL = "openai-codex/faux-1";
+test("cross-host resume Pi -> Grok: prior native records enter target context, source unchanged, target writes only native volume", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-pi-to-grok-"));
+  try {
+    const runDirectory = join(root, "run");
+    const piSessionDir = join(runDirectory, "session");
+    await mkdir(piSessionDir, { recursive: true });
+    const piSessionFile = join(piSessionDir, "session.jsonl");
+    const rawPiSession = `{"type":"session","id":"run-pi-1"}\n{"type":"message","id":"m1","message":{"role":"user","content":"pi user input"}}\n{"type":"message","id":"m2","message":{"role":"assistant","content":"pi assistant output"}}\n`;
+    await writeFile(piSessionFile, rawPiSession, "utf8");
 
-/** Real Pi child via existing runPiSubprocess + faux-provider seam. */
-function realPiHost(leg: "birth" | "settle") {
-  return roleTurnHostFromLegacyPiRunner({
-    packageRoot,
-    principalAuthority: piDurablePrincipalAuthority,
-    extraPiArgs: ["-e", CROSS_HOST_PROVIDER],
-    timeoutMs: 90_000,
-    piRunner: async (args, options) => {
-      assert.ok(argvFlagValue(args, "--session"), `Pi ${leg} must pass --session`);
-      const subprocess = await runPiSubprocess([...args], {
-        cwd: options.cwd,
-        env: {
-          ...options.env,
-          PI_OFFLINE: "1",
-          AK_CROSS_HOST_LEG: leg,
+    const promptCalls: Array<Readonly<Record<string, unknown>>> = [];
+    const grokHost = createGrokRoleTurnHost({
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+      },
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          if (method === "initialize") return {};
+          if (method === "session/new") return { sessionId: "grok-s1" };
+          if (method === "session/prompt") {
+            promptCalls.push(params);
+            return { stopReason: "end_turn" };
+          }
+          if (method === "session/close") return {};
+          return {};
         },
-        timeoutMs: options.timeoutMs ?? 90_000,
-      });
-      return {
-        code: subprocess.code,
-        stdout: subprocess.stdout,
-        stderr: subprocess.stderr,
-        timedOut: subprocess.localTimeout,
-        args: [...args],
-      };
-    },
-  });
-}
-
-/**
- * #617 DK-1 / Scope 2: public-CLI Pi→Grok→Pi through real Pi `--session` restore.
- * Birth + final resume use runPiSubprocess/faux-provider; Grok keeps a minimal ACP
- * end for the production projector. No handwritten JSONL or synthetic sealedAcceptance.
- */
-test(
-  "cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and settles",
-  { timeout: 120_000 },
-  async () => {
-    await withHermeticHome({ prefix: "ak-cross-host-roundtrip-" }, async ({ home, agentDir }) => {
-      const project = join(home, "work");
-      await mkdir(project, { recursive: true });
-      seedGitProject(project);
-      await writeFile(
-        join(agentDir, "navigator-model.json"),
-        `${JSON.stringify({ model: CROSS_HOST_MODEL })}\n`,
-      );
-      const runId = "run-cross-host-roundtrip";
-      const selected: string[] = [];
-
-      {
-        const { io, stderr } = captureIo();
-        assert.equal(
-          (await runAkRole(["config", "set-auto-resume-limit", "0"], { packageRoot, home, io })).exitCode,
-          0,
-          stderr.join(""),
-        );
-      }
-
-      // 1. Birth on real Pi: bash tool history then typed 429 keeps the run resumable.
-      {
-        const { io, stderr } = captureIo();
-        const birth = await runAkRole(
-          ["judge", "--model", CROSS_HOST_MODEL, "--thinking", "off", `seed-${runId}`],
-          {
-            packageRoot,
-            home,
-            agentDir,
-            cwd: project,
-            credentials,
-            createRunId: () => runId,
-            io,
-            principalAuthority: piDurablePrincipalAuthority,
-            hostAdapters: [{
-              name: "pi",
-              create: () => ({ ok: true as const, host: realPiHost("birth") }),
-            }],
-          },
-        );
-        assert.equal(birth.exitCode, 1, stderr.join(""));
-        assert.ok(birth.terminal?.resume, "birth must stay resumable");
-      }
-
-      const books = await readdir(join(home, ".ak-roles", "books"));
-      const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
-      const invPath = join(runDirectory, "invocation.json");
-      const sessionPath = join(runDirectory, "session", "session.jsonl");
-
-      {
-        const { io, stderr } = captureIo();
-        assert.equal(
-          (await runAkRole(["config", "set", "judge", `${CROSS_HOST_MODEL}:high`], {
-            packageRoot, home, io,
-          })).exitCode,
-          0,
-          stderr.join(""),
-        );
-        assert.equal(
-          (await runAkRole(["config", "set-host", "judge", "grok-build"], {
-            packageRoot, home, io,
-          })).exitCode,
-          0,
-          stderr.join(""),
-        );
-      }
-
-      // 2. Grok resume: production projector → keyed application/json resource from sole JSONL.
-      const grokPromptParams: unknown[] = [];
-      const grokHost = createGrokRoleTurnHost({
-        sessionIdentity: {
-          async load() { return undefined; },
-          async bind() {},
-          resolveSessionFile(principal) {
-            return piDurablePrincipalAuthority.decode(principal).sessionFile;
-          },
-        },
-        recordCapabilities: async () => {},
-        connect: async () => ({
-          async request(method, params) {
-            if (method === "initialize") return {};
-            if (method === "session/new") return { sessionId: "grok-cross-host" };
-            if (method === "session/load") {
-              throw new Error("cross-host resume must not session/load");
-            }
-            if (method === "session/prompt") {
-              grokPromptParams.push(params);
-              return { stopReason: "end_turn" };
-            }
-            return {};
-          },
-          notify() {},
-          async close() {},
-        }),
-        inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
-        prepare: async (request) => {
-          const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
-          return {
-            mcpServers: [{ name: "ak-role" }],
-            systemPrompt: { body: "law", materials: [] },
-            prompt: request.continuation.prompt,
-            sessionAppend: openGrokSessionAppendCursor(sessionFile),
-            closeRound: async () => {
-              // Typed 429 observation keeps the run on the resume face after Grok.
-              await observeTyped429ViaProductionHandler({
-                runDirectory: request.runDirectory,
-                provider: "openai-codex",
-              });
-              return {
-                accepted: false as const,
-                failure: {
-                  cause: "provider" as const,
-                  identity: { name: "rate_limit", code: 429 },
-                },
-              };
-            },
-          };
-        },
-      });
-
-      {
-        const { io, stderr } = captureIo();
-        // Unique opaque message → Grok appends it to JSONL; settle resume stays bare.
-        const grokResume = await runAkRole(["resume", runId, CROSS_HOST_GROK_USER_MARKER], {
-          packageRoot,
-          home,
-          agentDir,
-          cwd: project,
-          credentials,
-          io,
-          principalAuthority: piDurablePrincipalAuthority,
-          hostAdapters: [
-            {
-              name: "pi",
-              create() { throw new Error("Pi adapter must not run on grok-build seat"); },
-            },
-            {
-              name: "grok-build",
-              create() {
-                selected.push("grok-build");
-                return { ok: true as const, host: grokHost };
-              },
-            },
-          ],
-        });
-        assert.equal(grokResume.exitCode, 1, stderr.join(""));
-        assert.equal(grokResume.terminal?.roleOutcome.kind, "failure");
-        assert.ok(grokResume.terminal?.resume, "Grok leg must stay resumable");
-        assert.equal(grokResume.terminal?.resume?.command.includes(runId), true);
-      }
-      assert.deepEqual(selected, ["grok-build"]);
-      assert.equal(grokPromptParams.length, 1);
-
-      const promptParts = (grokPromptParams[0] as { prompt?: unknown[] }).prompt ?? [];
-      const resourcePart = promptParts.find(
-        (part) => typeof part === "object" && part !== null && (part as { type?: unknown }).type === "resource",
-      ) as { resource?: { mimeType?: unknown; text?: unknown; uri?: unknown } } | undefined;
-      assert.equal(resourcePart?.resource?.mimeType, "application/json");
-      assert.equal(resourcePart?.resource?.uri, "context://ak-role/session-history");
-      const history = JSON.parse(String(resourcePart?.resource?.text)) as GrokRebuildHistoryResource;
-      assert.equal(history.version, 1);
-      assert.ok(
-        history.turns.some(
-          (turn) =>
-            turn.kind === "toolCall"
-            && turn.id === CROSS_HOST_BASH_CALL_ID
-            && turn.name === "bash"
-            && typeof turn.arguments === "object"
-            && turn.arguments !== null
-            && String((turn.arguments as { command?: unknown }).command ?? "").includes(CROSS_HOST_BASH_MARKER),
-        ),
-        "Grok rebuild resource must carry keyed bash toolCall.arguments from real Pi birth",
-      );
-      assert.ok(
-        history.turns.some(
-          (turn) =>
-            turn.kind === "toolResult"
-            && turn.toolCallId === CROSS_HOST_BASH_CALL_ID
-            && turn.toolName === "bash"
-            && turn.content != null,
-        ),
-        "Grok rebuild resource must carry keyed bash toolResult content from real Pi birth",
-      );
-
-      {
-        const { io, stderr } = captureIo();
-        assert.equal(
-          (await runAkRole(["config", "set-host", "judge", "pi"], { packageRoot, home, io })).exitCode,
-          0,
-          stderr.join(""),
-        );
-      }
-
-      // 3. Pi resume: real Pi loads `--session`, consumes restored history, seals accepted.
-      {
-        const { io, stderr } = captureIo();
-        const piResume = await runAkRole(["resume", runId], {
-          packageRoot,
-          home,
-          agentDir,
-          cwd: project,
-          credentials,
-          io,
-          principalAuthority: piDurablePrincipalAuthority,
-          hostAdapters: [
-            {
-              name: "pi",
-              create() {
-                selected.push("pi");
-                return { ok: true as const, host: realPiHost("settle") };
-              },
-            },
-            {
-              name: "grok-build",
-              create() { throw new Error("Grok adapter must not run on pi seat"); },
-            },
-          ],
-        });
-        assert.equal(piResume.exitCode, 0, stderr.join(""));
-        assert.equal(piResume.terminal?.roleOutcome.kind, "accepted");
-        assert.equal(piResume.terminal?.runId, runId);
-        assert.equal(piResume.terminal?.resume, undefined);
-      }
-      assert.deepEqual(selected, ["grok-build", "pi"]);
-
-      const inv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
-      assert.equal(inv.host, "pi");
-      // Session file the real Pi legs shared must still exist for the same runId.
-      assert.equal((await readFile(sessionPath, "utf8")).length > 0, true);
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
+      prepare: async (request) => ({
+        mcpServers: [{ name: "ak-role" }],
+        systemPrompt: { body: "law", materials: [] },
+        prompt: request.continuation.prompt,
+        closeRound: async () => ({ accepted: true }),
+      }),
     });
-  },
-);
+
+    const result = await grokHost.executeTurn({
+      principal: {},
+      activation: { role: "judge" },
+      methods: [],
+      continuation: { kind: "resume", prompt: "continue on grok" },
+      cwd: root,
+      home: root,
+      agentDir: join(root, "agent"),
+      runDirectory,
+    });
+
+    assert.equal(result.code, 0);
+    // 1. Prior Pi records enter target Grok context in session/prompt.
+    assert.equal(promptCalls.length, 1);
+    const promptParts = promptCalls[0]?.prompt as Array<{ type?: string; text?: string }>;
+    assert.ok(Array.isArray(promptParts));
+    const priorContextPart = promptParts.find((part) => part.text?.includes("[Prior session context (pi)]:"));
+    assert.ok(priorContextPart !== undefined, "Prior Pi session context must be delivered to Grok");
+    assert.ok(priorContextPart.text?.includes("pi user input"));
+    assert.ok(priorContextPart.text?.includes("pi assistant output"));
+
+    // 2. Source Pi session file is completely unchanged.
+    const currentPiSession = await readFile(piSessionFile, "utf8");
+    assert.equal(currentPiSession, rawPiSession, "Source Pi session file must remain untouched");
+
+    // 3. Target did not write any entries or mutate Pi session file.
+    const currentPiEntries = currentPiSession.trim().split("\n");
+    assert.equal(currentPiEntries.length, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cross-host resume Grok -> Pi: prior native records enter target context, source unchanged, target writes only native volume", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-to-pi-"));
+  try {
+    const runDirectory = join(root, "run");
+    const grokSessionDir = join(runDirectory, "grok-home", "sessions", "encoded-cwd", "grok-s1");
+    await mkdir(grokSessionDir, { recursive: true });
+    const grokUpdatesFile = join(grokSessionDir, "updates.jsonl");
+    const rawGrokUpdates = `{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"grok prior analysis"}}\n{"sessionUpdate":"tool_call","toolCallId":"c1","title":"grok_tool"}\n`;
+    await writeFile(grokUpdatesFile, rawGrokUpdates, "utf8");
+
+    let receivedArgs: readonly string[] = [];
+    const piHost = createPiRoleTurnHost({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      spawnRunner: async (args) => {
+        receivedArgs = args;
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    });
+
+    const result = await piHost.executeTurn({
+      principal: fixturePrincipal(join(runDirectory, "session")),
+      activation: { role: "judge" },
+      methods: [],
+      continuation: { kind: "resume", prompt: "continue on pi" },
+      cwd: root,
+      home: root,
+      agentDir: join(root, "agent"),
+      runDirectory,
+    });
+
+    assert.equal(result.code, 0);
+
+    // 1. Prior Grok records enter target Pi context.
+    const promptArg = receivedArgs.find((arg) => arg.includes("[Prior session context (grok)]:"));
+    assert.ok(promptArg !== undefined, "Prior Grok records must be delivered in Pi continuation prompt");
+    assert.ok(promptArg.includes("grok prior analysis"));
+    assert.ok(promptArg.includes("continue on pi"));
+
+    // 2. Source Grok updates file is completely unchanged.
+    const currentGrokUpdates = await readFile(grokUpdatesFile, "utf8");
+    assert.equal(currentGrokUpdates, rawGrokUpdates, "Source Grok updates file must remain untouched");
+
+    // 3. Pi writes only its native volume (uses --session on Pi session file).
+    const sessionArgIdx = receivedArgs.indexOf("--session");
+    assert.ok(sessionArgIdx >= 0);
+    const sessionPath = receivedArgs[sessionArgIdx + 1];
+    assert.ok(sessionPath?.includes(join("session", "session.jsonl")));
+    assert.ok(!sessionPath?.includes("grok-home"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

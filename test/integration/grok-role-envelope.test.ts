@@ -561,16 +561,6 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
             async bind(principal, sessionId) {
               sessionIds.set(principal, sessionId);
             },
-            resolveSessionFile(principal) {
-              const record = principal as { sessionFile?: unknown; sessionDirectory?: unknown };
-              if (typeof record.sessionFile === "string" && record.sessionFile.trim() !== "") {
-                return record.sessionFile;
-              }
-              if (typeof record.sessionDirectory === "string" && record.sessionDirectory.trim() !== "") {
-                return join(record.sessionDirectory, "session.jsonl");
-              }
-              return join(request.runDirectory, "session", "session.jsonl");
-            },
           },
           recordCapabilities: async () => {},
           connect: async () => ({
@@ -622,24 +612,6 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
       assert.equal(overrideEmpty, prepared.systemPrompt.body);
       assert.notEqual(overrideWithBound, overrideEmpty);
       assert.notEqual(overrideWithBound, overrideOtherTicket);
-
-      // Session custom entry is the envelope durable twin of the flag-derived bound.
-      // Durable principal layout is session/session.jsonl (settlement history face).
-      const sessionFile = join(envelopeRequest.runDirectory, "session", "session.jsonl");
-      const lines = (await readFile(sessionFile, "utf8"))
-        .split("\n")
-        .filter((l) => l.trim().length > 0)
-        .map((l) => JSON.parse(l) as { type?: string; customType?: string; data?: unknown });
-      const boundEntry = lines.find(
-        (row) => row.type === "custom" && row.customType === NOTARY_SESSION_BOUND_ENTRY,
-      );
-      assert.ok(boundEntry, "session must retain notary-session-bound custom entry");
-      const sessionBound = boundEntry.data as {
-        sourceRunPath?: string;
-        ticketNumber?: number;
-      };
-      assert.equal(sessionBound.ticketNumber, 582);
-      assert.equal(sessionBound.sourceRunPath, admitted.sourceRunPath);
     } finally {
       await prepared.dispose?.();
     }
@@ -693,15 +665,6 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
       },
     });
     try {
-      // Durable principal layout is seeded at prepare (settlement history / attempt append).
-      const sessionPath = join(runDirectory, "session", "session.jsonl");
-      const sessionHeader = JSON.parse((await readFile(sessionPath, "utf8")).trim().split("\n")[0]!) as {
-        type?: string;
-        id?: string;
-      };
-      assert.equal(sessionHeader.type, "session");
-      assert.equal(sessionHeader.id, `${runId}@notary`);
-
       const server = prepared.mcpServers[0] as McpServer;
       const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(reply.error, undefined);
@@ -730,201 +693,6 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
     }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("Grok accepted closeRound books navigator attendance onto parent session for extractNavigatorFact", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-nav-books-"));
-  const priorRun = process.env.AK_ROLE_RUN_DIR;
-  delete process.env.AK_ROLE_RUN_DIR;
-  try {
-    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ae";
-    const runDirectory = grokRunDirectory(root, `${runId}@notary`);
-    const subjectKey = join(root, "work");
-    const prepared = await prepareGrokRoleEnvelope({
-      request: {
-        principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
-        continuation: { kind: "initial", prompt: "attest" },
-        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory,
-      } as RoleTurnRequest,
-      socketPath: join(root, "mcp.sock"),
-      dependencies: {
-        loadNotarySoul: async () => "NOTARY SOUL",
-        loadNotarySourceRun: async () => ({ runDirectory: root, runId: "run-1", role: "notary" }),
-        loadJudgeSoul: async () => "judge",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-        activationTraceWriter: async () => {},
-        loadNavigatorWorkContext: async () => ({
-          subjectKey,
-          subject: "navigator book regression",
-          authority: "test",
-          subjectProvenance: "role_input" as const,
-        }),
-        createNavigatorAttendance: (options) => ({
-          prepare() {},
-          setWorkContext() {},
-          warmHelp() {},
-          isPreparing: () => false,
-          settle: async () => {
-            const event = {
-              version: 1 as const,
-              disposition: "no-advice" as const,
-              invocationId: options.invocationId,
-              role: options.role,
-              phase: options.phase,
-              subjectKey: options.subjectKey,
-            };
-            await options.onEvent(event, { disposition: "no-advice" });
-          },
-          dispose() {},
-        }),
-      },
-    });
-    try {
-      const server = prepared.mcpServers[0] as McpServer;
-      const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
-      assert.equal(reply.error, undefined);
-      const closure = await prepared.closeRound();
-      assert.deepEqual(closure, { accepted: true });
-
-      const sessionPath = join(runDirectory, "session", "session.jsonl");
-      const entries = (await readFile(sessionPath, "utf8"))
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line) as {
-          type?: string;
-          customType?: string;
-          message?: {
-            role?: string;
-            details?: unknown;
-            toolCallId?: string;
-            toolName?: string;
-            isError?: boolean;
-            content?: Array<{ type?: string; id?: string; name?: string; arguments?: unknown }>;
-          };
-        });
-      // #617 DK-1: Grok MCP tool path writes paired toolCall + toolResult onto JSONL.
-      // Role conclusion on toolCall.arguments; projected toolResult.details is the pair leaf.
-      const toolCall = entries.find((row) =>
-        row.type === "message"
-        && row.message?.role === "assistant"
-        && Array.isArray(row.message.content)
-        && row.message.content.some((part) => part.type === "toolCall" && part.name === NOTARY_OUTPUT_TOOL_NAME),
-      );
-      assert.ok(toolCall, "Grok MCP must book assistant toolCall leaf");
-      const callPart = toolCall!.message!.content!.find((part) => part.type === "toolCall")!;
-      assert.equal(
-        (callPart.arguments as { status?: unknown } | undefined)?.status,
-        "pass",
-      );
-      const toolResult = entries.find((row) =>
-        row.type === "message"
-        && row.message?.role === "toolResult"
-        && row.message.toolCallId === callPart.id
-        && row.message.toolName === NOTARY_OUTPUT_TOOL_NAME,
-      );
-      assert.ok(toolResult, "Grok MCP must book paired toolResult leaf");
-      assert.equal(toolResult!.message?.isError, false);
-      assert.equal(typeof toolResult!.message?.details, "object");
-      assert.notEqual(toolResult!.message?.details, null);
-      const attendance = entries.find(
-        (row) => row.type === "custom_message" && row.customType === "ak-navigator-attendance",
-      );
-      assert.ok(attendance, "accepted grok-build round must book navigator attendance on parent session");
-      const fact = extractNavigatorFact(entries as never);
-      assert.equal(fact.disposition, "no-advice");
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("Grok prepare keeps existing durable session history on resume", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-session-"));
-  try {
-    const runDirectory = grokRunDirectory(root, "resume-run");
-    const sessionPath = join(runDirectory, "session", "session.jsonl");
-    const subjectKey = join(root, "work");
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    const priorInvocationId = uuidv7();
-    const priorHeader = JSON.stringify({
-      type: "session",
-      version: 3,
-      id: "resume-run",
-      timestamp: "2026-01-01T00:00:00.000Z",
-      cwd: process.cwd(),
-    });
-    // Unfinished marker: same role/phase/subjectKey, no packaged terminal after it.
-    const priorMarker = JSON.stringify({
-      type: "custom",
-      customType: NAVIGATOR_INVOCATION_ENTRY,
-      data: {
-        invocationId: priorInvocationId,
-        role: "judge",
-        phase: null,
-        subjectKey,
-      },
-    });
-    const priorHistory = JSON.stringify({
-      type: "message",
-      message: { role: "assistant", content: [{ type: "text", text: "prior turn" }] },
-    });
-    const priorBytes = `${priorHeader}\n${priorMarker}\n${priorHistory}\n`;
-    await writeFile(sessionPath, priorBytes, "utf8");
-
-    let resumedInvocationId: string | undefined;
-    const prepared = await prepareGrokRoleEnvelope({
-      request: {
-        principal: {}, activation: { role: "judge" }, methods: [],
-        continuation: { kind: "resume", prompt: "continue" },
-        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory,
-      } as RoleTurnRequest,
-      socketPath: join(root, "mcp.sock"),
-      dependencies: {
-        loadJudgeSoul: async () => "JUDGE SOUL",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-        activationTraceWriter: async () => {},
-        loadNavigatorWorkContext: async () => ({
-          subjectKey,
-          subject: "resume work",
-          authority: "test",
-          subjectProvenance: "role_input" as const,
-        }),
-        createNavigatorAttendance: (options) => {
-          resumedInvocationId = options.invocationId;
-          return {
-            prepare() {},
-            setWorkContext() {},
-            warmHelp() {},
-            isPreparing: () => false,
-            settle: async () => {},
-            dispose() {},
-          };
-        },
-      },
-    });
-    try {
-      // Bytes preserved through the seeded history; lifecycle may append only after.
-      const after = await readFile(sessionPath, "utf8");
-      assert.ok(after.startsWith(priorBytes), "resume must keep every prior durable byte");
-      // Shared lifecycle reuses the unfinished marker — no second mint.
-      assert.equal(resumedInvocationId, priorInvocationId);
-      const markerRows = after
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line) as { type?: string; customType?: string })
-        .filter((row) => row.type === "custom" && row.customType === NAVIGATOR_INVOCATION_ENTRY);
-      assert.equal(markerRows.length, 1, "unfinished resume must not re-mint ak-navigator-invocation");
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1015,16 +783,6 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
       sessionIdentity: {
         load: async () => undefined,
         bind: async () => {},
-        resolveSessionFile(principal) {
-          const record = principal as { sessionFile?: unknown; sessionDirectory?: unknown };
-          if (typeof record.sessionFile === "string" && record.sessionFile.trim() !== "") {
-            return record.sessionFile;
-          }
-          if (typeof record.sessionDirectory === "string" && record.sessionDirectory.trim() !== "") {
-            return join(record.sessionDirectory, "session.jsonl");
-          }
-          return join(request.runDirectory, "session", "session.jsonl");
-        },
       },
       recordCapabilities: async () => {},
       connect: async () => ({

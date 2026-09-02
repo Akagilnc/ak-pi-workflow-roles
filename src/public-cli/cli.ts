@@ -1082,9 +1082,9 @@ export async function runAkRole(
                   : resumeRole === "gleaner-left"
                     ? "gleaner-left"
                     : "judge";
-      // #617 DK-3: resume resolves model/host/engine from the live seat table
+      // #617 DK-4: resume resolves model/host/engine from the live seat table
       // exactly as a new leg would (flag → persistent → default). Cross-host
-      // rebuild is owned by the target host adapter from session/session.jsonl.
+      // resume delivers prior native records as context to the target host.
       const seat = resolveEffectiveSeat(
         config,
         resumeSeatRole,

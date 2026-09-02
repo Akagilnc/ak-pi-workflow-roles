@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { appendFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,13 +23,9 @@ import {
 } from "../role-runtime.ts";
 import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import {
-  appendGrokSessionToolCall,
-  appendGrokSessionToolResult,
   createGrokRoleTurnHost,
-  openGrokSessionAppendCursor,
   type GrokPreparedTurn,
   type GrokRoleTurnHostConfig,
-  type GrokSessionAppendCursor,
 } from "./role-turn-host.ts";
 import {
   GatekeeperDecisionError,
@@ -132,8 +127,6 @@ export function createComposedGrokRoleTurnHost(
     prepare: (request) => prepareGrokRoleEnvelope({
       request,
       dependencies: config.roleRuntimeDependencies,
-      // Same durable-principal coordinate the host uses for resume history (#617).
-      sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
       socketPath: config.socketPath?.(request) ?? `/tmp/ak-grok-mcp-${randomUUID()}.sock`,
     }),
   });
@@ -143,12 +136,6 @@ export async function prepareGrokRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
   readonly socketPath: string;
-  /**
-   * Durable session JSONL path. Production composition passes
-   * DurablePrincipalAuthority.decode(principal).sessionFile; tests may omit and
-   * receive the default runDirectory layout.
-   */
-  readonly sessionFile?: string;
 }): Promise<GrokPreparedTurn> {
   const { request } = options;
   const flags = projectGrokActivationFlags(request);
@@ -156,7 +143,7 @@ export async function prepareGrokRoleEnvelope(options: {
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
-  /** Truthful parent-session books for first-record-then-audit / navigator lifecycle (#590). */
+  /** In-memory turn books for role lifecycle and audit subjects. */
   const sessionEntries: Array<Record<string, unknown>> = [];
   const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
@@ -175,44 +162,10 @@ export async function prepareGrokRoleEnvelope(options: {
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
 
-  // Durable principal layout: sessionFile from decode(principal) when composed;
-  // default runDirectory layout only when callers omit the coordinate (unit tests).
-  // prepare is the sole layout owner: initial mints the header when absent; resume
-  // never creates an empty header (host proves JSONL exists first — #617).
-  // Session JSONL is the sole durable books true source: hydrate in-memory entries
-  // from existing bytes so shared lifecycle getEntries sees unfinished markers/history
-  // (#590 grok-resume-session-hydration).
-  let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
+  // Activation ledger still needs a durable session principal path (header materialize).
+  // #617 DK-4 forbids Grok conversation/tool writeback into Pi JSONL — layout only here.
+  let sessionFile = join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
-  if (request.continuation.kind !== "resume") {
-    try {
-      await writeFile(
-        sessionFile,
-        `${JSON.stringify({
-          type: "session",
-          version: 3,
-          id: runId,
-          timestamp: new Date().toISOString(),
-          cwd: request.cwd,
-        })}\n`,
-        { encoding: "utf8", flag: "wx" },
-      );
-    } catch (error) {
-      if ((error as { code?: unknown }).code !== "EEXIST") throw error;
-    }
-  }
-  {
-    const raw = await readFile(sessionFile, "utf8");
-    for (const line of raw.split("\n")) {
-      if (line.trim() === "") continue;
-      const entry = JSON.parse(line) as Record<string, unknown>;
-      // Header is owned by getHeader(); Pi getEntries excludes it.
-      if (entry.type === "session") continue;
-      sessionEntries.push(entry);
-    }
-  }
-  // One parent cursor for MCP tool writes + host user/assistant/builtin shares (#617).
-  const sessionAppend: GrokSessionAppendCursor = openGrokSessionAppendCursor(sessionFile);
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
@@ -229,12 +182,6 @@ export async function prepareGrokRoleEnvelope(options: {
         const entry = { type: "custom", customType, data };
         sessionEntries.push(entry);
         customEntries.push({ customType, data });
-        // Same external face as Pi session custom entries (type/customType/data JSONL).
-        appendFileSync(
-          sessionFile,
-          `${JSON.stringify(entry)}\n`,
-          "utf8",
-        );
       },
     },
     abort() {
@@ -251,9 +198,6 @@ export async function prepareGrokRoleEnvelope(options: {
     const entry = { type: "custom_message", customType, ...payload, message: payload };
     sessionEntries.push(entry);
     customEntries.push({ customType, data: message.details ?? message.content });
-    // Pi custom_message face: type/customType/message.details JSONL so
-    // extractNavigatorFact can read grok-build parent-session books.
-    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
   };
 
   const emit = async (event: string, value: unknown): Promise<unknown[]> => {
@@ -417,7 +361,7 @@ export async function prepareGrokRoleEnvelope(options: {
         isError: "isError" in value && value.isError === true,
       };
     }
-    // Pair toolResult onto durable JSONL with the prior toolCall leaf (#617 DK-1).
+    // Record toolResult in memory for role turn lifecycle.
     const toolResultEntry = {
       type: "message",
       message: {
@@ -430,13 +374,6 @@ export async function prepareGrokRoleEnvelope(options: {
       },
     };
     sessionEntries.push(toolResultEntry);
-    appendGrokSessionToolResult(sessionAppend, {
-      toolCallId,
-      toolName,
-      content: projected.content,
-      details: projected.details,
-      isError: projected.isError,
-    });
     if (projected.isError) {
       rememberInfrastructureFailure(projected.details, projected.content);
       rememberProjectedRejection(projected.details, toolCallId);
@@ -478,7 +415,7 @@ export async function prepareGrokRoleEnvelope(options: {
             if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
             const toolCallId = randomUUID();
             calls.push({ toolCallId, toolName: name });
-            // First-record-then-audit: book the tool-call leaf before execute so
+            // First-record-then-audit: book the tool-call leaf in memory before execute so
             // judge/doctor subject gates see the candidate on parent session books.
             {
               const message = {
@@ -491,12 +428,6 @@ export async function prepareGrokRoleEnvelope(options: {
                 }],
               };
               sessionEntries.push({ type: "message", message });
-              // Durable books true source (#617): tree-linked so Pi --session restore consumes it.
-              appendGrokSessionToolCall(sessionAppend, {
-                id: toolCallId,
-                name,
-                arguments: params?.arguments ?? {},
-              });
             }
             try {
               await emit("tool_execution_start", { toolCallId, toolName: name });
@@ -702,7 +633,6 @@ export async function prepareGrokRoleEnvelope(options: {
     systemPrompt: { body: systemPromptBody, materials: readingMaterials },
     prompt,
     abortSignal: hostAbort.signal,
-    sessionAppend,
     closeRound,
     dispose,
   };
