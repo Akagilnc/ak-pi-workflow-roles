@@ -876,7 +876,9 @@ test("Grok MCP projection extracts typed evidence keys from thrown Infrastructur
       assert.equal(closure.accepted, false);
       assert.ok("failure" in closure);
       assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
-      assert.ok(closure.failure.diagnostic.includes("Gatekeeper authentication failed"));
+      const diagnostic = closure.failure.diagnostic;
+      assert.equal(typeof diagnostic, "string");
+      assert.ok((diagnostic as string).includes("Gatekeeper authentication failed"));
       const details = closure.failure.details as Record<string, unknown> | undefined;
       assert.equal(details?.stage, "gatekeeper");
       assert.ok(typeof details?.reason === "string" && details.reason.includes("Gatekeeper authentication failed"));

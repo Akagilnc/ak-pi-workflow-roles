@@ -440,9 +440,9 @@ export async function prepareGrokRoleEnvelope(options: {
                   cause: "infrastructure",
                   code: errorCode,
                 };
-                if (error instanceof Error && error.name === "InfrastructureFailure") {
-                  rememberInfrastructureFailure(details, content);
-                }
+                // Interrupt hanging session/prompt immediately. Durable failure record
+                // still lands via projectToolResult (pending infra details win when set).
+                hostAbort.abort();
               }
               // The shared envelope's tool_result handler is the sole classifier:
               // it projects either the structured submission non-pass (correctable
