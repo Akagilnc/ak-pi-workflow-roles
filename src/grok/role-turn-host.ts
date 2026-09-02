@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { copyFile, lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
@@ -94,6 +94,7 @@ export type GrokRebuildTurn =
  * Authoritative session→rebuild projector. JSONL is the sole history authority:
  * user/assistant text plus toolCall.arguments and toolResult.details survive so
  * cross-host resume keeps role conclusions (Pi-shaped and Grok-shaped pairs).
+ * Non-empty unparseable lines fail loudly — never skip-and-continue (#617).
  */
 export function projectGrokRebuildHistory(sessionJsonl: string): readonly GrokRebuildTurn[] {
   const turns: GrokRebuildTurn[] = [];
@@ -102,8 +103,11 @@ export function projectGrokRebuildHistory(sessionJsonl: string): readonly GrokRe
     let entry: Record<string, unknown>;
     try {
       entry = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
+    } catch (error) {
+      throw Object.assign(
+        new Error("session JSONL contains an unparseable non-empty line", { cause: error }),
+        { code: "session-history-corrupt" as const },
+      );
     }
     if (entry.type !== "message" || typeof entry.message !== "object" || entry.message === null) {
       continue;
@@ -182,59 +186,41 @@ function extractMessageText(content: unknown): string | undefined {
   return joined === "" ? undefined : joined;
 }
 
-/** Format projected history for ACP embeddedContext (provider-facing bytes). */
-export function formatGrokRebuildHistoryContext(
-  turns: readonly GrokRebuildTurn[],
-): string {
-  if (turns.length === 0) return "";
-  return turns
-    .map((turn) => {
-      switch (turn.kind) {
-        case "user":
-          return `user:\n${turn.text}`;
-        case "assistant":
-          return `assistant:\n${turn.text}`;
-        case "toolCall":
-          return `assistant toolCall ${turn.name} id=${turn.id}:\n${JSON.stringify(turn.arguments)}`;
-        case "toolResult":
-          return `toolResult ${turn.toolName} toolCallId=${turn.toolCallId} isError=${turn.isError}:\n${JSON.stringify(turn.details)}`;
-      }
-    })
-    .join("\n\n");
-}
+/** Keyed rebuild payload for ACP embeddedContext (no prose labels). */
+export type GrokRebuildHistoryResource = {
+  readonly version: 1;
+  readonly turns: readonly GrokRebuildTurn[];
+};
 
-/** Build session/prompt content: continuation text + optional JSONL history resource. */
+/** Build session/prompt content: continuation text + optional keyed JSONL history resource. */
 export function buildGrokResumePromptContent(
   continuationPrompt: string,
-  historyContext: string,
+  turns: readonly GrokRebuildTurn[],
 ): readonly Readonly<Record<string, unknown>>[] {
   const content: Array<Record<string, unknown>> = [
     { type: "text", text: continuationPrompt },
   ];
-  if (historyContext.trim() !== "") {
+  if (turns.length > 0) {
+    const resource: GrokRebuildHistoryResource = { version: 1, turns };
     content.push({
       type: "resource",
       resource: {
         uri: "context://ak-role/session-history",
-        mimeType: "text/plain",
-        text: historyContext,
+        mimeType: "application/json",
+        text: JSON.stringify(resource),
       },
     });
   }
   return content;
 }
 
-/** Append one durable message entry; ENOENT is a no-op for faux-prepare unit fixtures. */
+/** Append one durable message entry. Parent layout is created; write failures stay loud. */
 export function appendGrokSessionJsonlEntry(
   sessionFile: string,
   entry: Readonly<Record<string, unknown>>,
 ): void {
-  try {
-    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
+  mkdirSync(dirname(sessionFile), { recursive: true });
+  appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
 }
 
 /**
@@ -486,19 +472,37 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           const continuation = request.continuation;
           // #617 DK-1: session/session.jsonl is the sole history authority. Every
           // Grok resume rebuilds via session/new + JSONL embeddedContext — never
-          // session/load from a possibly-stale ACP binding (Pi→grok blank rebuild
-          // and grok→Pi→grok missing intermediate Pi history both fail that way).
+          // session/load from a possibly-stale ACP binding. Missing or corrupt JSONL
+          // fails through the existing session knownFailure terminal (no blank rebuild).
           // Binding is rewritten to the new ACP id after open; it is not a second true source.
-          let rebuildHistoryContext = "";
+          let rebuildTurns: readonly GrokRebuildTurn[] = [];
           if (continuation.kind === "resume") {
-            const sessionFile = grokSessionJsonlPath(request.runDirectory);
+            const historyFile = grokSessionJsonlPath(request.runDirectory);
+            let raw: string;
             try {
-              const raw = await readFile(sessionFile, "utf8");
-              rebuildHistoryContext = formatGrokRebuildHistoryContext(
-                projectGrokRebuildHistory(raw),
-              );
+              raw = await readFile(historyFile, "utf8");
             } catch (error) {
-              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+              if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+                return failure("session", "GrokSessionHistoryMissing", "session-history-missing");
+              }
+              throw error;
+            }
+            try {
+              rebuildTurns = projectGrokRebuildHistory(raw);
+            } catch (error) {
+              const code =
+                typeof error === "object"
+                && error !== null
+                && (error as { code?: unknown }).code === "session-history-corrupt"
+                  ? "session-history-corrupt"
+                  : "session-history-unreadable";
+              return failure(
+                "session",
+                code === "session-history-corrupt"
+                  ? "GrokSessionHistoryCorrupt"
+                  : "GrokSessionHistoryUnreadable",
+                code,
+              );
             }
           }
           const session = await connection.request(
@@ -519,7 +523,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           const activeConnection = connection;
           const sessionFile = grokSessionJsonlPath(request.runDirectory);
           // First resume prompt carries JSONL history; retry prompts stay bare.
-          let deliverRebuildHistory = continuation.kind === "resume" && rebuildHistoryContext !== "";
+          let deliverRebuildHistory = continuation.kind === "resume" && rebuildTurns.length > 0;
           // Accumulate assistant text from ACP session/update so JSONL stays the true source.
           let assistantChunks: string[] = [];
           activeConnection.onNotification?.((method, params) => {
@@ -573,7 +577,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             let result: Readonly<Record<string, unknown>>;
             try {
               const promptContent = deliverRebuildHistory
-                ? buildGrokResumePromptContent(prompt, rebuildHistoryContext)
+                ? buildGrokResumePromptContent(prompt, rebuildTurns)
                 : [{ type: "text", text: prompt }];
               deliverRebuildHistory = false;
               // Book the user turn onto durable JSONL before ACP sees it.
