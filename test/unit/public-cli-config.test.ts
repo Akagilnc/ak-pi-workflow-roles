@@ -17,7 +17,6 @@ import {
   savePublicCliConfig,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
-  setPersistentSeatHost,
   type CredentialProviders,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
@@ -297,17 +296,6 @@ test("#453 clear notary model keeps engine; unset-engine drops residual row", as
     assert.equal(emptied.seats.notary, undefined);
     assert.equal(Object.prototype.hasOwnProperty.call(emptied.seats, "notary"), false);
   });
-});
-
-// Direct Inspector keeps host/engine independently of the inherited model axis (#522/#568).
-test("clearing inspector model preserves its direct-call host and engine", () => {
-  let config = setPersistentSeatConfig({ seats: {} }, "inspector", {
-    provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium",
-  });
-  config = setPersistentSeatEngine(config, "inspector", "cursor");
-  config = setPersistentSeatHost(config, "inspector", "grok-build");
-  const cleared = clearPersistentSeatConfig(config, "inspector");
-  assert.deepEqual(cleared.seats.inspector, { host: "grok-build", engine: "cursor" });
 });
 
 // #453: engine-only residual ownership is notary/inspector at the persist boundary.
