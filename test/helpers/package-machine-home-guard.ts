@@ -7,7 +7,11 @@
  *
  * Crash contract:
  * - Lock owner metadata is complete before the lock name is visible (temp + link).
- * - Release and stale recovery verify ownership / unchanged payload (no blind rm).
+ * - Release verifies ownership payload (no blind rm).
+ * - Stale recovery uses rename-aside (single winner); payload mismatch restores the
+ *   moved lock so a competing reclaimer cannot delete a new owner's lock (no TOCTOU unlink).
+ * - Backup encodes prior presence OR absence; crash mid-flight cannot promote a
+ *   blanked/mutated table to "prior".
  * - Backup and config restore write via temp file + rename — never truncate in place.
  * - Do not blank the host seat table on entry; callers mutate only the keys they need.
  * - Leftover backup from a killed prior holder is restored before a new backup is taken.
@@ -38,10 +42,19 @@ export type PackageMachineHomeGuardOptions = {
    * Default false: do not wipe the host table; mutate only needed keys.
    */
   readonly blankSeats?: boolean;
+  /**
+   * Test-only override of the package home root. Default: real packageMachineHome().
+   * Lets absence/presence backup proofs run without mutating the host seat table.
+   */
+  readonly packageHome?: string;
 };
 
+/** Backup wire format: first line is presence tag; body follows only when present. */
+const BACKUP_ABSENT = "A\n";
+const BACKUP_PRESENT_TAG = "P\n";
+
 function lockPayload(): string {
-  return `${process.pid}\n${Date.now()}\n`;
+  return `${process.pid}\n${Date.now()}\n${randomBytes(8).toString("hex")}\n`;
 }
 
 function parseLockPid(text: string): number | undefined {
@@ -70,6 +83,11 @@ async function atomicWriteUtf8(path: string, contents: string): Promise<void> {
   }
 }
 
+/**
+ * Publish lock name only after full owner metadata is on disk (temp + link).
+ * Stale recovery: rename-aside so exactly one reclaimer wins; verify payload and
+ * restore on mismatch so a new owner's lock is never deleted by a lagging reclaimer.
+ */
 async function acquireCrossProcessLock(
   lockPath: string,
   timeoutMs = 60_000,
@@ -81,7 +99,6 @@ async function acquireCrossProcessLock(
     const tmp = `${lockPath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
     await writeFile(tmp, myPayload, "utf8");
     try {
-      // Lock name becomes visible only after full owner metadata is linked in.
       await link(tmp, lockPath);
       await rm(tmp, { force: true });
       return async () => {
@@ -96,19 +113,49 @@ async function acquireCrossProcessLock(
     } catch (error) {
       await rm(tmp, { force: true }).catch(() => undefined);
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      // Stale recovery: only remove when payload is unchanged and holder is dead
-      // (or unparseable leftover from a pre-atomic protocol).
       try {
         const holder = await readFile(lockPath, "utf8");
         const pid = parseLockPid(holder);
-        const stale =
-          pid === undefined ? true : !lockHolderAlive(pid);
+        const stale = pid === undefined ? true : !lockHolderAlive(pid);
         if (stale) {
-          const again = await readFile(lockPath, "utf8").catch(() => undefined);
-          if (again === holder) {
-            await rm(lockPath, { force: true });
+          // Single-winner reclaim: rename moves the inode aside atomically.
+          // A second reaper gets ENOENT and retries; it never unlinks a successor lock.
+          const reclaimPath = `${lockPath}.reclaim.${process.pid}.${randomBytes(6).toString("hex")}`;
+          try {
+            await rename(lockPath, reclaimPath);
+          } catch (reclaimError) {
+            if ((reclaimError as NodeJS.ErrnoException).code === "ENOENT") {
+              // Other reclaimer already took it.
+              continue;
+            }
+            throw reclaimError;
+          }
+          let moved: string;
+          try {
+            moved = await readFile(reclaimPath, "utf8");
+          } catch {
+            await rm(reclaimPath, { force: true }).catch(() => undefined);
             continue;
           }
+          await rm(reclaimPath, { force: true }).catch(() => undefined);
+          if (moved !== holder) {
+            // Renamed a lock that was not the stale payload we inspected — put it back.
+            const restoreTmp = `${lockPath}.${process.pid}.${randomBytes(6).toString("hex")}.restore`;
+            await writeFile(restoreTmp, moved, "utf8");
+            try {
+              await link(restoreTmp, lockPath);
+            } catch (restoreError) {
+              // Successor already published a new lock; drop the stray copy.
+              if ((restoreError as NodeJS.ErrnoException).code !== "EEXIST") {
+                await rm(restoreTmp, { force: true }).catch(() => undefined);
+                throw restoreError;
+              }
+            }
+            await rm(restoreTmp, { force: true }).catch(() => undefined);
+            continue;
+          }
+          // Stale lock removed; retry acquire.
+          continue;
         }
       } catch {
         // raced with holder release or unreadable lock; fall through to retry
@@ -130,6 +177,32 @@ async function readOptionalUtf8(path: string): Promise<string | undefined> {
   }
 }
 
+type BackupState =
+  | { readonly kind: "absent" }
+  | { readonly kind: "present"; readonly bytes: string };
+
+function encodeBackup(state: BackupState): string {
+  return state.kind === "absent" ? BACKUP_ABSENT : `${BACKUP_PRESENT_TAG}${state.bytes}`;
+}
+
+function decodeBackup(raw: string): BackupState | undefined {
+  if (raw === BACKUP_ABSENT || raw === "A") return { kind: "absent" };
+  if (raw.startsWith(BACKUP_PRESENT_TAG)) {
+    return { kind: "present", bytes: raw.slice(BACKUP_PRESENT_TAG.length) };
+  }
+  // Legacy bare-config backup (pre-absence encoding): treat whole file as present body.
+  if (raw.length > 0) return { kind: "present", bytes: raw };
+  return undefined;
+}
+
+async function applyBackupState(configPath: string, state: BackupState): Promise<void> {
+  if (state.kind === "absent") {
+    await rm(configPath, { force: true });
+    return;
+  }
+  await atomicWriteUtf8(configPath, state.bytes);
+}
+
 export async function withPackageMachineHomeGuard<T>(
   optionsOrScenario:
     | PackageMachineHomeGuardOptions
@@ -143,7 +216,10 @@ export async function withPackageMachineHomeGuard<T>(
       ? optionsOrScenario
       : scenarioMaybe!;
 
-  const packageHome = packageMachineHome();
+  const packageHome =
+    typeof options.packageHome === "string" && options.packageHome.length > 0
+      ? options.packageHome
+      : packageMachineHome();
   const ledgerHome = resolveActivationLedgerHome(packageHome);
   const dotAkRoles = join(packageHome, ".ak-roles");
   await mkdir(dotAkRoles, { recursive: true });
@@ -154,24 +230,25 @@ export async function withPackageMachineHomeGuard<T>(
 
   const releaseLock = await acquireCrossProcessLock(lockPath);
   const trackedBooks = new Set<string>();
-  /** True when a host config existed (or was recovered) and must be restored. */
-  let restoreFromBackup = false;
+  let backupState: BackupState | undefined;
 
   try {
-    // Crash recovery: leftover backup is the last known-good host table.
+    // Crash recovery: leftover backup is the last known-good host table (or absence).
     // Restore it before taking a new backup so a blanked/mutated table cannot become "prior".
-    const staleBackup = await readOptionalUtf8(backupPath);
-    if (staleBackup !== undefined) {
-      await atomicWriteUtf8(configPath, staleBackup);
+    const staleBackupRaw = await readOptionalUtf8(backupPath);
+    if (staleBackupRaw !== undefined) {
+      const staleState = decodeBackup(staleBackupRaw);
+      if (staleState !== undefined) {
+        await applyBackupState(configPath, staleState);
+      }
     }
 
     const priorConfig = await readOptionalUtf8(configPath);
-    if (priorConfig !== undefined) {
-      await atomicWriteUtf8(backupPath, priorConfig);
-      restoreFromBackup = true;
-    } else {
-      await rm(backupPath, { force: true });
-    }
+    backupState =
+      priorConfig === undefined
+        ? { kind: "absent" }
+        : { kind: "present", bytes: priorConfig };
+    await atomicWriteUtf8(backupPath, encodeBackup(backupState));
 
     // Default: leave host seats intact. Only blank when a scenario opts in.
     if (options.blankSeats === true) {
@@ -193,16 +270,12 @@ export async function withPackageMachineHomeGuard<T>(
       for (const bookKey of trackedBooks) {
         await rm(join(ledgerHome, "books", bookKey), { recursive: true, force: true });
       }
-      if (restoreFromBackup) {
-        const backupBytes = await readOptionalUtf8(backupPath);
-        if (backupBytes === undefined) {
-          // Backup missing mid-flight: leave configPath as-is rather than delete host seats.
-        } else {
-          await atomicWriteUtf8(configPath, backupBytes);
-          await rm(backupPath, { force: true });
-        }
-      } else {
-        await rm(configPath, { force: true });
+      if (backupState !== undefined) {
+        // Prefer on-disk backup (survives mid-flight crash of a prior holder) over memory.
+        const diskRaw = await readOptionalUtf8(backupPath);
+        const state =
+          diskRaw !== undefined ? (decodeBackup(diskRaw) ?? backupState) : backupState;
+        await applyBackupState(configPath, state);
         await rm(backupPath, { force: true });
       }
     } finally {
