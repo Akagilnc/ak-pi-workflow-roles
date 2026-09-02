@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { HostContext } from "./host-contracts.ts";
 import { isReviewerPromptText, type ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import type { AcceptedReviewerExecution } from "./reviewer-dispatch.ts";
 import type { ReviewerTargetSnapshot, ReviewerWorkspaceDisposition, ReviewerFailureClassification, ReviewerUsage } from "./reviewer-execution-ledger.ts";
@@ -29,7 +29,7 @@ export class ReviewerDispatchExecutionError extends Error {
     this.name = "ReviewerDispatchExecutionError";
   }
 }
-export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
+export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: HostContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
 export type ReviewerAgentFaultPoint = ReviewerWorkspaceFaultPoint;
 type Dependencies = Readonly<{
   fault?(operation: ReviewerAgentFaultPoint): void;
@@ -95,5 +95,30 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
       return outcome as ReviewerSuccessfulDispatchRunResult;
     },
     shutdown: () => workspaceOwner.shutdown(),
+  };
+}
+
+/**
+ * Host-level Reviewer binding: each accepted dispatch gets a fresh one-shot runner.
+ * Auto-resume turns must not reuse the inner one-shot slot.
+ */
+export function createPerDispatchReviewerAgent(dependencies: Dependencies = {}): ReviewerAgentRunner {
+  const active = new Set<ReviewerAgentRunner>();
+  return {
+    async run(dispatch, options) {
+      const runner = createReviewerAgentRunner(dependencies);
+      active.add(runner);
+      try {
+        return await runner.run(dispatch, options);
+      } finally {
+        active.delete(runner);
+        await runner.shutdown();
+      }
+    },
+    async shutdown() {
+      const runners = [...active];
+      active.clear();
+      await Promise.all(runners.map((runner) => runner.shutdown()));
+    },
   };
 }

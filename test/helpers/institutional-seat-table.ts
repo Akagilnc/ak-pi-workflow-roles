@@ -57,8 +57,9 @@ function normalizeParentSelection(parentModel: ParentModel): { provider: string;
 
 /**
  * Parent-inherited seats for every institutional consumer (the "unconfigured"
- * gate behavior: gate/officer/auditor all inherit the parent model). Pure
- * already-produced page content — write it directly to a run directory.
+ * gate behavior: gate/officer/auditor/evidenceChild inherit the parent model).
+ * Navigator is omitted: its model authority stays `navigator-model.json`
+ * (#590 — institutional transport must not shadow that setting).
  */
 export function parentInheritedSeats(parentModel: ParentModel): InstitutionalResolutionPage["seats"] {
   const selection = normalizeParentSelection(parentModel);

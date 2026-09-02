@@ -44,6 +44,7 @@ import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
+import { navigatorPrepareFixtureResponse } from "../helpers/navigator-child-fixture.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
@@ -531,6 +532,9 @@ test("packaged judge escalation emits one typed human decision", async () => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
           const province = scriptProvincePass(names, "notary");
           if (province !== undefined) return province;
+          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+            return navigatorPrepareFixtureResponse({ role: "judge", phase: null });
+          }
           if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
             return fauxAssistantMessage(
               fauxToolCall(
@@ -700,6 +704,9 @@ test("packaged coder apply proves canonical native tdd expansion including colli
             : row.callId;
           const provinceOrIdle = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
+            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+              return navigatorPrepareFixtureResponse({ role: "coder", phase: "apply" });
+            }
             const province = scriptProvincePass(names, "inspector");
             if (province !== undefined) return province;
             return fauxAssistantMessage("coder fixture idle");
@@ -1036,6 +1043,9 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           // Every Fixer status (plan/planned and apply/unfinished) requires Gatekeeper pass.
           const provinceOrIdle = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
+            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+              return navigatorPrepareFixtureResponse({ role: "fixer", phase: "apply" });
+            }
             const province = scriptProvincePass(names, "inspector");
             if (province !== undefined) return province;
             return fauxAssistantMessage("fixer fixture idle");
