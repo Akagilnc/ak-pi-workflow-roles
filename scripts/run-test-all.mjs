@@ -38,7 +38,6 @@ const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/package/doctor-package-lifecycle.test.ts",
   "test/package/public-cli-install.test.ts",
   "test/package/public-cli-cold-matrix.test.ts",
-  "test/integration/public-cli-coder-installed-run.test.ts",
 ]);
 
 const TIERS = Object.freeze([
