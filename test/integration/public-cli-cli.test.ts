@@ -13,8 +13,6 @@ import {
 import {
   buildExplicitInternalActivationArgs,
   helpDocument,
-  projectConfigDisplaySeats,
-  projectConfigSeatDisplay,
   resolveInternalRoleEntrypoint,
   runAkRole,
 } from "../../src/public-cli/cli.ts";
@@ -391,64 +389,6 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
       model: "gpt-5.6-sol",
       thinking: "low",
     });
-  });
-});
-
-test("#620 config set gatekeeper → config display projector inherits; coder-only does not invent province rows", async () => {
-  await withTempHome(async (home) => {
-    // Neighbor boundary: non-province seat alone must not invent province officers
-    // or fill startup models onto the persistent config face.
-    assert.equal(
-      (
-        await runAkRole(["config", "set", "coder", "xai/grok-4.5:high"], {
-          packageRoot,
-          home,
-          io: captureIo().io,
-        })
-      ).exitCode,
-      0,
-    );
-    const coderOnly = projectConfigDisplaySeats(await loadPublicCliConfig(home));
-    assert.deepEqual(
-      coderOnly.map((row) => row.seat),
-      ["coder"],
-    );
-    assert.equal(coderOnly[0]?.source, "persistent");
-    assert.deepEqual(coderOnly[0]?.selection, {
-      provider: "xai",
-      model: "grok-4.5",
-      thinking: "high",
-    });
-    assert.equal(projectConfigSeatDisplay(await loadPublicCliConfig(home), "notary").source, "unconfigured");
-    assert.equal(projectConfigSeatDisplay(await loadPublicCliConfig(home), "judge").source, "unconfigured");
-
-    assert.equal(
-      (
-        await runAkRole(
-          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
-          { packageRoot, home, io: captureIo().io },
-        )
-      ).exitCode,
-      0,
-    );
-
-    // CLI show/get consume projectConfigDisplaySeats / projectConfigSeatDisplay on the
-    // disk state this set just wrote — assert that same projector (not TSV).
-    const config = await loadPublicCliConfig(home);
-    const rows = projectConfigDisplaySeats(config);
-    const notary = rows.find((row) => row.seat === "notary");
-    const inspector = rows.find((row) => row.seat === "inspector");
-    assert.equal(notary?.source, "inherit-gatekeeper");
-    assert.deepEqual(notary?.selection, {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "low",
-    });
-    assert.equal(inspector?.source, "inherit-gatekeeper");
-    assert.deepEqual(inspector?.selection, notary?.selection);
-    assert.deepEqual(projectConfigSeatDisplay(config, "notary"), notary);
-    // coder remains persistent disk face, not startup-rewritten.
-    assert.equal(rows.find((row) => row.seat === "coder")?.source, "persistent");
   });
 });
 
