@@ -16,7 +16,8 @@ Status: accepted（票 #594；owner 2026-09-02 裁定；decision keys 与绑定�
 | --- | --- | --- |
 | `record-scope-phase-two` | `all-host-session-records` | 「什么叫grok home？ 不是统一交给司天台存吗？别给我说你把不同的cli的卷宗还分开了！」 |
 | `live-session-in-books` | 运行中活卷与终局卷宗同在 books 目录，不分宿主，哨兵取证不依赖临时目录 | 「grok 腿自动改盯受控 home 活卷 啥意思！卷宗不是统一存放吗？」 |
-| `direct-write-reaffirmation` | 重申 ADR 0048 直写律：受控 home 建在 runDirectory 下（`grok-home`），直写进家，settle 仅 scrub 凭据不删卷宗 | 由上述 owner 裁定与 ADR 0048 共同派生约束 |
+
+**施工约束（非 owner 新裁）**：受控 home 建在 `runDirectory/grok-home`、settle 仅 scrub `auth.json` 不删卷宗——此为实现形态，由上表两键与既有 [ADR 0048](0048-ledger-one-home-many-books-dirname-key-git-only.md) 直写律共同约束；不另立 owner decision key。
 
 本 ADR 正文中未被上表绑定的措辞属驱动方综合，不主张 owner authority。
 
