@@ -28,10 +28,10 @@ import {
   admitCountersignInvocation,
   bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
-  homeFromRunDirectory,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
+import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
@@ -205,13 +205,7 @@ export async function runCountersignDiaristStation(
   if (admitted.ticketNumber === undefined) return undefined;
 
   const issueFace = await loadBoundIssueFace(admitted);
-  // Package home from the admitted run directory — never process.env.HOME (#604).
-  let home: string | undefined;
-  try {
-    home = homeFromRunDirectory(admitted.runDirectory);
-  } catch {
-    home = undefined;
-  }
+  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
 
   const result = await runDiarist({
     ticketNumber: admitted.ticketNumber,
@@ -233,12 +227,7 @@ function persistIssueSourceFailure(
   ticketNumber: number,
   error: DiaristIssueSourceError,
 ): never {
-  let home: string | undefined;
-  try {
-    home = homeFromRunDirectory(admitted.runDirectory);
-  } catch {
-    home = undefined;
-  }
+  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
   appendIssueSourceFailureDiagnostic({
     ticketNumber,
     cwd: admitted.projectRoot,

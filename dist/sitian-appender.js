@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.js";
-import { activationBookDirectory, ensureRealDirectoryTree, errorText, homeFromRunDirectory, physicallyContainedIn, resolveActivationLedgerHome, } from "./activation-ledger-topology.js";
+import { activationBookDirectory, ensureRealDirectoryTree, errorText, physicallyContainedIn, resolveActivationLedgerHome, resolveActivationLedgerHomeForPath, } from "./activation-ledger-topology.js";
 import { SitianInfrastructureError, } from "./sitian-contracts.js";
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -69,22 +69,9 @@ export function resolveSitianRecordPathInLedger(input, ledgerHome) {
 }
 /** Compute a write destination from ambient ledger topology (ADR 0065). */
 export function resolveSitianRecordPath(input) {
-    let ledgerHome;
-    if (input.home !== undefined && input.home.length > 0) {
-        ledgerHome = resolveActivationLedgerHome(() => input.home);
-    }
-    else if (input.sessionParent !== undefined && input.sessionParent.length > 0) {
-        try {
-            const home = homeFromRunDirectory(input.sessionParent);
-            ledgerHome = resolveActivationLedgerHome(() => home);
-        }
-        catch {
-            ledgerHome = resolveActivationLedgerHome();
-        }
-    }
-    else {
-        ledgerHome = resolveActivationLedgerHome();
-    }
+    const ledgerHome = input.home !== undefined && input.home.length > 0
+        ? resolveActivationLedgerHome(input.home)
+        : resolveActivationLedgerHomeForPath(input.sessionParent);
     return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 /**

@@ -1,9 +1,8 @@
 import { resolve } from "node:path";
 import {
-  homeFromRunDirectory,
   physicalPathIdentity,
   physicallyContainedIn,
-  resolveActivationLedgerHome
+  resolveActivationLedgerHomeForPath
 } from "./activation-ledger-topology.js";
 function issueRoot(value) {
   const normalized = value.replaceAll("\\", "/");
@@ -21,15 +20,7 @@ function workIdentityFromCwd(cwd) {
   return void 0;
 }
 function isMachineLedgerSessionPath(sessionPath) {
-  if (physicallyContainedIn(resolveActivationLedgerHome(), sessionPath)) {
-    return true;
-  }
-  try {
-    const home = homeFromRunDirectory(sessionPath);
-    return physicallyContainedIn(resolveActivationLedgerHome(() => home), sessionPath);
-  } catch {
-    return false;
-  }
+  return physicallyContainedIn(resolveActivationLedgerHomeForPath(sessionPath), sessionPath);
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {

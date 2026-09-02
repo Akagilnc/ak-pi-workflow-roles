@@ -17,7 +17,7 @@ import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
-import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
+import { resolveActivationLedgerHomeForPath } from "./activation-ledger-topology.ts";
 import {
   appendAcceptedActivationToBook,
   buildAcceptedActivationFact,
@@ -1577,17 +1577,7 @@ export function createRoleRuntimeExtension(
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
         const sessionFile = ctx.sessionManager.getSessionFile?.() || ctx.sessionManager.getSessionDir?.();
-        let ledgerHome: string;
-        if (sessionFile) {
-          try {
-            const derivedHome = homeFromRunDirectory(sessionFile);
-            ledgerHome = resolveActivationLedgerHome(() => derivedHome);
-          } catch {
-            ledgerHome = resolveActivationLedgerHome();
-          }
-        } else {
-          ledgerHome = resolveActivationLedgerHome();
-        }
+        const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
         if (dependencies.createNavigatorAttendance !== undefined) {

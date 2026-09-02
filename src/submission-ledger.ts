@@ -1,6 +1,6 @@
 import {
-  homeFromRunDirectory,
   resolveActivationLedgerHome,
+  tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
@@ -192,10 +192,9 @@ export function createSubmissionLedgerHost(
   const resolveHomeFromContext = (context: HostContext): string | undefined => {
     if (options?.home !== undefined) return options.home;
     const sessionFile = context.sessionManager.getSessionFile?.() || context.sessionManager.getSessionDir?.();
-    if (sessionFile) {
-      try { return homeFromRunDirectory(sessionFile); } catch {}
-    }
-    return undefined;
+    return typeof sessionFile === "string" && sessionFile.length > 0
+      ? tryHomeFromAkRolesPath(sessionFile)
+      : undefined;
   };
   const stateFor = (context: HostContext, runId: string) => states.get(runId) ?? (() => {
     const home = resolveHomeFromContext(context);
