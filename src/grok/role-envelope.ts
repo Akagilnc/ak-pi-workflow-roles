@@ -24,6 +24,7 @@ import {
 } from "../role-runtime.ts";
 import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import {
+  appendGrokSessionToolCall,
   appendGrokSessionToolResult,
   createGrokRoleTurnHost,
   type GrokPreparedTurn,
@@ -467,21 +468,22 @@ export async function prepareGrokRoleEnvelope(options: {
             // First-record-then-audit: book the tool-call leaf before execute so
             // judge/doctor subject gates see the candidate on parent session books.
             {
-              const entry = {
-                type: "message",
-                message: {
-                  role: "assistant" as const,
-                  content: [{
-                    type: "toolCall",
-                    id: toolCallId,
-                    name,
-                    arguments: params?.arguments ?? {},
-                  }],
-                },
+              const message = {
+                role: "assistant" as const,
+                content: [{
+                  type: "toolCall",
+                  id: toolCallId,
+                  name,
+                  arguments: params?.arguments ?? {},
+                }],
               };
-              sessionEntries.push(entry);
-              // Durable books true source (#617): tool-call leaves must survive for cross-host rebuild.
-              appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
+              sessionEntries.push({ type: "message", message });
+              // Durable books true source (#617): tree-linked so Pi --session restore consumes it.
+              appendGrokSessionToolCall(sessionFile, {
+                id: toolCallId,
+                name,
+                arguments: params?.arguments ?? {},
+              });
             }
             try {
               await emit("tool_execution_start", { toolCallId, toolName: name });

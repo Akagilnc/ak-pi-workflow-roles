@@ -1,7 +1,8 @@
 /**
  * Offline faux provider for #617 Pi→Grok→Pi public-CLI roundtrip.
  * Birth leg: one non-terminating bash toolCall/toolResult, then typed 429.
- * Settle leg: judge_output converged only after restored session history is visible.
+ * Settle leg: judge_output converged only after birth-paired tools + Grok user turn
+ * are visible in restored session history (never settle/gatekeeper self-records).
  */
 import {
   createAssistantMessageEventStream,
@@ -26,12 +27,43 @@ import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 export const CROSS_HOST_BASH_CALL_ID = "call_cross_host_bash";
 export const CROSS_HOST_BASH_MARKER = "cross-host-history-anchor";
+/** Opaque resume message Grok alone appends to JSONL before ACP (settle must not re-send). */
+export const CROSS_HOST_GROK_USER_MARKER = "cross-host-grok-user-turn";
 
 function leg(): string {
   return process.env.AK_CROSS_HOST_LEG ?? "";
 }
 
-function hasBashResult(context: Context): boolean {
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const part of content) {
+    if (typeof part === "string") {
+      parts.push(part);
+      continue;
+    }
+    if (typeof part !== "object" || part === null) continue;
+    const record = part as { type?: unknown; text?: unknown };
+    if (record.type === "text" && typeof record.text === "string") parts.push(record.text);
+  }
+  return parts.join("");
+}
+
+function hasBirthBashToolCall(context: Context): boolean {
+  return context.messages.some((message) => {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) return false;
+    return message.content.some((part) => {
+      if (typeof part !== "object" || part === null) return false;
+      const record = part as { type?: unknown; id?: unknown; name?: unknown };
+      return record.type === "toolCall"
+        && record.id === CROSS_HOST_BASH_CALL_ID
+        && record.name === "bash";
+    });
+  });
+}
+
+function hasBirthBashToolResult(context: Context): boolean {
   return context.messages.some(
     (message) =>
       message.role === "toolResult"
@@ -40,15 +72,21 @@ function hasBashResult(context: Context): boolean {
   );
 }
 
-function hasRestoredHistory(context: Context): boolean {
-  // Real Pi --session restore must surface prior tool pairs and/or Grok-appended turns.
-  return context.messages.some((message) => {
-    if (message.role === "toolResult") return true;
-    if (message.role !== "assistant" || !Array.isArray(message.content)) return false;
-    return message.content.some(
-      (part) => typeof part === "object" && part !== null && (part as { type?: unknown }).type === "toolCall",
-    );
-  });
+function hasGrokAppendedUserTurn(context: Context): boolean {
+  // Grok production path appends this user turn to the same JSONL before ACP.
+  // Settle resume must not pass the marker, so only a restored Grok append satisfies it.
+  return context.messages.some(
+    (message) =>
+      message.role === "user"
+      && messageText(message.content).includes(CROSS_HOST_GROK_USER_MARKER),
+  );
+}
+
+/** Restored cross-host history: birth-paired bash + Grok-only user turn. */
+function hasRestoredCrossHostHistory(context: Context): boolean {
+  return hasBirthBashToolCall(context)
+    && hasBirthBashToolResult(context)
+    && hasGrokAppendedUserTurn(context);
 }
 
 export default async function crossHostResumeProvider(pi: ExtensionAPI): Promise<void> {
@@ -105,7 +143,8 @@ export default async function crossHostResumeProvider(pi: ExtensionAPI): Promise
         { stopReason: "toolUse" },
       );
     }
-    if (!bashIssued) {
+    // Birth only: anchor tool pair. Settle must never re-issue the same id/name bash.
+    if (leg() === "birth" && !bashIssued) {
       bashIssued = true;
       return fauxAssistantMessage(
         fauxToolCall(
@@ -117,7 +156,7 @@ export default async function crossHostResumeProvider(pi: ExtensionAPI): Promise
       );
     }
     if (names.includes(JUDGE_OUTPUT_TOOL_NAME) && leg() === "settle") {
-      if (!hasRestoredHistory(context)) {
+      if (!hasRestoredCrossHostHistory(context)) {
         return fauxAssistantMessage("cross-host settle refused: session history not restored");
       }
       return fauxAssistantMessage(
@@ -156,7 +195,7 @@ export default async function crossHostResumeProvider(pi: ExtensionAPI): Promise
       options?: SimpleStreamOptions,
     ) {
       // After bash history lands, birth leg stops via typed 429 so the run stays resumable.
-      if (leg() === "birth" && hasBashResult(streamContext)) {
+      if (leg() === "birth" && hasBirthBashToolResult(streamContext)) {
         const stream = createAssistantMessageEventStream();
         const human = fauxAssistantMessage([], {
           stopReason: "error",
