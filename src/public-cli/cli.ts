@@ -18,8 +18,10 @@ import {
   loadCredentialProviders,
   loadPublicCliConfig,
   parseModelSpec,
+  resolveConfiguredProvinceOfficerModel,
   resolveEffectiveSeat,
   savePublicCliConfig,
+  seatModelOnly,
   setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
@@ -90,6 +92,7 @@ import {
   isPublicCallableRole,
   isPublicCliSupportCommand,
   isPublicConfigurableSeat,
+  type PublicConfigurableSeat,
   listHelpCapabilities,
   type PublicCallableRole,
   type PublicThinkingLevel,
@@ -768,55 +771,88 @@ function renderRoles(seats: readonly EffectiveSeat[]): string {
 }
 
 /**
- * #620 typed config display row: effective model/source (roles 同投影) plus disk
- * engine/host residuals. Presentation formats these fields; tests assert the
- * projection, not TSV layout.
+ * #620 typed config display row. Non-subordinate seats stay on the persistent
+ * disk face; notary/inspector may surface inherit-gatekeeper without startup.
+ * Presentation formats these fields; tests assert the projection, not TSV.
  */
 export type ConfigDisplaySeat = {
-  readonly seat: EffectiveSeat["seat"];
-  readonly source: EffectiveSeat["source"];
-  readonly selection: EffectiveSeat["selection"];
+  readonly seat: PublicConfigurableSeat;
+  readonly source: "persistent" | "inherit-gatekeeper" | "unconfigured";
+  readonly selection?: EffectiveSeat["selection"];
   readonly engine?: string;
   readonly host?: string;
 };
 
-/**
- * Typed projection consumed by `ak-role config` show/get (#620).
- * Model/source come solely from resolveEffectiveSeat; engine/host stay disk residuals.
- */
-export function projectConfigSeatDisplay(
-  config: PublicCliConfig,
-  seat: EffectiveSeat["seat"],
-  credentials: CredentialProviders,
-): ConfigDisplaySeat {
-  const effective = resolveEffectiveSeat(config, seat, credentials);
-  const disk = config.seats[seat];
+function diskAxes(disk: PublicCliConfig["seats"][PublicConfigurableSeat]): {
+  engine?: string;
+  host?: string;
+} {
   return {
-    seat,
-    source: effective.source,
-    selection: effective.selection,
     ...(disk?.engine === undefined ? {} : { engine: disk.engine }),
     ...(disk?.host === undefined ? {} : { host: disk.host }),
   };
 }
 
+/**
+ * Single-seat config projection (#620).
+ * - notary/inspector: configured province rule (own > gatekeeper), never startup
+ * - all other seats: disk model only (persistent face; no startup fill-in)
+ */
+export function projectConfigSeatDisplay(
+  config: PublicCliConfig,
+  seat: PublicConfigurableSeat,
+): ConfigDisplaySeat {
+  const disk = config.seats[seat];
+  if (seat === "notary" || seat === "inspector") {
+    const own = seatModelOnly(disk);
+    if (own !== undefined) {
+      return { seat, source: "persistent", selection: own, ...diskAxes(disk) };
+    }
+    const inherited = resolveConfiguredProvinceOfficerModel(config, seat);
+    if (inherited !== undefined) {
+      return {
+        seat,
+        source: "inherit-gatekeeper",
+        selection: inherited,
+        ...diskAxes(disk),
+      };
+    }
+    return { seat, source: "unconfigured", ...diskAxes(disk) };
+  }
+  const own = seatModelOnly(disk);
+  if (own !== undefined) {
+    return { seat, source: "persistent", selection: own, ...diskAxes(disk) };
+  }
+  if (disk === undefined) {
+    return { seat, source: "unconfigured" };
+  }
+  return { seat, source: "unconfigured", ...diskAxes(disk) };
+}
+
+/**
+ * Bulk config show projection (#620).
+ * Disk seats only, plus notary/inspector inherit rows when gatekeeper supplies a
+ * model and the subordinate has no own pin — never invent province rows from an
+ * unrelated seat like coder.
+ */
 export function projectConfigDisplaySeats(
   config: PublicCliConfig,
-  credentials: CredentialProviders,
 ): readonly ConfigDisplaySeat[] {
-  const keys = new Set<EffectiveSeat["seat"]>(
-    Object.keys(config.seats) as EffectiveSeat["seat"][],
+  const diskSeats = (Object.keys(config.seats) as PublicConfigurableSeat[]).filter(
+    (seat) => isPublicConfigurableSeat(seat),
   );
-  // Once any seat exists, province officers stay visible so inheritance is readable.
-  if (keys.size > 0) {
-    keys.add("gatekeeper");
-    keys.add("inspector");
-    keys.add("notary");
+  const rows = new Map<PublicConfigurableSeat, ConfigDisplaySeat>();
+  for (const seat of diskSeats) {
+    rows.set(seat, projectConfigSeatDisplay(config, seat));
   }
-  return [...keys]
-    .filter((seat) => isPublicConfigurableSeat(seat))
-    .sort()
-    .map((seat) => projectConfigSeatDisplay(config, seat, credentials));
+  for (const seat of ["notary", "inspector"] as const) {
+    if (rows.has(seat)) continue;
+    const projected = projectConfigSeatDisplay(config, seat);
+    if (projected.source === "inherit-gatekeeper") {
+      rows.set(seat, projected);
+    }
+  }
+  return [...rows.keys()].sort().map((seat) => rows.get(seat)!);
 }
 
 function renderConfigDisplaySeat(row: ConfigDisplaySeat): string {
@@ -827,12 +863,9 @@ function renderConfigDisplaySeat(row: ConfigDisplaySeat): string {
   return `${row.seat}\t${row.source}\t${model}\t${engine}\t${host}`;
 }
 
-function renderConfig(
-  config: PublicCliConfig,
-  credentials: CredentialProviders,
-): string {
+function renderConfig(config: PublicCliConfig): string {
   const lines: string[] = ["seat\tsource\tmodel\tengine\thost"];
-  const rows = projectConfigDisplaySeats(config, credentials);
+  const rows = projectConfigDisplaySeats(config);
   if (rows.length === 0) {
     lines.push("(empty)");
   } else {
@@ -850,7 +883,6 @@ async function runConfigCommand(
   home: string,
   packageRoot: string,
   io: CliIo,
-  credentials: CredentialProviders,
 ): Promise<number> {
   if (args.length === 0 || args[0] === "get" || args[0] === "list" || args[0] === "show") {
     const config = await loadAndValidateConfig(home, packageRoot);
@@ -859,11 +891,11 @@ async function runConfigCommand(
         throw new CliUsageError(`unknown configurable seat: ${args[1]}`);
       }
       io.stdout(
-        `${renderConfigDisplaySeat(projectConfigSeatDisplay(config, args[1], credentials))}\n`,
+        `${renderConfigDisplaySeat(projectConfigSeatDisplay(config, args[1]))}\n`,
       );
       return 0;
     }
-    io.stdout(renderConfig(config, credentials));
+    io.stdout(renderConfig(config));
     return 0;
   }
 
@@ -892,7 +924,7 @@ async function runConfigCommand(
       config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config, credentials));
+    io.stdout(renderConfig(config));
     return 0;
   }
 
@@ -914,7 +946,7 @@ async function runConfigCommand(
       seat,
     );
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config, credentials));
+    io.stdout(renderConfig(config));
     return 0;
   }
 
@@ -932,7 +964,7 @@ async function runConfigCommand(
       throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config, credentials));
+    io.stdout(renderConfig(config));
     return 0;
   }
 
@@ -956,7 +988,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config, credentials));
+    io.stdout(renderConfig(config));
     return 0;
   }
 
@@ -978,7 +1010,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config, credentials));
+    io.stdout(renderConfig(config));
     return 0;
   }
 
@@ -1011,7 +1043,7 @@ async function runConfigCommand(
     let config = await loadAndValidateConfig(home, packageRoot);
     config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config, credentials));
+    io.stdout(renderConfig(config));
     return 0;
   }
 
@@ -1103,17 +1135,8 @@ export async function runAkRole(
     }
 
     if (parsed.command === "config") {
-      const credentials =
-        env.credentials ??
-        (await loadCredentialProviders(resolveAgentDir(env, home)));
       return {
-        exitCode: await runConfigCommand(
-          parsed.args,
-          home,
-          env.packageRoot,
-          io,
-          credentials,
-        ),
+        exitCode: await runConfigCommand(parsed.args, home, env.packageRoot, io),
       };
     }
 

@@ -5,6 +5,10 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
+  projectConfigDisplaySeats,
+  projectConfigSeatDisplay,
+} from "../../src/public-cli/cli.ts";
+import {
   buildSeatModelCliArgs,
   clearPersistentSeatConfig,
   effectiveSeatConfigurations,
@@ -161,6 +165,42 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
 });
 
 const CODEX_CREDS: CredentialProviders = { "openai-codex": true, xai: true };
+
+// #620 config display projection boundaries (persistent face; inherit only when earned).
+test("#620 config display: inherit only under gatekeeper; coder-only stays disk face", () => {
+  const coderOnly = projectConfigDisplaySeats({
+    seats: {
+      coder: { provider: "xai", model: "grok-4.5", thinking: "high" },
+    },
+  });
+  assert.deepEqual(
+    coderOnly.map((row) => row.seat),
+    ["coder"],
+  );
+  assert.equal(coderOnly[0]?.source, "persistent");
+  assert.equal(projectConfigSeatDisplay({ seats: {} }, "notary").source, "unconfigured");
+  assert.equal(projectConfigSeatDisplay({ seats: {} }, "judge").source, "unconfigured");
+
+  const withGate = projectConfigDisplaySeats({
+    seats: {
+      gatekeeper: { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "low" },
+    },
+  });
+  assert.equal(
+    withGate.find((row) => row.seat === "notary")?.source,
+    "inherit-gatekeeper",
+  );
+  assert.deepEqual(withGate.find((row) => row.seat === "inspector")?.selection, {
+    provider: "openai-codex",
+    model: "gpt-5.6-sol",
+    thinking: "low",
+  });
+  // judge absent from disk and not a subordinate — not invented on config face.
+  assert.equal(
+    withGate.some((row) => row.seat === "judge"),
+    false,
+  );
+});
 
 // #620: direct/display resolution matches institutional rule — own > gatekeeper > unconfigured.
 test("#620 subordinate seats: own persistent > inherit-gatekeeper > unconfigured (no startup)", () => {
