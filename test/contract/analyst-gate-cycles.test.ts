@@ -449,21 +449,36 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     );
     await assertAuditorRolesUnreadable(/missing or unknown officer/, "unknown officer");
 
-    // Accepted dispatch tool whose status is not the dispatch terminal.
+    // Lawful province non-dispatch release (pass) must be readable — zero rounds,
+    // never unreadable (#597). Unknown non-contract statuses stay loud above.
     await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
-      join(auditorDir, "d01_gatekeeper_non_dispatch_status.jsonl"),
+      join(auditorDir, "d01_gatekeeper_province_pass.jsonl"),
       gateToolSessionJsonl({
-        id: "disp-non-dispatch",
+        id: "disp-province-pass",
         startedAt: iso(0),
         endedAt: iso(1_000),
         toolName: "ak_gatekeeper_output",
-        args: { status: "pass", officer: "inspector" },
+        args: { status: "pass", reason: "no officer needed" },
       }),
       "utf8",
     );
-    await assertAuditorRolesUnreadable(/non-dispatch status/, "non-dispatch status");
+    const provincePass = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_PROJECT_ROOT,
+    });
+    assert.equal(
+      provincePass.page.unreadable.some((row) => row.runId === GATE_JUDGE_RUN),
+      false,
+      "lawful province pass must not mark the leg unreadable",
+    );
+    const provincePassLeg = gateSection(provincePass.page).legs.find(
+      (leg) => leg.runId === GATE_JUDGE_RUN,
+    );
+    assert.ok(provincePassLeg, "lawful province pass leg must remain readable");
+    assert.equal(provincePassLeg.roundCount, 0);
+    assert.deepEqual(provincePassLeg.rounds, []);
   });
 });
 
