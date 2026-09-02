@@ -27,8 +27,10 @@ import {
   appendGrokSessionToolCall,
   appendGrokSessionToolResult,
   createGrokRoleTurnHost,
+  openGrokSessionAppendCursor,
   type GrokPreparedTurn,
   type GrokRoleTurnHostConfig,
+  type GrokSessionAppendCursor,
 } from "./role-turn-host.ts";
 import {
   GatekeeperDecisionError,
@@ -130,6 +132,8 @@ export function createComposedGrokRoleTurnHost(
     prepare: (request) => prepareGrokRoleEnvelope({
       request,
       dependencies: config.roleRuntimeDependencies,
+      // Same durable-principal coordinate the host uses for resume history (#617).
+      sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
       socketPath: config.socketPath?.(request) ?? `/tmp/ak-grok-mcp-${randomUUID()}.sock`,
     }),
   });
@@ -139,6 +143,12 @@ export async function prepareGrokRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
   readonly socketPath: string;
+  /**
+   * Durable session JSONL path. Production composition passes
+   * DurablePrincipalAuthority.decode(principal).sessionFile; tests may omit and
+   * receive the default runDirectory layout.
+   */
+  readonly sessionFile?: string;
 }): Promise<GrokPreparedTurn> {
   const { request } = options;
   const flags = projectGrokActivationFlags(request);
@@ -165,13 +175,14 @@ export async function prepareGrokRoleEnvelope(options: {
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
 
-  // Durable principal layout matches public-cli settlement (session/session.jsonl).
+  // Durable principal layout: sessionFile from decode(principal) when composed;
+  // default runDirectory layout only when callers omit the coordinate (unit tests).
   // prepare is the sole layout owner: initial mints the header when absent; resume
   // never creates an empty header (host proves JSONL exists first — #617).
   // Session JSONL is the sole durable books true source: hydrate in-memory entries
   // from existing bytes so shared lifecycle getEntries sees unfinished markers/history
   // (#590 grok-resume-session-hydration).
-  let sessionFile = join(request.runDirectory, "session", "session.jsonl");
+  let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
   if (request.continuation.kind !== "resume") {
     try {
@@ -200,6 +211,8 @@ export async function prepareGrokRoleEnvelope(options: {
       sessionEntries.push(entry);
     }
   }
+  // One parent cursor for MCP tool writes + host user/assistant/builtin shares (#617).
+  const sessionAppend: GrokSessionAppendCursor = openGrokSessionAppendCursor(sessionFile);
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
@@ -208,7 +221,7 @@ export async function prepareGrokRoleEnvelope(options: {
       getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,
       getEntries: () => sessionEntries as ReturnType<HostContext["sessionManager"]["getEntries"]>,
-      getSessionDir: () => join(request.runDirectory, "session"),
+      getSessionDir: () => dirname(sessionFile),
       getSessionFile: () => sessionFile,
       getHeader: () => ({ type: "session", id: runId }),
       setSessionFile(path) { sessionFile = path; },
@@ -417,7 +430,7 @@ export async function prepareGrokRoleEnvelope(options: {
       },
     };
     sessionEntries.push(toolResultEntry);
-    appendGrokSessionToolResult(sessionFile, {
+    appendGrokSessionToolResult(sessionAppend, {
       toolCallId,
       toolName,
       content: projected.content,
@@ -479,7 +492,7 @@ export async function prepareGrokRoleEnvelope(options: {
               };
               sessionEntries.push({ type: "message", message });
               // Durable books true source (#617): tree-linked so Pi --session restore consumes it.
-              appendGrokSessionToolCall(sessionFile, {
+              appendGrokSessionToolCall(sessionAppend, {
                 id: toolCallId,
                 name,
                 arguments: params?.arguments ?? {},
@@ -689,6 +702,7 @@ export async function prepareGrokRoleEnvelope(options: {
     systemPrompt: { body: systemPromptBody, materials: readingMaterials },
     prompt,
     abortSignal: hostAbort.signal,
+    sessionAppend,
     closeRound,
     dispose,
   };

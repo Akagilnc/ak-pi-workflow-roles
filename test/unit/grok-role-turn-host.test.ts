@@ -16,37 +16,66 @@ import {
 } from "../../src/grok/production-host.ts";
 import {
   appendGrokSessionMessage,
+  appendGrokSessionToolCall,
+  appendGrokSessionToolResult,
   classifyGrokInspection,
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
   grokSessionJsonlPath,
   inspectControlledGrok,
+  openGrokSessionAppendCursor,
   projectGrokRebuildHistory,
+  readLastSessionTreeEntryId,
   type GrokAcpConnection,
   type GrokPreparedTurn,
+  type GrokSessionIdentityAuthority,
 } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const sessionIds = new WeakMap<object, string>();
-const sessionIdentity = {
-  async load(principal: object) { return sessionIds.get(principal); },
-  async bind(principal: object, sessionId: string) { sessionIds.set(principal, sessionId); },
+const sessionIdentity: GrokSessionIdentityAuthority = {
+  async load(principal) { return sessionIds.get(principal as object); },
+  async bind(principal, sessionId) { sessionIds.set(principal as object, sessionId); },
+  resolveSessionFile(principal) {
+    return piDurablePrincipalAuthority.decode(principal).sessionFile;
+  },
 };
 
-const request = {
-  principal: {}, activation: { role: "judge" }, methods: [],
-  continuation: { kind: "initial", prompt: "decide" },
-  model: { provider: "xai", model: "grok-4.5" }, cwd: "/work", home: "/home/user",
-  agentDir: "/agent", runDirectory: "/run",
-} as RoleTurnRequest;
+function turnRequest(input: {
+  readonly runDirectory: string;
+  readonly home?: string;
+  readonly agentDir?: string;
+  readonly sessionFile?: string;
+  readonly continuation?: RoleTurnRequest["continuation"];
+  readonly activation?: RoleTurnRequest["activation"] | { readonly role: string };
+  readonly model?: RoleTurnRequest["model"];
+  readonly principal?: RoleTurnRequest["principal"];
+}): RoleTurnRequest {
+  const sessionDirectory = dirname(input.sessionFile ?? grokSessionJsonlPath(input.runDirectory));
+  const sessionFile = input.sessionFile ?? join(sessionDirectory, "session.jsonl");
+  return {
+    principal: input.principal ?? fixturePrincipal(sessionDirectory, sessionFile),
+    activation: (input.activation ?? { role: "judge" }) as RoleTurnRequest["activation"],
+    methods: [],
+    continuation: input.continuation ?? { kind: "initial", prompt: "decide" },
+    model: input.model ?? { provider: "xai", model: "grok-4.5" },
+    cwd: "/work",
+    home: input.home ?? "/home/user",
+    agentDir: input.agentDir ?? "/agent",
+    runDirectory: input.runDirectory,
+  } as RoleTurnRequest;
+}
+
+const request = turnRequest({ runDirectory: "/run" });
 
 /**
  * Mirror production prepare layout ownership for unit fixtures that reach append.
  * append itself never mints directories (#617).
  */
-async function seedPrepareOwnedLayout(runDirectory: string): Promise<void> {
-  const sessionFile = grokSessionJsonlPath(runDirectory);
+async function seedPrepareOwnedLayout(sessionFile: string): Promise<void> {
   await mkdir(dirname(sessionFile), { recursive: true });
   try {
     await writeFile(
@@ -63,7 +92,7 @@ function prepared(
   closeRound: GrokPreparedTurn["closeRound"],
   mcpServers: Readonly<Record<string, unknown>>[] = [{}],
   materials: readonly unknown[] = [],
-  extras: { abortSignal?: AbortSignal } = {},
+  extras: { abortSignal?: AbortSignal; sessionAppend?: GrokPreparedTurn["sessionAppend"] } = {},
 ): GrokPreparedTurn {
   return {
     mcpServers,
@@ -71,6 +100,7 @@ function prepared(
     prompt: "decide",
     closeRound,
     ...(extras.abortSignal === undefined ? {} : { abortSignal: extras.abortSignal }),
+    ...(extras.sessionAppend === undefined ? {} : { sessionAppend: extras.sessionAppend }),
   };
 }
 
@@ -82,8 +112,12 @@ function prepareWithLayout(
   extras: { abortSignal?: AbortSignal } = {},
 ): (request: RoleTurnRequest) => Promise<GrokPreparedTurn> {
   return async (request) => {
-    await seedPrepareOwnedLayout(request.runDirectory);
-    return prepared(closeRound, mcpServers, materials, extras);
+    const sessionFile = sessionIdentity.resolveSessionFile(request.principal);
+    await seedPrepareOwnedLayout(sessionFile);
+    return prepared(closeRound, mcpServers, materials, {
+      ...extras,
+      sessionAppend: openGrokSessionAppendCursor(sessionFile),
+    });
   };
 }
 
@@ -125,7 +159,7 @@ function canDenyInitializeMeta() {
 test("grok host closes an accepted ACP turn through the typed round boundary", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-accept-"));
   try {
-    const localRequest = { ...request, home, agentDir: join(home, "agent"), runDirectory: join(home, "run") } as RoleTurnRequest;
+    const localRequest = turnRequest({ runDirectory: join(home, "run"), home, agentDir: join(home, "agent") });
     const calls: Array<[string, unknown]> = [];
     const capabilities: unknown[] = [];
     const connection: GrokAcpConnection = {
@@ -166,13 +200,12 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
 test("grok host installs PreToolUse deny only for Fixer when the host can deny", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-fixer-deny-"));
   try {
-    const localRequest = {
-      ...request,
-      activation: { role: "fixer" },
+    const localRequest = turnRequest({
+      runDirectory: join(home, "run"),
       home,
       agentDir: join(home, "agent"),
-      runDirectory: join(home, "run"),
-    } as RoleTurnRequest;
+      activation: { role: "fixer" },
+    });
     const capabilities: unknown[] = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity,
@@ -202,13 +235,12 @@ test("grok host installs PreToolUse deny only for Fixer when the host can deny",
 test("grok host records preToolUseDeny false when the host cannot deny", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-nodeny-"));
   try {
-    const localRequest = {
-      ...request,
-      activation: { role: "fixer" },
+    const localRequest = turnRequest({
+      runDirectory: join(home, "run"),
       home,
       agentDir: join(home, "agent"),
-      runDirectory: join(home, "run"),
-    } as RoleTurnRequest;
+      activation: { role: "fixer" },
+    });
     const capabilities: unknown[] = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity,
@@ -261,7 +293,6 @@ test("executeTurn resume rebuilds via session/new after settle scrubs residual A
   // (faux binary reports filesystem hooks the way grok inspect does — source.type=user).
   const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-hooks-"));
   const home = join(root, "controlled");
-  const principal = {};
   try {
     await mkdir(home, { recursive: true });
     const binary = join(root, "grok-inspect-faux.mjs");
@@ -305,6 +336,9 @@ process.stdout.write(JSON.stringify({
       sessionIdentity: {
         async load(p: object) { return sessionIds.get(p); },
         async bind(p: object, sessionId: string) { sessionIds.set(p, sessionId); },
+        resolveSessionFile(principal) {
+          return piDurablePrincipalAuthority.decode(principal).sessionFile;
+        },
       },
       recordCapabilities: async () => {},
       connect: async () => ({
@@ -330,13 +364,13 @@ process.stdout.write(JSON.stringify({
     });
 
     const localRequest = {
-      ...request,
-      principal,
-      activation: { role: "fixer" },
-      home,
+      ...turnRequest({
+        runDirectory: join(home, "run"),
+        home,
+        agentDir: join(home, "agent"),
+        activation: { role: "fixer" },
+      }),
       cwd: root,
-      agentDir: join(home, "agent"),
-      runDirectory: join(home, "run"),
     } as RoleTurnRequest;
 
     assert.equal((await host.executeTurn(localRequest)).code, 0);
@@ -373,13 +407,15 @@ test("grok resume always session/new and rebinds even when an ACP binding exists
       `${JSON.stringify({ type: "session", version: 3, id: "rebind" })}\n`,
       "utf8",
     );
-    const principal = {};
     const bound: string[] = [];
     const sessionCalls: Array<[string, unknown]> = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity: {
         async load() { return "stale-binding-id"; },
         async bind(_p, sessionId) { bound.push(sessionId); },
+        resolveSessionFile(principal) {
+          return piDurablePrincipalAuthority.decode(principal).sessionFile;
+        },
       },
       recordCapabilities: async () => {},
       connect: async () => ({
@@ -396,12 +432,11 @@ test("grok resume always session/new and rebinds even when an ACP binding exists
       prepare: prepareWithLayout(async () => ({ accepted: true })),
     });
 
-    const result = await host.executeTurn({
-      ...request,
-      principal,
+    const result = await host.executeTurn(turnRequest({
       runDirectory,
+      principal: fixturePrincipal(sessionDir),
       continuation: { kind: "resume", prompt: "again" },
-    } as RoleTurnRequest);
+    }));
     assert.equal(result.code, 0);
     assert.equal(sessionCalls.some(([m]) => m === "session/load"), false);
     const opened = sessionCalls.find(([m]) => m === "session/new");
@@ -424,6 +459,9 @@ test("resume fails when session JSONL is missing before prepare can mint a heade
       sessionIdentity: {
         async load() { return undefined; },
         async bind() {},
+        resolveSessionFile(principal) {
+          return piDurablePrincipalAuthority.decode(principal).sessionFile;
+        },
       },
       recordCapabilities: async () => {},
       connect: async () => ({
@@ -442,15 +480,14 @@ test("resume fails when session JSONL is missing before prepare can mint a heade
       // Production-shaped prepare would mint an empty header if called first.
       prepare: async (req) => {
         prepareCalled = true;
-        await seedPrepareOwnedLayout(req.runDirectory);
+        await seedPrepareOwnedLayout(sessionIdentity.resolveSessionFile(req.principal));
         return prepared(async () => ({ accepted: true }));
       },
     });
-    const result = await host.executeTurn({
-      ...request,
+    const result = await host.executeTurn(turnRequest({
       runDirectory,
       continuation: { kind: "resume", prompt: "continue" },
-    } as RoleTurnRequest);
+    }));
     assert.equal(result.code, null);
     assert.equal(result.knownFailure?.cause, "session");
     assert.equal(result.knownFailure?.identity?.code, "session-history-missing");
@@ -484,6 +521,9 @@ test("resume fails when session JSONL has a corrupt non-empty line", async () =>
       sessionIdentity: {
         async load() { return undefined; },
         async bind() {},
+        resolveSessionFile(principal) {
+          return piDurablePrincipalAuthority.decode(principal).sessionFile;
+        },
       },
       recordCapabilities: async () => {},
       connect: async () => ({
@@ -503,11 +543,10 @@ test("resume fails when session JSONL has a corrupt non-empty line", async () =>
         assert.fail("corrupt JSONL must fail before prepare");
       },
     });
-    const result = await host.executeTurn({
-      ...request,
+    const result = await host.executeTurn(turnRequest({
       runDirectory,
       continuation: { kind: "resume", prompt: "continue" },
-    } as RoleTurnRequest);
+    }));
     assert.equal(result.code, null);
     assert.equal(result.knownFailure?.cause, "session");
     assert.equal(result.knownFailure?.identity?.code, "session-history-corrupt");
@@ -527,7 +566,7 @@ test("append refuses corrupt session JSONL and does not extend the file", async 
       `${JSON.stringify({ type: "session", version: 3, id: "corrupt" })}\nnot-json\n`;
     await writeFile(sessionFile, corruptJsonl, "utf8");
     assert.throws(
-      () => appendGrokSessionMessage(sessionFile, "user", "after-corruption"),
+      () => openGrokSessionAppendCursor(sessionFile),
       (error: unknown) =>
         typeof error === "object"
         && error !== null
@@ -542,7 +581,7 @@ test("append refuses corrupt session JSONL and does not extend the file", async 
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-non-xai-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run"), home: join(root, "home"), agentDir: join(root, "agent") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run"), home: join(root, "home"), agentDir: join(root, "agent") });
     const host = createGrokRoleTurnHost({
       sessionIdentity,
       recordCapabilities: async () => {},
@@ -603,7 +642,7 @@ test("grok host rejects a model absent from typed ACP capabilities", async () =>
 test("grok host serializes concurrent ACP prompts", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-serial-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
     let firstStarted!: () => void;
@@ -648,7 +687,7 @@ test("grok host serializes concurrent ACP prompts", async () => {
 test("grok refusal is a typed failure and cancels instead of closing as accepted", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-refusal-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     const calls: string[] = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity,
@@ -679,7 +718,7 @@ test("grok refusal is a typed failure and cancels instead of closing as accepted
 test("grok host delivers a typed rejection and resubmits in the same ACP session", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-retry-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     const prompts: unknown[] = [];
     let rounds = 0;
     const host = createGrokRoleTurnHost({
@@ -712,7 +751,7 @@ test("grok host delivers a typed rejection and resubmits in the same ACP session
 test("grok host aborts a hanging session/prompt when prepare abortSignal fires", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-abort-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     const cancels: unknown[] = [];
     const closes: string[] = [];
     const abort = new AbortController();
@@ -770,7 +809,7 @@ test("grok host aborts a hanging session/prompt when prepare abortSignal fires",
 test("grok host does not send session/prompt when abortSignal is already aborted", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-preabort-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     const promptCalls: unknown[] = [];
     const knownFailure = {
       cause: "output" as const,
@@ -812,7 +851,7 @@ test("grok host does not send session/prompt when abortSignal is already aborted
 test("grok host drains late in-flight prompt rejection after abort wins race", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-drain-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     const abort = new AbortController();
     const knownFailure = {
       cause: "output" as const,
@@ -864,7 +903,7 @@ test("grok host drains late in-flight prompt rejection after abort wins race", a
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-nosub-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     const cancels: unknown[] = [];
     const knownFailure = {
       cause: "output",
@@ -991,7 +1030,7 @@ test("grok host enters session/new when inspect akActive is empty but prepared M
   // External packageRoot is injected at prepare, not via Grok-native inspect paths.
   const root = await mkdtemp(join(tmpdir(), "ak-grok-external-mcp-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     const methods: string[] = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity,
@@ -1044,7 +1083,7 @@ test("grok host rejects ak-config-missing only when prepared MCP servers are abs
 test("grok host keeps session/close failure loud after typed round acceptance", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-close-boom-"));
   try {
-    const local = { ...request, runDirectory: join(root, "run") } as RoleTurnRequest;
+    const local = turnRequest({ runDirectory: join(root, "run") });
     const connection: GrokAcpConnection = {
       async request(method) {
         if (method === "initialize") return canDenyInitializeMeta();
@@ -1072,6 +1111,240 @@ test("grok host keeps session/close failure loud after typed round acceptance", 
         && error.message === "unexpected close fault"
         && (error as { code?: unknown }).code === "acp-permission-missing-allow-once",
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** #617: Pi bash toolResult often stores evidence in content with details absent. */
+test("projectGrokRebuildHistory preserves toolResult content alongside details", () => {
+  const jsonl = [
+    JSON.stringify({ type: "session", version: 3, id: "s" }),
+    JSON.stringify({
+      type: "message",
+      id: "call",
+      parentId: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "bash-1", name: "bash", arguments: { command: "pwd" } }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      id: "result",
+      parentId: "call",
+      message: {
+        role: "toolResult",
+        toolCallId: "bash-1",
+        toolName: "bash",
+        content: [{ type: "text", text: "/work\n" }],
+        isError: false,
+      },
+    }),
+  ].join("\n");
+  const turns = projectGrokRebuildHistory(jsonl);
+  const result = turns.find((turn) => turn.kind === "toolResult");
+  assert.ok(result && result.kind === "toolResult");
+  assert.deepEqual(result.content, [{ type: "text", text: "/work\n" }]);
+  assert.equal(result.details, null);
+});
+
+/** #617: abandoned forks must not enter cross-host rebuild. */
+test("projectGrokRebuildHistory projects only the active leaf ancestry", () => {
+  const jsonl = [
+    JSON.stringify({ type: "session", version: 3, id: "s" }),
+    JSON.stringify({
+      type: "message",
+      id: "start",
+      parentId: null,
+      message: { role: "user", content: [{ type: "text", text: "start" }] },
+    }),
+    JSON.stringify({
+      type: "message",
+      id: "abandoned",
+      parentId: "start",
+      message: { role: "assistant", content: [{ type: "text", text: "abandoned" }] },
+    }),
+    JSON.stringify({
+      type: "message",
+      id: "replacement",
+      parentId: "start",
+      message: { role: "assistant", content: [{ type: "text", text: "replacement" }] },
+    }),
+    JSON.stringify({
+      type: "message",
+      id: "active",
+      parentId: "replacement",
+      message: { role: "user", content: [{ type: "text", text: "active" }] },
+    }),
+  ].join("\n");
+  const texts = projectGrokRebuildHistory(jsonl).map((turn) =>
+    turn.kind === "user" || turn.kind === "assistant" ? turn.text : turn.kind,
+  );
+  assert.deepEqual(texts, ["start", "replacement", "active"]);
+});
+
+/** #617: append cursor scans once then advances parentId in memory. */
+test("session append cursor advances parent without rescanning the full file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-append-cursor-"));
+  try {
+    const sessionFile = join(root, "session.jsonl");
+    await writeFile(
+      sessionFile,
+      `${JSON.stringify({ type: "session", version: 3, id: "s" })}\n`,
+      "utf8",
+    );
+    const cursor = openGrokSessionAppendCursor(sessionFile);
+    assert.equal(cursor.parentId, null);
+    appendGrokSessionMessage(cursor, "user", "one");
+    const afterUser = cursor.parentId;
+    assert.equal(typeof afterUser, "string");
+    appendGrokSessionMessage(cursor, "assistant", "two");
+    assert.notEqual(cursor.parentId, afterUser);
+    assert.equal(readLastSessionTreeEntryId(sessionFile), cursor.parentId);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** #617: host-issued principal sessionFile is the resume history coordinate. */
+test("resume loads history from durable principal sessionFile, not runDirectory default", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-host-issued-"));
+  try {
+    const runDirectory = join(root, "run");
+    const sessionDirectory = join(runDirectory, "session");
+    const issuedFile = join(sessionDirectory, "host-issued-principal.jsonl");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(
+      issuedFile,
+      [
+        JSON.stringify({ type: "session", version: 3, id: "issued" }),
+        JSON.stringify({
+          type: "message",
+          id: "u1",
+          parentId: null,
+          message: { role: "user", content: [{ type: "text", text: "from-issued" }] },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    // Default path intentionally absent — must not be probed.
+    const prompts: unknown[] = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          if (method === "session/new") return { sessionId: "issued-s1" };
+          if (method === "session/prompt") {
+            prompts.push(params);
+            return { stopReason: "end_turn" };
+          }
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: prepareWithLayout(async () => ({ accepted: true })),
+    });
+    const result = await host.executeTurn(turnRequest({
+      runDirectory,
+      sessionFile: issuedFile,
+      continuation: { kind: "resume", prompt: "continue-issued" },
+    }));
+    assert.equal(result.code, 0);
+    assert.equal(prompts.length, 1);
+    const promptParts = (prompts[0] as { prompt?: unknown[] }).prompt ?? [];
+    const resource = promptParts.find(
+      (part) => typeof part === "object" && part !== null && (part as { type?: unknown }).type === "resource",
+    ) as { resource?: { text?: string } } | undefined;
+    const history = JSON.parse(String(resource?.resource?.text)) as { turns: Array<{ text?: string }> };
+    assert.ok(history.turns.some((turn) => turn.text === "from-issued"));
+    await assert.rejects(readFile(grokSessionJsonlPath(runDirectory), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** #617: Grok builtin tool_call / completed tool_call_update land on sole JSONL. */
+test("host persists builtin tool_call pairs from ACP session/update onto JSONL", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-builtin-tool-"));
+  try {
+    const local = turnRequest({ runDirectory: join(root, "run") });
+    const sessionFile = sessionIdentity.resolveSessionFile(local.principal);
+    let notify: ((method: string, params: Readonly<Record<string, unknown>>) => void) | undefined;
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          if (method === "session/new") return { sessionId: "builtin-s1" };
+          if (method === "session/prompt") {
+            notify?.("session/update", {
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: "call-builtin-1",
+                title: "run_terminal_command",
+                rawInput: { command: "pwd" },
+                _meta: { "x.ai/tool": { name: "run_terminal_command" } },
+              },
+            });
+            notify?.("session/update", {
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "call-builtin-1",
+                status: "completed",
+                content: [{ type: "content", content: { type: "text", text: "/work" } }],
+                rawOutput: { type: "Bash", output: "/work" },
+              },
+            });
+            notify?.("session/update", {
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "done" },
+              },
+            });
+            return { stopReason: "end_turn" };
+          }
+          return {};
+        },
+        notify() {},
+        onNotification(handler) { notify = handler; },
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: prepareWithLayout(async () => ({ accepted: true })),
+    });
+    assert.equal((await host.executeTurn(local)).code, 0);
+    const turns = projectGrokRebuildHistory(await readFile(sessionFile, "utf8"));
+    assert.ok(turns.some((turn) =>
+      turn.kind === "toolCall"
+      && turn.id === "call-builtin-1"
+      && turn.name === "run_terminal_command"
+      && (turn.arguments as { command?: unknown }).command === "pwd",
+    ));
+    assert.ok(turns.some((turn) =>
+      turn.kind === "toolResult"
+      && turn.toolCallId === "call-builtin-1"
+      && turn.toolName === "run_terminal_command"
+      && turn.isError === false
+      && turn.details !== null,
+    ));
+    // Dedupe: second append of same id is a no-op.
+    const cursor = openGrokSessionAppendCursor(sessionFile);
+    cursor.recordedToolCallIds.add("call-builtin-1");
+    cursor.recordedToolCallIds.add("result:call-builtin-1");
+    const before = await readFile(sessionFile, "utf8");
+    appendGrokSessionToolCall(cursor, { id: "call-builtin-1", name: "run_terminal_command" });
+    appendGrokSessionToolResult(cursor, {
+      toolCallId: "call-builtin-1",
+      toolName: "run_terminal_command",
+      content: null,
+      details: null,
+      isError: false,
+    });
+    assert.equal(await readFile(sessionFile, "utf8"), before);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
