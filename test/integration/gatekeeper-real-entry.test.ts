@@ -283,22 +283,18 @@ test("Gatekeeper and shared officer decision tools accept malformed object submi
   );
 });
 
-test("province submission without explicit dispatch is transport_failure with original retained, never dispatch or pass", async () => {
+test("province pass is a lawful non-dispatch release (no officer dispatched)", async () => {
   await withParent(async (context, faux) => {
-    const submission = { status: "pass", findings: [] };
+    // ADR 0074 gate-non-mandatory + gate-output-guide: pass = 正常放行.
     faux.setResponses([
-      completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: submission }], []),
+      completion([{ tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], []),
     ]);
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "worker_completion", material: "completion" },
     });
-    assert.equal(result.status, "transport_failure");
-    if (result.status === "transport_failure") {
-      assert.equal(result.stage, "gatekeeper");
-      assert.deepEqual(result.submission, submission);
-    }
+    assert.deepEqual(result, { status: "pass", findings: [] });
   });
 });
 

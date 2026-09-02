@@ -19,7 +19,11 @@ export type GatekeeperSubject =
   | { readonly kind: "countersign_verdict"; readonly material: string };
 
 export type GatekeeperResult =
-  | { readonly status: "pass"; readonly officer: "inspector" | "notary"; readonly findings: readonly string[] }
+  /**
+   * Lawful release. Officer present = officer seat pass; officer absent =
+   * province non-dispatch release (ADR 0074 gate-non-mandatory; #597).
+   */
+  | { readonly status: "pass"; readonly officer?: "inspector" | "notary"; readonly findings: readonly string[] }
   | {
       readonly status: "bounce";
       readonly officer: "inspector" | "notary";
@@ -78,8 +82,9 @@ const officerDecisionSchema = openToolObject(Type.Object({
 }));
 
 const gatekeeperDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "dispatch — 形状指引，非 schema 闸" }),
+  status: Type.Unknown({ description: "dispatch | pass — 形状指引，非 schema 闸" }),
   officer: Type.Unknown({ description: "status 为 dispatch 时为 inspector | notary" }),
+  findings: Type.Unknown({ description: "status 为 pass 时可选 string[] findings" }),
 }));
 
 function result(content: string, details: unknown) {
@@ -172,6 +177,11 @@ function projectProvinceDecision(decision: unknown): GatekeeperResult | { status
   if (record === undefined) return noUsableReleaseFailure("gatekeeper", decision);
   if (record.status === "dispatch" && (record.officer === "inspector" || record.officer === "notary")) {
     return { status: "dispatch", officer: record.officer };
+  }
+  // Lawful non-dispatch release — province may pass without dispatching an officer
+  // (ADR 0074 gate-non-mandatory; gate-output-guide pass = 正常放行; #597).
+  if (record.status === "pass") {
+    return { status: "pass", findings: asStringArray(record.findings) };
   }
   return noUsableReleaseFailure("gatekeeper", decision);
 }
