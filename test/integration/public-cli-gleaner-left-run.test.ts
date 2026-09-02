@@ -1,6 +1,6 @@
 /**
  * #502 public Gleaner-Left seat — required --base, empty instruction admitted,
- * one-shot (no resume), empty/nonempty 弹章 through real runAkRole → typed Terminal.
+ * #599 resume continues the exact session; empty/nonempty 弹章 → typed Terminal.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -18,7 +18,7 @@ import {
   parseGleanerLeftArgv,
 } from "../../src/public-cli/invocation.ts";
 import { buildGleanerLeftTurnRequest } from "../../src/public-cli/gleaner-left-run.ts";
-import { markRunAdmitted, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -211,31 +211,74 @@ test("public gleaner-left settles nonempty 弹章 pointer/statement as typed Ter
   });
 });
 
-test("gleaner-left runs are one-shot — resume is refused", async () => {
+test("ak-role resume continues gleaner-left on the exact session and base", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
     const runId = "01a0glean00-0000-7000-8000-0000000000aa";
-    const admitted = await admitGleanerLeftInvocation({
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      instruction: "",
-      baseRevision: "HEAD",
-      createRunId: () => runId,
-    });
-    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
+    const first = await runAkRole(
+      ["gleaner-left", "--project", project, "--base", "HEAD"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedGleanerLeftSession({
+            status: "completed",
+            findings: [],
+          }),
+        }),
+      },
+    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.role, "gleaner-left");
 
-    const { io } = captureIo();
-    const refused = await runAkRole(["resume", runId], {
+    const coords = issuePiDurablePrincipalCoordinates({
+      cwd: project,
+      runId,
+      role: "gleaner-left",
+      home,
+    });
+    const { io, stdout } = captureIo();
+    let resumeArgs: string[] | undefined;
+    const resumed = await runAkRole(["resume", runId], {
       home,
       packageRoot,
       cwd: project,
       io,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          resumeArgs = [...args];
+          return scriptedGleanerLeftSession({
+            status: "completed",
+            findings: [
+              {
+                pointer: "src/packaged-role-registry.ts:146",
+                statement: "resume ban revoked",
+              },
+            ],
+          })(args, options);
+        },
+      }),
     });
-    assert.equal(refused.exitCode, 2);
-    assert.equal(refused.terminal, undefined);
+    assert.equal(resumed.exitCode, 0, stdout.join("") || "gleaner-left resume failed");
+    assert.equal(Array.isArray(resumeArgs), true);
+    assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "gleaner-left");
+    assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
+    assert.equal(resumed.terminal?.roleOutcome.role, "gleaner-left");
+    assert.equal(
+      resumed.terminal?.roleOutcome.kind === "accepted"
+        ? resumed.terminal.roleOutcome.status
+        : undefined,
+      "completed",
+    );
   });
 });

@@ -1,6 +1,6 @@
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
- * out via real runAkRole entry; one-shot (no resume).
+ * out via real runAkRole entry; #599 resume continues the exact session.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -481,14 +481,14 @@ test("public countersign diarist station: issue-unavailable fetcher fails typed 
   });
 });
 
-test("countersign runs are one-shot — resume is refused", async () => {
+test("ak-role resume continues countersign on the exact session", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
     const runId = "01a0sign00-0000-7000-8000-0000000000aa";
-    const result = await runAkRole(
+    const first = await runAkRole(
       ["countersign", "--project", project, "裁"],
       {
         home,
@@ -506,17 +506,46 @@ test("countersign runs are one-shot — resume is refused", async () => {
         }),
       },
     );
-    assert.equal(result.exitCode, 0);
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.role, "countersign");
 
-    const { io: resumeIo } = captureIo();
-    const refused = await runAkRole(["resume", runId, "再裁一次"], {
+    const coords = issuePiDurablePrincipalCoordinates({
+      cwd: project,
+      runId,
+      role: "countersign",
+      home,
+    });
+    const { io: resumeIo, stdout } = captureIo();
+    let resumeArgs: string[] | undefined;
+    const resumed = await runAkRole(["resume", runId, "再裁一次"], {
       home,
       packageRoot,
       cwd: project,
       io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          resumeArgs = [...args];
+          return scriptedCountersignSession({
+            countersignStatus: "converged",
+            note: "续署",
+          })(args, options);
+        },
+      }),
     });
-    assert.equal(refused.exitCode, 2);
-    assert.equal(refused.terminal, undefined);
+    assert.equal(resumed.exitCode, 0, stdout.join("") || "countersign resume failed");
+    assert.equal(Array.isArray(resumeArgs), true);
+    assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "countersign");
+    assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
+    assert.equal(resumeArgs!.includes("再裁一次"), true);
+    assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
+    assert.equal(
+      resumed.terminal?.roleOutcome.kind === "accepted"
+        ? resumed.terminal.roleOutcome.status
+        : undefined,
+      "converged",
+    );
   });
 });
 
