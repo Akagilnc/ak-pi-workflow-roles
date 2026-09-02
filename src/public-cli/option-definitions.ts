@@ -313,8 +313,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Select the named main-session host adapter for this invocation.",
-      zh: "为本调用选择具名主会话宿主适配器。",
+      en: "Select the named main-session host adapter for this invocation (overrides persistent seat host; after config set-host the role command face is unchanged).",
+      zh: "为本调用选择具名主会话宿主适配器（覆盖席位持久 host；config set-host 后角色命令面不变）。",
     },
   },
   {
@@ -1214,7 +1214,7 @@ const SUPPORT_COMMAND_HELP = {
   },
   config: {
     command: "config",
-    summary: "Persistent seat model, labor-engine, and auto-resume defaults.",
+    summary: "Persistent seat model, labor-engine, host, and auto-resume defaults.",
     usage: [
       "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
       "ak-role config unset <gatekeeper|inspector|notary>",
@@ -1228,6 +1228,7 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role config set judge openai-codex/gpt-5.6-sol:high",
       "ak-role config unset gatekeeper",
       "ak-role config set-engine judge opus",
+      "ak-role config set-host judge grok-build",
       "ak-role config set-auto-resume-limit 3",
     ],
   },

@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import test from "node:test";
 
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -18,6 +17,8 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
+import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
+import { uuidv7 } from "../../src/uuidv7.ts";
 import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import {
   issuePiDurablePrincipalCoordinates,
@@ -30,50 +31,12 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { callThroughMcp, listThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-type McpServer = { command: string; args: string[]; env: Array<{ name: string; value: string }> };
-
-async function listThroughMcp(server: McpServer): Promise<Record<string, unknown>> {
-  const child = spawn(server.command, server.args, {
-    env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
-    stdio: ["pipe", "pipe", "inherit"],
-  });
-  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-  try {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
-    await replies.next();
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
-    const line = await replies.next();
-    assert.equal(line.done, false);
-    const response = JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
-    assert.equal(response.error, undefined);
-    return response.result ?? {};
-  } finally {
-    child.stdin.end();
-    child.kill("SIGTERM");
-  }
-}
-
-async function callThroughMcp(server: McpServer, name: string, args: unknown): Promise<{ result?: Record<string, unknown>; error?: unknown }> {
-  const child = spawn(server.command, server.args, {
-    env: { ...process.env, ...Object.fromEntries(server.env.map(({ name, value }) => [name, value])) },
-    stdio: ["pipe", "pipe", "inherit"],
-  });
-  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-  try {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
-    await replies.next();
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })}\n`);
-    const line = await replies.next();
-    assert.equal(line.done, false);
-    return JSON.parse(line.value) as { result?: Record<string, unknown>; error?: unknown };
-  } finally {
-    child.stdin.end();
-    child.kill("SIGTERM");
-  }
-}
+type McpServer = GrokMcpServer;
 
 test("Grok projection maps public activations onto the shared envelope", () => {
   const activations: RoleTurnRequest["activation"][] = [
@@ -569,6 +532,88 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
   }
 });
 
+test("Grok accepted closeRound books navigator attendance onto parent session for extractNavigatorFact", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-nav-books-"));
+  const priorHome = process.env.HOME;
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  process.env.HOME = root;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runId = "01a0551c-77b9-73e5-a62a-61bd812266ae";
+    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const subjectKey = join(root, "work");
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
+        continuation: { kind: "initial", prompt: "attest" },
+        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory,
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: {
+        loadNotarySoul: async () => "NOTARY SOUL",
+        loadNotarySourceRun: async () => ({ runDirectory: root, runId: "run-1", role: "notary" }),
+        loadJudgeSoul: async () => "judge",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey,
+          subject: "navigator book regression",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: (options) => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => {
+            const event = {
+              version: 1 as const,
+              disposition: "no-advice" as const,
+              invocationId: options.invocationId,
+              role: options.role,
+              phase: options.phase,
+              subjectKey: options.subjectKey,
+            };
+            await options.onEvent(event, { disposition: "no-advice" });
+          },
+          dispose() {},
+        }),
+      },
+    });
+    try {
+      const server = prepared.mcpServers[0] as McpServer;
+      const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
+      assert.equal(reply.error, undefined);
+      const closure = await prepared.closeRound();
+      assert.deepEqual(closure, { accepted: true });
+
+      const sessionPath = join(runDirectory, "session", "session.jsonl");
+      const entries = (await readFile(sessionPath, "utf8"))
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          customType?: string;
+          message?: { details?: unknown };
+        });
+      const attendance = entries.find(
+        (row) => row.type === "custom_message" && row.customType === "ak-navigator-attendance",
+      );
+      assert.ok(attendance, "accepted grok-build round must book navigator attendance on parent session");
+      const fact = extractNavigatorFact(entries as never);
+      assert.equal(fact.disposition, "no-advice");
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Grok prepare keeps existing durable session history on resume", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-session-"));
   const priorHome = process.env.HOME;
@@ -576,7 +621,9 @@ test("Grok prepare keeps existing durable session history on resume", async () =
   try {
     const runDirectory = join(root, "runs", "resume-run");
     const sessionPath = join(runDirectory, "session", "session.jsonl");
+    const subjectKey = join(root, "work");
     await mkdir(join(runDirectory, "session"), { recursive: true });
+    const priorInvocationId = uuidv7();
     const priorHeader = JSON.stringify({
       type: "session",
       version: 3,
@@ -584,13 +631,25 @@ test("Grok prepare keeps existing durable session history on resume", async () =
       timestamp: "2026-01-01T00:00:00.000Z",
       cwd: process.cwd(),
     });
+    // Unfinished marker: same role/phase/subjectKey, no packaged terminal after it.
+    const priorMarker = JSON.stringify({
+      type: "custom",
+      customType: NAVIGATOR_INVOCATION_ENTRY,
+      data: {
+        invocationId: priorInvocationId,
+        role: "judge",
+        phase: null,
+        subjectKey,
+      },
+    });
     const priorHistory = JSON.stringify({
       type: "message",
       message: { role: "assistant", content: [{ type: "text", text: "prior turn" }] },
     });
-    const priorBytes = `${priorHeader}\n${priorHistory}\n`;
+    const priorBytes = `${priorHeader}\n${priorMarker}\n${priorHistory}\n`;
     await writeFile(sessionPath, priorBytes, "utf8");
 
+    let resumedInvocationId: string | undefined;
     const prepared = await prepareGrokRoleEnvelope({
       request: {
         principal: {}, activation: { role: "judge" }, methods: [],
@@ -603,10 +662,37 @@ test("Grok prepare keeps existing durable session history on resume", async () =
         loadJudgeSoul: async () => "JUDGE SOUL",
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey,
+          subject: "resume work",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: (options) => {
+          resumedInvocationId = options.invocationId;
+          return {
+            prepare() {},
+            setWorkContext() {},
+            warmHelp() {},
+            isPreparing: () => false,
+            settle: async () => {},
+            dispose() {},
+          };
+        },
       },
     });
     try {
-      assert.equal(await readFile(sessionPath, "utf8"), priorBytes);
+      // Bytes preserved through the seeded history; lifecycle may append only after.
+      const after = await readFile(sessionPath, "utf8");
+      assert.ok(after.startsWith(priorBytes), "resume must keep every prior durable byte");
+      // Shared lifecycle reuses the unfinished marker — no second mint.
+      assert.equal(resumedInvocationId, priorInvocationId);
+      const markerRows = after
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as { type?: string; customType?: string })
+        .filter((row) => row.type === "custom" && row.customType === NAVIGATOR_INVOCATION_ENTRY);
+      assert.equal(markerRows.length, 1, "unfinished resume must not re-mint ak-navigator-invocation");
     } finally {
       await prepared.dispose?.();
     }
