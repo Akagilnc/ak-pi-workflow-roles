@@ -4,7 +4,7 @@
  * unchanged — preload is NODE_OPTIONS --require only.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,13 +24,26 @@ test("parent process packageMachineHome still follows real user profile", () => 
 });
 
 test("withTestUserProfileEnv child: package home = temp; realMachineHome stays operator", async () => {
-  const profileHome = mkdtempSync(join(tmpdir(), "ak-test-user-profile-"));
+  // Spaced temp preload path: bare `--require $path` truncates; encoding must keep it one token.
+  const spacedRoot = mkdtempSync(join(tmpdir(), "ak test user profile "));
+  const preloadPath = join(spacedRoot, "pre load.cjs");
+  const profileHome = mkdtempSync(join(spacedRoot, "profile "));
+  const callerNodeOptions = "--unhandled-rejections=strict";
   try {
-    const env = withTestUserProfileEnv({ ...process.env }, profileHome);
+    copyFileSync(PRELOAD, preloadPath);
+    const env = withTestUserProfileEnv(
+      { ...process.env, NODE_OPTIONS: callerNodeOptions },
+      profileHome,
+      preloadPath,
+    );
     assert.equal(env.AK_TEST_USER_PROFILE_HOME, profileHome);
     assert.ok(
-      (env.NODE_OPTIONS ?? "").includes(PRELOAD),
-      `NODE_OPTIONS must require preload, got ${env.NODE_OPTIONS}`,
+      (env.NODE_OPTIONS ?? "").includes(preloadPath),
+      `NODE_OPTIONS must require spaced preload, got ${env.NODE_OPTIONS}`,
+    );
+    assert.ok(
+      (env.NODE_OPTIONS ?? "").includes(callerNodeOptions),
+      `caller NODE_OPTIONS must be preserved, got ${env.NODE_OPTIONS}`,
     );
 
     const result = await runTestSubprocess(
@@ -71,6 +84,6 @@ test("withTestUserProfileEnv child: package home = temp; realMachineHome stays o
     assert.equal(body.realHome, REAL_PASSWD_HOME);
     assert.equal(body.preserved, REAL_PASSWD_HOME);
   } finally {
-    rmSync(profileHome, { recursive: true, force: true });
+    rmSync(spacedRoot, { recursive: true, force: true });
   }
 });
