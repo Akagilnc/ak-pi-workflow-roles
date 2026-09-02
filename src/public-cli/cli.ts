@@ -24,7 +24,6 @@ import {
   parseModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
-  seatModelOnly,
   setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
@@ -35,6 +34,7 @@ import {
   type InvocationModelOverride,
   type PublicCliConfig,
 } from "./config.ts";
+import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
