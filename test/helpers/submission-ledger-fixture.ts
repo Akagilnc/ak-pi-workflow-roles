@@ -121,13 +121,20 @@ export async function sealAcceptedSubmissionForSpawn(input: {
   if (runId === undefined) {
     throw new Error("sealed submission requires admitted run identity from runDirectory");
   }
+  // #604: package home is request.home (role-turn sets env.HOME to that value for
+  // child process isolation), not process ambient HOME. Prefer explicit env.HOME
+  // from the turn host; never invent a second home channel.
+  const home =
+    typeof input.env.HOME === "string" && input.env.HOME.length > 0
+      ? input.env.HOME
+      : undefined;
   await sealAcceptedSubmission({
     cwd: input.cwd,
     runId,
     runDirectory,
     role: input.role,
     details: input.details,
-    ...(typeof input.env.HOME === "string" ? { home: input.env.HOME } : {}),
+    ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
   });
 }
