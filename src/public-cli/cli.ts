@@ -18,7 +18,7 @@ import {
   loadCredentialProviders,
   loadPublicCliConfig,
   parseModelSpec,
-  resolveConfiguredProvinceOfficerModel,
+  resolveConfiguredProvinceOfficer,
   resolveEffectiveSeat,
   savePublicCliConfig,
   seatModelOnly,
@@ -804,20 +804,13 @@ export function projectConfigSeatDisplay(
 ): ConfigDisplaySeat {
   const disk = config.seats[seat];
   if (seat === "notary" || seat === "inspector") {
-    const own = seatModelOnly(disk);
-    if (own !== undefined) {
-      return { seat, source: "persistent", selection: own, ...diskAxes(disk) };
-    }
-    const inherited = resolveConfiguredProvinceOfficerModel(config, seat);
-    if (inherited !== undefined) {
-      return {
-        seat,
-        source: "inherit-gatekeeper",
-        selection: inherited,
-        ...diskAxes(disk),
-      };
-    }
-    return { seat, source: "unconfigured", ...diskAxes(disk) };
+    const resolved = resolveConfiguredProvinceOfficer(config, seat);
+    return {
+      seat,
+      source: resolved.source,
+      ...(resolved.selection === undefined ? {} : { selection: resolved.selection }),
+      ...diskAxes(disk),
+    };
   }
   const own = seatModelOnly(disk);
   if (own !== undefined) {
