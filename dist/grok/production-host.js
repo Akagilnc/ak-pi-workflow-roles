@@ -1178,7 +1178,7 @@ var init_in_process_session = __esm({
 });
 
 // src/grok/production-host.ts
-import { readFile as readFile15, rm as rm5, writeFile as writeFile10 } from "node:fs/promises";
+import { readFile as readFile15, rm as rm6, writeFile as writeFile10 } from "node:fs/promises";
 import { join as join25 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
@@ -4933,13 +4933,16 @@ function acceptedFacts(toolName, details) {
 function record2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+var GROK_HOME_DIR_NAME = "grok-home";
 async function discoverCaseFiles(root) {
   const found = [];
   async function walk(dir, depth) {
     for (const item of await readdir(dir, { withFileTypes: true })) {
       const path = resolve8(dir, item.name);
-      if (item.isDirectory()) await walk(path, depth + 1);
-      else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
+      if (item.isDirectory()) {
+        if (item.name === GROK_HOME_DIR_NAME) continue;
+        await walk(path, depth + 1);
+      } else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
     }
   }
   await walk(root, 0);
@@ -12781,7 +12784,7 @@ import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/grok/role-turn-host.ts
 import { execFile as execFile3, spawn as spawn4 } from "node:child_process";
-import { copyFile, mkdir as mkdir4, open as open2, realpath as realpath7 } from "node:fs/promises";
+import { copyFile, lstat as lstat3, mkdir as mkdir4, open as open2, realpath as realpath7, rm as rm5 } from "node:fs/promises";
 import { basename as basename7, dirname as dirname15, isAbsolute as isAbsolute7, join as join22, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify as promisify3 } from "node:util";
@@ -13213,9 +13216,52 @@ function classifyGrokInspection(document, packageRoot, options = {}) {
   }
   return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
 }
+var AK_BASH_SEATBELT_HOOK_FILES = ["ak-bash-seatbelt.json", "ak-bash-seatbelt.mjs"];
+function isMissingPathError2(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+async function assertControlledGrokHomeIsRealDirectory(controlledHome) {
+  let st;
+  try {
+    st = await lstat3(controlledHome);
+  } catch (error) {
+    if (isMissingPathError2(error)) return;
+    throw error;
+  }
+  if (st.isSymbolicLink()) {
+    throw new Error(`controlled grok home must not be a symlink: ${controlledHome}`);
+  }
+  if (!st.isDirectory()) {
+    throw new Error(`controlled grok home must be a real directory: ${controlledHome}`);
+  }
+}
+async function assertControlledGrokAuthIsNotSymlink(authPath) {
+  let st;
+  try {
+    st = await lstat3(authPath);
+  } catch (error) {
+    if (isMissingPathError2(error)) return;
+    throw error;
+  }
+  if (st.isSymbolicLink()) {
+    throw new Error(`controlled grok auth must not be a symlink: ${authPath}`);
+  }
+}
+async function scrubAkBashSeatbeltHooks(controlledHome) {
+  const hooksDir = join22(controlledHome, "hooks");
+  for (const name of AK_BASH_SEATBELT_HOOK_FILES) {
+    await rm5(join22(hooksDir, name), { force: true });
+  }
+}
 async function prepareControlledGrokHome(sourceHome, controlledHome) {
+  await assertControlledGrokHomeIsRealDirectory(controlledHome);
   await mkdir4(controlledHome, { recursive: true, mode: 448 });
-  await copyFile(join22(sourceHome, ".grok", "auth.json"), join22(controlledHome, "auth.json"));
+  await assertControlledGrokHomeIsRealDirectory(controlledHome);
+  const authPath = join22(controlledHome, "auth.json");
+  await assertControlledGrokAuthIsNotSymlink(authPath);
+  await rm5(authPath, { force: true });
+  await scrubAkBashSeatbeltHooks(controlledHome);
+  await copyFile(join22(sourceHome, ".grok", "auth.json"), authPath);
 }
 async function inspectControlledGrok(options) {
   const { stdout } = await execFileAsync3(options.binary, ["inspect", "--json"], {
@@ -13725,7 +13771,11 @@ var NO_PRODUCTION_GROK_PRIMARY_FAILURE = {
 };
 async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, concurrentMessage) {
   try {
-    await rm5(join25(controlledHome, "auth.json"), { force: true });
+    await assertControlledGrokHomeIsRealDirectory(controlledHome);
+    const authPath = join25(controlledHome, "auth.json");
+    await assertControlledGrokAuthIsNotSymlink(authPath);
+    await rm6(authPath, { force: true });
+    await scrubAkBashSeatbeltHooks(controlledHome);
   } catch (cleanupFailure) {
     if (primaryFailure.present) {
       throw new AggregateError([primaryFailure.value, cleanupFailure], concurrentMessage, {

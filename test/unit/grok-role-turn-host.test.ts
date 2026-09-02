@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,10 @@ import {
   fixerBashSeatbeltDenyReason,
 } from "../../src/fixer-bash-seatbelt.ts";
 import { installGrokPreToolUseDeny } from "../../src/grok/bash-seatbelt.ts";
+import {
+  NO_PRODUCTION_GROK_PRIMARY_FAILURE,
+  settleProductionGrokHomeCleanup,
+} from "../../src/grok/production-host.ts";
 import {
   classifyGrokInspection,
   controlledGrokChildEnv,
@@ -208,6 +212,82 @@ test("installed seatbelt hook denies the representative dangerous command and al
         literal,
       );
     }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("executeTurn resume reaches session/load after settle scrubs residual AK seatbelt hooks", async () => {
+  // #594 F1: prior Fixer turn left hooks under controlled home; settle must scrub them
+  // so the next executeTurn inspect stays clean and resume reaches session/load.
+  const home = await mkdtemp(join(tmpdir(), "ak-grok-resume-hooks-"));
+  const principal = {};
+  try {
+    await installGrokPreToolUseDeny(home);
+    await access(join(home, "hooks", "ak-bash-seatbelt.json"));
+    await settleProductionGrokHomeCleanup(
+      home,
+      NO_PRODUCTION_GROK_PRIMARY_FAILURE,
+      "test settle after residual hooks",
+    );
+    await assert.rejects(access(join(home, "hooks", "ak-bash-seatbelt.json")));
+
+    const sessionCalls: Array<[string, unknown]> = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity: {
+        async load(p: object) { return sessionIds.get(p); },
+        async bind(p: object, sessionId: string) { sessionIds.set(p, sessionId); },
+      },
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          sessionCalls.push([method, params]);
+          if (method === "initialize") return canDenyInitializeMeta();
+          if (method === "session/new") return { sessionId: "resume-s1" };
+          if (method === "session/load") return { sessionId: "resume-s1" };
+          if (method === "session/prompt") return { stopReason: "end_turn" };
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      // Mirror production classify outcome: leftover seatbelt hooks under home are privateActive.
+      inspect: async (req) => {
+        try {
+          await access(join(req.home, "hooks", "ak-bash-seatbelt.json"));
+          return { privateActive: ["hooks:ak-bash-seatbelt"], akActive: [] };
+        } catch {
+          return { privateActive: [], akActive: ["ak_fixer_output"] };
+        }
+      },
+      prepare: async () => prepared(async () => ({ accepted: true })),
+    });
+
+    const localRequest = {
+      ...request,
+      principal,
+      activation: { role: "fixer" },
+      home,
+      agentDir: join(home, "agent"),
+      runDirectory: join(home, "run"),
+    } as RoleTurnRequest;
+
+    assert.equal((await host.executeTurn(localRequest)).code, 0);
+    // Fixer install re-writes hooks during the turn; settle again before resume.
+    await settleProductionGrokHomeCleanup(
+      home,
+      NO_PRODUCTION_GROK_PRIMARY_FAILURE,
+      "test settle before resume",
+    );
+    const resumeResult = await host.executeTurn({
+      ...localRequest,
+      continuation: { kind: "resume", prompt: "continue after 429" },
+    });
+    assert.equal(resumeResult.code, 0);
+    assert.equal(resumeResult.knownFailure, undefined);
+    const load = sessionCalls.find(([method]) => method === "session/load");
+    assert.deepEqual(load?.[0], "session/load");
+    assert.equal((load?.[1] as { sessionId?: string } | undefined)?.sessionId, "resume-s1");
   } finally {
     await rm(home, { recursive: true, force: true });
   }
