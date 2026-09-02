@@ -32,6 +32,7 @@ import {
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import { analystIssuePagePath } from "../../src/analyst-page.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const ABSENT_METRIC = { status: "absent" as const };
 
@@ -105,101 +106,111 @@ const RUN_ID = "019ff000-9001-7000-8000-0000000009a1";
 test("U3: real book basename root:foo keeps its book scope through cohort cache-miss recompute", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-413r2-e2e-"));
   const previousHome = process.env.HOME;
-  process.env.HOME = home;
-  // Real Git repository whose book key (common-dir host basename) is literally root:foo.
-  const repoParent = mkdtempSync(join(tmpdir(), "analyst-413r2-repos-"));
-  try {
-    const ledgerHome = join(home, ".ak-roles");
-    const repo = join(repoParent, "root:foo");
-    mkdirSync(repo, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
-    const repoIdentity = physicalPathIdentity(repo);
+  // Owned immediately after allocation so a later repoParent failure still deletes home.
+  let repoParent = "";
+  await withPrimaryAwareCleanup(
+    async () => {
+      process.env.HOME = home;
+      // Real Git repository whose book key (common-dir host basename) is literally root:foo.
+      // Allocated inside the cleanup boundary so failure still restores HOME / deletes home.
+      repoParent = mkdtempSync(join(tmpdir(), "analyst-413r2-repos-"));
+      const ledgerHome = join(home, ".ak-roles");
+      const repo = join(repoParent, "root:foo");
+      mkdirSync(repo, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+      const repoIdentity = physicalPathIdentity(repo);
 
-    // One typed-ticketed run inside book root:foo.
-    const runDir = join(ledgerHome, "books", "root:foo", "runs", `${RUN_ID}@coder`);
-    mkdirSync(join(runDir, "session"), { recursive: true });
-    mkdirSync(join(runDir, "artifacts"), { recursive: true });
-    writeFileSync(
-      join(runDir, "invocation.json"),
-      `${JSON.stringify({
-        role: "coder",
-        runId: RUN_ID,
+      // One typed-ticketed run inside book root:foo.
+      const runDir = join(ledgerHome, "books", "root:foo", "runs", `${RUN_ID}@coder`);
+      mkdirSync(join(runDir, "session"), { recursive: true });
+      mkdirSync(join(runDir, "artifacts"), { recursive: true });
+      writeFileSync(
+        join(runDir, "invocation.json"),
+        `${JSON.stringify({
+          role: "coder",
+          runId: RUN_ID,
+          bookKey: "root:foo",
+          projectRoot: repoIdentity,
+          ticketNumber: 7,
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      writeFileSync(
+        join(runDir, "artifacts", "report.json"),
+        `${JSON.stringify({
+          role: "coder",
+          runId: RUN_ID,
+          phase: "apply",
+          outcome: { kind: "accepted", role: "coder", status: "completed", decisiveFacts: {} },
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      writeFileSync(
+        join(runDir, "session", "session.jsonl"),
+        [
+          JSON.stringify({ type: "session", version: 3, id: "s-u3", timestamp: "2026-08-04T03:00:00.000Z", cwd: repoIdentity }),
+          JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "2026-08-04T03:00:00.000Z", message: { role: "assistant", model: "sol-low", timestamp: "2026-08-04T03:00:00.000Z", content: [] } }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      // Issue-mode entry produces the page + index row under the REAL book key.
+      await runAnalyst({
+        mode: "issue",
         bookKey: "root:foo",
-        projectRoot: repoIdentity,
-        ticketNumber: 7,
-      }, null, 2)}\n`,
-      "utf8",
-    );
-    writeFileSync(
-      join(runDir, "artifacts", "report.json"),
-      `${JSON.stringify({
-        role: "coder",
-        runId: RUN_ID,
-        phase: "apply",
-        outcome: { kind: "accepted", role: "coder", status: "completed", decisiveFacts: {} },
-      }, null, 2)}\n`,
-      "utf8",
-    );
-    writeFileSync(
-      join(runDir, "session", "session.jsonl"),
-      [
-        JSON.stringify({ type: "session", version: 3, id: "s-u3", timestamp: "2026-08-04T03:00:00.000Z", cwd: repoIdentity }),
-        JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "2026-08-04T03:00:00.000Z", message: { role: "assistant", model: "sol-low", timestamp: "2026-08-04T03:00:00.000Z", content: [] } }),
-      ].join("\n") + "\n",
-      "utf8",
-    );
+        projectRoot: repo,
+        issueNumber: 7,
+      });
 
-    // Issue-mode entry produces the page + index row under the REAL book key.
-    await runAnalyst({
-      mode: "issue",
-      bookKey: "root:foo",
-      projectRoot: repo,
-      issueNumber: 7,
-    });
+      const pagePath = analystIssuePagePath(ledgerHome, {
+        bookKey: "root:foo",
+        issueNumber: 7,
+      });
+      // Counterexample shape: checkout deleted before the cohort query — the
+      // recompute can no longer re-derive the book from the filesystem, so the
+      // explicit real book key is the only lawful carrier.
+      await rm(pagePath, { force: true });
+      rmSync(repo, { recursive: true, force: true });
 
-    const pagePath = analystIssuePagePath(ledgerHome, {
-      bookKey: "root:foo",
-      issueNumber: 7,
-    });
-    // Counterexample shape: checkout deleted before the cohort query — the
-    // recompute can no longer re-derive the book from the filesystem, so the
-    // explicit real book key is the only lawful carrier.
-    await rm(pagePath, { force: true });
-    rmSync(repo, { recursive: true, force: true });
+      const result = (await runAnalyst({
+        mode: "cohort",
+        groups: [
+          { groupLabel: "real", issues: [{ bookKey: "root:foo", issueNumber: 7 }] },
+          { groupLabel: "vacancy", issues: [{ bookKey: "no-such-book", issueNumber: 8 }] },
+        ],
+      })) as AnalystCohortModeResult;
 
-    const result = (await runAnalyst({
-      mode: "cohort",
-      groups: [
-        { groupLabel: "real", issues: [{ bookKey: "root:foo", issueNumber: 7 }] },
-        { groupLabel: "vacancy", issues: [{ bookKey: "no-such-book", issueNumber: 8 }] },
-      ],
-    })) as AnalystCohortModeResult;
+      // Present projection stays bound to the real book (index join face).
+      assert.deepEqual(result.groups[0]!.issues, [
+        { issueNumber: 7, status: "present", bookKey: "root:foo", projectRoot: repoIdentity },
+      ]);
+      assert.deepEqual(result.groups[1]!.issues, [
+        { issueNumber: 8, status: "absent", bookKey: "no-such-book" },
+      ]);
 
-    // Present projection stays bound to the real book (index join face).
-    assert.deepEqual(result.groups[0]!.issues, [
-      { issueNumber: 7, status: "present", bookKey: "root:foo", projectRoot: repoIdentity },
-    ]);
-    assert.deepEqual(result.groups[1]!.issues, [
-      { issueNumber: 8, status: "absent", bookKey: "no-such-book" },
-    ]);
-
-    // The restored page must land under the REAL book key — pre-fix the
-    // prefix misclassification recomputed under a synthetic root:<path>
-    // identity (wrong-book scan, wrong-key page rewrite).
-    const restored = JSON.parse(
-      await readFile(pagePath, "utf8"),
-    ) as {
-      bookKey: string;
-      issueNumber?: number;
-      legs: readonly { runId: string }[];
-    };
-    assert.equal(restored.bookKey, "root:foo");
-    assert.equal(restored.issueNumber, 7);
-    assert.deepEqual(restored.legs.map((leg) => leg.runId), [RUN_ID]);
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    rmSync(repoParent, { recursive: true, force: true });
-    await rm(home, { recursive: true, force: true });
-  }
+      // The restored page must land under the REAL book key — pre-fix the
+      // prefix misclassification recomputed under a synthetic root:<path>
+      // identity (wrong-book scan, wrong-key page rewrite).
+      const restored = JSON.parse(
+        await readFile(pagePath, "utf8"),
+      ) as {
+        bookKey: string;
+        issueNumber?: number;
+        legs: readonly { runId: string }[];
+      };
+      assert.equal(restored.bookKey, "root:foo");
+      assert.equal(restored.issueNumber, 7);
+      assert.deepEqual(restored.legs.map((leg) => leg.runId), [RUN_ID]);
+    },
+    async () => {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    },
+    async () => {
+      if (repoParent) rmSync(repoParent, { recursive: true, force: true });
+    },
+    async () => {
+      await rm(home, { recursive: true, force: true });
+    },
+  );
 });
