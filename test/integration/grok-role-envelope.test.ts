@@ -51,6 +51,7 @@ test("Grok projection maps public activations onto the shared envelope", () => {
     { role: "notary", sourceRun: "/source" },
     { role: "countersign", ticketNumber: 582 },
     { role: "gleaner-left", baseRevision: "HEAD" },
+    { role: "inspector" },
   ];
   for (const activation of activations) {
     const flags = projectGrokActivationFlags({ activation } as RoleTurnRequest);

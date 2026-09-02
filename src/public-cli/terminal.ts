@@ -34,7 +34,8 @@ export type TerminalRoleName =
   | "merger"
   | "notary"
   | "countersign"
-  | "gleaner-left";
+  | "gleaner-left"
+  | "inspector";
 
 /** Merger/Collector residual only — Notary/audit residual abolished (#475). */
 export type ResidualIncompleteTerminalOutcome = {
