@@ -16,6 +16,7 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
+import { GROK_ACP_SESSION_BINDING } from "../grok/session-identity.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -1173,9 +1174,6 @@ export async function peekRoleRunRole(
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }
-
-/** ACP binding filename written only by the grok host on initial bind (#595 legacy birth). */
-const GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
 
 /**
  * Birth host for bare resume (#595).

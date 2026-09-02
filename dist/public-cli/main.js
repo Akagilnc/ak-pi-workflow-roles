@@ -16803,6 +16803,15 @@ var init_uuidv7 = __esm({
   }
 });
 
+// src/grok/session-identity.ts
+var GROK_ACP_SESSION_BINDING;
+var init_session_identity = __esm({
+  "src/grok/session-identity.ts"() {
+    "use strict";
+    GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
+  }
+});
+
 // src/typed-provider-http.ts
 import { readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join10 } from "node:path";
@@ -17543,11 +17552,12 @@ async function resolveRoleRunBirthHost(home, runId) {
   }
   return "pi";
 }
-var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError, GROK_ACP_SESSION_BINDING;
+var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
     init_activation_ledger_topology();
+    init_session_identity();
     init_cli_errors();
     init_typed_provider_http();
     init_typed_provider_http();
@@ -17565,7 +17575,6 @@ var init_run_lifecycle = __esm({
         this.name = "RunWriterLeaseHeldError";
       }
     };
-    GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
   }
 });
 
