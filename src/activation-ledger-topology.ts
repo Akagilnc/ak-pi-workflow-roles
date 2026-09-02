@@ -27,20 +27,36 @@ export function packageMachineHome(): string {
   return resolve(userInfo().homedir);
 }
 
-/** Recover the machine home that owns a run directory under `.ak-roles/`. */
-export function homeFromRunDirectory(runDirectory: string): string {
+/**
+ * Soft derive: package home owning a path under `.ak-roles/`, or undefined when
+ * the path is not ledger topology. Single parse authority — callers must not
+ * reimplement marker splitting.
+ */
+export function tryHomeFromAkRolesPath(path: string): string | undefined {
   const marker = `${sep}.ak-roles${sep}`;
-  const idx = runDirectory.indexOf(marker);
+  const idx = path.indexOf(marker);
   if (idx !== -1) {
-    return runDirectory.slice(0, idx);
+    return path.slice(0, idx);
   }
   const altMarker = ".ak-roles";
-  const altIdx = runDirectory.indexOf(altMarker);
-  if (altIdx !== -1) {
-    const candidate = runDirectory.slice(0, altIdx);
-    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  const altIdx = path.indexOf(altMarker);
+  if (altIdx === -1) return undefined;
+  const candidate = path.slice(0, altIdx);
+  return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+}
+
+/**
+ * Hard derive: package home owning a run/session path under `.ak-roles/`.
+ * Fails typed when the path is not ledger topology (no HOME fallback).
+ */
+export function homeFromRunDirectory(runDirectory: string): string {
+  const home = tryHomeFromAkRolesPath(runDirectory);
+  if (home === undefined || home.length === 0) {
+    throw new ActivationLedgerError(
+      `cannot resolve home from runDirectory: ${runDirectory}`,
+    );
   }
-  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
+  return home;
 }
 
 /**
@@ -57,6 +73,21 @@ export function resolveActivationLedgerHome(home?: (() => string | undefined) | 
     );
   }
   return resolve(processHome, ".ak-roles");
+}
+
+/**
+ * Ledger home for a session/run path: derive package home from `.ak-roles` topology
+ * when present, otherwise the passwd/profile machine home. Single authority for
+ * "path → ledger home" (call sites pass the path only).
+ */
+export function resolveActivationLedgerHomeForPath(path?: string | null): string {
+  if (typeof path === "string" && path.length > 0) {
+    const derived = tryHomeFromAkRolesPath(path);
+    if (derived !== undefined && derived.length > 0) {
+      return resolveActivationLedgerHome(derived);
+    }
+  }
+  return resolveActivationLedgerHome();
 }
 
 /** Enumerable book directory for one basename key. */

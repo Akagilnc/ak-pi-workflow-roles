@@ -1,99 +1,73 @@
+/**
+ * Small seam: package home topology ignores process.env.HOME (#604).
+ * Pure path/default resolution only — CLI write-surface lives in integration.
+ */
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { userInfo } from "node:os";
+import { resolve } from "node:path";
 import test from "node:test";
 
 import {
+  ActivationLedgerError,
   homeFromRunDirectory,
   packageMachineHome,
   resolveActivationLedgerHome,
+  resolveActivationLedgerHomeForPath,
+  tryHomeFromAkRolesPath,
 } from "../../src/activation-ledger-topology.ts";
-import { runAkRole } from "../../src/public-cli/cli.ts";
 
 const REAL_PASSWD_HOME = resolve(userInfo().homedir);
-const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 test("packageMachineHome resolves passwd/user-profile homedir, never process.env.HOME", () => {
-  const fakeTmpHome = mkdtempSync(join(tmpdir(), "ak-fake-home-"));
   const previousHome = process.env.HOME;
   try {
-    process.env.HOME = fakeTmpHome;
+    process.env.HOME = "/tmp/ak-fake-home-must-not-win";
     assert.equal(packageMachineHome(), REAL_PASSWD_HOME);
-    assert.notEqual(packageMachineHome(), fakeTmpHome);
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
-    rmSync(fakeTmpHome, { recursive: true, force: true });
   }
 });
 
 test("resolveActivationLedgerHome default uses packageMachineHome, ignoring process.env.HOME", () => {
-  const fakeTmpHome = mkdtempSync(join(tmpdir(), "ak-fake-home-"));
   const previousHome = process.env.HOME;
   try {
-    process.env.HOME = fakeTmpHome;
-    const defaultLedgerHome = resolveActivationLedgerHome();
-    assert.equal(defaultLedgerHome, resolve(REAL_PASSWD_HOME, ".ak-roles"));
-    assert.notEqual(defaultLedgerHome, resolve(fakeTmpHome, ".ak-roles"));
-
-    // Explicit injection still works
-    const customHome = resolve(fakeTmpHome, "injected");
-    assert.equal(
-      resolveActivationLedgerHome(() => customHome),
-      resolve(customHome, ".ak-roles"),
-    );
+    process.env.HOME = "/tmp/ak-fake-home-must-not-win";
+    assert.equal(resolveActivationLedgerHome(), resolve(REAL_PASSWD_HOME, ".ak-roles"));
+    const customHome = "/custom/injected/home";
+    assert.equal(resolveActivationLedgerHome(customHome), resolve(customHome, ".ak-roles"));
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
-    rmSync(fakeTmpHome, { recursive: true, force: true });
   }
 });
 
-test("homeFromRunDirectory extracts home from .ak-roles path and throws otherwise (no HOME fallback)", () => {
-  const fakeTmpHome = mkdtempSync(join(tmpdir(), "ak-fake-home-"));
+test("tryHomeFromAkRolesPath / homeFromRunDirectory: derive or typed fail, no HOME fallback", () => {
   const previousHome = process.env.HOME;
   try {
-    process.env.HOME = fakeTmpHome;
+    process.env.HOME = "/tmp/ak-fake-home-must-not-win";
 
     const normalRunDir = "/custom/home/path/.ak-roles/books/my-repo/runs/0123@coder";
+    assert.equal(tryHomeFromAkRolesPath(normalRunDir), "/custom/home/path");
     assert.equal(homeFromRunDirectory(normalRunDir), "/custom/home/path");
+    assert.equal(
+      resolveActivationLedgerHomeForPath(normalRunDir),
+      resolve("/custom/home/path", ".ak-roles"),
+    );
 
     const nonAkRolesDir = "/some/random/dir/not/in/ledger";
+    assert.equal(tryHomeFromAkRolesPath(nonAkRolesDir), undefined);
+    assert.equal(
+      resolveActivationLedgerHomeForPath(nonAkRolesDir),
+      resolve(REAL_PASSWD_HOME, ".ak-roles"),
+    );
     assert.throws(
       () => homeFromRunDirectory(nonAkRolesDir),
-      /cannot resolve home from runDirectory/,
+      (error: unknown) =>
+        error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
     );
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
-    rmSync(fakeTmpHome, { recursive: true, force: true });
-  }
-});
-
-test("acceptance: HOME=<tmpdir> ak-role operations do not create .ak-roles in tmpdir", async () => {
-  const fakeTmpHome = mkdtempSync(join(tmpdir(), "ak-fake-cli-home-"));
-  const previousHome = process.env.HOME;
-  try {
-    process.env.HOME = fakeTmpHome;
-
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const result = await runAkRole(["roles"], {
-      packageRoot: PACKAGE_ROOT,
-      io: {
-        stdout: (text) => stdout.push(text),
-        stderr: (text) => stderr.push(text),
-      },
-    });
-
-    assert.equal(result.exitCode, 0);
-    // fakeTmpHome must NOT have .ak-roles created in it
-    assert.equal(existsSync(join(fakeTmpHome, ".ak-roles")), false);
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    rmSync(fakeTmpHome, { recursive: true, force: true });
   }
 });

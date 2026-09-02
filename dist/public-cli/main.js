@@ -108,19 +108,26 @@ import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, 
 function packageMachineHome() {
   return resolve2(userInfo().homedir);
 }
-function homeFromRunDirectory(runDirectory) {
+function tryHomeFromAkRolesPath(path) {
   const marker = `${sep}.ak-roles${sep}`;
-  const idx = runDirectory.indexOf(marker);
+  const idx = path.indexOf(marker);
   if (idx !== -1) {
-    return runDirectory.slice(0, idx);
+    return path.slice(0, idx);
   }
   const altMarker = ".ak-roles";
-  const altIdx = runDirectory.indexOf(altMarker);
-  if (altIdx !== -1) {
-    const candidate = runDirectory.slice(0, altIdx);
-    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  const altIdx = path.indexOf(altMarker);
+  if (altIdx === -1) return void 0;
+  const candidate = path.slice(0, altIdx);
+  return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+}
+function homeFromRunDirectory(runDirectory) {
+  const home = tryHomeFromAkRolesPath(runDirectory);
+  if (home === void 0 || home.length === 0) {
+    throw new ActivationLedgerError(
+      `cannot resolve home from runDirectory: ${runDirectory}`
+    );
   }
-  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
+  return home;
 }
 function resolveActivationLedgerHome(home) {
   const processHome = typeof home === "string" ? home : home?.() ?? packageMachineHome();
@@ -130,6 +137,15 @@ function resolveActivationLedgerHome(home) {
     );
   }
   return resolve2(processHome, ".ak-roles");
+}
+function resolveActivationLedgerHomeForPath(path) {
+  if (typeof path === "string" && path.length > 0) {
+    const derived = tryHomeFromAkRolesPath(path);
+    if (derived !== void 0 && derived.length > 0) {
+      return resolveActivationLedgerHome(derived);
+    }
+  }
+  return resolveActivationLedgerHome();
 }
 function activationBookDirectory(ledgerHome, bookKey) {
   return join2(ledgerHome, "books", bookKey);
@@ -15819,19 +15835,7 @@ function resolveSitianRecordPathInLedger(input, ledgerHome) {
   return { sessionDir, recordFile, ledgerHome };
 }
 function resolveSitianRecordPath(input) {
-  let ledgerHome;
-  if (input.home !== void 0 && input.home.length > 0) {
-    ledgerHome = resolveActivationLedgerHome(() => input.home);
-  } else if (input.sessionParent !== void 0 && input.sessionParent.length > 0) {
-    try {
-      const home = homeFromRunDirectory(input.sessionParent);
-      ledgerHome = resolveActivationLedgerHome(() => home);
-    } catch {
-      ledgerHome = resolveActivationLedgerHome();
-    }
-  } else {
-    ledgerHome = resolveActivationLedgerHome();
-  }
+  const ledgerHome = input.home !== void 0 && input.home.length > 0 ? resolveActivationLedgerHome(input.home) : resolveActivationLedgerHomeForPath(input.sessionParent);
   return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 function appendSitianRecord(input) {
@@ -27788,12 +27792,7 @@ async function resolveCountersignTicketBinding(admitted, env) {
 async function runCountersignDiaristStation(admitted, env) {
   if (admitted.ticketNumber === void 0) return void 0;
   const issueFace = await loadBoundIssueFace(admitted);
-  let home;
-  try {
-    home = homeFromRunDirectory(admitted.runDirectory);
-  } catch {
-    home = void 0;
-  }
+  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
   const result2 = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
@@ -27805,12 +27804,7 @@ async function runCountersignDiaristStation(admitted, env) {
   return result2;
 }
 function persistIssueSourceFailure(admitted, ticketNumber, error) {
-  let home;
-  try {
-    home = homeFromRunDirectory(admitted.runDirectory);
-  } catch {
-    home = void 0;
-  }
+  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
   appendIssueSourceFailureDiagnostic({
     ticketNumber,
     cwd: admitted.projectRoot,
@@ -27873,6 +27867,7 @@ var init_countersign_run = __esm({
     init_engine_material();
     init_cli_errors();
     init_invocation();
+    init_activation_ledger_topology();
     init_post_admission();
     init_run_lifecycle();
     init_settlement();

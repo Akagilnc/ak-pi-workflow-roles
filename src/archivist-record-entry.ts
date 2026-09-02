@@ -14,10 +14,9 @@ import {
   activationBookDirectory,
   ensureRealDirectoryTree,
   errorText,
-  homeFromRunDirectory,
   pathContainedIn,
   physicallyContainedIn,
-  resolveActivationLedgerHome,
+  resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
@@ -138,19 +137,8 @@ function assertRecentFinalFileUnderSessionDir(
 export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  // Prefer the parent principal's home so nests stay beside the admitted run
-  // (explicit env.home / hermetic fixtures). Never follow process.env.HOME (#604).
-  let ledgerHome: string;
-  if (typeof parentFile === "string" && parentFile.length > 0) {
-    try {
-      const derived = homeFromRunDirectory(parentFile);
-      ledgerHome = resolveActivationLedgerHome(() => derived);
-    } catch {
-      ledgerHome = resolveActivationLedgerHome();
-    }
-  } else {
-    ledgerHome = resolveActivationLedgerHome();
-  }
+  // Path → ledger home is owned by topology (explicit env.home nests via parent path).
+  const ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
 
   let sessionDir: string;
   let parentSession: string | undefined;

@@ -7,10 +7,9 @@
 import { resolve } from "node:path";
 
 import {
-  homeFromRunDirectory,
   physicalPathIdentity,
   physicallyContainedIn,
-  resolveActivationLedgerHome,
+  resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
 
 /**
@@ -42,18 +41,9 @@ function workIdentityFromCwd(cwd: string): string | undefined {
 /** Machine-ledger session paths are not work identity (ADR 0048 session-in-home). */
 function isMachineLedgerSessionPath(sessionPath: string): boolean {
   // Physical containment under the package ledger home — never directory spelling,
-  // and stable across macOS /var ↔ /private/var realpath asymmetry.
-  // Any path under an `.ak-roles` tree is ledger topology (passwd home or explicit
-  // test injection); do not consult process.env.HOME (#604).
-  if (physicallyContainedIn(resolveActivationLedgerHome(), sessionPath)) {
-    return true;
-  }
-  try {
-    const home = homeFromRunDirectory(sessionPath);
-    return physicallyContainedIn(resolveActivationLedgerHome(() => home), sessionPath);
-  } catch {
-    return false;
-  }
+  // and stable across macOS /var ↔ /private/var realpath asymmetry. Path → ledger
+  // home is topology-owned (passwd or explicit injection via `.ak-roles` path).
+  return physicallyContainedIn(resolveActivationLedgerHomeForPath(sessionPath), sessionPath);
 }
 
 /**

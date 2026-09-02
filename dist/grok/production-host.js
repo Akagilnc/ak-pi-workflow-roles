@@ -106,19 +106,17 @@ import { basename as basename2, dirname as dirname5, isAbsolute as isAbsolute2, 
 function packageMachineHome() {
   return resolve4(userInfo().homedir);
 }
-function homeFromRunDirectory(runDirectory) {
+function tryHomeFromAkRolesPath(path) {
   const marker = `${sep}.ak-roles${sep}`;
-  const idx = runDirectory.indexOf(marker);
+  const idx = path.indexOf(marker);
   if (idx !== -1) {
-    return runDirectory.slice(0, idx);
+    return path.slice(0, idx);
   }
   const altMarker = ".ak-roles";
-  const altIdx = runDirectory.indexOf(altMarker);
-  if (altIdx !== -1) {
-    const candidate = runDirectory.slice(0, altIdx);
-    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
-  }
-  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
+  const altIdx = path.indexOf(altMarker);
+  if (altIdx === -1) return void 0;
+  const candidate = path.slice(0, altIdx);
+  return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
 }
 function resolveActivationLedgerHome(home) {
   const processHome = typeof home === "string" ? home : home?.() ?? packageMachineHome();
@@ -128,6 +126,15 @@ function resolveActivationLedgerHome(home) {
     );
   }
   return resolve4(processHome, ".ak-roles");
+}
+function resolveActivationLedgerHomeForPath(path) {
+  if (typeof path === "string" && path.length > 0) {
+    const derived = tryHomeFromAkRolesPath(path);
+    if (derived !== void 0 && derived.length > 0) {
+      return resolveActivationLedgerHome(derived);
+    }
+  }
+  return resolveActivationLedgerHome();
 }
 function activationBookDirectory(ledgerHome, bookKey) {
   return join3(ledgerHome, "books", bookKey);
@@ -438,17 +445,7 @@ function assertRecentFinalFileUnderSessionDir(sessionDir, recentFile) {
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  let ledgerHome;
-  if (typeof parentFile === "string" && parentFile.length > 0) {
-    try {
-      const derived = homeFromRunDirectory(parentFile);
-      ledgerHome = resolveActivationLedgerHome(() => derived);
-    } catch {
-      ledgerHome = resolveActivationLedgerHome();
-    }
-  } else {
-    ledgerHome = resolveActivationLedgerHome();
-  }
+  const ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
   let sessionDir;
   let parentSession;
   if (options.subject !== void 0) {
@@ -2995,19 +2992,7 @@ function resolveSitianRecordPathInLedger(input, ledgerHome) {
   return { sessionDir, recordFile, ledgerHome };
 }
 function resolveSitianRecordPath(input) {
-  let ledgerHome;
-  if (input.home !== void 0 && input.home.length > 0) {
-    ledgerHome = resolveActivationLedgerHome(() => input.home);
-  } else if (input.sessionParent !== void 0 && input.sessionParent.length > 0) {
-    try {
-      const home = homeFromRunDirectory(input.sessionParent);
-      ledgerHome = resolveActivationLedgerHome(() => home);
-    } catch {
-      ledgerHome = resolveActivationLedgerHome();
-    }
-  } else {
-    ledgerHome = resolveActivationLedgerHome();
-  }
+  const ledgerHome = input.home !== void 0 && input.home.length > 0 ? resolveActivationLedgerHome(input.home) : resolveActivationLedgerHomeForPath(input.sessionParent);
   return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 function appendSitianRecord(input) {
@@ -5243,15 +5228,7 @@ function workIdentityFromCwd(cwd) {
   return void 0;
 }
 function isMachineLedgerSessionPath(sessionPath) {
-  if (physicallyContainedIn(resolveActivationLedgerHome(), sessionPath)) {
-    return true;
-  }
-  try {
-    const home = homeFromRunDirectory(sessionPath);
-    return physicallyContainedIn(resolveActivationLedgerHome(() => home), sessionPath);
-  } catch {
-    return false;
-  }
+  return physicallyContainedIn(resolveActivationLedgerHomeForPath(sessionPath), sessionPath);
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
@@ -8174,13 +8151,7 @@ function createSubmissionLedgerHost(host, outputTools, failInfrastructure2 = (er
   const resolveHomeFromContext = (context) => {
     if (options?.home !== void 0) return options.home;
     const sessionFile = context.sessionManager.getSessionFile?.() || context.sessionManager.getSessionDir?.();
-    if (sessionFile) {
-      try {
-        return homeFromRunDirectory(sessionFile);
-      } catch {
-      }
-    }
-    return void 0;
+    return typeof sessionFile === "string" && sessionFile.length > 0 ? tryHomeFromAkRolesPath(sessionFile) : void 0;
   };
   const stateFor = (context, runId) => states.get(runId) ?? (() => {
     const home = resolveHomeFromContext(context);
@@ -12746,17 +12717,7 @@ function createRoleRuntimeExtension(dependencies) {
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
         const sessionFile = ctx.sessionManager.getSessionFile?.() || ctx.sessionManager.getSessionDir?.();
-        let ledgerHome;
-        if (sessionFile) {
-          try {
-            const derivedHome = homeFromRunDirectory(sessionFile);
-            ledgerHome = resolveActivationLedgerHome(() => derivedHome);
-          } catch {
-            ledgerHome = resolveActivationLedgerHome();
-          }
-        } else {
-          ledgerHome = resolveActivationLedgerHome();
-        }
+        const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
         if (dependencies.createNavigatorAttendance !== void 0) {
           let work;

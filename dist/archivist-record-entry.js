@@ -8,10 +8,9 @@ import {
   activationBookDirectory,
   ensureRealDirectoryTree,
   errorText,
-  homeFromRunDirectory,
   pathContainedIn,
   physicallyContainedIn,
-  resolveActivationLedgerHome
+  resolveActivationLedgerHomeForPath
 } from "./activation-ledger-topology.js";
 const CURRENT_SESSION_LEDGER = "current-session.json";
 function readCurrentSession(sessionDir) {
@@ -77,17 +76,7 @@ function assertRecentFinalFileUnderSessionDir(sessionDir, recentFile) {
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  let ledgerHome;
-  if (typeof parentFile === "string" && parentFile.length > 0) {
-    try {
-      const derived = homeFromRunDirectory(parentFile);
-      ledgerHome = resolveActivationLedgerHome(() => derived);
-    } catch {
-      ledgerHome = resolveActivationLedgerHome();
-    }
-  } else {
-    ledgerHome = resolveActivationLedgerHome();
-  }
+  const ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
   let sessionDir;
   let parentSession;
   if (options.subject !== void 0) {

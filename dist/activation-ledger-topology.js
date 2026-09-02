@@ -19,19 +19,26 @@ class ActivationLedgerError extends Error {
 function packageMachineHome() {
   return resolve(userInfo().homedir);
 }
-function homeFromRunDirectory(runDirectory) {
+function tryHomeFromAkRolesPath(path) {
   const marker = `${sep}.ak-roles${sep}`;
-  const idx = runDirectory.indexOf(marker);
+  const idx = path.indexOf(marker);
   if (idx !== -1) {
-    return runDirectory.slice(0, idx);
+    return path.slice(0, idx);
   }
   const altMarker = ".ak-roles";
-  const altIdx = runDirectory.indexOf(altMarker);
-  if (altIdx !== -1) {
-    const candidate = runDirectory.slice(0, altIdx);
-    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  const altIdx = path.indexOf(altMarker);
+  if (altIdx === -1) return void 0;
+  const candidate = path.slice(0, altIdx);
+  return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+}
+function homeFromRunDirectory(runDirectory) {
+  const home = tryHomeFromAkRolesPath(runDirectory);
+  if (home === void 0 || home.length === 0) {
+    throw new ActivationLedgerError(
+      `cannot resolve home from runDirectory: ${runDirectory}`
+    );
   }
-  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
+  return home;
 }
 function resolveActivationLedgerHome(home) {
   const processHome = typeof home === "string" ? home : home?.() ?? packageMachineHome();
@@ -41,6 +48,15 @@ function resolveActivationLedgerHome(home) {
     );
   }
   return resolve(processHome, ".ak-roles");
+}
+function resolveActivationLedgerHomeForPath(path) {
+  if (typeof path === "string" && path.length > 0) {
+    const derived = tryHomeFromAkRolesPath(path);
+    if (derived !== void 0 && derived.length > 0) {
+      return resolveActivationLedgerHome(derived);
+    }
+  }
+  return resolveActivationLedgerHome();
 }
 function activationBookDirectory(ledgerHome, bookKey) {
   return join(ledgerHome, "books", bookKey);
@@ -254,5 +270,7 @@ export {
   pathContainedIn,
   physicalPathIdentity,
   physicallyContainedIn,
-  resolveActivationLedgerHome
+  resolveActivationLedgerHome,
+  resolveActivationLedgerHomeForPath,
+  tryHomeFromAkRolesPath
 };
