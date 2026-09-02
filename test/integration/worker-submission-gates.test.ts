@@ -49,6 +49,7 @@ import {
   withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
+import { packageMachineHome } from "../../src/activation-ledger-topology.ts";
 
 const FACTORY = "ak-roles:";
 const OWNED_MARKER = "ak-roles: worker-submission-gates reference-transaction";
@@ -66,14 +67,20 @@ async function withTempGit<T>(
   fn: (root: string) => Promise<T> | T,
   options?: { seed?: boolean },
 ): Promise<T> {
+  // Gate bounce state is in-memory when arm() has no parent. Sitian still falls
+  // through to packageMachineHome with bookKey=basename(root); clean that book
+  // in finally so #604 real-home isolation holds without durable-resume side effects.
   const root = await mkdtemp(join(tmpdir(), "ak-worker-gate-"));
   git(root, ["init", "-b", "main"]);
   configureGitUser(root);
   if (options?.seed !== false) git(root, ["commit", "--allow-empty", "-m", "seed"]);
+  const bookKey = root.split("/").filter(Boolean).at(-1)!;
+  const leakedBook = join(packageMachineHome(), ".ak-roles", "books", bookKey);
   try {
     return await fn(root);
   } finally {
     await rm(root, { recursive: true, force: true });
+    await rm(leakedBook, { recursive: true, force: true });
   }
 }
 

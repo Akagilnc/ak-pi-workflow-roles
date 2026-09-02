@@ -42,7 +42,7 @@ function readHostModelsHash(): string | null {
   return sha256(readFileSync(path));
 }
 
-/** Exact heavy set — independent expected literals, not runner import (#160; #319 Batch 4 R1 split). */
+/** Exact heavy set — independent expected literals, not runner import (#160; #319 Batch 4 R1 split; #604 cold real-bin). */
 const TICKET_HEAVYWEIGHT = [
   "test/integration/audit-failure-subprocess.test.ts",
   "test/integration/public-cli-judge-run.test.ts",
@@ -53,6 +53,8 @@ const TICKET_HEAVYWEIGHT = [
   "test/package/package-entrypoint-packaged-workers.integration.test.ts",
   "test/package/doctor-package-lifecycle.test.ts",
   "test/package/public-cli-install.test.ts",
+  "test/package/public-cli-cold-matrix.test.ts",
+  "test/integration/public-cli-coder-installed-run.test.ts",
 ] as const;
 
 type ChildRecord = {
