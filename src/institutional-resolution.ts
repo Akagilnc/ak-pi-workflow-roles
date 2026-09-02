@@ -20,10 +20,23 @@ export type InstitutionalResolutionPage = {
   };
 };
 
+/** Why institutional seat read failed — structured, not free-text. */
+export type InstitutionalResolutionFailureReason =
+  | "missing-page"
+  | "missing-seat"
+  | "corrupted"
+  | "invalid-format";
+
 export class InstitutionalResolutionError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly reason: InstitutionalResolutionFailureReason;
+  constructor(
+    message: string,
+    reason: InstitutionalResolutionFailureReason,
+    options?: ErrorOptions,
+  ) {
     super(message, options);
     this.name = "InstitutionalResolutionError";
+    this.reason = reason;
   }
 }
 
@@ -41,6 +54,10 @@ function cleanSelection(model?: { provider?: string; model?: string; thinking?: 
  * Resolve effective per-seat institutional selections (#518 §2 Hop 1):
  * - gatekeeper / inspector / notary: seat override > gatekeeper override > parent effective
  * - auditor / evidenceChild: parent effective
+ * - navigator: explicit config seat only. Navigator model authority stays
+ *   `navigator-model.json`; the page never carries a parent-inherited navigator
+ *   seat, so host-neutral transport cannot shadow that setting (#590 Out of Scope:
+ *   席位表／模型路由变更归 owner 域).
  */
 export function resolveInstitutionalSeatSelections(
   config: PublicCliConfig,
@@ -51,12 +68,14 @@ export function resolveInstitutionalSeatSelections(
   const ownInspector = cleanSelection(seatModelOnly(config.seats?.inspector));
   const ownNotary = cleanSelection(seatModelOnly(config.seats?.notary));
   const ownGatekeeper = cleanSelection(seatModelOnly(config.seats?.gatekeeper));
+  const ownNavigator = cleanSelection(seatModelOnly(config.seats?.navigator));
 
   const gatekeeper = ownGatekeeper ?? parentSelection;
   const inspector = ownInspector ?? ownGatekeeper ?? parentSelection;
   const notary = ownNotary ?? ownGatekeeper ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
+  const navigator = ownNavigator;
 
   return {
     version: 1,
@@ -66,6 +85,7 @@ export function resolveInstitutionalSeatSelections(
       ...(notary === undefined ? {} : { notary }),
       ...(auditor === undefined ? {} : { auditor }),
       ...(evidenceChild === undefined ? {} : { evidenceChild }),
+      ...(navigator === undefined ? {} : { navigator }),
     },
   };
 }
@@ -97,6 +117,7 @@ export async function readInstitutionalSeatSelection(
   } catch (error) {
     throw new InstitutionalResolutionError(
       `institutional resolution page is missing at ${filePath}`,
+      "missing-page",
       { cause: error },
     );
   }
@@ -107,6 +128,7 @@ export async function readInstitutionalSeatSelection(
   } catch (error) {
     throw new InstitutionalResolutionError(
       `institutional resolution page is corrupted at ${filePath}`,
+      "corrupted",
       { cause: error },
     );
   }
@@ -114,6 +136,7 @@ export async function readInstitutionalSeatSelection(
   if (typeof page !== "object" || page === null || (page as { version?: unknown }).version !== 1) {
     throw new InstitutionalResolutionError(
       `institutional resolution page format is invalid at ${filePath}`,
+      "invalid-format",
     );
   }
 
@@ -121,6 +144,7 @@ export async function readInstitutionalSeatSelection(
   if (typeof seats !== "object" || seats === null) {
     throw new InstitutionalResolutionError(
       `institutional resolution page missing seats object at ${filePath}`,
+      "invalid-format",
     );
   }
 
@@ -128,6 +152,7 @@ export async function readInstitutionalSeatSelection(
   if (selection === undefined) {
     throw new InstitutionalResolutionError(
       `institutional resolution page has no resolution for seat "${seat}" at ${filePath}`,
+      "missing-seat",
     );
   }
 
