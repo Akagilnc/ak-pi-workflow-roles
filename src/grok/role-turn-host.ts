@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
+import { copyFile, lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -12,6 +13,8 @@ import { installGrokPreToolUseDeny } from "./bash-seatbelt.ts";
 export interface GrokAcpConnection {
   request(method: string, params: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>>;
   notify(method: string, params: Readonly<Record<string, unknown>>): void;
+  /** Subscribe to agent→client notifications (session/update stream, etc.). */
+  onNotification?(handler: (method: string, params: Readonly<Record<string, unknown>>) => void): void;
   close(): Promise<void>;
 }
 
@@ -59,6 +62,112 @@ export function renderGrokSystemPromptOverride(authority: {
   readonly materials: readonly unknown[];
 }): string {
   return renderAgentStartMaterials(authority.body, authority.materials);
+}
+
+/** Durable books session path (sole cross-host true source — #617 DK-1). */
+export function grokSessionJsonlPath(runDirectory: string): string {
+  return join(runDirectory, "session", "session.jsonl");
+}
+
+/**
+ * Extract provider-visible conversation turns from session/session.jsonl.
+ * User/assistant text only — tool plumbing stays host-local. Used to rebuild a
+ * fresh ACP session so JSONL, not the Grok ACP binding, is the history authority.
+ */
+export function extractGrokRebuildHistory(
+  sessionJsonl: string,
+): readonly { readonly role: "user" | "assistant"; readonly text: string }[] {
+  const turns: Array<{ role: "user" | "assistant"; text: string }> = [];
+  for (const line of sessionJsonl.split("\n")) {
+    if (line.trim() === "") continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (entry.type !== "message" || typeof entry.message !== "object" || entry.message === null) {
+      continue;
+    }
+    const message = entry.message as { role?: unknown; content?: unknown };
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    const text = extractMessageText(message.content);
+    if (text === undefined || text.trim() === "") continue;
+    turns.push({ role: message.role, text });
+  }
+  return turns;
+}
+
+function extractMessageText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const part of content) {
+    if (typeof part === "string") {
+      parts.push(part);
+      continue;
+    }
+    if (typeof part !== "object" || part === null) continue;
+    const record = part as { type?: unknown; text?: unknown };
+    if (record.type === "text" && typeof record.text === "string") parts.push(record.text);
+  }
+  const joined = parts.join("").trim();
+  return joined === "" ? undefined : joined;
+}
+
+/** Format JSONL-derived history for ACP embeddedContext (promptCapabilities.embeddedContext). */
+export function formatGrokRebuildHistoryContext(
+  turns: readonly { readonly role: "user" | "assistant"; readonly text: string }[],
+): string {
+  if (turns.length === 0) return "";
+  return turns.map((turn) => `${turn.role}:\n${turn.text}`).join("\n\n");
+}
+
+/** Build session/prompt content: continuation text + optional JSONL history resource. */
+export function buildGrokResumePromptContent(
+  continuationPrompt: string,
+  historyContext: string,
+): readonly Readonly<Record<string, unknown>>[] {
+  const content: Array<Record<string, unknown>> = [
+    { type: "text", text: continuationPrompt },
+  ];
+  if (historyContext.trim() !== "") {
+    content.push({
+      type: "resource",
+      resource: {
+        uri: "context://ak-role/session-history",
+        mimeType: "text/plain",
+        text: historyContext,
+      },
+    });
+  }
+  return content;
+}
+
+/**
+ * Append one Pi-shaped message entry to the durable session JSONL (books true source).
+ * prepare owns layout creation (`session/session.jsonl`); when that file is absent
+ * (unit fixtures with a faux prepare) the append is a no-op so ACP turns still run.
+ */
+export function appendGrokSessionMessage(
+  sessionFile: string,
+  role: "user" | "assistant",
+  text: string,
+): void {
+  if (text.trim() === "") return;
+  try {
+    appendFileSync(
+      sessionFile,
+      `${JSON.stringify({
+        type: "message",
+        message: { role, content: [{ type: "text", text }] },
+      })}\n`,
+      "utf8",
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
 }
 
 export type GrokCapabilityDeclaration = Readonly<{
@@ -197,6 +306,9 @@ export function connectGrokAcpStdio(options: {
       if (closed) throw terminalError ?? acpError("acp-connection-closed", "Grok ACP connection is closed");
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
     },
+    onNotification(handler) {
+      notificationHandlers.push(handler);
+    },
     async close() {
       if (closed) return;
       settleClosed(acpError("acp-connection-closed", "Grok ACP connection is closed"));
@@ -265,35 +377,56 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             });
           }
           const continuation = request.continuation;
-          // Same-host grok resume reuses the durable ACP binding via session/load.
-          // Cross-host rebuild (#617 DK-1): missing binding ⇒ session/new from the
-          // shared session/session.jsonl true source, then bind the new ACP id.
-          const resumedSessionId = continuation.kind === "resume"
-            ? await config.sessionIdentity.load(request.principal)
-            : undefined;
-          const openMethod =
-            continuation.kind === "resume" && resumedSessionId !== undefined
-              ? "session/load"
-              : "session/new";
+          // #617 DK-1: session/session.jsonl is the sole history authority. Every
+          // Grok resume rebuilds via session/new + JSONL embeddedContext — never
+          // session/load from a possibly-stale ACP binding (Pi→grok blank rebuild
+          // and grok→Pi→grok missing intermediate Pi history both fail that way).
+          // Binding is rewritten to the new ACP id after open; it is not a second true source.
+          let rebuildHistoryContext = "";
+          if (continuation.kind === "resume") {
+            const sessionFile = grokSessionJsonlPath(request.runDirectory);
+            try {
+              const raw = await readFile(sessionFile, "utf8");
+              rebuildHistoryContext = formatGrokRebuildHistoryContext(
+                extractGrokRebuildHistory(raw),
+              );
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            }
+          }
           const session = await connection.request(
-            openMethod,
+            "session/new",
             {
-              ...(resumedSessionId === undefined ? {} : { sessionId: resumedSessionId }),
               cwd: request.cwd,
               mcpServers: prepared.mcpServers,
               _meta: { systemPromptOverride: renderGrokSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
             },
           );
-          sessionId = resumedSessionId ?? (typeof session.sessionId === "string" ? session.sessionId : undefined);
+          sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
           if (sessionId === undefined || sessionId === "") {
             return failure("session", "GrokAcpSessionFailure", "session-id-missing");
           }
-          if (continuation.kind === "initial" || resumedSessionId === undefined) {
-            await config.sessionIdentity.bind(request.principal, sessionId);
-          }
+          await config.sessionIdentity.bind(request.principal, sessionId);
           let prompt = prepared.prompt;
           const abortSignal = prepared.abortSignal;
           const activeConnection = connection;
+          const sessionFile = grokSessionJsonlPath(request.runDirectory);
+          // First resume prompt carries JSONL history; retry prompts stay bare.
+          let deliverRebuildHistory = continuation.kind === "resume" && rebuildHistoryContext !== "";
+          // Accumulate assistant text from ACP session/update so JSONL stays the true source.
+          let assistantChunks: string[] = [];
+          activeConnection.onNotification?.((method, params) => {
+            if (method !== "session/update") return;
+            const update = (params as { update?: unknown }).update;
+            if (typeof update !== "object" || update === null) return;
+            const record = update as { sessionUpdate?: unknown; content?: unknown };
+            if (record.sessionUpdate !== "agent_message_chunk") return;
+            const content = record.content;
+            if (typeof content === "object" && content !== null) {
+              const text = (content as { type?: unknown; text?: unknown }).text;
+              if (typeof text === "string") assistantChunks.push(text);
+            }
+          });
           /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
           const promptOrAbort = async (
             params: Readonly<Record<string, unknown>>,
@@ -332,9 +465,16 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           for (let attempt = 0; attempt < 8; attempt += 1) {
             let result: Readonly<Record<string, unknown>>;
             try {
+              const promptContent = deliverRebuildHistory
+                ? buildGrokResumePromptContent(prompt, rebuildHistoryContext)
+                : [{ type: "text", text: prompt }];
+              deliverRebuildHistory = false;
+              // Book the user turn onto durable JSONL before ACP sees it.
+              appendGrokSessionMessage(sessionFile, "user", prompt);
+              assistantChunks = [];
               result = await promptOrAbort({
                 sessionId,
-                prompt: [{ type: "text", text: prompt }],
+                prompt: promptContent,
               });
             } catch (error) {
               // Envelope abort (typed infra declaration): closeRound owns the failure record.
@@ -351,6 +491,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               }
               throw error;
             }
+            appendGrokSessionMessage(sessionFile, "assistant", assistantChunks.join(""));
             if (result.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }

@@ -442,18 +442,23 @@ export async function prepareGrokRoleEnvelope(options: {
             calls.push({ toolCallId, toolName: name });
             // First-record-then-audit: book the tool-call leaf before execute so
             // judge/doctor subject gates see the candidate on parent session books.
-            sessionEntries.push({
-              type: "message",
-              message: {
-                role: "assistant",
-                content: [{
-                  type: "toolCall",
-                  id: toolCallId,
-                  name,
-                  arguments: params?.arguments ?? {},
-                }],
-              },
-            });
+            {
+              const entry = {
+                type: "message",
+                message: {
+                  role: "assistant" as const,
+                  content: [{
+                    type: "toolCall",
+                    id: toolCallId,
+                    name,
+                    arguments: params?.arguments ?? {},
+                  }],
+                },
+              };
+              sessionEntries.push(entry);
+              // Durable books true source (#617): tool-call leaves must survive for cross-host rebuild.
+              appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
+            }
             try {
               await emit("tool_execution_start", { toolCallId, toolName: name });
               const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} }))

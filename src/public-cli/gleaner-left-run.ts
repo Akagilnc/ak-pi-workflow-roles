@@ -20,7 +20,7 @@ import {
 import {
   loadResumableGleanerLeftRun,
   markRunAdmitted,
-  selectResumeContinuationPrompt,
+  buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -171,7 +171,11 @@ export async function runPublicGleanerLeftResume(
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message),
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
   });
 
@@ -181,5 +185,6 @@ export async function runPublicGleanerLeftResume(
     io,
     request: turnRequest,
     adapters: gleanerLeftAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

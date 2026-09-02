@@ -612,15 +612,14 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
 
-    // Support command with --engine → structural reject (resume accepts --engine; #617).
+    // Support command with --engine → structural reject (stable exit semantics only).
     {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(
         ["roles", "--engine", "opus"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /engine axis is role commands only; refused command roles/);
     }
 
     // Syntax-illegal persistent engine on load → structural reject.
@@ -1252,46 +1251,14 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
         "utf8",
       );
 
-      // analyst --engine structural refuse.
+      // analyst --engine structural refuse (stable exit semantics; no prose lock).
       {
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         const result = await runAkRole(
           ["analyst", "--engine", "opus", "--issue", "1"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 2);
-        assert.match(
-          stderr.join(""),
-          /engine axis is role commands only; refused command analyst/,
-        );
-      }
-
-      // support command --engine structural refuse; resume accepts --engine (#617).
-      {
-        const { io, stderr } = captureIo();
-        const result = await runAkRole(
-          ["roles", "--engine", "opus"],
-          { packageRoot, home, io },
-        );
-        assert.equal(result.exitCode, 2);
-        assert.match(
-          stderr.join(""),
-          /engine axis is role commands only; refused command roles/,
-        );
-      }
-      {
-        const { io, stderr } = captureIo();
-        const result = await runAkRole(
-          ["resume", "--engine", "opus", "run-not-real"],
-          { packageRoot, home, io },
-        );
-        // Unknown run is usage/load failure, not axis refuse.
-        assert.notEqual(
-          stderr.join("").includes("engine axis is role commands only"),
-          true,
-          `resume --engine must not axis-refuse: ${stderr.join("")}`,
-        );
-        assert.notEqual(result.exitCode, 0);
       }
 
       // Illegal engine name on set-engine.

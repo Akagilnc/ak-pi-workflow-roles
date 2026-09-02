@@ -1,14 +1,15 @@
 /**
- * #526 / #600: engine field stays effective across the initial / auto-resume /
- * explicit-resume typed request for all five resumable seats; resume also
+ * #526 / #600 / #617: engine field stays effective across the initial / auto-resume /
+ * explicit-resume typed request for all seven resumable seats; resume also
  * projects engine onto invocation.json and continuation material coordinates.
+ * Engine present→absent resume clears invocation.engine (authoritative seat axis).
  *
  * Drives the real public entry (`runAkRole`) with the minimal host-neutral host
  * (`createMinimalHost`) so the proof exercises the production composition root.
  *
- * - Initial: asserted for all five resumable seats (judge/coder/fixer/reviewer/merger).
- * - Auto: asserted across all five resumable seats (initial + auto-resume payloads).
- * - Explicit: asserted across all five resumable seats (`ak-role resume <runId>`).
+ * - Initial/auto: five core seats (judge/coder/fixer/reviewer/merger).
+ * - Explicit: all seven resumable seats (+ countersign / gleaner-left).
+ * - Unset: engine-bearing run → unset-engine → resume clears invocation.engine.
  *
  * No argv flag assertions — typed `request.engine`, invocation.engine, and
  * structured material coordinates on the resume continuation prompt only.
@@ -30,6 +31,8 @@ import { resolveEngineMaterialPath } from "../../src/package-resources/engine-ma
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
+import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -38,10 +41,12 @@ import {
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
+import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 
 const ENGINE = "kimi";
 
-type Seat = "judge" | "coder" | "fixer" | "reviewer" | "merger";
+type CoreSeat = "judge" | "coder" | "fixer" | "reviewer" | "merger";
+type Seat = CoreSeat | "countersign" | "gleaner-left";
 
 /**
  * Materialize the durable principal's Pi session file at its authoritative
@@ -76,7 +81,11 @@ async function seedTerminalSession(input: {
           ? FIXER_OUTPUT_TOOL_NAME
           : seat === "reviewer"
             ? REVIEWER_OUTPUT_TOOL_NAME
-            : MERGER_OUTPUT_TOOL_NAME;
+            : seat === "merger"
+              ? MERGER_OUTPUT_TOOL_NAME
+              : seat === "countersign"
+                ? COUNTERSIGN_OUTPUT_TOOL_NAME
+                : GLEANER_LEFT_OUTPUT_TOOL_NAME;
   const details =
     seat === "judge"
       ? { judgeStatus: "converged" }
@@ -101,7 +110,11 @@ async function seedTerminalSession(input: {
                   commitSha: "0".repeat(40),
                 }],
               }
-            : { status: "completed", report: "engine proof" };
+            : seat === "countersign"
+              ? { countersignStatus: "converged" }
+              : seat === "gleaner-left"
+                ? { status: "completed", findings: [] }
+                : { status: "completed", report: "engine proof" };
   const entries = [];
   if (seat === "merger") {
     const skillPath = join(packageRoot, "resources/methods/resolving-merge-conflicts/SKILL.md");
@@ -151,6 +164,11 @@ function baseArgs(seat: Seat, project: string): string[] {
       return ["reviewer", "--project", project, "--base", "HEAD", "engine detour proof"];
     case "merger":
       return ["merger", "--project", project, "engine detour proof"];
+    case "countersign":
+      // Unbound ticket: diarist does not re-resolve; resume still carries engine material.
+      return ["countersign", "--project", project, "engine detour proof"];
+    case "gleaner-left":
+      return ["gleaner-left", "--project", project, "--base", "HEAD", "engine detour proof"];
   }
 }
 
@@ -292,102 +310,210 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    // Countersign pre-court diarist needs hermes on PATH.
+    const binDir = join(home, "bin");
+    await installHermesFixture(binDir);
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
 
-    const seats: Seat[] = ["judge", "coder", "fixer", "reviewer", "merger"];
-    for (const seat of seats) {
-      if (seat === "merger") await seedMergeProject(project);
-      const runId = `run-engine-resume-${seat}`;
+    try {
+      const seats: Seat[] = [
+        "judge",
+        "coder",
+        "fixer",
+        "reviewer",
+        "merger",
+        "countersign",
+        "gleaner-left",
+      ];
+      for (const seat of seats) {
+        if (seat === "merger") await seedMergeProject(project);
+        const runId = `run-engine-resume-${seat}`;
 
-      // Create an admitted, resumable run (faux typed-429).
-      {
-        const { io } = captureIo();
-        await runAkRole(baseArgs(seat, project), {
-          packageRoot,
-          home,
-          cwd: project,
-          credentials: { "openai-codex": true, xai: true },
-          createRunId: () => runId,
-          io,
-          roleTurnHost: createMinimalHost(async (request) => {
-            await seedPrincipalSession(request);
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "xai",
-            });
-            return { code: 1, stderr: "quota", timedOut: false };
-          }),
-        });
-      }
+        // Create an admitted, resumable run (faux typed-429).
+        {
+          const { io } = captureIo();
+          await runAkRole(baseArgs(seat, project), {
+            packageRoot,
+            home,
+            cwd: project,
+            credentials: { "openai-codex": true, xai: true },
+            createRunId: () => runId,
+            io,
+            roleTurnHost: createMinimalHost(async (request) => {
+              await seedPrincipalSession(request);
+              await observeTyped429ViaProductionHandler({
+                runDirectory: request.runDirectory,
+                provider: "xai",
+              });
+              return { code: 1, stderr: "quota", timedOut: false };
+            }),
+          });
+        }
 
-      // Explicit resume takes engine from the config seat (#617 seat table);
-      // #453 requires a persistent model before engine.
-      {
-        const { io, stderr } = captureIo();
-        await runAkRole(["config", "set", seat, "xai/grok-4.5:high"], { packageRoot, home, io });
-        assert.equal(stderr.join(""), "");
-        await runAkRole(["config", "set-engine", seat, ENGINE], { packageRoot, home, io });
-        assert.equal(stderr.join(""), "");
+        // Explicit resume takes engine from the config seat (#617 seat table);
+        // #453 requires a persistent model before engine.
+        {
+          const { io, stderr } = captureIo();
+          await runAkRole(["config", "set", seat, "xai/grok-4.5:high"], { packageRoot, home, io });
+          assert.equal(stderr.join(""), "");
+          await runAkRole(["config", "set-engine", seat, ENGINE], { packageRoot, home, io });
+          assert.equal(stderr.join(""), "");
+        }
+        // Explicit resume must carry engine onto typed request, continuation
+        // material coordinates, and invocation.json (seat table is the axis).
+        const engineMaterialPath = resolveEngineMaterialPath(packageRoot, ENGINE);
+        let resumedEngine: string | undefined;
+        let resumedPrompt: string | undefined;
+        let resumedInvocationEngine: unknown;
+        {
+          const { io, stdout, stderr } = captureIo();
+          const resumed = await runAkRole(["resume", runId], {
+            packageRoot,
+            home,
+            cwd: project,
+            credentials: { "openai-codex": true, xai: true },
+            io,
+            principalAuthority: piDurablePrincipalAuthority,
+            roleTurnHost: createMinimalHost(async (request) => {
+              resumedEngine = request.engine;
+              resumedPrompt =
+                request.continuation.kind === "resume" || request.continuation.kind === "initial"
+                  ? request.continuation.prompt
+                  : undefined;
+              const invocation = JSON.parse(
+                await readFile(join(request.runDirectory, "invocation.json"), "utf8"),
+              ) as Record<string, unknown>;
+              resumedInvocationEngine = invocation.engine;
+              const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+              await seedTerminalSession({
+                seat,
+                sessionFile,
+                cwd: request.cwd,
+                home: request.home,
+                runId,
+                runDirectory: request.runDirectory,
+              });
+              return { code: 0, stderr: "", timedOut: false };
+            }),
+          });
+          assert.equal(resumed.exitCode, 0, stdout.join("") + "\n[stderr] " + stderr.join(""));
+        }
+        assert.equal(resumedEngine, ENGINE, `${seat}: explicit resume must re-project engine`);
+        assert.equal(
+          typeof resumedPrompt,
+          "string",
+          `${seat}: explicit resume must carry a continuation prompt`,
+        );
+        assert.match(
+          resumedPrompt as string,
+          new RegExp(`- engine: ${ENGINE}`),
+          `${seat}: resume continuation must carry engine name coordinate`,
+        );
+        assert.equal(
+          (resumedPrompt as string).includes(engineMaterialPath),
+          true,
+          `${seat}: resume continuation must carry packaged engine material path`,
+        );
+        assert.equal(
+          resumedInvocationEngine,
+          ENGINE,
+          `${seat}: explicit resume must write engine onto invocation.json`,
+        );
       }
-      // Explicit resume must carry engine onto typed request, continuation
-      // material coordinates, and invocation.json (seat table is the axis).
-      const engineMaterialPath = resolveEngineMaterialPath(packageRoot, ENGINE);
-      let resumedEngine: string | undefined;
-      let resumedPrompt: string | undefined;
-      let resumedInvocationEngine: unknown;
-      {
-        const { io, stdout, stderr } = captureIo();
-        const resumed = await runAkRole(["resume", runId], {
-          packageRoot,
-          home,
-          cwd: project,
-          credentials: { "openai-codex": true, xai: true },
-          io,
-          principalAuthority: piDurablePrincipalAuthority,
-          roleTurnHost: createMinimalHost(async (request) => {
-            resumedEngine = request.engine;
-            resumedPrompt =
-              request.continuation.kind === "resume" || request.continuation.kind === "initial"
-                ? request.continuation.prompt
-                : undefined;
-            const invocation = JSON.parse(
-              await readFile(join(request.runDirectory, "invocation.json"), "utf8"),
-            ) as Record<string, unknown>;
-            resumedInvocationEngine = invocation.engine;
-            const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-            await seedTerminalSession({
-              seat,
-              sessionFile,
-              cwd: request.cwd,
-              home: request.home,
-              runId,
-              runDirectory: request.runDirectory,
-            });
-            return { code: 0, stderr: "", timedOut: false };
-          }),
-        });
-        assert.equal(resumed.exitCode, 0, stdout.join("") + "\n[stderr] " + stderr.join(""));
-      }
-      assert.equal(resumedEngine, ENGINE, `${seat}: explicit resume must re-project engine`);
-      assert.equal(
-        typeof resumedPrompt,
-        "string",
-        `${seat}: explicit resume must carry a continuation prompt`,
-      );
-      assert.match(
-        resumedPrompt as string,
-        new RegExp(`- engine: ${ENGINE}`),
-        `${seat}: resume continuation must carry engine name coordinate`,
-      );
-      assert.equal(
-        (resumedPrompt as string).includes(engineMaterialPath),
-        true,
-        `${seat}: resume continuation must carry packaged engine material path`,
-      );
-      assert.equal(
-        resumedInvocationEngine,
-        ENGINE,
-        `${seat}: explicit resume must write engine onto invocation.json`,
-      );
+    } finally {
+      if (priorPath === undefined) delete process.env.PATH;
+      else process.env.PATH = priorPath;
     }
+  });
+});
+
+test("explicit resume clears invocation.engine when the live seat has no engine", async () => {
+  await withHermeticHome({ prefix: "ak-engine-unset-resume-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-engine-unset-resume";
+
+    // Birth leg carries engine onto invocation.
+    {
+      const { io, stderr } = captureIo();
+      await runAkRole(["config", "set", "judge", "xai/grok-4.5:high"], { packageRoot, home, io });
+      assert.equal(stderr.join(""), "");
+      await runAkRole(["config", "set-engine", "judge", ENGINE], { packageRoot, home, io });
+      assert.equal(stderr.join(""), "");
+      await runAkRole(["judge", "--project", project, "seed with engine"], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: createMinimalHost(async (request) => {
+          await seedPrincipalSession(request);
+          await observeTyped429ViaProductionHandler({
+            runDirectory: request.runDirectory,
+            provider: "xai",
+          });
+          return { code: 1, stderr: "quota", timedOut: false };
+        }),
+      });
+    }
+
+    // Live seat drops engine (#617 acceptance: engine 有/无).
+    {
+      const { io, stderr } = captureIo();
+      const unset = await runAkRole(["config", "unset-engine", "judge"], { packageRoot, home, io });
+      assert.equal(unset.exitCode, 0, stderr.join(""));
+    }
+
+    let resumedEngine: string | undefined = "sentinel";
+    let resumedInvocationEngine: unknown = "sentinel";
+    let resumedPrompt: string | undefined;
+    {
+      const { io, stdout, stderr } = captureIo();
+      const resumed = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io,
+        principalAuthority: piDurablePrincipalAuthority,
+        roleTurnHost: createMinimalHost(async (request) => {
+          resumedEngine = request.engine;
+          resumedPrompt =
+            request.continuation.kind === "resume" || request.continuation.kind === "initial"
+              ? request.continuation.prompt
+              : undefined;
+          const invocation = JSON.parse(
+            await readFile(join(request.runDirectory, "invocation.json"), "utf8"),
+          ) as Record<string, unknown>;
+          resumedInvocationEngine = invocation.engine;
+          const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+          await seedTerminalSession({
+            seat: "judge",
+            sessionFile,
+            cwd: request.cwd,
+            home: request.home,
+            runId,
+            runDirectory: request.runDirectory,
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      });
+      assert.equal(resumed.exitCode, 0, stdout.join("") + "\n[stderr] " + stderr.join(""));
+    }
+    assert.equal(resumedEngine, undefined, "resume must not carry engine when seat has none");
+    assert.equal(
+      resumedInvocationEngine,
+      undefined,
+      "invocation.engine must be cleared when live seat has no engine",
+    );
+    assert.equal(typeof resumedPrompt, "string");
+    assert.equal(
+      (resumedPrompt as string).includes(`- engine: ${ENGINE}`),
+      false,
+      "continuation must not carry engine material when seat has none",
+    );
   });
 });
