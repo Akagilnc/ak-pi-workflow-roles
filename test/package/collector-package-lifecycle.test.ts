@@ -56,7 +56,8 @@ else if(path.includes('/comments') || path.includes('/reactions')) ok([]); else 
       ]);
       try {
         await withInProcessPi({
-          activationLedgerSession: true, cwd: fixture, agentDir, faux, modelsPath: null,
+          // #604: nest session under hermetic home .ak-roles for sitian/submission seal.
+          activationLedgerSession: true, cwd: fixture, home, agentDir, faux, modelsPath: null,
           additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")],
           noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
           flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "3" },
@@ -83,7 +84,7 @@ else if(path.includes('/comments') || path.includes('/reactions')) ok([]); else 
           assert.deepEqual(output.message.details, { submissionDisposition: "pending-round-closure" });
           const headerId = sessionManager.getHeader?.()?.id;
           assert.ok(headerId);
-          const sealed = await readSealedSubmission(fixture, headerId);
+          const sealed = await readSealedSubmission(fixture, headerId, home);
           assert.ok(sealed, "installed Collector must seal its receipt");
           const receipt = sealed.decisiveFacts as any;
           assert.equal(receipt.repository, "acme/widgets");

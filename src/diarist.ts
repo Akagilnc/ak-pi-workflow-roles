@@ -87,6 +87,8 @@ export type DiaristIssueFaceFetcher = (input: {
 export type DiaristRunInput = {
   readonly ticketNumber: number;
   readonly cwd: string;
+  /** Explicit package home (admitted run / tests); never process.env.HOME (#604). */
+  readonly home?: string;
   /**
    * Frozen GitHub issue face (body + comments). Production loads via shared gh seam.
    * Soft-unavailable → omit (no fake face from attachments).
@@ -222,8 +224,9 @@ export function resolveDiaristGithubOrigin(
 async function loadSeenEntryIdentities(
   ticketNumber: number,
   cwd: string,
+  home?: string,
 ): Promise<ReadonlySet<string>> {
-  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   const { records } = await readSitianRecords(recordFile);
   const seen = new Set<string>();
   for (const record of records) {
@@ -231,7 +234,7 @@ async function loadSeenEntryIdentities(
       seen.add(record.identity);
     }
   }
-  for (const identity of readOfferedIdentities(ticketNumber, cwd)) {
+  for (const identity of readOfferedIdentities(ticketNumber, cwd, home)) {
     seen.add(identity);
   }
   return seen;
@@ -291,8 +294,9 @@ function faceTextForAnchors(face: DiaristIssueFace | undefined): string | undefi
  * Always establishes the per-ticket volume + md.
  */
 export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResult> {
+  const homeOpt = input.home === undefined ? {} : { home: input.home };
   // Per-ticket volume exists for every bound court, including empty/fail paths.
-  const volumePaths = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
+  const volumePaths = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
 
   const anchorText = faceTextForAnchors(input.issueFace);
   const anchors: DiaristAnchorSet = buildDiaristAnchors({
@@ -304,7 +308,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
   const safeguarded = mechanicalSafeguardPipeline(rawBlocks);
   // Incremental: only blocks whose entry identity is not yet on the volume
   // are offered to the collector (ADR 0075 refresh-every-court = 增量幂等).
-  const seen = await loadSeenEntryIdentities(input.ticketNumber, input.cwd);
+  const seen = await loadSeenEntryIdentities(input.ticketNumber, input.cwd, input.home);
   const fresh = safeguarded.filter(
     (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block)),
   );
@@ -343,6 +347,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
       appendCollectorFailureDiagnostic({
         ticketNumber: input.ticketNumber,
         cwd: input.cwd,
+        ...homeOpt,
         collectorError,
       });
     }
@@ -371,6 +376,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
         const ptr = appendQuoteVerifyFailureDiagnostic({
           ticketNumber: input.ticketNumber,
           cwd: input.cwd,
+          ...homeOpt,
           cause: projected.cause,
         });
         pointers.push(ptr);
@@ -379,6 +385,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
       const ptr = appendTicketProvenanceEntry({
         ticketNumber: input.ticketNumber,
         cwd: input.cwd,
+        ...homeOpt,
         entry: projected.entry,
         source: "diarist",
       });
@@ -399,6 +406,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     recordOfferedIdentities({
       ticketNumber: input.ticketNumber,
       cwd: input.cwd,
+      ...homeOpt,
       identities: fresh.map((block) =>
         blockEntryIdentity(input.ticketNumber, block),
       ),
@@ -407,10 +415,11 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
 
   // Refresh human view from the full volume (includes prior court runs).
   // Always write — empty courts still get the md face next to the JSONL.
-  const volume = await readTicketProvenance(input.ticketNumber, input.cwd);
+  const volume = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
   const humanViewFile = writeTicketProvenanceHumanView({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
+    ...homeOpt,
     entries: volume.entries,
   });
 

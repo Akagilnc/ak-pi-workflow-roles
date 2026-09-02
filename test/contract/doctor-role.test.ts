@@ -3,10 +3,35 @@ import test from "node:test";
 import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { createDoctorRoleRuntime, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-role.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
+import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
+
+// #604 F1: session/cwd must sit under temp `.ak-roles` so sitian path-derive never
+// falls through to the real machine home (bare `/case` wrote books/case).
+const doctorLedger = createTempPackageHomeLedger({
+  prefix: "ak-doctor-role-",
+  runName: "contract@doctor",
+});
+test.after(() => doctorLedger.dispose());
 
 const zero = { count: 0, sources: [] }; const patient: DoctorCase = { version: 1, identity: { issueNumber: 28, runsPath: "/case/.ak/work/issues/28/runs" }, evidence: [{ id: "review/session/live.jsonl", kind: "session", byteLength: 6, contentLength: 2, sha256: "abc", content: "中文" }], cost: { invocations: zero, legs: zero, modelApiTurns: zero, outputTokens: zero, toolCalls: zero, retries: { ...zero, evidence: "literal run-dir naming" }, statuses: [], commits: [], sessions: [], outputBytes: { ...zero, payload: "raw JSONL bytes", providerWireBytes: "unavailable" } } };
 function harness() { const flags = new Map<string, boolean | string>([["ak-doctor-case", patient.identity.runsPath]]); const tools = new Map<string, HostToolDefinition>(); let beforeAgentStartResult: unknown; let active: string[] = []; const host: RoleHost = { registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); }, getFlag: (name) => flags.get(name), registerTool(tool) { tools.set(tool.name, tool); }, getAllTools: () => ["read", "bash", ...tools.keys()].map((name) => ({ name })), setActiveTools(names) { active = names; }, getActiveTools: () => active, on(name, handler) { if (name === "before_agent_start") beforeAgentStartResult = handler({ prompt: "", systemPrompt: "BASE", systemPromptOptions: {}, text: "", toolName: "", toolCallId: "", input: {}, isError: false, content: [], details: undefined, reason: "", status: 200, messages: [], partialResult: undefined, turnIndex: 0, calls: [] }, context("doctor")); }, getCommands: () => [] }; return { host, tools, beforeAgentStartResult: () => beforeAgentStartResult, active: () => active }; }
-function context(id: string, abort = () => {}): HostContext { const entries = [{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: DOCTOR_OUTPUT_TOOL_NAME, arguments: {} }] } }]; return { cwd: "/case", mode: "json", model: undefined, sessionManager: { getLeafEntry: () => entries.at(-1), getLeafId: () => id, getEntries: () => entries, getSessionDir: () => "/case/session", getSessionFile: () => "/case/session/record.jsonl", appendCustomEntry: () => undefined }, abort }; }
+function context(id: string, abort = () => {}): HostContext {
+  const entries = [{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id, name: DOCTOR_OUTPUT_TOOL_NAME, arguments: {} }] } }];
+  return {
+    cwd: doctorLedger.home,
+    mode: "json",
+    model: undefined,
+    sessionManager: {
+      getLeafEntry: () => entries.at(-1),
+      getLeafId: () => id,
+      getEntries: () => entries,
+      getSessionDir: () => doctorLedger.sessionDirectory,
+      getSessionFile: () => doctorLedger.sessionFile,
+      appendCustomEntry: () => undefined,
+    },
+    abort,
+  };
+}
 const refusal = { status: "refused" as const, reason: "Session bytes are incomplete.", missingEvidence: [{ need: "session header", targetKeys: ["case"] }] };
 
 test("Doctor activation exposes only paged session evidence and output tools", async () => { const h = harness(); const soul = crypto.randomUUID(); const runtime = createDoctorRoleRuntime(h.host, { loadSoul: async () => soul, loadCase: async () => patient, auditCompliance: async () => ({ status: "pass" }) }, { failInfrastructure(error) { throw error; } }); await runtime.activate(); assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME)?.parameters, "object"); assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME)?.parameters, "object"); const prompt = await h.beforeAgentStartResult(); assert.ok(prompt && typeof prompt === "object" && "systemPrompt" in prompt); assert.ok(typeof prompt.systemPrompt === "string"); assert.equal(prompt.systemPrompt.includes(soul), true); });

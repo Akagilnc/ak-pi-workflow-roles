@@ -621,7 +621,7 @@ export async function findRunDirectoryById(
   runId: string,
 ): Promise<string | undefined> {
   if (runId.trim() === "") return undefined;
-  const ledgerHome = resolveActivationLedgerHome(() => home);
+  const ledgerHome = resolveActivationLedgerHome(home);
   const booksRoot = join(ledgerHome, "books");
   let bookKeys: string[];
   try {

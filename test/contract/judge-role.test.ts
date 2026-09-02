@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";
 
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
@@ -53,6 +53,7 @@ import {
   createRoleRuntimeExtension,
   type JudgeVerdict,
 } from "../../src/role-runtime.ts";
+import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 
@@ -79,7 +80,10 @@ async function acceptThroughTypedRoundClosure(input: {
   const runId = runIdFromRunDirectory(runDirectory);
   assert.ok(runId);
   const cwd = typeof input.context.cwd === "string" ? input.context.cwd : process.cwd();
-  const sealed = await readSealedSubmission(cwd, runId);
+  // #604: seal lands under the temp package home owning the run path — not real home.
+  const ledgerHomeOwner = tryHomeFromAkRolesPath(runDirectory);
+  assert.ok(ledgerHomeOwner, "institutional run must sit under temp .ak-roles topology");
+  const sealed = await readSealedSubmission(cwd, runId, ledgerHomeOwner);
   assert.ok(sealed, "typed turn_end must seal sole candidate");
   return { sealed, pending };
 }
@@ -99,7 +103,7 @@ import {
   writeInstitutionalSeatTable,
 } from "../helpers/institutional-seat-table.ts";
 import type { InstitutionalResolutionPage } from "../../src/institutional-resolution.ts";
-import { createMockProviderServer, packageRoot, withActivationHome, withInProcessPi, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInProcessPi, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
 // tool.execute seam carries no explicit runDirectory option), so this local
@@ -108,9 +112,10 @@ import { createMockProviderServer, packageRoot, withActivationHome, withInProces
 const activeRunDirs: string[] = [];
 function installInstitutionalRunDir(seats: InstitutionalResolutionPage["seats"]): string {
   // Publisher face is `<runId>@<role>` — sole runIdFromRunDirectory authority requires the @.
-  const book = mkdtempSync(join(tmpdir(), "ak-judge-book-"));
-  const runDirectory = join(book, `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@judge`);
-  mkdirSync(runDirectory, { recursive: true });
+  // #604: nest under temp `.ak-roles` so session/ledger path-derive never hits real home.
+  const runName = `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@judge`;
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-judge-home-", runName });
+  const runDirectory = ledger.runDirectory;
   // writeInstitutionalSeatTable writes synchronously (writeFileSync); the
   // resolved promise is fire-and-forget, so the page is on disk immediately.
   void writeInstitutionalSeatTable(runDirectory, seats);
@@ -122,8 +127,11 @@ function disposeInstitutionalRunDir(runDirectory: string): void {
   const index = activeRunDirs.indexOf(runDirectory);
   if (index !== -1) activeRunDirs.splice(index, 1);
   if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
-  // book parent is the temp mkdtemp that holds `<runId>@role`.
-  rmSync(dirname(runDirectory), { recursive: true, force: true });
+  // Package home owns `.ak-roles/books/<book>/runs/<run>` — remove the temp home root.
+  const marker = `${sep}.ak-roles${sep}`;
+  const markerIdx = runDirectory.indexOf(marker);
+  const homeRoot = markerIdx >= 0 ? runDirectory.slice(0, markerIdx) : dirname(runDirectory);
+  rmSync(homeRoot, { recursive: true, force: true });
 }
 async function withInstitutionalRunDir<T>(
   seats: InstitutionalResolutionPage["seats"],
@@ -2720,7 +2728,8 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   // this carrier owns revise→errored / pass→terminate / escalate per audited role output tool.
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
-  const nestedRunDir = await mkdtemp(join(tmpdir(), "ak-nested-audit-run-"));
+  const nestedLedger = createTempPackageHomeLedger({ prefix: "ak-nested-audit-home-", runName: "nested@judge" });
+  const nestedRunDir = nestedLedger.runDirectory;
   await writeInstitutionalSeatTable(nestedRunDir, {
     auditor: { provider: "installed-auditor", model: "installed-auditor" },
   });
@@ -2984,6 +2993,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   } finally {
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    await rm(nestedRunDir, { recursive: true, force: true });
+    nestedLedger.dispose();
   }
 });

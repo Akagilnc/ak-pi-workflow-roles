@@ -83,7 +83,7 @@ test("accepted-activation fact is closed at the typed API and omits injected con
 test("resolved ledger home rejects relative process home before filesystem writes", () => {
   for (const relativeHome of [".", "relative-home", ""] as const) {
     assert.throws(
-      () => resolveActivationLedgerHome(() => relativeHome),
+      () => resolveActivationLedgerHome(relativeHome),
       (error: unknown) => {
         assert.ok(error instanceof ActivationLedgerError);
         assert.equal(error.code, "AK_ACTIVATION_LEDGER");
@@ -93,7 +93,7 @@ test("resolved ledger home rejects relative process home before filesystem write
   }
 
   const absoluteHome = resolve(tmpdir(), "ak-ledger-abs-home");
-  const ledgerHome = resolveActivationLedgerHome(() => absoluteHome);
+  const ledgerHome = resolveActivationLedgerHome(absoluteHome);
   assert.equal(isAbsolute(ledgerHome), true);
   assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
 

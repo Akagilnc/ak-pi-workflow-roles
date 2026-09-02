@@ -6,7 +6,12 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { packageRoot, piCli, withColdInstalledPackage } from "../helpers/pi-test-harness.ts";
+import {
+  machineLedgerHome,
+  packageRoot,
+  piCli,
+  withColdInstalledPackage,
+} from "../helpers/pi-test-harness.ts";
 import { runPublicCliSubprocess } from "../helpers/public-cli-subprocess.ts";
 
 function seedProject(project: string): void {
@@ -24,11 +29,15 @@ async function runPackagedTracer(marker: string): Promise<{
 }> {
   const home = await mkdtemp(join(tmpdir(), `ak-dossier-${marker}-`));
   try {
+    // #604: hermetic home is package user profile via runPublicCliSubprocess preload.
     return await withColdInstalledPackage(home, async ({ fixture, installedRoot: rawRoot }) => {
       const installedRoot = await realpath(rawRoot);
-      const project = join(home, "work");
+      const ledgerHome = machineLedgerHome(home);
+      // Unique book key per tracer so parallel A/B cannot cross-adopt runs.
+      const project = join(home, `work-${marker}`);
       await mkdir(project, { recursive: true });
       seedProject(project);
+      const bookKey = resolveBookKeyFromGit(project);
       const attachment = join(home, "evidence.txt");
       await writeFile(attachment, `attachment-${marker}\n`);
       const agentDir = join(home, ".pi", "agent");
@@ -72,9 +81,9 @@ async function runPackagedTracer(marker: string): Promise<{
       assert.equal(result.localTimeout, false, result.stderr);
       assert.equal(result.code, 0, result.stderr);
 
-      const runsRoot = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs");
+      const runsRoot = join(ledgerHome, "books", bookKey, "runs");
       const runName = (await readdir(runsRoot)).find((name) => name.endsWith("@judge"));
-      assert.ok(runName);
+      assert.ok(runName, `expected @judge run under ${runsRoot}`);
       const runDirectory = join(runsRoot, runName);
       const invocation = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as Record<string, unknown>;
       const launchArgs = JSON.parse(await readFile(launchArgsPath, "utf8")) as string[];

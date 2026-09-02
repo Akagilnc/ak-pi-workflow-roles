@@ -40,7 +40,13 @@ async function driveLedgerProducer(input: {
       handlers.set(event, handler);
     },
   } as RoleHost;
-  createSubmissionLedgerHost(host, new Map([[toolName, input.role]])).registerTool({
+  createSubmissionLedgerHost(
+    host,
+    new Map([[toolName, input.role]]),
+    undefined,
+    undefined,
+    input.home === undefined ? undefined : { home: input.home },
+  ).registerTool({
     name: toolName,
     label: "output",
     description: "",
@@ -48,9 +54,7 @@ async function driveLedgerProducer(input: {
     execute: async () => ({ content: [], details: input.details, terminate: true }),
   });
   if (registered === undefined) throw new Error("submission ledger host did not register output tool");
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  if (input.home !== undefined) process.env.HOME = input.home;
   process.env.AK_ROLE_RUN_DIR =
     input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
   try {
@@ -75,10 +79,6 @@ async function driveLedgerProducer(input: {
       calls: [{ toolCallId: input.toolCallId, toolName }],
     }, context);
   } finally {
-    if (input.home !== undefined) {
-      if (priorHome === undefined) delete process.env.HOME;
-      else process.env.HOME = priorHome;
-    }
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = priorRun;
   }
@@ -121,13 +121,20 @@ export async function sealAcceptedSubmissionForSpawn(input: {
   if (runId === undefined) {
     throw new Error("sealed submission requires admitted run identity from runDirectory");
   }
+  // #604: package home is request.home (role-turn sets env.HOME to that value for
+  // child process isolation), not process ambient HOME. Prefer explicit env.HOME
+  // from the turn host; never invent a second home channel.
+  const home =
+    typeof input.env.HOME === "string" && input.env.HOME.length > 0
+      ? input.env.HOME
+      : undefined;
   await sealAcceptedSubmission({
     cwd: input.cwd,
     runId,
     runDirectory,
     role: input.role,
     details: input.details,
-    ...(typeof input.env.HOME === "string" ? { home: input.env.HOME } : {}),
+    ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
   });
 }

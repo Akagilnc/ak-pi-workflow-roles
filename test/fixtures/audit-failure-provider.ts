@@ -11,7 +11,11 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { activationBookDirectory, resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+  resolveActivationLedgerHomeForPath,
+} from "../../src/activation-ledger-topology.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -266,8 +270,15 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
     if (!healthyNavigator || observation) return;
     const root = process.env.AK_NAVIGATOR_ROOT;
+    // #604: derive ledger home from the role session path when present — bare
+    // resolveActivationLedgerHome() is packageMachineHome and ignores HOME.
+    const sessionDir = process.env.AK_ROLE_SESSION_DIR;
+    const ledgerHome =
+      typeof sessionDir === "string" && sessionDir.length > 0
+        ? resolveActivationLedgerHomeForPath(sessionDir)
+        : resolveActivationLedgerHome();
     const navigatorRoot = root === undefined ? undefined : join(
-      activationBookDirectory(resolveActivationLedgerHome(), resolveBookKeyFromGit(root)),
+      activationBookDirectory(ledgerHome, resolveBookKeyFromGit(root)),
       "navigator",
     );
     const subjectDirectories = navigatorRoot === undefined ? [] : (await readdir(navigatorRoot)).sort();

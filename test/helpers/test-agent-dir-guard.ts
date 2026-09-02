@@ -20,8 +20,17 @@ export class TestAgentDirError extends Error {
   }
 }
 
-/** Real machine home via passwd/user profile — never process.env.HOME. */
+/**
+ * Operator's real machine home (passwd/user profile) — never process.env.HOME.
+ * When the #604 test user-profile preload is active, AK_TEST_REAL_MACHINE_HOME
+ * holds the pre-patch passwd home so this guard still protects the operator tree
+ * while packageMachineHome follows the temporary profile.
+ */
 export function realMachineHome(): string {
+  const preserved = process.env.AK_TEST_REAL_MACHINE_HOME;
+  if (typeof preserved === "string" && preserved.length > 0) {
+    return resolve(preserved);
+  }
   return resolve(userInfo().homedir);
 }
 
