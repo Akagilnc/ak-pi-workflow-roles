@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,10 +18,12 @@ import {
   classifyGrokInspection,
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
+  inspectControlledGrok,
   type GrokAcpConnection,
   type GrokPreparedTurn,
 } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const sessionIds = new WeakMap<object, string>();
 const sessionIdentity = {
@@ -218,19 +220,49 @@ test("installed seatbelt hook denies the representative dangerous command and al
 });
 
 test("executeTurn resume reaches session/load after settle scrubs residual AK seatbelt hooks", async () => {
-  // #594 F1: prior Fixer turn left hooks under controlled home; settle must scrub them
-  // so the next executeTurn inspect stays clean and resume reaches session/load.
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-resume-hooks-"));
+  // #594 F1: residual AK hooks under controlled home must not survive settle into the
+  // next executeTurn. Inspect goes through real inspectControlledGrok → classifyGrokInspection
+  // (faux binary reports filesystem hooks the way grok inspect does — source.type=user).
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-hooks-"));
+  const home = join(root, "controlled");
   const principal = {};
   try {
+    await mkdir(home, { recursive: true });
+    const binary = join(root, "grok-inspect-faux.mjs");
+    await writeFile(binary, `#!/usr/bin/env node
+import { access } from "node:fs/promises";
+import { join } from "node:path";
+const home = process.env.GROK_HOME ?? process.env.HOME ?? "";
+const hookPath = join(home, "hooks", "ak-bash-seatbelt.json");
+let hooks = [];
+try {
+  await access(hookPath);
+  hooks = [{ name: "ak-bash-seatbelt", source: { type: "user", path: hookPath } }];
+} catch { /* absent → empty hooks, as a clean controlled home */ }
+process.stdout.write(JSON.stringify({
+  hooks, skills: [], agents: [], plugins: [], mcpServers: [], projectInstructions: [],
+}));
+`);
+    await chmod(binary, 0o755);
+
     await installGrokPreToolUseDeny(home);
-    await access(join(home, "hooks", "ak-bash-seatbelt.json"));
+    const inspectEnv = controlledGrokChildEnv({ ...process.env }, home);
+    // Pre-settle: real classify path sees residual hook as privateActive (red without scrub).
+    const beforeSettle = await inspectControlledGrok({
+      binary, cwd: root, env: inspectEnv, packageRoot,
+    });
+    assert.deepEqual(beforeSettle.privateActive, ["hooks:ak-bash-seatbelt"]);
+
     await settleProductionGrokHomeCleanup(
       home,
       NO_PRODUCTION_GROK_PRIMARY_FAILURE,
       "test settle after residual hooks",
     );
-    await assert.rejects(access(join(home, "hooks", "ak-bash-seatbelt.json")));
+    // Post-settle: same inspect seam reports empty privateActive.
+    const afterSettle = await inspectControlledGrok({
+      binary, cwd: root, env: inspectEnv, packageRoot,
+    });
+    assert.deepEqual(afterSettle.privateActive, []);
 
     const sessionCalls: Array<[string, unknown]> = [];
     const host = createGrokRoleTurnHost({
@@ -251,15 +283,13 @@ test("executeTurn resume reaches session/load after settle scrubs residual AK se
         notify() {},
         async close() {},
       }),
-      // Mirror production classify outcome: leftover seatbelt hooks under home are privateActive.
-      inspect: async (req) => {
-        try {
-          await access(join(req.home, "hooks", "ak-bash-seatbelt.json"));
-          return { privateActive: ["hooks:ak-bash-seatbelt"], akActive: [] };
-        } catch {
-          return { privateActive: [], akActive: ["ak_fixer_output"] };
-        }
-      },
+      // Production inspect seam: inspectControlledGrok + classifyGrokInspection.
+      inspect: async (req) => inspectControlledGrok({
+        binary,
+        cwd: req.cwd === "/work" ? root : req.cwd,
+        env: controlledGrokChildEnv({ ...process.env }, req.home),
+        packageRoot,
+      }),
       prepare: async () => prepared(async () => ({ accepted: true })),
     });
 
@@ -268,6 +298,7 @@ test("executeTurn resume reaches session/load after settle scrubs residual AK se
       principal,
       activation: { role: "fixer" },
       home,
+      cwd: root,
       agentDir: join(home, "agent"),
       runDirectory: join(home, "run"),
     } as RoleTurnRequest;
@@ -286,10 +317,10 @@ test("executeTurn resume reaches session/load after settle scrubs residual AK se
     assert.equal(resumeResult.code, 0);
     assert.equal(resumeResult.knownFailure, undefined);
     const load = sessionCalls.find(([method]) => method === "session/load");
-    assert.deepEqual(load?.[0], "session/load");
+    assert.equal(load?.[0], "session/load");
     assert.equal((load?.[1] as { sessionId?: string } | undefined)?.sessionId, "resume-s1");
   } finally {
-    await rm(home, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 

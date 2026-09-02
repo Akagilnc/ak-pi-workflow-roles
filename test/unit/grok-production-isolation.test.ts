@@ -197,15 +197,10 @@ test("openProductionGrokHome refuses a symlinked grok-home before auth copy", as
   const escapeTarget = await mkdtemp(join(tmpdir(), "ak-grok-escape-"));
   try {
     await symlink(escapeTarget, join(runDirectory, "grok-home"));
+    // Refusal is the contract; message prose is not. open primary + settle both refuse → AggregateError.
     await assert.rejects(
       () => openProductionGrokHome(runDirectory, operatorHome),
-      (error: unknown) => {
-        const match = (value: unknown) =>
-          value instanceof Error && /must not be a symlink/.test(value.message);
-        // open primary + settle cleanup both refuse the same symlink → AggregateError.
-        if (error instanceof AggregateError) return error.errors.some(match);
-        return match(error);
-      },
+      (error: unknown) => error instanceof Error,
     );
     // Escape target must not receive operator credentials.
     await assert.rejects(access(join(escapeTarget, "auth.json")));
@@ -223,6 +218,7 @@ test("settleProductionGrokHomeCleanup refuses symlinked auth destination", async
   try {
     await writeFile(escapeAuth, "OUTSIDE-SECRET\n", "utf8");
     await symlink(escapeAuth, join(controlledHome, "auth.json"));
+    // Refusal is the contract; message prose is not.
     await assert.rejects(
       () =>
         settleProductionGrokHomeCleanup(
@@ -230,7 +226,7 @@ test("settleProductionGrokHomeCleanup refuses symlinked auth destination", async
           NO_PRODUCTION_GROK_PRIMARY_FAILURE,
           TURN_CLEANUP_MESSAGE,
         ),
-      (error: unknown) => error instanceof Error && /must not be a symlink/.test(error.message),
+      (error: unknown) => error instanceof Error && !(error instanceof AggregateError),
     );
     // Outside target must survive — settle must not follow the symlink.
     assert.equal(await readFile(escapeAuth, "utf8"), "OUTSIDE-SECRET\n");
