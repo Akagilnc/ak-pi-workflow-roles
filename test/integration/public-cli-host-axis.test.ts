@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
   createGrokRoleTurnHost,
-  projectGrokRebuildHistory,
   type GrokRebuildHistoryResource,
 } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
@@ -15,13 +14,21 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
 import {
+  CROSS_HOST_BASH_CALL_ID,
+  CROSS_HOST_BASH_MARKER,
+} from "../fixtures/cross-host-resume-provider.ts";
+import {
   argvFlagValue,
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import {
+  packageRoot,
+  runPiSubprocess,
+  withHermeticHome,
+} from "../helpers/pi-test-harness.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
 const io = { stdout() {}, stderr() {} };
@@ -362,335 +369,267 @@ test("bare resume follows live seat table host when it drifts from birth host", 
   });
 });
 
-/**
- * #617 DK-1 / Scope 2: shortest public-CLI trunk through real host seams.
- * Birth + final resume go through Pi role-turn-host `--session` argv;
- * middle leg goes through Grok projector. History consumption is proven by
- * keyed rebuild resource + final Pi session path + accepted settlement.
- */
-test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and settles", async () => {
-  await withHermeticHome({ prefix: "ak-cross-host-roundtrip-" }, async ({ home }) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-cross-host-roundtrip";
-    const toolCallId = "call_cross_host_escalate";
-    const escalateDetails = {
-      judgeStatus: "escalate",
-      note: "cross-host history anchor",
-    } as const;
-    const settleDetails = {
-      judgeStatus: "converged",
-      note: "cross-host settled",
-    } as const;
+const CROSS_HOST_PROVIDER = resolve(
+  packageRoot,
+  "test/fixtures/cross-host-resume-provider.ts",
+);
+const CROSS_HOST_MODEL = "openai-codex/faux-1";
 
-    // 1. Birth on Pi via real argv seam (`--session` / `--session-dir`).
-    {
-      const { io, stderr } = captureIo();
-      const birth = await runAkRole(["judge", `seed-${runId}`], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials,
-        createRunId: () => runId,
-        io,
-        principalAuthority: piDurablePrincipalAuthority,
-        hostAdapters: [
-          {
-            name: "pi",
-            create: () => ({
-              ok: true as const,
-              host: roleTurnHostFromLegacyPiRunner({
-                packageRoot,
-                principalAuthority: piDurablePrincipalAuthority,
-                piRunner: async (args) => {
-                  const sessionFile = argvFlagValue(args, "--session");
-                  assert.ok(sessionFile, "Pi birth must pass --session");
-                  await mkdir(dirname(sessionFile), { recursive: true });
-                  await writeFile(
-                    sessionFile,
-                    [
-                      { type: "session", version: 3, id: runId },
-                      {
-                        type: "message",
-                        id: "user-1",
-                        message: {
-                          role: "user",
-                          content: [{ type: "text", text: "seed-cross-host" }],
-                        },
-                      },
-                      {
-                        type: "message",
-                        id: "assistant-1",
-                        message: {
-                          role: "assistant",
-                          content: [{
-                            type: "toolCall",
-                            id: toolCallId,
-                            name: JUDGE_OUTPUT_TOOL_NAME,
-                            arguments: escalateDetails,
-                          }],
-                        },
-                      },
-                      {
-                        type: "message",
-                        id: "result-1",
-                        message: {
-                          role: "toolResult",
-                          toolCallId,
-                          toolName: JUDGE_OUTPUT_TOOL_NAME,
-                          content: [{ type: "text", text: "escalated" }],
-                          details: escalateDetails,
-                          isError: false,
-                        },
-                      },
-                    ].map((row) => JSON.stringify(row)).join("\n") + "\n",
-                    "utf8",
-                  );
-                  await observeTyped429ViaProductionHandler({
-                    runDirectory: dirname(dirname(sessionFile)),
-                    provider: "openai-codex",
-                  });
-                  return { code: 1, stderr: "quota", timedOut: false };
-                },
-              }),
-            }),
-          },
-        ],
-      });
-      assert.equal(birth.exitCode, 1, stderr.join(""));
-      assert.ok(birth.terminal?.resume, "birth must stay resumable");
-    }
-
-    const books = await readdir(join(home, ".ak-roles", "books"));
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      books[0]!,
-      "runs",
-      `${runId}@judge`,
-    );
-    const invPath = join(runDirectory, "invocation.json");
-    const sessionPath = join(runDirectory, "session", "session.jsonl");
-
-    {
-      const { io, stderr } = captureIo();
-      const setModel = await runAkRole(
-        ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
-        { packageRoot, home, io },
-      );
-      assert.equal(setModel.exitCode, 0, stderr.join(""));
-      const setHost = await runAkRole(
-        ["config", "set-host", "judge", "grok-build"],
-        { packageRoot, home, io },
-      );
-      assert.equal(setHost.exitCode, 0, stderr.join(""));
-    }
-
-    // 2. Grok resume projects the sole JSONL authority into keyed ACP resource.
-    const grokPromptParams: unknown[] = [];
-    const selected: string[] = [];
-    const grokHost = createGrokRoleTurnHost({
-      sessionIdentity: {
-        async load() { return undefined; },
-        async bind() {},
-      },
-      recordCapabilities: async () => {},
-      connect: async () => ({
-        async request(method, params) {
-          if (method === "initialize") return {};
-          if (method === "session/new") return { sessionId: "grok-cross-host" };
-          if (method === "session/load") {
-            throw new Error("cross-host resume must not session/load");
-          }
-          if (method === "session/prompt") {
-            grokPromptParams.push(params);
-            return { stopReason: "end_turn" };
-          }
-          return {};
+/** Real Pi child via existing runPiSubprocess + faux-provider seam. */
+function realPiHost(leg: "birth" | "settle") {
+  return roleTurnHostFromLegacyPiRunner({
+    packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    extraPiArgs: ["-e", CROSS_HOST_PROVIDER],
+    timeoutMs: 90_000,
+    piRunner: async (args, options) => {
+      assert.ok(argvFlagValue(args, "--session"), `Pi ${leg} must pass --session`);
+      const subprocess = await runPiSubprocess([...args], {
+        cwd: options.cwd,
+        env: {
+          ...options.env,
+          PI_OFFLINE: "1",
+          AK_CROSS_HOST_LEG: leg,
         },
-        notify() {},
-        async close() {},
-      }),
-      inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
-      prepare: async (request) => ({
-        mcpServers: [{ name: "ak-role" }],
-        systemPrompt: { body: "law", materials: [] },
-        prompt: request.continuation.prompt,
-        closeRound: async () => {
-          await observeTyped429ViaProductionHandler({
-            runDirectory: request.runDirectory,
-            provider: "openai-codex",
-          });
-          return {
-            accepted: false as const,
-            failure: {
-              cause: "provider" as const,
-              identity: { name: "rate_limit", code: 429 },
-            },
-          };
-        },
-      }),
-    });
-
-    {
-      const { io, stderr } = captureIo();
-      const grokResume = await runAkRole(["resume", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials,
-        io,
-        principalAuthority: piDurablePrincipalAuthority,
-        hostAdapters: [
-          {
-            name: "pi",
-            create() {
-              throw new Error("Pi adapter must not run on grok-build seat");
-            },
-          },
-          {
-            name: "grok-build",
-            create() {
-              selected.push("grok-build");
-              return { ok: true as const, host: grokHost };
-            },
-          },
-        ],
+        timeoutMs: options.timeoutMs ?? 90_000,
       });
-      assert.equal(grokResume.exitCode, 1, stderr.join(""));
-      assert.equal(grokResume.terminal?.roleOutcome.kind, "failure");
-      assert.ok(grokResume.terminal?.resume, "Grok leg must stay resumable");
-      assert.equal(
-        grokResume.terminal?.resume?.command.includes(runId),
-        true,
-        "resume command must keep the same runId",
-      );
-    }
-    assert.deepEqual(selected, ["grok-build"]);
-    assert.equal(grokPromptParams.length, 1);
-
-    const promptParts = (grokPromptParams[0] as { prompt?: unknown[] }).prompt ?? [];
-    const resourcePart = promptParts.find(
-      (part) => typeof part === "object" && part !== null && (part as { type?: unknown }).type === "resource",
-    ) as
-      | { resource?: { mimeType?: unknown; text?: unknown; uri?: unknown } }
-      | undefined;
-    assert.equal(resourcePart?.resource?.mimeType, "application/json");
-    assert.equal(resourcePart?.resource?.uri, "context://ak-role/session-history");
-    const history = JSON.parse(String(resourcePart?.resource?.text)) as GrokRebuildHistoryResource;
-    assert.equal(history.version, 1);
-    const rebuildCall = history.turns.find(
-      (turn) =>
-        turn.kind === "toolCall"
-        && turn.id === toolCallId
-        && turn.name === JUDGE_OUTPUT_TOOL_NAME
-        && typeof turn.arguments === "object"
-        && turn.arguments !== null
-        && (turn.arguments as { judgeStatus?: unknown }).judgeStatus === "escalate",
-    );
-    assert.ok(rebuildCall, "Grok rebuild resource must carry keyed toolCall.arguments");
-    const rebuildResult = history.turns.find(
-      (turn) =>
-        turn.kind === "toolResult"
-        && turn.toolCallId === toolCallId
-        && turn.toolName === JUDGE_OUTPUT_TOOL_NAME
-        && typeof turn.details === "object"
-        && turn.details !== null
-        && (turn.details as { judgeStatus?: unknown }).judgeStatus === "escalate",
-    );
-    assert.ok(rebuildResult, "Grok rebuild resource must carry keyed toolResult.details");
-
-    // Production projector is the sole JSONL reader — no parallel test parser.
-    const afterGrok = projectGrokRebuildHistory(await readFile(sessionPath, "utf8"));
-    assert.ok(
-      afterGrok.some((t) => t.kind === "toolCall" && t.id === toolCallId),
-      "JSONL authority keeps escalate toolCall after Grok leg",
-    );
-    assert.ok(
-      afterGrok.some((t) => t.kind === "toolResult" && t.toolCallId === toolCallId),
-      "JSONL authority keeps escalate toolResult after Grok leg",
-    );
-
-    {
-      const { io, stderr } = captureIo();
-      const setHost = await runAkRole(
-        ["config", "set-host", "judge", "pi"],
-        { packageRoot, home, io },
-      );
-      assert.equal(setHost.exitCode, 0, stderr.join(""));
-    }
-
-    // 3. Pi resume through role-turn-host `--session` restore path; settle accepted.
-    let piResumeSessionFile: string | undefined;
-    {
-      const { io, stderr } = captureIo();
-      const piResume = await runAkRole(["resume", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials,
-        io,
-        principalAuthority: piDurablePrincipalAuthority,
-        hostAdapters: [
-          {
-            name: "pi",
-            create() {
-              selected.push("pi");
-              return {
-                ok: true as const,
-                host: roleTurnHostFromLegacyPiRunner({
-                  packageRoot,
-                  principalAuthority: piDurablePrincipalAuthority,
-                  piRunner: async (args) => {
-                    const sessionFile = argvFlagValue(args, "--session");
-                    assert.ok(sessionFile, "Pi resume must pass --session");
-                    piResumeSessionFile = sessionFile;
-                    // History the prior legs left is the file Pi restores.
-                    const restored = projectGrokRebuildHistory(await readFile(sessionFile, "utf8"));
-                    assert.ok(
-                      restored.some((t) =>
-                        t.kind === "toolResult"
-                        && t.toolCallId === toolCallId
-                        && typeof t.details === "object"
-                        && t.details !== null
-                        && (t.details as { judgeStatus?: unknown }).judgeStatus === "escalate"
-                      ),
-                      "Pi --session restore must see Grok-preserved escalate history",
-                    );
-                    return {
-                      code: 0,
-                      stderr: "",
-                      timedOut: false,
-                      sealedAcceptance: {
-                        role: "judge",
-                        details: settleDetails,
-                        toolCallId: "call_cross_host_settle",
-                      },
-                    };
-                  },
-                }),
-              };
-            },
-          },
-          {
-            name: "grok-build",
-            create() {
-              throw new Error("Grok adapter must not run on pi seat");
-            },
-          },
-        ],
-      });
-      assert.equal(piResume.exitCode, 0, stderr.join(""));
-      assert.equal(piResume.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(piResume.terminal?.runId, runId);
-      assert.equal(piResume.terminal?.resume, undefined);
-    }
-    assert.deepEqual(selected, ["grok-build", "pi"]);
-    assert.equal(piResumeSessionFile, sessionPath);
-
-    const inv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
-    assert.equal(inv.host, "pi");
+      return {
+        code: subprocess.code,
+        stdout: subprocess.stdout,
+        stderr: subprocess.stderr,
+        timedOut: subprocess.localTimeout,
+        args: [...args],
+      };
+    },
   });
-});
+}
+
+/**
+ * #617 DK-1 / Scope 2: public-CLI Pi→Grok→Pi through real Pi `--session` restore.
+ * Birth + final resume use runPiSubprocess/faux-provider; Grok keeps a minimal ACP
+ * end for the production projector. No handwritten JSONL or synthetic sealedAcceptance.
+ */
+test(
+  "cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and settles",
+  { timeout: 120_000 },
+  async () => {
+    await withHermeticHome({ prefix: "ak-cross-host-roundtrip-" }, async ({ home, agentDir }) => {
+      const project = join(home, "work");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      await writeFile(
+        join(agentDir, "navigator-model.json"),
+        `${JSON.stringify({ model: CROSS_HOST_MODEL })}\n`,
+      );
+      const runId = "run-cross-host-roundtrip";
+      const selected: string[] = [];
+
+      {
+        const { io, stderr } = captureIo();
+        assert.equal(
+          (await runAkRole(["config", "set-auto-resume-limit", "0"], { packageRoot, home, io })).exitCode,
+          0,
+          stderr.join(""),
+        );
+      }
+
+      // 1. Birth on real Pi: bash tool history then typed 429 keeps the run resumable.
+      {
+        const { io, stderr } = captureIo();
+        const birth = await runAkRole(
+          ["judge", "--model", CROSS_HOST_MODEL, "--thinking", "off", `seed-${runId}`],
+          {
+            packageRoot,
+            home,
+            agentDir,
+            cwd: project,
+            credentials,
+            createRunId: () => runId,
+            io,
+            principalAuthority: piDurablePrincipalAuthority,
+            hostAdapters: [{
+              name: "pi",
+              create: () => ({ ok: true as const, host: realPiHost("birth") }),
+            }],
+          },
+        );
+        assert.equal(birth.exitCode, 1, stderr.join(""));
+        assert.ok(birth.terminal?.resume, "birth must stay resumable");
+      }
+
+      const books = await readdir(join(home, ".ak-roles", "books"));
+      const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
+      const invPath = join(runDirectory, "invocation.json");
+      const sessionPath = join(runDirectory, "session", "session.jsonl");
+
+      {
+        const { io, stderr } = captureIo();
+        assert.equal(
+          (await runAkRole(["config", "set", "judge", `${CROSS_HOST_MODEL}:high`], {
+            packageRoot, home, io,
+          })).exitCode,
+          0,
+          stderr.join(""),
+        );
+        assert.equal(
+          (await runAkRole(["config", "set-host", "judge", "grok-build"], {
+            packageRoot, home, io,
+          })).exitCode,
+          0,
+          stderr.join(""),
+        );
+      }
+
+      // 2. Grok resume: production projector → keyed application/json resource from sole JSONL.
+      const grokPromptParams: unknown[] = [];
+      const grokHost = createGrokRoleTurnHost({
+        sessionIdentity: { async load() { return undefined; }, async bind() {} },
+        recordCapabilities: async () => {},
+        connect: async () => ({
+          async request(method, params) {
+            if (method === "initialize") return {};
+            if (method === "session/new") return { sessionId: "grok-cross-host" };
+            if (method === "session/load") {
+              throw new Error("cross-host resume must not session/load");
+            }
+            if (method === "session/prompt") {
+              grokPromptParams.push(params);
+              return { stopReason: "end_turn" };
+            }
+            return {};
+          },
+          notify() {},
+          async close() {},
+        }),
+        inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
+        prepare: async (request) => ({
+          mcpServers: [{ name: "ak-role" }],
+          systemPrompt: { body: "law", materials: [] },
+          prompt: request.continuation.prompt,
+          closeRound: async () => {
+            // Typed 429 observation keeps the run on the resume face after Grok.
+            await observeTyped429ViaProductionHandler({
+              runDirectory: request.runDirectory,
+              provider: "openai-codex",
+            });
+            return {
+              accepted: false as const,
+              failure: {
+                cause: "provider" as const,
+                identity: { name: "rate_limit", code: 429 },
+              },
+            };
+          },
+        }),
+      });
+
+      {
+        const { io, stderr } = captureIo();
+        const grokResume = await runAkRole(["resume", runId], {
+          packageRoot,
+          home,
+          agentDir,
+          cwd: project,
+          credentials,
+          io,
+          principalAuthority: piDurablePrincipalAuthority,
+          hostAdapters: [
+            {
+              name: "pi",
+              create() { throw new Error("Pi adapter must not run on grok-build seat"); },
+            },
+            {
+              name: "grok-build",
+              create() {
+                selected.push("grok-build");
+                return { ok: true as const, host: grokHost };
+              },
+            },
+          ],
+        });
+        assert.equal(grokResume.exitCode, 1, stderr.join(""));
+        assert.equal(grokResume.terminal?.roleOutcome.kind, "failure");
+        assert.ok(grokResume.terminal?.resume, "Grok leg must stay resumable");
+        assert.equal(grokResume.terminal?.resume?.command.includes(runId), true);
+      }
+      assert.deepEqual(selected, ["grok-build"]);
+      assert.equal(grokPromptParams.length, 1);
+
+      const promptParts = (grokPromptParams[0] as { prompt?: unknown[] }).prompt ?? [];
+      const resourcePart = promptParts.find(
+        (part) => typeof part === "object" && part !== null && (part as { type?: unknown }).type === "resource",
+      ) as { resource?: { mimeType?: unknown; text?: unknown; uri?: unknown } } | undefined;
+      assert.equal(resourcePart?.resource?.mimeType, "application/json");
+      assert.equal(resourcePart?.resource?.uri, "context://ak-role/session-history");
+      const history = JSON.parse(String(resourcePart?.resource?.text)) as GrokRebuildHistoryResource;
+      assert.equal(history.version, 1);
+      assert.ok(
+        history.turns.some(
+          (turn) =>
+            turn.kind === "toolCall"
+            && turn.id === CROSS_HOST_BASH_CALL_ID
+            && turn.name === "bash"
+            && typeof turn.arguments === "object"
+            && turn.arguments !== null
+            && String((turn.arguments as { command?: unknown }).command ?? "").includes(CROSS_HOST_BASH_MARKER),
+        ),
+        "Grok rebuild resource must carry keyed bash toolCall.arguments from real Pi birth",
+      );
+      assert.ok(
+        history.turns.some(
+          (turn) =>
+            turn.kind === "toolResult"
+            && turn.toolCallId === CROSS_HOST_BASH_CALL_ID
+            && turn.toolName === "bash",
+        ),
+        "Grok rebuild resource must carry keyed bash toolResult from real Pi birth",
+      );
+
+      {
+        const { io, stderr } = captureIo();
+        assert.equal(
+          (await runAkRole(["config", "set-host", "judge", "pi"], { packageRoot, home, io })).exitCode,
+          0,
+          stderr.join(""),
+        );
+      }
+
+      // 3. Pi resume: real Pi loads `--session`, consumes restored history, seals accepted.
+      {
+        const { io, stderr } = captureIo();
+        const piResume = await runAkRole(["resume", runId], {
+          packageRoot,
+          home,
+          agentDir,
+          cwd: project,
+          credentials,
+          io,
+          principalAuthority: piDurablePrincipalAuthority,
+          hostAdapters: [
+            {
+              name: "pi",
+              create() {
+                selected.push("pi");
+                return { ok: true as const, host: realPiHost("settle") };
+              },
+            },
+            {
+              name: "grok-build",
+              create() { throw new Error("Grok adapter must not run on pi seat"); },
+            },
+          ],
+        });
+        assert.equal(piResume.exitCode, 0, stderr.join(""));
+        assert.equal(piResume.terminal?.roleOutcome.kind, "accepted");
+        assert.equal(piResume.terminal?.runId, runId);
+        assert.equal(piResume.terminal?.resume, undefined);
+      }
+      assert.deepEqual(selected, ["grok-build", "pi"]);
+
+      const inv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
+      assert.equal(inv.host, "pi");
+      // Session file the real Pi legs shared must still exist for the same runId.
+      assert.equal((await readFile(sessionPath, "utf8")).length > 0, true);
+    });
+  },
+);
