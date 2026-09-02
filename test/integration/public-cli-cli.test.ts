@@ -339,6 +339,48 @@ test("config persistence round-trips across processes on the typed seat face", a
   });
 });
 
+test("#620 roles shows inherit-gatekeeper for unset notary/inspector", async () => {
+  await withTempHome(async (home) => {
+    const gateSet = await runAkRole(
+      ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(gateSet.exitCode, 0);
+
+    const roles = captureIo();
+    const listed = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      credentials: { "openai-codex": true, xai: true },
+      io: roles.io,
+    });
+    assert.equal(listed.exitCode, 0);
+    const body = roles.stdout.join("");
+    assert.match(body, /^notary\tcallable\tinherit-gatekeeper\topenai-codex\/gpt-5\.6-sol:low$/m);
+    assert.match(body, /^inspector\tcallable\tinherit-gatekeeper\topenai-codex\/gpt-5\.6-sol:low$/m);
+    assert.match(body, /^gatekeeper\tautomatic\tpersistent\topenai-codex\/gpt-5\.6-sol:low$/m);
+
+    // Explicit notary pin is independent of gatekeeper.
+    const notarySet = await runAkRole(
+      ["config", "set", "notary", "xai/grok-4.5:high"],
+      { packageRoot, home, io: captureIo().io },
+    );
+    assert.equal(notarySet.exitCode, 0);
+    const rolesPinned = captureIo();
+    const listedPinned = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      credentials: { "openai-codex": true, xai: true },
+      io: rolesPinned.io,
+    });
+    assert.equal(listedPinned.exitCode, 0);
+    assert.match(
+      rolesPinned.stdout.join(""),
+      /^notary\tcallable\tpersistent\txai\/grok-4\.5:high$/m,
+    );
+  });
+});
+
 test("#453 config unset clears gate model only; keeps notary engine; refuses non-gate", async () => {
   await withTempHome(async (home) => {
     const setModel = await runAkRole(

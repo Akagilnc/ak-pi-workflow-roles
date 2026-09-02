@@ -72,7 +72,12 @@ export type PublicCliConfig = {
   unknownSeats?: Record<string, unknown>;
 };
 
-export type EffectiveSource = "persistent" | "startup" | "invocation" | "unconfigured";
+export type EffectiveSource =
+  | "persistent"
+  | "startup"
+  | "invocation"
+  | "inherit-gatekeeper"
+  | "unconfigured";
 
 /** Engine axis source is independent of model source (#356). */
 export type EngineSource = "invocation" | "persistent" | "unconfigured";
@@ -177,8 +182,8 @@ export function setPersistentSeatConfig(
  * Clear a gate officer's persistent model override (#453).
  * Scope is GateOfficerSeat only — non-province seats have no destructive clear seam.
  * Notary and direct Inspector may retain host/engine residual axes while model
- * resolution returns to startup / province inheritance (#522 two independent
- * axes; #568 public Inspector). Gatekeeper drops the whole row.
+ * resolution returns to gatekeeper inheritance (#522 two independent
+ * axes; #568 public Inspector; #620). Gatekeeper drops the whole row.
  * Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(
@@ -207,26 +212,6 @@ export function clearPersistentSeatConfig(
   return { ...config, seats };
 }
 
-/**
- * Province-only model selection (#453): officer persistent > gatekeeper persistent
- * > unset (caller inherits parent session). Never consults startup candidates —
- * direct `ak-role notary` keeps resolveEffectiveSeat; only province reads this.
- * Engine-only residual is not a model override.
- */
-export function resolveGateOfficerModelSelection(
-  config: PublicCliConfig,
-  officer: GateOfficerSeat,
-): SeatModelConfig | undefined {
-  const ownModel = seatModelOnly(config.seats[officer]);
-  if (ownModel !== undefined) return ownModel;
-  if (officer === "gatekeeper") return undefined;
-  return seatModelOnly(config.seats.gatekeeper);
-}
-
-/**
- * Seats that own the labor-engine axis (#391: PUBLIC_CALLABLE_ROLES only).
- * Navigator is configurable for model but has no independent activation path.
- */
 /** Set or clear the persistent main-session host on a callable role seat. */
 export function setPersistentSeatHost(
   config: PublicCliConfig,
@@ -659,6 +644,22 @@ function resolveBaseSeat(
       selection: persistentModel,
       engineSource: "unconfigured",
     };
+  }
+  // #620: notary/inspector share institutional order (own > gatekeeper > unset).
+  // Direct/display has no parent session; province path still adds parent via
+  // resolveInstitutionalSeatSelections. No package startup for subordinates.
+  if (seat === "notary" || seat === "inspector") {
+    const gatekeeperModel = seatModelOnly(config.seats.gatekeeper);
+    if (gatekeeperModel !== undefined) {
+      return {
+        seat,
+        automatic,
+        source: "inherit-gatekeeper",
+        selection: gatekeeperModel,
+        engineSource: "unconfigured",
+      };
+    }
+    return { seat, automatic, source: "unconfigured", engineSource: "unconfigured" };
   }
   const startup = pickStartupCandidate(seat, credentials);
   if (startup !== undefined) {
