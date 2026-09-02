@@ -19,14 +19,12 @@ export type PublicCallableRole = (typeof PUBLIC_CALLABLE_ROLES)[number];
 /** Automatic attendance seat — configurable, never a caller-selected command. */
 export const AUTOMATIC_NAVIGATOR_SEAT = "navigator" as const;
 
-/** Automatic gate seats — configurable model only; never caller commands (#453). */
+/** Automatic province seat — configurable model only; never a caller command. */
 export const AUTOMATIC_GATEKEEPER_SEAT = "gatekeeper" as const;
-export const AUTOMATIC_INSPECTOR_SEAT = "inspector" as const;
 
-/** All automatic configurable seats (no independent public activation command). */
+/** Automatic-only configurable seats. Inspector remains automatic-capable via its callable seat. */
 export const AUTOMATIC_CONFIGURABLE_SEATS = [
   AUTOMATIC_GATEKEEPER_SEAT,
-  AUTOMATIC_INSPECTOR_SEAT,
   AUTOMATIC_NAVIGATOR_SEAT,
 ] as const;
 

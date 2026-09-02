@@ -7,9 +7,10 @@ import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 
 export const GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
-export const INSPECTOR_OUTPUT_TOOL = "ak_inspector_output";
+export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 const SUBJECT_TOOL = "ak_gatekeeper_subject";
 

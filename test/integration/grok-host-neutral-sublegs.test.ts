@@ -25,7 +25,8 @@ import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-session-contracts.ts";
-import { callThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
+import { callThroughMcp, listThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { packageRoot, seedGitRepository, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
@@ -105,6 +106,43 @@ async function withGrokRoot<T>(run: (ctx: {
     await rm(root, { recursive: true, force: true });
   }
 }
+
+test("production Grok deps: public inspector activates with packaged session materials", async () => {
+  await withGrokRoot(async ({ root, runDirectory, deps }) => {
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {},
+        activation: { role: "inspector" },
+        methods: [],
+        continuation: { kind: "initial", prompt: "inspect the material" },
+        model: { provider: "xai", model: "grok-4.6" },
+        cwd: root,
+        home: root,
+        agentDir: join(root, "agent"),
+        runDirectory,
+      } as RoleTurnRequest,
+      socketPath: join(root, "mcp.sock"),
+      dependencies: deps,
+    });
+    try {
+      const server = prepared.mcpServers[0] as GrokMcpServer;
+      const listed = await listThroughMcp(server) as { tools?: Array<{ name: string }> };
+      const names = listed.tools?.map(({ name }) => name) ?? [];
+      assert.ok(names.includes(INSPECTOR_OUTPUT_TOOL_NAME), `expected ${INSPECTOR_OUTPUT_TOOL_NAME}, got ${JSON.stringify(names)}`);
+      const reply = await callThroughMcp(server, INSPECTOR_OUTPUT_TOOL_NAME, {
+        status: "pass",
+        findings: ["material inspected"],
+      });
+      assert.equal(reply.error, undefined);
+      const result = reply.result as { isError?: boolean; structuredContent?: { submissionDisposition?: unknown } };
+      assert.equal(result?.isError, undefined);
+      assert.equal(result?.structuredContent?.submissionDisposition, "pending-round-closure");
+      assert.equal((await prepared.closeRound()).accepted, true);
+    } finally {
+      await prepared.dispose?.();
+    }
+  });
+});
 
 test("production Grok deps: judge soul audit institutional child returns typed pass", async () => {
   await withGrokRoot(async ({ root, runDirectory, deps }) => {

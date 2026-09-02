@@ -121,7 +121,8 @@ export type RoleTurnActivation =
       readonly role: "gleaner-left";
       /** Required comparison-base revision for the unanchored merge-candidate diff. */
       readonly baseRevision: string;
-    };
+    }
+  | { readonly role: "inspector" };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }

@@ -31,6 +31,7 @@ import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, ty
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
 import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
 import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_OUTPUT_TOOL_NAME, validateRecordedGleanerLeftOutput, type GleanerLeftOutput } from "../gleaner-left-contracts.ts";
+import { INSPECTOR_ACCEPTED_TEXT, INSPECTOR_OUTPUT_TOOL_NAME, validateRecordedInspectorOutput, type InspectorOutput } from "../inspector-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -65,6 +66,7 @@ export {
   validateRecordedNotaryOutput,
   validateRecordedCountersignOutput,
   validateRecordedGleanerLeftOutput,
+  validateRecordedInspectorOutput,
 };
 export type {
   CollectorReceipt,
@@ -78,6 +80,7 @@ export type {
   NotaryOutput,
   CountersignVerdict,
   GleanerLeftOutput,
+  InspectorOutput,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -91,6 +94,7 @@ export const TERMINATING_TOOL_NAMES = [
   NOTARY_OUTPUT_TOOL_NAME,
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   GLEANER_LEFT_OUTPUT_TOOL_NAME,
+  INSPECTOR_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -104,7 +108,8 @@ export type AcceptedDetails =
   | MergerOutput
   | NotaryOutput
   | CountersignVerdict
-  | GleanerLeftOutput;
+  | GleanerLeftOutput
+  | InspectorOutput;
 
 export function isTerminatingToolName(
   name: string,
@@ -134,6 +139,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return COUNTERSIGN_ACCEPTED_TEXT;
     case GLEANER_LEFT_OUTPUT_TOOL_NAME:
       return GLEANER_LEFT_ACCEPTED_TEXT;
+    case INSPECTOR_OUTPUT_TOOL_NAME:
+      return INSPECTOR_ACCEPTED_TEXT;
   }
 }
 
@@ -189,6 +196,7 @@ export function validateAcceptedDetails(
     [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
     [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
     [GLEANER_LEFT_OUTPUT_TOOL_NAME]: ["completed"],
+    [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;
@@ -223,6 +231,8 @@ export function validateAcceptedDetails(
       return validateRecordedCountersignOutput(details);
     case GLEANER_LEFT_OUTPUT_TOOL_NAME:
       return validateRecordedGleanerLeftOutput(details);
+    case INSPECTOR_OUTPUT_TOOL_NAME:
+      return validateRecordedInspectorOutput(details);
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -268,7 +278,8 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case REVIEWER_OUTPUT_TOOL_NAME:
     case DOCTOR_OUTPUT_TOOL_NAME:
     case NOTARY_OUTPUT_TOOL_NAME:
-    case GLEANER_LEFT_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
+    case GLEANER_LEFT_OUTPUT_TOOL_NAME:
+    case INSPECTOR_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
     case COUNTERSIGN_OUTPUT_TOOL_NAME: return { status: (details as { countersignStatus: string }).countersignStatus };
     case MERGER_OUTPUT_TOOL_NAME: {

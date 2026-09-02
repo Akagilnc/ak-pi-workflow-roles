@@ -51,6 +51,12 @@ const TICKET_MAIN_MATERIALS = {
   notary: ["CLAUDE.md", "souls/notary.md", "souls/gate-output-guide.md"],
   countersign: ["CLAUDE.md", "souls/countersign.md"],
   "gleaner-left": ["CLAUDE.md", "souls/gleaner-left.md", "souls/quality-law.md"],
+  inspector: [
+    "CLAUDE.md",
+    "souls/inspector.md",
+    "souls/quality-law.md",
+    "souls/gate-output-guide.md",
+  ],
   navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
 
