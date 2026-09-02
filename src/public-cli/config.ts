@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
+import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
   AUTOMATIC_CONFIGURABLE_SEATS,
   PUBLIC_CALLABLE_ROLES,
@@ -210,45 +211,6 @@ export function clearPersistentSeatConfig(
   }
   const { [seat]: _dropped, ...seats } = config.seats;
   return { ...config, seats };
-}
-
-/** Configured province-officer resolution (#453/#620 sole authority for source+selection). */
-export type ConfiguredProvinceOfficerResolution = {
-  readonly selection?: SeatModelConfig;
-  readonly source: "persistent" | "inherit-gatekeeper" | "unconfigured";
-};
-
-/**
- * Configured province-officer model+source (#453/#620 sole authority):
- * officer persistent > gatekeeper persistent > unset.
- * No startup candidates and no parent-session fallback here — province path
- * composes parent via resolveInstitutionalSeatSelections; direct and config
- * display consume this result as-is (no second source branch).
- */
-export function resolveConfiguredProvinceOfficer(
-  config: PublicCliConfig,
-  officer: GateOfficerSeat,
-): ConfiguredProvinceOfficerResolution {
-  const ownModel = seatModelOnly(config.seats[officer]);
-  if (ownModel !== undefined) {
-    return { selection: ownModel, source: "persistent" };
-  }
-  if (officer === "gatekeeper") {
-    return { source: "unconfigured" };
-  }
-  const gatekeeperModel = seatModelOnly(config.seats.gatekeeper);
-  if (gatekeeperModel !== undefined) {
-    return { selection: gatekeeperModel, source: "inherit-gatekeeper" };
-  }
-  return { source: "unconfigured" };
-}
-
-/** Selection-only view of resolveConfiguredProvinceOfficer (institutional parent compose). */
-export function resolveConfiguredProvinceOfficerModel(
-  config: PublicCliConfig,
-  officer: GateOfficerSeat,
-): SeatModelConfig | undefined {
-  return resolveConfiguredProvinceOfficer(config, officer).selection;
 }
 
 /** Set or clear the persistent main-session host on a callable role seat. */
@@ -673,7 +635,7 @@ function resolveBaseSeat(
   credentials: CredentialProviders,
 ): UnhostedEffectiveSeat {
   const automatic = isAutomaticConfigurableSeat(seat);
-  // #620: subordinate officers take selection+source solely from province configured rule.
+  // #620: subordinate officers consume institutional-resolution authority result.
   if (seat === "notary" || seat === "inspector") {
     const resolved = resolveConfiguredProvinceOfficer(config, seat);
     return {

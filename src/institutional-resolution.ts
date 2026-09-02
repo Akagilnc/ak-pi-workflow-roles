@@ -1,16 +1,28 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RoleTurnModelConfig } from "./host-contracts.ts";
-import {
-  resolveConfiguredProvinceOfficerModel,
-  seatModelOnly,
-  type PublicCliConfig,
+import type {
+  GateOfficerSeat,
+  PublicCliConfig,
+  SeatModelConfig,
 } from "./public-cli/config.ts";
 
 export const INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json" as const;
 
 /** Non-secret per-seat model selection — alias of the single host-neutral RoleTurnModelConfig. */
 export type InstitutionalSeatSelection = RoleTurnModelConfig;
+
+/**
+ * Configured province-officer resolution (#453/#620 authority seam):
+ * officer persistent > gatekeeper persistent > unconfigured.
+ * No startup candidates and no parent-session fallback — parent compose stays
+ * in resolveInstitutionalSeatSelections; direct call and config display consume
+ * this typed result as-is.
+ */
+export type ConfiguredProvinceOfficerResolution = {
+  readonly selection?: SeatModelConfig;
+  readonly source: "persistent" | "inherit-gatekeeper" | "unconfigured";
+};
 
 export type InstitutionalResolutionPage = {
   readonly version: 1;
@@ -54,10 +66,46 @@ function cleanSelection(model?: { provider?: string; model?: string; thinking?: 
   };
 }
 
+/** Disk province seat → SeatModelConfig without widening thinking past PublicThinkingLevel. */
+function configuredSeatModel(
+  config: PublicCliConfig,
+  seat: GateOfficerSeat,
+): SeatModelConfig | undefined {
+  const row = config.seats[seat];
+  if (row?.provider === undefined || row.model === undefined) return undefined;
+  return row.thinking === undefined
+    ? { provider: row.provider, model: row.model }
+    : { provider: row.provider, model: row.model, thinking: row.thinking };
+}
+
+/**
+ * Authority for configured province-officer model+source (#453/#620):
+ * own persistent > gatekeeper persistent > unconfigured.
+ * Shared by resolveInstitutionalSeatSelections (plus parent fallback),
+ * resolveEffectiveSeat subordinate branch, and roles/config display.
+ */
+export function resolveConfiguredProvinceOfficer(
+  config: PublicCliConfig,
+  officer: GateOfficerSeat,
+): ConfiguredProvinceOfficerResolution {
+  const ownModel = configuredSeatModel(config, officer);
+  if (ownModel !== undefined) {
+    return { selection: ownModel, source: "persistent" };
+  }
+  if (officer === "gatekeeper") {
+    return { source: "unconfigured" };
+  }
+  const gatekeeperModel = configuredSeatModel(config, "gatekeeper");
+  if (gatekeeperModel !== undefined) {
+    return { selection: gatekeeperModel, source: "inherit-gatekeeper" };
+  }
+  return { source: "unconfigured" };
+}
+
 /**
  * Resolve effective per-seat institutional selections (#518 §2 Hop 1; #620):
- * - gatekeeper / inspector / notary: resolveConfiguredProvinceOfficerModel (sole
- *   configured rule) then parent effective on the province path only
+ * - gatekeeper / inspector / notary: resolveConfiguredProvinceOfficer then
+ *   parent effective on the province path only
  * - auditor / evidenceChild: parent effective
  * - navigator: explicit config seat only. Navigator model authority stays
  *   `navigator-model.json`; the page never carries a parent-inherited navigator
@@ -71,14 +119,14 @@ export function resolveInstitutionalSeatSelections(
   const parentSelection = cleanSelection(parentEffectiveModel);
 
   const gatekeeper =
-    resolveConfiguredProvinceOfficerModel(config, "gatekeeper") ?? parentSelection;
+    resolveConfiguredProvinceOfficer(config, "gatekeeper").selection ?? parentSelection;
   const inspector =
-    resolveConfiguredProvinceOfficerModel(config, "inspector") ?? parentSelection;
+    resolveConfiguredProvinceOfficer(config, "inspector").selection ?? parentSelection;
   const notary =
-    resolveConfiguredProvinceOfficerModel(config, "notary") ?? parentSelection;
+    resolveConfiguredProvinceOfficer(config, "notary").selection ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
-  const navigator = cleanSelection(seatModelOnly(config.seats?.navigator));
+  const navigator = cleanSelection(config.seats?.navigator);
 
   return {
     version: 1,
