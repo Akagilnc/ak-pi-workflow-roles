@@ -17993,8 +17993,8 @@ var init_option_definitions = __esm({
         repeatable: false,
         form: "option",
         description: {
-          en: "Optional labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
-          zh: "\u672C\u8C03\u7528\u53EF\u9009\u52B3\u52A8\u5F15\u64CE\uFF08\u6C60\u4EE4\u540D\u5B57\uFF1B\u6709\u5305\u5185\u8C03\u6CD5\u7B14\u8BB0\u5219\u9644\u5377\uFF1B\u5168\u90E8\u89D2\u8272\u53EF\u7528\uFF09\u3002"
+          en: "Labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
+          zh: "\u672C\u8C03\u7528\u52B3\u52A8\u5F15\u64CE\uFF08\u6C60\u4EE4\u540D\u5B57\uFF1B\u6709\u5305\u5185\u8C03\u6CD5\u7B14\u8BB0\u5219\u9644\u5377\uFF1B\u5168\u90E8\u89D2\u8272\u53EF\u7528\uFF09\u3002"
         }
       },
       {
