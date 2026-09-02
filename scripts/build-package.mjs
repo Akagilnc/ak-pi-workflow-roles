@@ -8,6 +8,8 @@ const entries = [
   "public-command-renderer",
   "work-subject-identity",
   "navigator-invocation-identity",
+  // Static import of navigator-invocation-identity (#603: non-bundle graph closure).
+  "uuidv7",
   "navigator-attendance",
   // Navigator package-graph dependencies used by attendance settlement.
   // navigator-session-contracts is a static import of the published attendance root
