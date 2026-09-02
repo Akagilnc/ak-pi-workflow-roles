@@ -67,6 +67,8 @@ export type PostAdmissionEnv = {
   roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   engine?: string;
+  /** Effective main-session host for this run — recorded as birth host (#595). */
+  host?: string;
   credentials?: CredentialProviders;
   timeoutMs?: number;
   principalAuthority: DurablePrincipalAuthority;
@@ -244,7 +246,7 @@ export async function dispatchPostAdmissionTurn<
         io,
       )) as { exitCode: number; admitted: A; terminal: T };
     }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     // beforeDispatch (e.g. countersign diarist station) runs after running is
     // marked — its failures must settle the run, not leave it permanently running.
@@ -447,7 +449,7 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
-    dispatch: (request, lease, isFirst, attemptIo) =>
+    dispatch: (request, lease, _isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,
         env: {
@@ -458,13 +460,17 @@ export async function runPostAdmissionResumable<
         request,
         lease,
         adapters,
-        ...(isFirst && effectiveEngine !== undefined ? { effectiveEngine } : {}),
+        // #600: every attempt (initial + auto-resume) writes seat engine when present.
+        ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       }),
   });
 }
 
 /**
  * Shared post-admission manual resume path: acquire writer lease and dispatch turn.
+ * When the submission ledger is already sealed, project that accepted terminal
+ * idempotently — do not dispatch a doomed turn that would append
+ * post-seal-anomaly and erase the sealed read (#599; keep #416 open load).
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
@@ -475,15 +481,43 @@ export async function runPostAdmissionManualResume<
   io: CliIo;
   request: RoleTurnRequest;
   adapters: PostAdmissionAdapters<A, T>;
+  /** Seat-table engine axis on resume (#600); written onto invocation.json when present. */
+  effectiveEngine?: string;
 }): Promise<{
   exitCode: number;
   admitted?: A;
   terminal?: T;
 }> {
-  const { admitted, env, io, request, adapters } = input;
+  const { admitted, env, io, request, adapters, effectiveEngine } = input;
   // Single seam: explicit env model wins; otherwise restore admitted.model
   // (including thinking) so a model-less manual resume reuses the recorded model.
   const effectiveModel = resolveResumeModel(env.model, admitted.model);
+  const shouldPresent =
+    adapters.shouldPresentSettled ??
+    ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
+
+  // Sealed accepted receipt only — audit_escalation / residual failure must not
+  // short-circuit; those still need a real continuation turn.
+  try {
+    const existing = await adapters.trySettle(admitted, env.principalAuthority);
+    if (
+      existing !== undefined &&
+      existing.roleOutcome.kind === "accepted" &&
+      shouldPresent(existing)
+    ) {
+      (existing as { autoResumeCount?: number }).autoResumeCount = 0;
+      io.stdout(formatTerminalResult(existing));
+      return {
+        exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
+        admitted,
+        terminal: existing,
+      };
+    }
+  } catch {
+    // Pre-dispatch settle failure is not proof of seal; fall through to dispatch
+    // so the attempt path can settle or fail honestly.
+  }
+
   let lease: RunWriterLease;
   try {
     lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
@@ -506,6 +540,7 @@ export async function runPostAdmissionManualResume<
     request,
     lease,
     adapters,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;

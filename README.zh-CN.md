@@ -39,7 +39,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎、给事中、左拾遗仍为一次性，无 resume。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。
+`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎仍为一次性，无 resume；给事中、左拾遗可手动 resume（#599）。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。
 
 大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
@@ -64,7 +64,7 @@ ak-role config set-auto-resume-limit 3
 
 **宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动。全部 public callable 角色及其机构子腿（审刑审计、太医审计、游奕使、御史台证据子腿）在共享进程内机构子会话接缝上均为宿主中立。
 
-门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。
+门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
@@ -104,7 +104,7 @@ ak-role notary --source-run <runId@role|path> --ticket 582
 # 给事中——票庭五问；可选 --ticket（起居郎流水线前序工序按票刷新起居录）
 ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
 
-# 左拾遗——合并前无锚定风闻；一次性；--base 必填；instruction 可空；调用者不得传方向性 instruction
+# 左拾遗——合并前无锚定风闻；可 resume 续同一 session；--base 必填；instruction 可空；调用者不得传方向性 instruction
 ak-role gleaner-left --base main
 
 # 太史——确定性指标；裸调＝整簿
@@ -170,7 +170,7 @@ ak-role resume <runId> "<裁定>"
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--model` | — | `provider/model` | 否 | 否 | option | — | 覆盖本调用有效席位模型（可置于子命令前或后）。 |
 | `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off\|minimal\|low\|medium\|high\|xhigh\|max。 |
-| `--engine` | — | `name` | 否 | 否 | option | — | 本调用可选劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。 |
+| `--engine` | — | `name` | 否 | 否 | option | — | 本调用劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。 |
 | `--host` | — | `name` | 否 | 否 | option | — | 为本调用选择具名主会话宿主适配器。 |
 | `--help` | `-h` | — | 否 | 否 | option | — | 显示公开 CLI 帮助并退出。 |
 

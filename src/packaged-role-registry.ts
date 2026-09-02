@@ -142,13 +142,14 @@ export const PUBLIC_ROLE_RECORDS = [
 export type PublicRoleRecord = (typeof PUBLIC_ROLE_RECORDS)[number];
 export type PackagedRole = PublicRoleRecord["role"];
 
-/** One-shot seats: runs terminate and refuse resume — single typed owner (#572 判词送修 5). */
+/**
+ * Seats that refuse resume. Collector/doctor/notary remain pending independent
+ * authority review; countersign/gleaner-left revoked by #599 (DK-1/2/3).
+ */
 export const ONE_SHOT_ROLES: readonly PackagedRole[] = [
   "collector",
   "doctor",
   "notary",
-  "countersign",
-  "gleaner-left",
 ];
 
 /**

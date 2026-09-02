@@ -32,7 +32,7 @@ import {
 import {
   loadResumableMergerRun,
   markRunAdmitted,
-  selectResumeContinuationPrompt,
+  buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -347,7 +347,10 @@ export async function runPublicMerger(
           : { correlationId: admitted.correlationId ?? env.correlationId }),
         continuation: {
           kind: "resume",
-          prompt: selectResumeContinuationPrompt(),
+          prompt: buildResumeContinuationPrompt({
+            packageRoot: env.packageRoot,
+            ...(env.engine === undefined ? {} : { engine: env.engine }),
+          }),
         },
       }),
     adapters: mergerAdapters(env.packageRoot, methodMaterial),
@@ -412,7 +415,11 @@ export async function runPublicMergerResume(
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message),
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
   });
 
@@ -422,6 +429,7 @@ export async function runPublicMergerResume(
     io,
     request: turnRequest,
     adapters: mergerAdapters(env.packageRoot, methodMaterial),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
