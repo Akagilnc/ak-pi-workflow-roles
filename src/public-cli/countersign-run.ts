@@ -31,6 +31,7 @@ import {
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
+import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
   runPostAdmissionManualResume,
   runPostAdmissionOneShot,
@@ -277,10 +278,12 @@ export async function runCountersignDiaristStation(
   if (admitted.ticketNumber === undefined) return undefined;
 
   const issueFace = await loadBoundIssueFace(admitted);
+  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
 
   const result = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
+    ...(home === undefined ? {} : { home }),
     issueFace,
     sessionCwds: [admitted.projectRoot, env.cwd],
     ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
@@ -297,9 +300,11 @@ function persistIssueSourceFailure(
   ticketNumber: number,
   error: DiaristIssueSourceError,
 ): never {
+  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
   appendIssueSourceFailureDiagnostic({
     ticketNumber,
     cwd: admitted.projectRoot,
+    ...(home === undefined ? {} : { home }),
     cause: error.message,
     reason: error.reason,
   });

@@ -218,7 +218,18 @@ function reliableWindow(
   });
 }
 
-export function createWorkerSubmissionGate(): {
+export type CreateWorkerSubmissionGateOptions = {
+  /**
+   * Explicit package home for sitian writes when no parent session is armed.
+   * Existing injection point on sitianReport — does not change fallback when omitted
+   * (path-derive from parent, else package machine home). #604 Scope 2.
+   */
+  readonly home?: string;
+};
+
+export function createWorkerSubmissionGate(
+  options: CreateWorkerSubmissionGateOptions = {},
+): {
   arm(cwd: string, parent?: WorkerSubmissionGateParent): void;
   assertAcceptable(status: string, details?: unknown): void;
 } {
@@ -228,6 +239,10 @@ export function createWorkerSubmissionGate(): {
   let prefixReminded = false;
   let unfinishedReasonBounces = 0;
   let record: SessionManager | undefined;
+  /** Parent session file retained so every gate sitian write path-derives the same ledger home. */
+  let sessionParent: string | undefined;
+  const explicitHome =
+    typeof options.home === "string" && options.home.length > 0 ? options.home : undefined;
   const head = (cwd: string): string | null => {
     try {
       return git(cwd, ["rev-parse", "HEAD"]);
@@ -236,10 +251,22 @@ export function createWorkerSubmissionGate(): {
       return null;
     }
   };
+  const gateSitian = (cwd: string, payload: Record<string, unknown>) => {
+    sitianReport({
+      level: "event",
+      kind: "gate",
+      cwd,
+      ...(sessionParent === undefined ? {} : { sessionParent }),
+      ...(explicitHome === undefined ? {} : { home: explicitHome }),
+      payload,
+      source: "worker-submission-gates",
+    });
+  };
   return {
     arm(cwd, parent) {
       uninstallPackageWorkerHooks(cwd);
       root = cwd;
+      sessionParent = parent?.getSessionFile();
       record = createRecordSession({
         cwd,
         kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
@@ -259,17 +286,10 @@ export function createWorkerSubmissionGate(): {
         version: 1,
         head: baseline,
       });
-      sitianReport({
-        level: "event",
-        kind: "gate",
-        cwd,
-        ...(parent?.getSessionFile() ? { sessionParent: parent.getSessionFile() } : {}),
-        payload: {
-          type: WORKER_COMMIT_BASELINE_ENTRY_TYPE,
-          version: 1,
-          head: baseline,
-        },
-        source: "worker-submission-gates",
+      gateSitian(cwd, {
+        type: WORKER_COMMIT_BASELINE_ENTRY_TYPE,
+        version: 1,
+        head: baseline,
       });
     },
     assertAcceptable(status, details) {
@@ -287,15 +307,9 @@ export function createWorkerSubmissionGate(): {
       if (!headMoved && !reminded) {
         reminded = true;
         record?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
-        sitianReport({
-          level: "event",
-          kind: "gate",
-          cwd: root,
-          payload: {
-            type: WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
-            version: 1,
-          },
-          source: "worker-submission-gates",
+        gateSitian(root, {
+          type: WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
+          version: 1,
         });
         throw new WorkerCommitReminderError();
       }
@@ -313,15 +327,9 @@ export function createWorkerSubmissionGate(): {
       }
       prefixReminded = true;
       record?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
-      sitianReport({
-        level: "event",
-        kind: "gate",
-        cwd: root,
-        payload: {
-          type: WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
-          version: 1,
-        },
-        source: "worker-submission-gates",
+      gateSitian(root, {
+        type: WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
+        version: 1,
       });
       throw new WorkerPrefixReminderError();
     },

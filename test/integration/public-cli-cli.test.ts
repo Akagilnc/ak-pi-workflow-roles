@@ -463,7 +463,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
     }
 
     const bookKey = resolveBookKeyFromGit(project);
-    const ledgerHome = resolveActivationLedgerHome(() => home);
+    const ledgerHome = resolveActivationLedgerHome(home);
     const piRunner = async (args: readonly string[]) => ({
       code: 1,
       stderr: "public ledger tracer",

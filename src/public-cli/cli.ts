@@ -4,9 +4,9 @@ import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
  * Public ak-role CLI dispatcher (roles / config / layered help / Judge run).
  */
 import { realpath } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { packageMachineHome } from "../activation-ledger-topology.ts";
 import {
   assertLegalEngineName,
 } from "../package-resources/engine-material.ts";
@@ -437,7 +437,7 @@ function defaultIo(): CliIo {
 }
 
 function resolveHome(env: CliEnv): string {
-  return env.home ?? process.env.HOME ?? homedir();
+  return env.home ?? packageMachineHome();
 }
 
 function resolveAgentDir(env: CliEnv, home: string): string {
@@ -978,7 +978,6 @@ export async function runAkRole(
   env: CliEnv,
 ): Promise<CliResult> {
   const io = env.io ?? defaultIo();
-  const home = resolveHome(env);
 
   try {
     // Select the installed package identity once, before any role-owned Skill,
@@ -1023,6 +1022,7 @@ export async function runAkRole(
       parsed.command === "help"
     ) {
       // Layered help: `help <topic>` derives from the typed registry + option table (#342).
+      // Home-free path: never touch passwd/user profile for help/bare/--help.
       if (parsed.command === "help" && parsed.args[0] !== undefined) {
         const topic = parsed.args[0];
         const rendered = renderCommandHelp(topic);
@@ -1035,6 +1035,10 @@ export async function runAkRole(
       io.stdout(renderHelp());
       return { exitCode: 0 };
     }
+
+    // Profile home only after home-free paths return. Failures keep real identity
+    // and settle through the outer catch — no $HOME fallback (#604).
+    const home = resolveHome(env);
 
     if (parsed.command === "roles") {
       if (parsed.args.length > 0) {

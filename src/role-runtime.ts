@@ -17,6 +17,7 @@ import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
+import { resolveActivationLedgerHomeForPath } from "./activation-ledger-topology.ts";
 import {
   appendAcceptedActivationToBook,
   buildAcceptedActivationFact,
@@ -1595,7 +1596,8 @@ export function createRoleRuntimeExtension(
         // deferred SM materialization must not wipe an in-memory principal marker.
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
-        const ledgerHome = resolveActivationLedgerHome();
+        const sessionFile = ctx.sessionManager.getSessionFile?.() || ctx.sessionManager.getSessionDir?.();
+        const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
         if (dependencies.createNavigatorAttendance !== undefined) {

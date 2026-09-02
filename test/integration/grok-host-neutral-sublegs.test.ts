@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
@@ -81,17 +81,16 @@ async function withGrokRoot<T>(run: (ctx: {
   deps: ReturnType<typeof createGrokRoleRuntimeDependencies>;
 }) => Promise<T>): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-leg-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_ENGINE;
   try {
     seedGitRepository(root);
     execFileSync("git", ["-C", root, "config", "user.email", "leg@test.local"], { stdio: "ignore" });
     execFileSync("git", ["-C", root, "config", "user.name", "Leg Test"], { stdio: "ignore" });
     execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "seed"], { stdio: "ignore" });
-    const runDirectory = join(root, "runs", "leg");
+    const bookKey = basename(root);
+    const runDirectory = join(root, ".ak-roles", "books", bookKey, "runs", "leg");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     process.env.AK_ROLE_RUN_DIR = runDirectory;
     return await run({
@@ -100,7 +99,6 @@ async function withGrokRoot<T>(run: (ctx: {
       deps: createGrokRoleRuntimeDependencies(packageRoot),
     });
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
     await rm(root, { recursive: true, force: true });

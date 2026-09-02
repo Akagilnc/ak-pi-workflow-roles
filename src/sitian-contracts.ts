@@ -71,6 +71,7 @@ export type SitianRecordInput = {
   readonly raw?: SitianRawReference | undefined;
   readonly usage?: SitianUsage | undefined;
   readonly cwd?: string | undefined;
+  readonly home?: string | undefined;
 };
 
 /** Typed malformed diagnostic emitted by the canonical Reader upon encountering damaged lines. */

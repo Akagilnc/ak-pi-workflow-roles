@@ -19,6 +19,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -53,13 +54,9 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fixer-"));
-  const priorHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
-    if (priorHome === undefined) delete process.env.HOME;
-    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -665,10 +662,11 @@ async function settleFixerSession(
 ) {
   await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
   await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
+  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
   await sealAcceptedSubmission({
     runId: admitted.runId,
     cwd: admitted.projectRoot,
-    ...(process.env.HOME === undefined ? {} : { home: process.env.HOME }),
+    ...(home === undefined ? {} : { home }),
     runDirectory: admitted.runDirectory,
     role: "fixer",
     details,

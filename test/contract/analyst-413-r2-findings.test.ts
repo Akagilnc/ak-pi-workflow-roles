@@ -105,14 +105,12 @@ const RUN_ID = "019ff000-9001-7000-8000-0000000009a1";
 
 test("U3: real book basename root:foo keeps its book scope through cohort cache-miss recompute", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-413r2-e2e-"));
-  const previousHome = process.env.HOME;
   // Owned immediately after allocation so a later repoParent failure still deletes home.
   let repoParent = "";
   await withPrimaryAwareCleanup(
     async () => {
-      process.env.HOME = home;
       // Real Git repository whose book key (common-dir host basename) is literally root:foo.
-      // Allocated inside the cleanup boundary so failure still restores HOME / deletes home.
+      // Allocated inside the cleanup boundary so failure still deletes home.
       repoParent = mkdtempSync(join(tmpdir(), "analyst-413r2-repos-"));
       const ledgerHome = join(home, ".ak-roles");
       const repo = join(repoParent, "root:foo");
@@ -160,7 +158,7 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
         bookKey: "root:foo",
         projectRoot: repo,
         issueNumber: 7,
-      });
+      }, { home });
 
       const pagePath = analystIssuePagePath(ledgerHome, {
         bookKey: "root:foo",
@@ -178,7 +176,7 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
           { groupLabel: "real", issues: [{ bookKey: "root:foo", issueNumber: 7 }] },
           { groupLabel: "vacancy", issues: [{ bookKey: "no-such-book", issueNumber: 8 }] },
         ],
-      })) as AnalystCohortModeResult;
+      }, { home })) as AnalystCohortModeResult;
 
       // Present projection stays bound to the real book (index join face).
       assert.deepEqual(result.groups[0]!.issues, [
@@ -201,10 +199,6 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
       assert.equal(restored.bookKey, "root:foo");
       assert.equal(restored.issueNumber, 7);
       assert.deepEqual(restored.legs.map((leg) => leg.runId), [RUN_ID]);
-    },
-    async () => {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
     },
     async () => {
       if (repoParent) rmSync(repoParent, { recursive: true, force: true });

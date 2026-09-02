@@ -43,7 +43,7 @@ function registerTool(
   } as RoleHost;
   const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, role]]), undefined, async (projection) => {
     closedSubmissions.push(projection);
-  });
+  }, { home: root });
   pipeline.registerTool({ name: outputTool, label: "output", description: "", parameters: Type.Object({}), execute });
   const context = {
     cwd: root,
@@ -85,13 +85,10 @@ async function ledgerRecords(root: string): Promise<SitianRecord[]> {
 }
 
 async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>>) => Promise<void>) {
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const f = await fixture();
-  process.env.HOME = f.root;
   process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-ledger@judge`;
   try { await run(f); } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(f.root, { recursive: true, force: true });
   }
@@ -103,7 +100,7 @@ test("host-neutral round closure seals only a sole terminal candidate", async ()
     const accepted = await f.tool().execute("only", {}, undefined, undefined, f.context);
     assert.equal(accepted.terminate, undefined);
     assert.deepEqual(accepted.details, { submissionDisposition: "pending-round-closure" });
-    assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
+    assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
 
     await f.close();
     assert.deepEqual((await ledgerRecords(f.root)).map((record) => record.kind), ["candidate", "roundContext", "sealed"]);
@@ -113,7 +110,7 @@ test("host-neutral round closure seals only a sole terminal candidate", async ()
       status: "converged",
       decisiveFacts: { judgeStatus: "converged" },
     };
-    assert.deepEqual(await readSealedSubmission(f.root, "run-ledger"), projection);
+    assert.deepEqual(await readSealedSubmission(f.root, "run-ledger", f.root), projection);
     assert.deepEqual(f.closedSubmissions, [projection]);
 
     const resumed = registerTool(f.root);
@@ -134,7 +131,7 @@ test("mixed and double-output rounds reject typed candidates before a legal retr
         if (name === JUDGE_OUTPUT_TOOL_NAME) await f.tool().execute(id, {}, undefined, undefined, f.context);
       }
       await f.close();
-      assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined, row.label);
+      assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined, row.label);
       const rejected = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
       assert.equal(rejected.length, row.label === "double-output" ? 2 : 1, row.label);
       assert.equal((rejected[0]?.payload as { code?: string }).code, "non-sole-round", row.label);
@@ -149,7 +146,7 @@ test("mixed and double-output rounds reject typed candidates before a legal retr
       await f.start(`${row.label}-retry`);
       await f.tool().execute(`${row.label}-retry`, {}, undefined, undefined, f.context);
       await f.close();
-      assert.equal((await readSealedSubmission(f.root, "run-ledger"))?.status, "converged", row.label);
+      assert.equal((await readSealedSubmission(f.root, "run-ledger", f.root))?.status, "converged", row.label);
     });
   }
 });
@@ -167,7 +164,7 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
       outcome: "infrastructure",
       diagnostic: "typed seam unavailable",
     });
-    assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
+    assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
   });
 });
 
@@ -196,7 +193,7 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
       );
       const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
       assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection", anchor.label);
-      assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined, anchor.label);
+      assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined, anchor.label);
     }
   });
 });
@@ -212,9 +209,9 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
     const result = await escalating.tool().execute("esc", {}, undefined, undefined, escalating.context);
     assert.equal(result.terminate, undefined);
     assert.deepEqual(result.details, { submissionDisposition: "pending-round-closure" });
-    assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
+    assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
     await escalating.close();
-    const projection = await readAuditEscalationSubmission(f.root, "run-ledger");
+    const projection = await readAuditEscalationSubmission(f.root, "run-ledger", f.root);
     assert.equal(projection?.kind, "audit_escalation");
     assert.equal(projection?.role, "judge");
     assert.equal(projection?.decisiveFacts.kind, "audit_escalation");
@@ -230,7 +227,7 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
     await retry.start("after-audit");
     await retry.tool().execute("after-audit", {}, undefined, undefined, retry.context);
     await retry.close();
-    assert.equal((await readSealedSubmission(f.root, "run-ledger"))?.status, "converged");
+    assert.equal((await readSealedSubmission(f.root, "run-ledger", f.root))?.status, "converged");
   });
 });
 
@@ -278,7 +275,7 @@ test("every packaged role seals through the production ledger host", async () =>
       const pending = await alternateHost.tool().execute(`${row.role}-output`, {}, undefined, undefined, alternateHost.context);
       assert.deepEqual(pending.details, { submissionDisposition: "pending-round-closure" }, row.role);
       await alternateHost.close();
-      const sealed = await readSealedSubmission(f.root, `run-${row.role}`);
+      const sealed = await readSealedSubmission(f.root, `run-${row.role}`, f.root);
       assert.equal(sealed?.kind, "accepted", row.role);
       assert.equal(sealed?.role, row.role);
       assert.equal(sealed?.status, row.status, row.role);
@@ -301,7 +298,7 @@ test("a sealed append failure never returns accepted", async () => {
       await failing.start("seal-failure");
       await failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context);
       await assert.rejects(failing.close());
-      assert.equal(await readSealedSubmission(f.root, "run-ledger"), undefined);
+      assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
     } finally {
       if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
     }

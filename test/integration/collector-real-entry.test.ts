@@ -48,7 +48,7 @@ async function runRealCollector(options: { request?: boolean; wait?: number }) {
     ] as any);
     let receipt: any;
     await withInProcessPi({
-      activationLedgerSession: true, cwd: home, agentDir, faux, modelsPath: null,
+      activationLedgerSession: true, home, cwd: home, agentDir, faux, modelsPath: null,
       extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
       noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
       flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1", ...(options.request ? { "ak-collector-request-manifest": manifest } : {}) },
@@ -59,7 +59,8 @@ async function runRealCollector(options: { request?: boolean; wait?: number }) {
       assert.deepEqual(output.message.details, { submissionDisposition: "pending-round-closure" });
       const headerId = sessionManager.getHeader?.()?.id;
       assert.ok(headerId);
-      const sealed = await readSealedSubmission(home, headerId);
+      // #604: sealed volume lives under hermetic package home (session path-derive).
+      const sealed = await readSealedSubmission(home, headerId, home);
       assert.ok(sealed, "typed turn_end must seal sole candidate");
       receipt = sealed.decisiveFacts;
     });

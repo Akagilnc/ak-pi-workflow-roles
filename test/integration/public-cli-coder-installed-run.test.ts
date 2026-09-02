@@ -16,6 +16,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import {
   installPackedArtifactIntoPiNpm,
+  machineLedgerHome,
   packageRoot,
   piCli,
   withHermeticHome,
@@ -147,6 +148,8 @@ test(
     await withHermeticHome(
       { prefix: "ak-public-cli-coder-chain-" },
       async ({ home }) => {
+        // #604: hermetic home = package user profile (test preload); fresh seats.
+        const ledgerHome = machineLedgerHome(home);
         const piAgentDir = resolve(home, ".pi", "agent");
         await mkdir(piAgentDir, { recursive: true });
         await writeFile(
@@ -175,7 +178,8 @@ test(
           (error: NodeJS.ErrnoException) => error.code === "ENOENT",
         );
 
-        const project = resolve(home, "work");
+        const bookDirName = `work-604-${Date.now().toString(36)}`;
+        const project = resolve(home, bookDirName);
         await mkdir(project, { recursive: true });
         seedGitProject(project);
 
@@ -239,7 +243,7 @@ test(
         );
 
         const bookKey = resolveBookKeyFromGit(project);
-        const runsRoot = join(home, ".ak-roles", "books", bookKey, "runs");
+        const runsRoot = join(ledgerHome, "books", bookKey, "runs");
         const { readdir } = await import("node:fs/promises");
         const runDirs = await readdir(runsRoot);
         const coderRun = runDirs.find((name) => name.endsWith("@coder"));

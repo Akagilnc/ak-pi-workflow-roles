@@ -51,13 +51,9 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-notary-"));
-  const priorHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     return await scenario(home);
   } finally {
-    if (priorHome === undefined) delete process.env.HOME;
-    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -280,7 +276,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     const runId = CANONICAL_SOURCE_RUN_ID;
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
-      activationBookDirectory(resolveActivationLedgerHome(() => home), bookKey),
+      activationBookDirectory(resolveActivationLedgerHome(home), bookKey),
       "runs",
       `${runId}@${inventedRole}`,
     );

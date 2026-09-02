@@ -15,6 +15,7 @@ import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import {
   activationBookDirectory,
   ensureRealDirectoryTree,
+  homeFromRunDirectory,
   pathContainedIn,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
@@ -256,9 +257,7 @@ export function issueAdmissionPlacement(
   const principal = authority.issue(request);
   const { sessionDirectory, sessionFile } = authority.decode(principal);
   const runDirectory = join(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(
-    request.home === undefined ? undefined : () => request.home!,
-  );
+  const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
   return {
     principal,
@@ -315,24 +314,7 @@ function effectiveModelLedgerFields(
   };
 }
 
-/** Recover the machine home that owns a run directory under `.ak-roles/`. */
-export function homeFromRunDirectory(runDirectory: string): string {
-  const marker = `${sep}.ak-roles${sep}`;
-  const idx = runDirectory.indexOf(marker);
-  if (idx !== -1) {
-    return runDirectory.slice(0, idx);
-  }
-  const altMarker = ".ak-roles";
-  const altIdx = runDirectory.indexOf(altMarker);
-  if (altIdx !== -1) {
-    const candidate = runDirectory.slice(0, altIdx);
-    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
-  }
-  if (typeof process.env.HOME === "string" && process.env.HOME.length > 0) {
-    return process.env.HOME;
-  }
-  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
-}
+export { homeFromRunDirectory };
 
 /**
  * Persist one `invocation.json` identity page for the public run.
@@ -2000,7 +1982,7 @@ export async function resolveDoctorCaseRunsPath(options: {
   issueNumber: number;
   runs?: string;
 }): Promise<string> {
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const ledgerHome = resolveActivationLedgerHome(options.home);
   const defaultRuns = join(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",

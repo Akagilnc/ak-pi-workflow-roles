@@ -60,6 +60,8 @@ export type AppendTicketProvenanceInput = {
   readonly ticketNumber: number;
   readonly entry: TicketProvenanceEntry;
   readonly cwd: string;
+  /** Explicit package home (tests / admitted run); never process.env.HOME (#604). */
+  readonly home?: string;
   readonly host?: string;
   readonly source?: string;
 };
@@ -81,6 +83,7 @@ export function appendTicketProvenanceEntry(
     identity,
     subject,
     cwd: input.cwd,
+    ...(input.home === undefined ? {} : { home: input.home }),
     host: input.host ?? "diarist",
     source: input.source ?? "diarist",
     payload: input.entry,
@@ -106,12 +109,14 @@ export type TicketProvenanceVolumePath = {
 export function resolveTicketProvenanceVolume(
   ticketNumber: number,
   cwd: string,
+  home?: string,
 ): TicketProvenanceVolumePath {
   const path = resolveSitianRecordPath({
     level: "event",
     kind: TICKET_PROVENANCE_KIND,
     subject: ticketProvenanceSubject(ticketNumber),
     cwd,
+    ...(home === undefined ? {} : { home }),
   });
   return {
     recordFile: path.recordFile,
@@ -151,8 +156,9 @@ export class TicketProvenanceWatermarkError extends Error {
 export function readOfferedIdentities(
   ticketNumber: number,
   cwd: string,
+  home?: string,
 ): ReadonlySet<string> {
-  const { offeredWatermarkFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+  const { offeredWatermarkFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   if (!existsSync(offeredWatermarkFile)) return new Set();
   let text: string;
   try {
@@ -204,14 +210,16 @@ export function readOfferedIdentities(
 export function recordOfferedIdentities(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly home?: string;
   readonly identities: readonly string[];
 }): void {
   if (input.identities.length === 0) return;
   const { volumeDir, offeredWatermarkFile } = resolveTicketProvenanceVolume(
     input.ticketNumber,
     input.cwd,
+    input.home,
   );
-  const already = new Set(readOfferedIdentities(input.ticketNumber, input.cwd));
+  const already = new Set(readOfferedIdentities(input.ticketNumber, input.cwd, input.home));
   const rows: string[] = [];
   for (const identity of input.identities) {
     if (identity.length === 0 || already.has(identity)) continue;
@@ -238,8 +246,9 @@ export type ReadTicketProvenanceResult = {
 export async function readTicketProvenance(
   ticketNumber: number,
   cwd: string,
+  home?: string,
 ): Promise<ReadTicketProvenanceResult> {
-  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd);
+  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   const { records } = await readSitianRecords(recordFile);
   const entries: TicketProvenanceEntry[] = [];
   const diagnostics: TicketProvenanceDiagnostic[] = [];
@@ -340,8 +349,9 @@ export function renderTicketProvenanceMarkdown(input: {
 export function ensureTicketProvenanceVolume(
   ticketNumber: number,
   cwd: string,
+  home?: string,
 ): TicketProvenanceVolumePath {
-  const volume = resolveTicketProvenanceVolume(ticketNumber, cwd);
+  const volume = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   mkdirSync(volume.volumeDir, { recursive: true });
   if (!existsSync(volume.recordFile)) {
     writeFileSync(volume.recordFile, "", "utf8");
@@ -357,6 +367,7 @@ export function ensureTicketProvenanceVolume(
 export function appendTicketProvenanceDiagnostic(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly home?: string;
   readonly diagnostic: TicketProvenanceDiagnostic;
   readonly host?: string;
   readonly source?: string;
@@ -390,6 +401,7 @@ export function appendTicketProvenanceDiagnostic(input: {
     identity,
     subject,
     cwd: input.cwd,
+    ...(input.home === undefined ? {} : { home: input.home }),
     host: input.host ?? "diarist",
     source: input.source ?? "diarist-diagnostic",
     payload: input.diagnostic,
@@ -400,6 +412,7 @@ export function appendTicketProvenanceDiagnostic(input: {
 export function appendCollectorFailureDiagnostic(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly home?: string;
   readonly collectorError: string;
   readonly recordedAt?: string;
 }): RecordPointer {
@@ -407,6 +420,7 @@ export function appendCollectorFailureDiagnostic(input: {
   return appendTicketProvenanceDiagnostic({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
+    ...(input.home === undefined ? {} : { home: input.home }),
     source: "diarist-collector-fail",
     diagnostic: {
       recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
@@ -421,6 +435,7 @@ export function appendCollectorFailureDiagnostic(input: {
 export function appendIssueSourceFailureDiagnostic(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly home?: string;
   readonly cause: string;
   readonly reason: string;
   readonly recordedAt?: string;
@@ -429,6 +444,7 @@ export function appendIssueSourceFailureDiagnostic(input: {
   return appendTicketProvenanceDiagnostic({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
+    ...(input.home === undefined ? {} : { home: input.home }),
     source: "diarist-issue-source",
     diagnostic: {
       recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
@@ -444,6 +460,7 @@ export function appendIssueSourceFailureDiagnostic(input: {
 export function appendQuoteVerifyFailureDiagnostic(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly home?: string;
   readonly cause: string;
   readonly recordedAt?: string;
 }): RecordPointer {
@@ -451,6 +468,7 @@ export function appendQuoteVerifyFailureDiagnostic(input: {
   return appendTicketProvenanceDiagnostic({
     ticketNumber: input.ticketNumber,
     cwd: input.cwd,
+    ...(input.home === undefined ? {} : { home: input.home }),
     source: "diarist-quote-verify",
     diagnostic: {
       recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
@@ -466,9 +484,10 @@ export function appendQuoteVerifyFailureDiagnostic(input: {
 export function writeTicketProvenanceHumanView(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly home?: string;
   readonly entries: readonly TicketProvenanceEntry[];
 }): string {
-  const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd);
+  const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
   const md = renderTicketProvenanceMarkdown({
     ticketNumber: input.ticketNumber,
     entries: input.entries,

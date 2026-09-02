@@ -186,13 +186,11 @@ async function withBookScopeWorld<T>(
 ): Promise<T> {
   // Each temp root is owned by a registered cleanup before the next fallible step.
   const home = await mkdtemp(join(tmpdir(), "analyst-399-home-"));
-  const previousHome = process.env.HOME;
   let mainRoot = "";
   let worktreeParent1 = "";
   let worktreeParent2 = "";
   return withPrimaryAwareCleanup(
     async () => {
-      process.env.HOME = home;
       mainRoot = await mkdtemp(join(tmpdir(), "analyst-399-main-"));
       execFileSync("git", ["init"], { cwd: mainRoot });
       execFileSync("git", ["branch", "-M", "main"], { cwd: mainRoot });
@@ -258,10 +256,6 @@ async function withBookScopeWorld<T>(
       });
 
       return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
-    },
-    async () => {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
     },
     async () => {
       await rm(home, { recursive: true, force: true });
@@ -393,12 +387,10 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
 // D4
 test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-399-nongit-home-"));
-  const previousHome = process.env.HOME;
   const previousCwd = process.cwd();
   let nonGit = "";
   await withPrimaryAwareCleanup(
     async () => {
-      process.env.HOME = home;
       nonGit = await mkdtemp(join(tmpdir(), "analyst-399-nongit-cwd-"));
       await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
       const before = await countAnalystFiles(home);
@@ -414,10 +406,6 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
       process.chdir(previousCwd);
     },
     async () => {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-    },
-    async () => {
       await rm(home, { recursive: true, force: true });
     },
     async () => {
@@ -429,13 +417,11 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
 // D5
 test("D5 analyst #399 two books ticket 181: pages distinct by book identity", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-399-d5-home-"));
-  const previousHome = process.env.HOME;
   const previousCwd = process.cwd();
   let repoA = "";
   let repoB = "";
   await withPrimaryAwareCleanup(
     async () => {
-      process.env.HOME = home;
       repoA = await mkdtemp(join(tmpdir(), "analyst-399-d5-a-"));
       repoB = await mkdtemp(join(tmpdir(), "analyst-399-d5-b-"));
       for (const repo of [repoA, repoB]) {
@@ -502,10 +488,6 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
       process.chdir(previousCwd);
     },
     async () => {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-    },
-    async () => {
       await rm(home, { recursive: true, force: true });
     },
     async () => {
@@ -547,14 +529,14 @@ test("D6 analyst #399 unmatched ticket: honest empty page, no full-book fallback
 
 // D7
 test("D7 analyst #399 damaged invocation/session stays unreadable (loud exclusion)", async () => {
-  await withBookScopeWorld(async ({ mainRoot, bookKey }) => {
+  await withBookScopeWorld(async ({ home, mainRoot, bookKey }) => {
     const result = await runAnalyst({
       mode: "issue",
       bookKey,
       projectRoot: mainRoot,
       ticketNumber: TICKET_A,
       issueNumber: TICKET_A,
-    });
+    }, { home });
     assert.ok(result.page.unreadable.some((u) => u.runId === RUN_DAMAGED));
     assert.equal(result.page.legs.some((l) => l.runId === RUN_DAMAGED), false);
   });
@@ -562,12 +544,12 @@ test("D7 analyst #399 damaged invocation/session stays unreadable (loud exclusio
 
 // library API: book scope without path filter
 test("analyst #399 library bookKey scope: whole book includes worktree runs", async () => {
-  await withBookScopeWorld(async ({ mainRoot, bookKey }) => {
+  await withBookScopeWorld(async ({ home, mainRoot, bookKey }) => {
     const result = await runAnalyst({
       mode: "issue",
       bookKey,
       projectRoot: mainRoot,
-    });
+    }, { home });
     const runIds = result.page.legs.map((leg) => leg.runId).sort();
     assert.deepEqual(
       runIds,
