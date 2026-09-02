@@ -8,7 +8,11 @@ import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
 import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import type { DurablePrincipalAuthority } from "../../src/host-contracts.ts";
+import {
+  issuePiDurablePrincipalCoordinates,
+  piDurablePrincipalAuthority,
+} from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { callThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { parentInheritedSeats, writeInstitutionalSeatTable } from "../helpers/institutional-seat-table.ts";
@@ -284,9 +288,11 @@ async function seedResumableJudge(input: {
   project: string;
   runId: string;
   hostAdapters?: readonly NamedRoleTurnHostAdapter[];
+  principalAuthority?: DurablePrincipalAuthority;
   afterTurn?: (runDirectory: string, sessionDirectory: string) => Promise<void>;
 }): Promise<void> {
   const { io } = captureIo();
+  const principalAuthority = input.principalAuthority ?? piDurablePrincipalAuthority;
   await runAkRole(["judge", `seed-${input.runId}`], {
     packageRoot,
     home: input.home,
@@ -294,7 +300,7 @@ async function seedResumableJudge(input: {
     credentials,
     createRunId: () => input.runId,
     io,
-    principalAuthority: piDurablePrincipalAuthority,
+    principalAuthority,
     hostAdapters: input.hostAdapters ?? [
       {
         name: "pi",
@@ -426,21 +432,65 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     const PI_SESSION_SEED =
       `${JSON.stringify({ type: "session", id: runId })}\n`
       + `${JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: PI_PRIOR_MARKER } })}\n`;
+    // Non-default principal sessionFile — prior-native must follow resolveSessionFile, not runDirectory join.
+    const HOST_ISSUED_SESSION_LEAF = "host-issued-principal.jsonl";
+    const hostIssuedPrincipalAuthority: DurablePrincipalAuthority = {
+      issue(request) {
+        const coords = issuePiDurablePrincipalCoordinates(request);
+        return {
+          sessionDirectory: coords.sessionDirectory,
+          sessionFile: join(coords.sessionDirectory, HOST_ISSUED_SESSION_LEAF),
+        };
+      },
+      decode: (value) => piDurablePrincipalAuthority.decode(value),
+      isAvailable: (principal) => piDurablePrincipalAuthority.isAvailable(principal),
+    };
 
     await seedResumableJudge({
       home,
       project,
       runId,
-      afterTurn: async (_runDirectory, sessionDirectory) => {
-        await writeFile(join(sessionDirectory, "session.jsonl"), PI_SESSION_SEED, "utf8");
-      },
+      principalAuthority: hostIssuedPrincipalAuthority,
+      hostAdapters: [{
+        name: "pi",
+        create: () => ({
+          ok: true as const,
+          host: createMinimalHost(async (request) => {
+            const { sessionDirectory, sessionFile } =
+              hostIssuedPrincipalAuthority.decode(request.principal);
+            await mkdir(sessionDirectory, { recursive: true });
+            // Default leaf intentionally empty of marker — wrong join path must not supply prior.
+            await writeFile(join(sessionDirectory, "session.jsonl"), "{\"type\":\"session\",\"id\":\"default-leaf\"}\n", "utf8");
+            await writeFile(sessionFile, PI_SESSION_SEED, "utf8");
+            await observeTyped429ViaProductionHandler({
+              runDirectory: request.runDirectory,
+              provider: "openai-codex",
+            });
+            return { code: 1, stderr: "quota", timedOut: false };
+          }),
+        }),
+      }],
     });
 
     const books = await readdir(join(home, ".ak-roles", "books"));
     const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
-    const piSessionFile = join(runDirectory, "session", "session.jsonl");
+    const admitted = JSON.parse(
+      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+    ) as { sessionFile: string; sessionDirectory: string };
+    // admitted-request projects top-level sessionFile from principal issue.
+    assert.ok(
+      admitted.sessionFile.endsWith(HOST_ISSUED_SESSION_LEAF),
+      "birth must record host-issued principal sessionFile",
+    );
+    const piSessionFile = admitted.sessionFile;
+    const defaultLeaf = join(admitted.sessionDirectory, "session.jsonl");
     const piBefore = await readFile(piSessionFile, "utf8");
     assert.ok(piBefore.includes(PI_PRIOR_MARKER));
+    assert.equal(
+      (await readFile(defaultLeaf, "utf8")).includes(PI_PRIOR_MARKER),
+      false,
+      "default session.jsonl must not hold the prior marker (coordinate divergence probe)",
+    );
 
     {
       const { io, stderr } = captureIo();
@@ -472,7 +522,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
         async load() { return boundSessionId; },
         async bind(_p, sessionId) { boundSessionId = sessionId; },
         resolveSessionFile(principal) {
-          return piDurablePrincipalAuthority.decode(principal).sessionFile;
+          return hostIssuedPrincipalAuthority.decode(principal).sessionFile;
         },
       },
       recordCapabilities: async () => {},
@@ -524,7 +574,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
       // Production envelope owns session layout + MCP/custom paths under test for DK-4 writeback ban.
       prepare: async (request) => {
         activeRunDirectory = request.runDirectory;
-        const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+        const sessionFile = hostIssuedPrincipalAuthority.decode(request.principal).sessionFile;
         const prepared = await prepareGrokRoleEnvelope({
           request,
           sessionFile,
@@ -574,7 +624,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
         cwd: project,
         credentials,
         io,
-        principalAuthority: piDurablePrincipalAuthority,
+        principalAuthority: hostIssuedPrincipalAuthority,
         hostAdapters: [
           { name: "pi", create() { throw new Error("pi must not run on grok-build seat"); } },
           grokAdapter,
@@ -590,7 +640,12 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     assert.equal(prior?.uri, "ak-role:prior-native/pi");
     assert.equal(prior?.mimeType, "application/x-ak-prior-native");
     assert.equal(typeof prior?.text, "string");
-    assert.ok(String(prior?.text).includes(PI_PRIOR_MARKER), "transition must deliver prior Pi native bytes");
+    assert.ok(String(prior?.text).includes(PI_PRIOR_MARKER), "transition must deliver prior Pi native bytes from host-issued principal file");
+    assert.equal(
+      String(prior?.text).includes("default-leaf"),
+      false,
+      "prior-native must not be read from default session.jsonl join path",
+    );
 
     // DK-4: after subtracting settlement attempt_history, Pi JSONL conversation rows must be
     // byte-identical structured equals — Grok must not append message/tool/custom conversation.
@@ -611,7 +666,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
         cwd: project,
         credentials,
         io,
-        principalAuthority: piDurablePrincipalAuthority,
+        principalAuthority: hostIssuedPrincipalAuthority,
         hostAdapters: [
           { name: "pi", create() { throw new Error("pi must not run on grok-build seat"); } },
           grokAdapter,

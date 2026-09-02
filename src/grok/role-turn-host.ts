@@ -64,10 +64,9 @@ export function renderGrokSystemPromptOverride(authority: {
 }
 
 /** Read prior Pi native session bytes as opaque context (#617 DK-4). ENOENT only → absent. */
-async function readPriorPiNativeContext(runDirectory: string): Promise<string | undefined> {
-  const piSessionFile = join(runDirectory, "session", "session.jsonl");
+async function readPriorPiNativeContext(sessionFile: string): Promise<string | undefined> {
   try {
-    const raw = await readFile(piSessionFile, "utf8");
+    const raw = await readFile(sessionFile, "utf8");
     const trimmed = raw.trim();
     return trimmed.length > 0 ? trimmed : undefined;
   } catch (error) {
@@ -293,7 +292,10 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               request.hostTransition !== undefined
               && request.hostTransition.previousHost !== "grok-build"
             ) {
-              priorPiContext = await readPriorPiNativeContext(request.runDirectory);
+              // Same durable-principal coordinate as envelope layout / isAvailable.
+              priorPiContext = await readPriorPiNativeContext(
+                config.sessionIdentity.resolveSessionFile(request.principal),
+              );
             }
             const boundSessionId = await config.sessionIdentity.load(request.principal);
             if (boundSessionId !== undefined && boundSessionId !== "") {
