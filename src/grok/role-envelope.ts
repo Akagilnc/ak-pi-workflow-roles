@@ -132,6 +132,8 @@ export async function prepareGrokRoleEnvelope(options: {
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
+  /** Truthful parent-session books for first-record-then-audit / navigator lifecycle (#590). */
+  const sessionEntries: Array<Record<string, unknown>> = [];
   const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
   let rejection: { readonly code: string; readonly toolCallIds: readonly string[] } | undefined;
@@ -148,6 +150,9 @@ export async function prepareGrokRoleEnvelope(options: {
 
   // Durable principal layout matches public-cli settlement (session/session.jsonl).
   // Create the header only when absent; resume must keep every prior byte and append.
+  // Session JSONL is the sole durable books true source: hydrate in-memory entries
+  // from existing bytes so shared lifecycle getEntries sees unfinished markers/history
+  // (#590 grok-resume-session-hydration).
   let sessionFile = join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
   try {
@@ -165,29 +170,53 @@ export async function prepareGrokRoleEnvelope(options: {
   } catch (error) {
     if ((error as { code?: unknown }).code !== "EEXIST") throw error;
   }
+  {
+    const raw = await readFile(sessionFile, "utf8");
+    for (const line of raw.split("\n")) {
+      if (line.trim() === "") continue;
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      // Header is owned by getHeader(); Pi getEntries excludes it.
+      if (entry.type === "session") continue;
+      sessionEntries.push(entry);
+    }
+  }
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
     model: request.model === undefined ? undefined : { provider: request.model.provider },
     sessionManager: {
-      getLeafEntry: () => undefined,
+      getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,
-      getEntries: () => [],
-      getSessionDir: () => request.runDirectory,
+      getEntries: () => sessionEntries as ReturnType<HostContext["sessionManager"]["getEntries"]>,
+      getSessionDir: () => join(request.runDirectory, "session"),
       getSessionFile: () => sessionFile,
       getHeader: () => ({ type: "session", id: runId }),
       setSessionFile(path) { sessionFile = path; },
       appendCustomEntry(customType, data) {
+        const entry = { type: "custom", customType, data };
+        sessionEntries.push(entry);
         customEntries.push({ customType, data });
         // Same external face as Pi session custom entries (type/customType/data JSONL).
         appendFileSync(
           sessionFile,
-          `${JSON.stringify({ type: "custom", customType, data })}\n`,
+          `${JSON.stringify(entry)}\n`,
           "utf8",
         );
       },
     },
     abort() {},
+  };
+  const bookCustomMessage = (customType: string, message: { content?: string; details?: unknown }): void => {
+    const payload = {
+      ...(message.content === undefined ? {} : { content: message.content }),
+      ...(message.details === undefined ? {} : { details: message.details }),
+    };
+    const entry = { type: "custom_message", customType, ...payload, message: payload };
+    sessionEntries.push(entry);
+    customEntries.push({ customType, data: message.details ?? message.content });
+    // Pi custom_message face: type/customType/message.details JSONL so
+    // extractNavigatorFact can read grok-build parent-session books.
+    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
   };
 
   const emit = async (event: string, value: unknown): Promise<unknown[]> => {
@@ -237,11 +266,17 @@ export async function prepareGrokRoleEnvelope(options: {
   };
   const envelope: RoleEnvelopeHost = {
     host,
-    appendEntry(customType: string, data?: unknown) { customEntries.push({ customType, data }); },
+    appendEntry(customType: string, data?: unknown) {
+      context.sessionManager.appendCustomEntry?.(customType, data);
+    },
     async sendMessage(message) {
-      if (typeof message === "object" && message !== null && "content" in message && typeof message.content === "string") {
-        customEntries.push({ customType: "message", data: message.content });
-      }
+      if (typeof message !== "object" || message === null) return;
+      const customType = typeof message.customType === "string" ? message.customType : undefined;
+      if (customType === undefined) return;
+      bookCustomMessage(customType, {
+        ...(typeof message.content === "string" ? { content: message.content } : {}),
+        ...(message.details === undefined ? {} : { details: message.details }),
+      });
     },
     startKeepalive() {},
     stopKeepalive() {},
@@ -321,6 +356,20 @@ export async function prepareGrokRoleEnvelope(options: {
             if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
             const toolCallId = randomUUID();
             calls.push({ toolCallId, toolName: name });
+            // First-record-then-audit: book the tool-call leaf before execute so
+            // judge/doctor subject gates see the candidate on parent session books.
+            sessionEntries.push({
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [{
+                  type: "toolCall",
+                  id: toolCallId,
+                  name,
+                  arguments: params?.arguments ?? {},
+                }],
+              },
+            });
             await emit("tool_execution_start", { toolCallId, toolName: name });
             const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} }))
               .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
@@ -372,7 +421,12 @@ export async function prepareGrokRoleEnvelope(options: {
     disposed = true;
     try {
       await emit("session_shutdown", {});
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      // Drop keep-alive / residual MCP relay sockets so test processes exit promptly.
+      const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
+      if (typeof closeAll === "function") closeAll.call(server);
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
     } finally {
       restoreAkRoleRunDir();
     }
@@ -390,6 +444,9 @@ export async function prepareGrokRoleEnvelope(options: {
       if (customEntries[index]?.customType === "ak-role-submission-closure") { closure = customEntries[index]; break; }
     }
     if (closure !== undefined) {
+      // Pi flushes navigator attendance on agent_settled; session/prompt
+      // resolution is grok-build's equivalent round boundary.
+      await emit("agent_settled", {});
       return { accepted: true as const };
     }
     if (rejection !== undefined) {
@@ -413,6 +470,13 @@ export async function prepareGrokRoleEnvelope(options: {
     if (typeof value !== "object" || value === null) continue;
     const record = value as Record<string, unknown>;
     if (record.action === "transform" && typeof record.text === "string") prompt = record.text;
+  }
+  // Book the user assignment so judge audit subjects recover it from parent books.
+  if (typeof prompt === "string" && prompt.trim() !== "") {
+    sessionEntries.push({
+      type: "message",
+      message: { role: "user", content: prompt },
+    });
   }
   const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
   const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");

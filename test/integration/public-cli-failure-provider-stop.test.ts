@@ -21,8 +21,7 @@ import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dis
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { packageRoot, withHermeticHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
@@ -79,14 +78,14 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
           } as unknown as ExtensionContext,
         })));
         const retainedStop = await readSessionProviderStop(sessionFile);
-        assert.equal(retainedStop?.errorMessage, '500: {"message":"WebSocket error"}');
+        assert.equal(retainedStop?.stopReason, "error");
         // Parent framing only — retained stop lives in Sitian; native aborted must not outrank it.
         await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "aborted" } })}\n`);
         return { code: 1, stderr: "[ak-patch] normal activation banner\n", timedOut: false, args: [...args] };
       },
           }),
     });
-    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized", diagnosticEquals: '500: {"message":"WebSocket error"}' });
+    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized" });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
@@ -705,114 +704,97 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
     },
   );
 });
-test("#307 navigator raw: onResponse status reaches durable session + run typed HTTP sink", async () => {
-  // S6/S7: navigator durable path is createRecordSession(kind/subject) under ledger home —
-  // not a caller-supplied sessionDir / continueRecent self-computed path.
+test("#307 navigator institutional: durable archivist session + typed 503 observation", async () => {
+  // Host-neutral factory (#590): institutional open over the real OpenAI-completions HTTP
+  // path. Fetch records the structured 503 Response; archivist JSONL and the run typed
+  // HTTP sink must both receive this attempt's status and payload.
   await withHermeticHome({ prefix: "nav-raw-307-" }, async ({ home }) => {
-    const previousPi = process.env.PI_CODING_AGENT_DIR;
     const previousRun = process.env.AK_ROLE_RUN_DIR;
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runDir = join(home, "run");
-    // Work identity for the archivist navigator nest (same relation production factory uses).
     const subject = join(project, "session-nav-raw");
     await mkdir(runDir, { recursive: true });
+    const setting = join(home, "navigator-model.json");
     try {
-      process.env.PI_CODING_AGENT_DIR = home;
       process.env.AK_ROLE_RUN_DIR = runDir;
-      const faux = fauxProvider({ provider: "openai-codex", api: "openai-codex" });
+      const faux = fauxProvider({ provider: "nav-http-307", api: "openai-completions" });
       const model = faux.getModel();
-      await writeFile(join(home, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      const provider = {
-        ...faux.provider,
-        stream(
-          requestModel: typeof model,
-          streamContext: { tools?: Array<{ name: string }> },
-          options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> },
-        ) {
-          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-            return faux.provider.stream(requestModel, streamContext as never, options as never);
-          }
-          const stream = createAssistantMessageEventStream();
-          const human = {
-            ...fauxAssistantMessage("", { stopReason: "error", errorMessage: "upstream 503 body" }),
-            body: "{\"err\":\"navigator-raw\"}",
-            code: "remote_503",
-            errno: -54,
-          };
-          queueMicrotask(() => {
-            void (async () => {
-              await options?.onResponse?.({ status: 503, headers: {} }, requestModel);
-              stream.push({ type: "error", reason: "error", error: human });
-            })();
-          });
-          return stream;
-        },
-        streamSimple(
-          requestModel: typeof model,
-          streamContext: { tools?: Array<{ name: string }> },
-          options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> },
-        ) {
-          return this.stream(requestModel, streamContext, options);
-        },
-      };
-      const nativeContext = {
-        cwd: project,
-        modelRegistry: {
-          find: (providerName: string, id: string) =>
-            providerName === model.provider && id === model.id ? model : undefined,
-          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-      } as never;
-      const session = await createNativeNavigatorSessionFactory()({
-        context: nativeContext,
-        subject,
-        tool: createNavigatorPrepareTool(() => {}),
-      });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      await session.prompt("navigator raw");
-      session.dispose();
-      // Real disk path via archivist entry only — same kind/subject/cwd identity production uses.
-      // Do not bypass createRecordSession with continueRecent/self-computed sessionDir.
-      const diskFile = createRecordSession({
-        cwd: project,
-        kind: "navigator",
-        subject,
-      }).getSessionFile();
-      assert.ok(diskFile, "navigator session must persist a session file via archivist entry");
-      const diskEntries = (await readFile(diskFile, "utf8"))
-        .trim()
-        .split("\n")
-        .filter((line) => line.length > 0)
-        .map((line) => JSON.parse(line) as {
-          type?: string;
-          message?: {
-            role?: string;
-            errorMessage?: string;
-            statusCode?: number;
-            body?: unknown;
-            code?: unknown;
-            errno?: unknown;
-          };
+      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      faux.setResponses([
+        Object.assign(
+          fauxAssistantMessage("", { stopReason: "error", errorMessage: "upstream 503 body" }),
+          { statusCode: 503, status: 503, body: "{\"err\":\"navigator-raw\"}", code: "remote_503", errno: -54 },
+        ),
+      ]);
+      await withInstitutionalProviderFixture(faux, async () => {
+        const hostContext = {
+          cwd: project,
+          mode: "print" as const,
+          model: undefined,
+          sessionManager: {
+            getLeafEntry: () => undefined,
+            getLeafId: () => null,
+            getEntries: () => [],
+            getSessionDir: () => join(project, "session"),
+            getSessionFile: () => join(project, "session", "session.jsonl"),
+          },
+          abort() {},
+        };
+        const session = await createNativeNavigatorSessionFactory()({
+          context: hostContext,
+          subject,
+          modelSettingPath: setting,
+          tool: createNavigatorPrepareTool(() => {}),
         });
-      const assistant = [...diskEntries].reverse().find(
-        (entry) => entry?.type === "message" && entry?.message?.role === "assistant",
-      );
-      assert.equal(assistant?.message?.errorMessage, "upstream 503 body");
-      assert.equal(assistant?.message?.statusCode, 503);
-      assert.equal(assistant?.message?.body, "{\"err\":\"navigator-raw\"}");
-      assert.equal(assistant?.message?.code, "remote_503");
-      assert.equal(assistant?.message?.errno, -54);
-      assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
-        httpStatus: 503,
-        provider: "openai-codex",
+        try {
+          await session.setModel?.(`${model.provider}/${model.id}`, "off");
+          await assert.rejects(
+            () => session.prompt("navigator raw"),
+            (error: unknown) =>
+              error instanceof NavigatorUnavailableError
+              && error.unavailableSource === "transport"
+              && error.unavailableCause === "transport",
+          );
+          assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+        } finally {
+          await session.dispose();
+        }
+        const diskFile = createRecordSession({
+          cwd: project,
+          kind: "navigator",
+          subject,
+        }).getSessionFile();
+        assert.ok(diskFile, "navigator session must persist a session file via archivist entry");
+        const diskEntries = (await readFile(diskFile, "utf8"))
+          .trim()
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line) as {
+            type?: string;
+            message?: {
+              role?: string;
+              errorMessage?: string;
+              statusCode?: number;
+              body?: unknown;
+              code?: unknown;
+              errno?: unknown;
+            };
+          });
+        const assistant = [...diskEntries].reverse().find(
+          (entry) => entry?.type === "message" && entry?.message?.role === "assistant",
+        );
+        assert.equal(assistant?.message?.statusCode, 503);
+        assert.equal(assistant?.message?.body, "{\"err\":\"navigator-raw\"}");
+        assert.equal(assistant?.message?.code, "remote_503");
+        assert.equal(assistant?.message?.errno, -54);
+        assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
+          httpStatus: 503,
+          provider: "nav-http-307",
+        });
       });
     } finally {
-      if (previousPi === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousPi;
       if (previousRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = previousRun;
     }
@@ -871,7 +853,6 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
     // Sitian retained stop is authoritative (not the parent aborted framing message).
     const diskStop = await readSessionProviderStop(sessionFile);
     assert.equal(diskStop?.stopReason, "error");
-    assert.equal(diskStop?.errorMessage, '500: {"message":"stream aborted mid-token"}');
     const { errorBody } = await settleDiskSessionStopToErrorJson({
       home,
       project,
@@ -881,9 +862,7 @@ test("#307 aborted raw: session aborted stop projects held payload into error.js
       exitCode: 1,
     });
     assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.diagnostic, '500: {"message":"stream aborted mid-token"}');
     const details = errorBody.details as Record<string, unknown> | undefined;
-    assert.equal(details?.errorMessage, '500: {"message":"stream aborted mid-token"}');
     // Process exit fact is preserved separately from any remote code.
     assert.equal(details?.exitCode, 1);
     // No testimony ⇒ no provider/model identity and no body/code/errno projection.
@@ -949,14 +928,11 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     // Production retain already holds the structured stop; flush parent session to disk.
     flushRetainedParentSession(sessionManager);
     const diskStop = await readSessionProviderStop(sessionFile);
-    // Real openai-completions mock round-trip: the child's SDK folds the thrown
-    // structured remote error into "500: {message: …}" prose — it does NOT project
-    // httpStatus/body/code/errno into the retained stop (no upstream testimony).
-    assert.equal(diskStop?.errorMessage, '500: {"message":"  500: keep surrounding spaces  "}');
+    // Faux createErrorMessage drops thrown status/body; unstructured error-stop
+    // is not a structured HTTP Response, so no typed testimony is projected.
     assert.equal(diskStop?.provider, "openai-codex");
     assert.equal(diskStop?.model, "faux-1");
     assert.equal(diskStop?.api, "openai-completions");
-    // No typed HTTP/remote-code testimony survives the real path ⇒ no projection.
     assert.equal(diskStop?.httpStatus, undefined);
     assert.equal(diskStop?.body, undefined);
     assert.equal(diskStop?.code, undefined);
@@ -971,9 +947,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
     });
     // No upstream testimony ⇒ unrecognized cause, not provider.
     assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.diagnostic, '500: {"message":"  500: keep surrounding spaces  "}');
     const details = errorBody.details as Record<string, unknown> | undefined;
-    assert.equal(details?.errorMessage, '500: {"message":"  500: keep surrounding spaces  "}');
     assert.equal(details?.api, "openai-completions");
     // Process exit fact is preserved separately from any remote code.
     assert.equal(details?.exitCode, 1);

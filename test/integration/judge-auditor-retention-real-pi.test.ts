@@ -249,19 +249,18 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       await tracer.close();
     }
     assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout");
-    // openai-completions throws APIError before onResponse, so non-2xx never becomes
-    // typed HTTP testimony at this seam (r3-A: onResponse only, no fetch wrap).
-    // Held errorMessage still reaches error.json; cause stays the honest unknown.
+    // Institutional fetch records the structured 500 Response as upstream testimony
+    // (5xx wire observation). errorMessage still carries the SDK-folded body;
+    // cause follows the observed Response, not prose.
     const retentionSettlement = await assertPublicFailureSettlement({
       result: retentionResult,
       stdout: retentionIo.stdout,
       stderr: retentionIo.stderr,
-      expectedCause: "unrecognized",
-      diagnosticIncludes: "WebSocket error",
+      expectedCause: "provider",
     });
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
-    assert.equal(retentionArtifact.details?.errorMessage?.includes("WebSocket error") || retentionArtifact.diagnostic?.includes("WebSocket error"), true);
-    assert.equal(retentionArtifact.details?.provider, undefined);
+    // Typed 500 contract only — no free-text oracle on SDK/HTTP body (#590).
+    assert.equal(retentionArtifact.details?.httpStatus, 500);
     assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
     assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
   });
