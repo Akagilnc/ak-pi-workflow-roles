@@ -21260,6 +21260,9 @@ async function classifyAuditorVolume(filePath) {
   const findings = asStringFindings(call.args?.findings);
   const findingsCount = findings.length;
   if (DISPATCH_TOOLS.has(call.toolName)) {
+    if (status === "pass") {
+      return void 0;
+    }
     if (status !== "dispatch") {
       throw new Error(
         `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`
