@@ -18,19 +18,17 @@ function isEnoent(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-/** Read Pi native session file bytes. ENOENT → undefined. */
+/** Read Pi native session file bytes exactly. ENOENT → undefined; empty file → "". */
 export async function readPiNativeSessionRecords(sessionFile: string): Promise<string | undefined> {
   try {
-    const raw = await readFile(sessionFile, "utf8");
-    const trimmed = raw.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
+    return await readFile(sessionFile, "utf8");
   } catch (error) {
     if (isEnoent(error)) return undefined;
     throw error;
   }
 }
 
-/** Read Grok native updates.jsonl under runDirectory/grok-home. ENOENT tree → undefined. */
+/** Read Grok native updates.jsonl under runDirectory/grok-home exactly. ENOENT tree → undefined. */
 export async function readGrokNativeSessionRecords(runDirectory: string): Promise<string | undefined> {
   const grokSessionsDir = join(runDirectory, "grok-home", "sessions");
   let encodedCwds;
@@ -48,15 +46,14 @@ export async function readGrokNativeSessionRecords(runDirectory: string): Promis
       if (!sessEntry.isDirectory()) continue;
       const updatesFile = join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl");
       try {
-        const content = await readFile(updatesFile, "utf8");
-        if (content.trim().length > 0) files.push(content.trim());
+        files.push(await readFile(updatesFile, "utf8"));
       } catch (error) {
         if (!isEnoent(error)) throw error;
       }
     }
   }
   if (files.length === 0) return undefined;
-  return files.join("\n");
+  return files.join("");
 }
 
 /**
@@ -70,8 +67,7 @@ export async function projectHostTransitionPriorNative(input: {
   readonly runDirectory: string;
   readonly piSessionFile: string;
 }): Promise<RoleTurnHostTransition | undefined> {
-  if (input.previousHost === input.liveHost) return undefined;
-  if (!isKnownRoleTurnHost(input.previousHost) || !isKnownRoleTurnHost(input.liveHost)) {
+  if (!shouldProjectHostTransition(input.previousHost, input.liveHost)) {
     return undefined;
   }
   if (input.previousHost === "pi") {
@@ -87,4 +83,13 @@ export async function projectHostTransitionPriorNative(input: {
     previousHost: "grok-build",
     priorNativeRecords: records ?? "",
   };
+}
+
+/** Pure host-pair gate: known switch only. No I/O. */
+export function shouldProjectHostTransition(
+  previousHost: string,
+  liveHost: string,
+): previousHost is KnownRoleTurnHost {
+  if (previousHost === liveHost) return false;
+  return isKnownRoleTurnHost(previousHost) && isKnownRoleTurnHost(liveHost);
 }
