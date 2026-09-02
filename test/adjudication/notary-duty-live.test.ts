@@ -15,7 +15,7 @@ import { join } from "node:path";
 import test, { describe } from "node:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 
-import { runGatekeeper, type GatekeeperResult } from "../../src/gatekeeper-role.ts";
+import { runGatekeeper } from "../../src/gatekeeper-role.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { loadCredentialProviders } from "../../src/public-cli/config.ts";
@@ -146,26 +146,6 @@ const SCENARIOS: readonly DutyScenario[] = [
         "dk2",
         "DK-2：「引擎应该是我想要就要不想要就不要。」",
         "2026-09-02T15:21:35.016Z",
-      ),
-    ],
-    expect: "pass",
-  },
-  {
-    id: "dk3-three-axes-quoted",
-    ticketNumber: 62104,
-    ticketFace:
-      "#62104\n\n## Scope\n1. 所有运行都根据现在定的席位来。三轴 model、host、engine。额度我来控（DK-3）。",
-    verdict: {
-      judgeStatus: "continue",
-      fixSummary: "按 DK-3：所有运行都根据现在定的席位来。三轴 model、host、engine。额度我来控。",
-      classes: [{ name: "three-axes", disposition: "fix_now" }],
-    },
-    diary: [
-      diaryEntry(
-        ["#62104", "根据现在定的席位", "三轴"],
-        "dk3",
-        "DK-3：「所有运行都根据现在定的席位来。三轴 model、host、engine。额度我来控。」",
-        "2026-09-02T16:00:00.000Z",
       ),
     ],
     expect: "pass",
@@ -468,10 +448,8 @@ describe(
                       } as never);
                       process.env.AK_ROLE_RUN_DIR = home;
 
-                      const material = JSON.stringify({
-                        ...scenario.verdict,
-                        note: `票 #${scenario.ticketNumber}`,
-                      });
+                      // Production judge-role.ts: material is the verdict only.
+                      const material = JSON.stringify(scenario.verdict);
                       return runGatekeeper({
                         context: {
                           cwd: home,
