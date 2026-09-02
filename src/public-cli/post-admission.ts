@@ -67,6 +67,8 @@ export type PostAdmissionEnv = {
   roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   engine?: string;
+  /** Effective main-session host for this run — recorded as birth host (#595). */
+  host?: string;
   credentials?: CredentialProviders;
   timeoutMs?: number;
   principalAuthority: DurablePrincipalAuthority;
@@ -244,7 +246,7 @@ export async function dispatchPostAdmissionTurn<
         io,
       )) as { exitCode: number; admitted: A; terminal: T };
     }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     // beforeDispatch (e.g. countersign diarist station) runs after running is
     // marked — its failures must settle the run, not leave it permanently running.
