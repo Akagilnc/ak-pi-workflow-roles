@@ -13,28 +13,49 @@ const USER_PROFILE_PRELOAD = fileURLToPath(
   new URL("../../scripts/test-user-profile-preload.cjs", import.meta.url),
 );
 
+/** Unavailable userInfo mode for the shared test-user-profile preload. */
+export type UnavailableTestUserProfile = {
+  mode: "unavailable";
+  /** Test-only override so spaced preload paths exercise NODE_OPTIONS encoding. */
+  preloadPath?: string;
+};
+
 /**
- * #604: point production packageMachineHome (os.userInfo().homedir) at a temp
- * user profile for this child process only. Test-layer NODE_OPTIONS --require;
- * not a production env hook.
+ * #604: assemble NODE_OPTIONS --require for the sole test-user-profile preload.
+ * - string packageHome → redirect os.userInfo().homedir (cold-bin hermetic home).
+ * - { mode: "unavailable" } → userInfo throws ERR_SYSTEM_ERROR.
+ * Test-layer only; not a production env hook.
  */
 export function withTestUserProfileEnv(
   env: NodeJS.ProcessEnv,
-  packageHome: string,
+  packageHomeOrOptions: string | UnavailableTestUserProfile,
   /** Test-only override so spaced preload paths exercise NODE_OPTIONS encoding. */
   preloadPath: string = USER_PROFILE_PRELOAD,
 ): NodeJS.ProcessEnv {
+  const resolvedPreload =
+    typeof packageHomeOrOptions === "object"
+      ? (packageHomeOrOptions.preloadPath ?? USER_PROFILE_PRELOAD)
+      : preloadPath;
   // Single NODE_OPTIONS argv token: bare `--require $path` splits on spaces.
-  const requireFlag = `--require=${JSON.stringify(preloadPath)}`;
+  const requireFlag = `--require=${JSON.stringify(resolvedPreload)}`;
   const nodeOptions = env.NODE_OPTIONS ?? "";
-  return {
+  const withRequire: NodeJS.ProcessEnv = {
     ...env,
-    AK_TEST_USER_PROFILE_HOME: packageHome,
-    NODE_OPTIONS: nodeOptions.includes(preloadPath)
+    NODE_OPTIONS: nodeOptions.includes(resolvedPreload)
       ? nodeOptions
       : nodeOptions.length > 0
         ? `${requireFlag} ${nodeOptions}`
         : requireFlag,
+  };
+  if (typeof packageHomeOrOptions !== "string") {
+    return {
+      ...withRequire,
+      AK_TEST_USER_PROFILE_MODE: "unavailable",
+    };
+  }
+  return {
+    ...withRequire,
+    AK_TEST_USER_PROFILE_HOME: packageHomeOrOptions,
   };
 }
 
