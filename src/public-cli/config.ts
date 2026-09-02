@@ -212,6 +212,23 @@ export function clearPersistentSeatConfig(
   return { ...config, seats };
 }
 
+/**
+ * Configured province-officer model (#453/#620 sole authority):
+ * officer persistent > gatekeeper persistent > unset.
+ * No startup candidates and no parent-session fallback here — province path
+ * composes parent via resolveInstitutionalSeatSelections; direct/display path
+ * tags unset as unconfigured / inherit-gatekeeper in resolveEffectiveSeat.
+ */
+export function resolveConfiguredProvinceOfficerModel(
+  config: PublicCliConfig,
+  officer: GateOfficerSeat,
+): SeatModelConfig | undefined {
+  const ownModel = seatModelOnly(config.seats[officer]);
+  if (ownModel !== undefined) return ownModel;
+  if (officer === "gatekeeper") return undefined;
+  return seatModelOnly(config.seats.gatekeeper);
+}
+
 /** Set or clear the persistent main-session host on a callable role seat. */
 export function setPersistentSeatHost(
   config: PublicCliConfig,
@@ -634,6 +651,21 @@ function resolveBaseSeat(
   credentials: CredentialProviders,
 ): UnhostedEffectiveSeat {
   const automatic = isAutomaticConfigurableSeat(seat);
+  // #620: subordinate officers take model solely from the province configured rule.
+  if (seat === "notary" || seat === "inspector") {
+    const selection = resolveConfiguredProvinceOfficerModel(config, seat);
+    if (selection === undefined) {
+      return { seat, automatic, source: "unconfigured", engineSource: "unconfigured" };
+    }
+    const own = seatModelOnly(config.seats[seat]);
+    return {
+      seat,
+      automatic,
+      source: own !== undefined ? "persistent" : "inherit-gatekeeper",
+      selection,
+      engineSource: "unconfigured",
+    };
+  }
   // Engine-only residual is not a persistent model source (#453).
   const persistentModel = seatModelOnly(config.seats[seat]);
   if (persistentModel !== undefined) {
@@ -644,22 +676,6 @@ function resolveBaseSeat(
       selection: persistentModel,
       engineSource: "unconfigured",
     };
-  }
-  // #620: notary/inspector share institutional order (own > gatekeeper > unset).
-  // Direct/display has no parent session; province path still adds parent via
-  // resolveInstitutionalSeatSelections. No package startup for subordinates.
-  if (seat === "notary" || seat === "inspector") {
-    const gatekeeperModel = seatModelOnly(config.seats.gatekeeper);
-    if (gatekeeperModel !== undefined) {
-      return {
-        seat,
-        automatic,
-        source: "inherit-gatekeeper",
-        selection: gatekeeperModel,
-        engineSource: "unconfigured",
-      };
-    }
-    return { seat, automatic, source: "unconfigured", engineSource: "unconfigured" };
   }
   const startup = pickStartupCandidate(seat, credentials);
   if (startup !== undefined) {

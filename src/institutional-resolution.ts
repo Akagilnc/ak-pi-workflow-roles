@@ -1,7 +1,11 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RoleTurnModelConfig } from "./host-contracts.ts";
-import { seatModelOnly, type PublicCliConfig } from "./public-cli/config.ts";
+import {
+  resolveConfiguredProvinceOfficerModel,
+  seatModelOnly,
+  type PublicCliConfig,
+} from "./public-cli/config.ts";
 
 export const INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json" as const;
 
@@ -52,9 +56,8 @@ function cleanSelection(model?: { provider?: string; model?: string; thinking?: 
 
 /**
  * Resolve effective per-seat institutional selections (#518 §2 Hop 1; #620):
- * - gatekeeper / inspector / notary: seat override > gatekeeper override > parent effective
- *   (direct `ak-role notary|inspector` and `roles` share the same first two steps via
- *   resolveEffectiveSeat; parent effective applies on the province path only)
+ * - gatekeeper / inspector / notary: resolveConfiguredProvinceOfficerModel (sole
+ *   configured rule) then parent effective on the province path only
  * - auditor / evidenceChild: parent effective
  * - navigator: explicit config seat only. Navigator model authority stays
  *   `navigator-model.json`; the page never carries a parent-inherited navigator
@@ -67,17 +70,15 @@ export function resolveInstitutionalSeatSelections(
 ): InstitutionalResolutionPage {
   const parentSelection = cleanSelection(parentEffectiveModel);
 
-  const ownInspector = cleanSelection(seatModelOnly(config.seats?.inspector));
-  const ownNotary = cleanSelection(seatModelOnly(config.seats?.notary));
-  const ownGatekeeper = cleanSelection(seatModelOnly(config.seats?.gatekeeper));
-  const ownNavigator = cleanSelection(seatModelOnly(config.seats?.navigator));
-
-  const gatekeeper = ownGatekeeper ?? parentSelection;
-  const inspector = ownInspector ?? ownGatekeeper ?? parentSelection;
-  const notary = ownNotary ?? ownGatekeeper ?? parentSelection;
+  const gatekeeper =
+    resolveConfiguredProvinceOfficerModel(config, "gatekeeper") ?? parentSelection;
+  const inspector =
+    resolveConfiguredProvinceOfficerModel(config, "inspector") ?? parentSelection;
+  const notary =
+    resolveConfiguredProvinceOfficerModel(config, "notary") ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
-  const navigator = ownNavigator;
+  const navigator = cleanSelection(seatModelOnly(config.seats?.navigator));
 
   return {
     version: 1,
