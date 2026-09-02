@@ -21,13 +21,16 @@ const USER_PROFILE_PRELOAD = fileURLToPath(
 export function withTestUserProfileEnv(
   env: NodeJS.ProcessEnv,
   packageHome: string,
+  /** Test-only override so spaced preload paths exercise NODE_OPTIONS encoding. */
+  preloadPath: string = USER_PROFILE_PRELOAD,
 ): NodeJS.ProcessEnv {
-  const requireFlag = `--require ${USER_PROFILE_PRELOAD}`;
+  // Single NODE_OPTIONS argv token: bare `--require $path` splits on spaces.
+  const requireFlag = `--require=${JSON.stringify(preloadPath)}`;
   const nodeOptions = env.NODE_OPTIONS ?? "";
   return {
     ...env,
     AK_TEST_USER_PROFILE_HOME: packageHome,
-    NODE_OPTIONS: nodeOptions.includes(USER_PROFILE_PRELOAD)
+    NODE_OPTIONS: nodeOptions.includes(preloadPath)
       ? nodeOptions
       : nodeOptions.length > 0
         ? `${requireFlag} ${nodeOptions}`
