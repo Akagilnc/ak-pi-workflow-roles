@@ -46,6 +46,7 @@ async function runRealGleanerLeft(receipt: {
     await withInProcessPi(
       {
         activationLedgerSession: true,
+        home,
         cwd: home,
         agentDir,
         faux,
@@ -82,7 +83,8 @@ async function runRealGleanerLeft(receipt: {
         toolDetails = output.message?.details;
         const headerId = sessionManager.getHeader?.()?.id;
         assert.ok(headerId);
-        const sealed = await readSealedSubmission(home, headerId);
+        // #604: sealed volume lives under hermetic package home (session path-derive).
+        const sealed = await readSealedSubmission(home, headerId, home);
         assert.ok(sealed, "typed turn_end must seal sole candidate");
         assert.equal(sealed.role, "gleaner-left");
         assert.equal(sealed.status, "completed");
