@@ -991,6 +991,7 @@ export async function runPiSubprocess(
 export interface InProcessPiOptions {
   cwd: string;
   agentDir: string;
+  home?: string;
   faux: FauxProviderHandle;
   model?: Model<any>;
   provider?: Provider;
@@ -1363,9 +1364,9 @@ export async function withInProcessPi<T>(
     // nested auditor-roles land beside the parent (ADR 0048), not at repo root.
     // subjectPath treats machine-ledger session dirs like empty getSessionDir, so
     // cwd/Navigator identity stays fixture-owned.
-    const hermeticHome = process.env.HOME;
+    const hermeticHome = options.home ?? (options.agentDir ? dirname(options.agentDir) : undefined);
     if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
-      throw new Error("withInProcessPi activationLedgerSession requires process.env.HOME");
+      throw new Error("withInProcessPi activationLedgerSession requires home or agentDir");
     }
     // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
     const bookKey = resolveBookKeyFromGit(options.cwd);

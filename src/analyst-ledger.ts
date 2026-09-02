@@ -457,9 +457,7 @@ export async function scanAnalystIssueRuns(input: {
   readonly home?: string;
 }): Promise<AnalystScopedRunScan> {
   // Package-owned machine home only (ADR 0048) — caller may supply explicit home for isolation.
-  const ledgerHome = resolveActivationLedgerHome(
-    input.home === undefined ? undefined : () => input.home,
-  );
+  const ledgerHome = resolveActivationLedgerHome(input.home);
   const scopeTicketNumber = input.ticketNumber;
   const booksRoot = join(ledgerHome, "books");
 

@@ -81,8 +81,6 @@ async function withSweepFixture<T>(
   const businessRepo = await mkdtemp(join(tmpdir(), "analyst-337-business-"));
   const home = await mkdtemp(join(tmpdir(), "analyst-337-home-"));
   const attachDir = await mkdtemp(join(tmpdir(), "analyst-337-attach-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -102,8 +100,6 @@ async function withSweepFixture<T>(
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(attachDir, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
     await rm(businessRepo, { recursive: true, force: true });

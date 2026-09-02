@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -24,6 +24,8 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
   const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-reset-"));
   try {
     seedGitRepository(root);
+    const bookKey = basename(root);
+    const sessionFile = join(root, ".ak-roles", "books", bookKey, "runs", "nav", "session", "session.jsonl");
     const hostContext = {
       cwd: root,
       mode: "print" as const,
@@ -32,8 +34,8 @@ test("host-neutral factory resets providerFailure per prompt and classifies term
         getLeafEntry: () => undefined,
         getLeafId: () => null,
         getEntries: () => [],
-        getSessionDir: () => join(root, "session"),
-        getSessionFile: () => join(root, "session", "session.jsonl"),
+        getSessionDir: () => dirname(sessionFile),
+        getSessionFile: () => sessionFile,
       },
       abort() {},
     };
@@ -254,7 +256,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
   );
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
 
-  const ledgerSession = join(process.env.HOME!, ".ak-roles", "books", "repo", "issues", "28", "runs", "judge@src", "session");
+  const ledgerSession = "/custom/home/.ak-roles/books/repo/issues/28/runs/judge@src/session";
   assert.equal(subjectPath(ledgerSession, "/repo"), "/repo/.ak/work");
   assert.equal(subjectPath("", "/repo"), "/repo/.ak/work");
   assert.equal(subjectPath(ledgerSession, issue), issue);
@@ -263,8 +265,6 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
   assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak/work");
 
   const home = await mkdtemp(join(tmpdir(), "ak-nav-physical-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     const { realpathSync } = await import("node:fs");
     const physicalIssue = resolve(home, ".ak/work/issues/28");
@@ -274,7 +274,6 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
     assert.equal(subjectPath(session, physicalIssue), physicalIssue);
     assert.equal(subjectPath(realpathSync(session), physicalIssue), physicalIssue);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 

@@ -66,6 +66,21 @@ test("tryHomeFromAkRolesPath / homeFromRunDirectory: derive or typed fail, no HO
       (error: unknown) =>
         error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
     );
+
+    // F5 regression: path containing .ak-roles as substring of directory name must NOT derive
+    assert.equal(tryHomeFromAkRolesPath("/home/x.ak-roles-backup/foo"), undefined);
+    assert.equal(tryHomeFromAkRolesPath("/home/.ak-roles-backup/foo"), undefined);
+    assert.equal(tryHomeFromAkRolesPath("/home/backup.ak-roles/foo"), undefined);
+    assert.equal(tryHomeFromAkRolesPath("/home/ak-roles/foo"), undefined);
+    assert.throws(
+      () => homeFromRunDirectory("/home/x.ak-roles-backup/foo"),
+      ActivationLedgerError,
+    );
+
+    // True .ak-roles segment at end or middle
+    assert.equal(tryHomeFromAkRolesPath("/custom/home/.ak-roles"), "/custom/home");
+    assert.equal(tryHomeFromAkRolesPath("/custom/home/.ak-roles/"), "/custom/home");
+    assert.equal(tryHomeFromAkRolesPath("/custom/home/.ak-roles/books"), "/custom/home");
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;

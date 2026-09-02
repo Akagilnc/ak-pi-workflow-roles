@@ -54,9 +54,7 @@ async function driveLedgerProducer(input: {
     execute: async () => ({ content: [], details: input.details, terminate: true }),
   });
   if (registered === undefined) throw new Error("submission ledger host did not register output tool");
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  if (input.home !== undefined) process.env.HOME = input.home;
   process.env.AK_ROLE_RUN_DIR =
     input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
   try {
@@ -81,10 +79,6 @@ async function driveLedgerProducer(input: {
       calls: [{ toolCallId: input.toolCallId, toolName }],
     }, context);
   } finally {
-    if (input.home !== undefined) {
-      if (priorHome === undefined) delete process.env.HOME;
-      else process.env.HOME = priorHome;
-    }
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = priorRun;
   }

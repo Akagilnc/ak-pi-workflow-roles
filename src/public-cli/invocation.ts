@@ -252,9 +252,7 @@ export function issueAdmissionPlacement(
   const principal = authority.issue(request);
   const { sessionDirectory, sessionFile } = authority.decode(principal);
   const runDirectory = join(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(
-    request.home === undefined ? undefined : () => request.home!,
-  );
+  const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
   return {
     principal,
@@ -1923,7 +1921,7 @@ export async function resolveDoctorCaseRunsPath(options: {
   issueNumber: number;
   runs?: string;
 }): Promise<string> {
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const ledgerHome = resolveActivationLedgerHome(options.home);
   const defaultRuns = join(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",

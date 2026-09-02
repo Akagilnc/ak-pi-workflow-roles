@@ -46,17 +46,13 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
-  const priorHome = process.env.HOME;
   const priorPath = process.env.PATH;
-  process.env.HOME = home;
   process.env.PATH = `${binDir}:${priorPath ?? ""}`;
   try {
     return await scenario(home);
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
-    if (priorHome === undefined) delete process.env.HOME;
-    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }

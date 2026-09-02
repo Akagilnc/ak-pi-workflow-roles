@@ -20,16 +20,12 @@ function packageMachineHome() {
   return resolve(userInfo().homedir);
 }
 function tryHomeFromAkRolesPath(path) {
-  const marker = `${sep}.ak-roles${sep}`;
-  const idx = path.indexOf(marker);
-  if (idx !== -1) {
-    return path.slice(0, idx);
+  const match = /(^|[\\/])\.ak-roles(?=[\\/]|$)/.exec(path);
+  if (!match) return void 0;
+  if (match.index === 0) {
+    return match[1] === "" ? "" : match[1];
   }
-  const altMarker = ".ak-roles";
-  const altIdx = path.indexOf(altMarker);
-  if (altIdx === -1) return void 0;
-  const candidate = path.slice(0, altIdx);
-  return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  return path.slice(0, match.index);
 }
 function homeFromRunDirectory(runDirectory) {
   const home = tryHomeFromAkRolesPath(runDirectory);
@@ -41,7 +37,7 @@ function homeFromRunDirectory(runDirectory) {
   return home;
 }
 function resolveActivationLedgerHome(home) {
-  const processHome = typeof home === "string" ? home : home?.() ?? packageMachineHome();
+  const processHome = typeof home === "string" ? home : packageMachineHome();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`

@@ -33,16 +33,12 @@ export function packageMachineHome(): string {
  * reimplement marker splitting.
  */
 export function tryHomeFromAkRolesPath(path: string): string | undefined {
-  const marker = `${sep}.ak-roles${sep}`;
-  const idx = path.indexOf(marker);
-  if (idx !== -1) {
-    return path.slice(0, idx);
+  const match = /(^|[\\/])\.ak-roles(?=[\\/]|$)/.exec(path);
+  if (!match) return undefined;
+  if (match.index === 0) {
+    return match[1] === "" ? "" : match[1];
   }
-  const altMarker = ".ak-roles";
-  const altIdx = path.indexOf(altMarker);
-  if (altIdx === -1) return undefined;
-  const candidate = path.slice(0, altIdx);
-  return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  return path.slice(0, match.index);
 }
 
 /**
@@ -65,8 +61,8 @@ export function homeFromRunDirectory(runDirectory: string): string {
  * homes would split the family and can write into a consumer repository.
  * Process home must already be absolute; relative home is rejected before any write.
  */
-export function resolveActivationLedgerHome(home?: (() => string | undefined) | string): string {
-  const processHome = typeof home === "string" ? home : (home?.() ?? packageMachineHome());
+export function resolveActivationLedgerHome(home?: string): string {
+  const processHome = typeof home === "string" ? home : packageMachineHome();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`,

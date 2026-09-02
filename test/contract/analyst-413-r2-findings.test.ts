@@ -104,8 +104,6 @@ const RUN_ID = "019ff000-9001-7000-8000-0000000009a1";
 
 test("U3: real book basename root:foo keeps its book scope through cohort cache-miss recompute", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-413r2-e2e-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     const ledgerHome = join(home, ".ak-roles");
     // Real Git repository whose book key (common-dir host basename) is literally root:foo.
@@ -199,8 +197,6 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
 
     rmSync(repoParent, { recursive: true, force: true });
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 });

@@ -172,9 +172,7 @@ export async function runPublicAnalyst(
   try {
     const parsed = parseAnalystArgv(argv);
     // Machine home is package-owned (ADR 0048) — caller may supply explicit home in env.
-    const ledgerHome = resolveActivationLedgerHome(
-      _env.home === undefined ? undefined : () => _env.home,
-    );
+    const ledgerHome = resolveActivationLedgerHome(_env.home);
 
     if (parsed.query === "sweep") {
       const input = await buildAnalystSweepModeInputFromAttachmentPaths(
