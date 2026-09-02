@@ -284,12 +284,16 @@ function hostNeutralTypedTurn(options: {
         options.sessionLines === undefined ? "" : `${options.sessionLines.join("\n")}\n`,
         "utf8",
       );
+      // #604: expose principal session under home/.ak-roles so submission-ledger
+      // path-derives package home — never falls through to real books/<basename(cwd)>.
       const context = {
         cwd: request.cwd,
         mode: "json",
         model: undefined,
         sessionManager: {
           getHeader: () => ({ type: "session", id: `${options.runId}:alternate-host` }),
+          getSessionFile: () => coordinates.sessionFile,
+          getSessionDir: () => coordinates.sessionDirectory,
           appendCustomEntry(customType: string, data: unknown) {
             appendFileSync(coordinates.sessionFile, `${JSON.stringify({ type: "custom", customType, data })}\n`, "utf8");
           },
@@ -551,7 +555,7 @@ test("host-neutral typed turns reject non-sole output and accept same-session re
         toolCallIds: row.name === "double-output" ? ["first", "second"] : ["first"],
       });
       assert.equal(result.terminal?.roleOutcome.kind, "accepted", row.name);
-      assert.equal((await readSealedSubmission(project, runId))?.role, "judge", row.name);
+      assert.equal((await readSealedSubmission(project, runId, home))?.role, "judge", row.name);
     }
   });
 });
@@ -589,7 +593,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
         "settled-without-accepted-receipt",
       );
       assert.equal(result.terminal.roleOutcome.acceptedReceipt, false);
-      assert.equal(await readSealedSubmission(project, "run-table-no-receipt"), undefined);
+      assert.equal(await readSealedSubmission(project, "run-table-no-receipt", home), undefined);
     }
 
     // infrastructure: output candidate exists, then the host fails before typed closure
@@ -621,7 +625,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
         "AlternateHostSessionFailure",
       );
       assert.equal(result.terminal.roleOutcome.decisiveFacts.errorCode, "candidate-unclosed");
-      assert.equal(await readSealedSubmission(project, "run-table-infrastructure"), undefined);
+      assert.equal(await readSealedSubmission(project, "run-table-infrastructure", home), undefined);
       process.exitCode = undefined;
     }
 
@@ -644,7 +648,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
         }),
       });
       assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(await readSealedSubmission(project, runId), undefined);
+      assert.equal(await readSealedSubmission(project, runId, home), undefined);
     }
   });
 });
@@ -820,6 +824,7 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
         await withInProcessPi(
         {
           activationLedgerSession: true,
+          home,
           cwd: work,
           agentDir,
           faux,
@@ -847,7 +852,8 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
           );
           assert.equal(rejectionObservedByModel, true, `${row.role} receives the rejection before retrying`);
           const headerId = sessionManager.getHeader?.()?.id;
-          const sealed = headerId === undefined ? undefined : await readSealedSubmission(work, headerId);
+          const sealed =
+            headerId === undefined ? undefined : await readSealedSubmission(work, headerId, home);
           assert.equal(sealed?.role, row.role, `${row.role} retry on the same durable session seals`);
         },
         );

@@ -391,6 +391,7 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
       appendTicketProvenanceEntry({
         ticketNumber: 582,
         cwd: project,
+        home,
         entry: read1.entries[0]!,
       });
       const afterIdem = await readTicketProvenance(582, project, home);

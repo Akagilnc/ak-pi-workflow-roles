@@ -6,7 +6,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -23,7 +23,12 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildResumeContinuationPrompt, RESUME_TRANSPORT_ENVELOPE, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-import { packageRoot, withHermeticHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import {
+  packageRoot,
+  persistActivationSessionFile,
+  withHermeticHome,
+  withInstitutionalProviderFixture,
+} from "../helpers/pi-test-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
@@ -844,6 +849,16 @@ test("#307 navigator institutional: durable archivist session + typed 503 observ
     const subject = join(project, "session-nav-raw");
     await mkdir(runDir, { recursive: true });
     const setting = join(home, "navigator-model.json");
+    // #604: parent principal under home/.ak-roles so navigator/archivist path-derive
+    // never falls through to real books/proj.
+    const bookKey = resolveBookKeyFromGit(project);
+    const parentSessionFile = persistActivationSessionFile({
+      home,
+      bookKey,
+      name: "nav-raw-parent",
+      cwd: project,
+    });
+    const parentSessionDir = dirname(parentSessionFile);
     try {
       process.env.AK_ROLE_RUN_DIR = runDir;
       const faux = fauxProvider({ provider: "nav-http-307", api: "openai-completions" });
@@ -864,8 +879,8 @@ test("#307 navigator institutional: durable archivist session + typed 503 observ
             getLeafEntry: () => undefined,
             getLeafId: () => null,
             getEntries: () => [],
-            getSessionDir: () => join(project, "session"),
-            getSessionFile: () => join(project, "session", "session.jsonl"),
+            getSessionDir: () => parentSessionDir,
+            getSessionFile: () => parentSessionFile,
           },
           abort() {},
         };
@@ -892,6 +907,9 @@ test("#307 navigator institutional: durable archivist session + typed 503 observ
           cwd: project,
           kind: "navigator",
           subject,
+          parent: {
+            getSessionFile: () => parentSessionFile,
+          },
         }).getSessionFile();
         assert.ok(diskFile, "navigator session must persist a session file via archivist entry");
         const diskEntries = (await readFile(diskFile, "utf8"))
