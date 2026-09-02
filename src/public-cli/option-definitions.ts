@@ -300,8 +300,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Optional labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
-      zh: "本调用可选劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。",
+      en: "Labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
+      zh: "本调用劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。",
     },
   },
   {

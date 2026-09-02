@@ -1,6 +1,6 @@
 # agy engine method material
 
-This file is packaged technical material for the optional `agy` labor engine
+This file is packaged technical material for the `agy` labor engine
 (Gemini-family CLI on the host).
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path

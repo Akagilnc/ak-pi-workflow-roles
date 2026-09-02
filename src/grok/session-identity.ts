@@ -4,10 +4,13 @@ import { dirname, join } from "node:path";
 import type { DurablePrincipal, DurablePrincipalAuthority } from "../host-contracts.ts";
 import type { GrokSessionIdentityAuthority } from "./role-turn-host.ts";
 
+/** ACP binding filename written only by the grok host on initial bind. */
+export const GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
+
 /** Durable ACP binding stored beside the host-owned session principal. */
 export function createGrokSessionIdentityAuthority(authority: DurablePrincipalAuthority): GrokSessionIdentityAuthority {
   const bindingPath = (principal: DurablePrincipal): string =>
-    join(authority.decode(principal).sessionDirectory, "grok-acp-session.json");
+    join(authority.decode(principal).sessionDirectory, GROK_ACP_SESSION_BINDING);
   return {
     async load(principal) {
       try {

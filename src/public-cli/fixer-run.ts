@@ -25,9 +25,9 @@ import {
   type AdmittedFixerInvocation,
 } from "./invocation.ts";
 import {
+  buildResumeContinuationPrompt,
   loadResumableFixerRun,
   markRunAdmitted,
-  selectResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -209,7 +209,10 @@ export async function runPublicFixer(
           : { correlationId: admitted.correlationId ?? env.correlationId }),
         continuation: {
           kind: "resume",
-          prompt: selectResumeContinuationPrompt(),
+          prompt: buildResumeContinuationPrompt({
+            packageRoot: env.packageRoot,
+            ...(env.engine === undefined ? {} : { engine: env.engine }),
+          }),
         },
       }),
     adapters: fixerAdapters(env.packageRoot, methodMaterial),
@@ -273,7 +276,11 @@ export async function runPublicFixerResume(
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message),
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
   });
 
@@ -283,6 +290,7 @@ export async function runPublicFixerResume(
     io,
     request: turnRequest,
     adapters: fixerAdapters(env.packageRoot, methodMaterial),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 

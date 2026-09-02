@@ -497,8 +497,8 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
         stub,
         `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(ready)}, "ready");
 process.on("SIGTERM", () => { writeFileSync(${JSON.stringify(signal)}, "SIGTERM"); process.exit(143); });
+writeFileSync(${JSON.stringify(ready)}, "ready");
 setInterval(() => {}, 1000);
 `,
       );

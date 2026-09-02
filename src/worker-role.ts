@@ -3,6 +3,7 @@ import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 import type {
   AnyCanonicalSkillBinding,
@@ -116,7 +117,7 @@ export type CoderSkillExpansionEvidenceMissingResult = {
 };
 
 /** Correct completed rejection — not infrastructure; projected via submission non-pass bridge. */
-export class CoderSkillExpansionEvidenceMissingError extends Error {
+export class CoderSkillExpansionEvidenceMissingError extends CorrectableSubmissionError {
   readonly code = CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE;
   readonly result: CoderSkillExpansionEvidenceMissingResult;
   constructor() {

@@ -1,6 +1,6 @@
 # sonnet engine method material
 
-This file is packaged technical material for the optional `sonnet` labor engine
+This file is packaged technical material for the `sonnet` labor engine
 (Claude Code CLI on the host, pinned to the Sonnet model).
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path
