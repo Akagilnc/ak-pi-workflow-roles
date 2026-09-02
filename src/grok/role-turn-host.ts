@@ -229,23 +229,23 @@ export function appendGrokSessionJsonlEntry(
 /**
  * Last non-session entry id in the JSONL tree — parent for the next Pi-shaped append.
  * Same leaf walk as settlement attempt-history / Pi custom append (#617 cross-host restore).
+ * Read/parse failures stay loud — never wash missing or corrupt truth into parentId=null (#617).
  */
 function lastSessionTreeEntryId(sessionFile: string): string | null {
   let parentId: string | null = null;
-  let text: string;
-  try {
-    text = readFileSync(sessionFile, "utf8");
-  } catch {
-    return null;
-  }
+  const text = readFileSync(sessionFile, "utf8");
   for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
+    let entry: { id?: unknown; type?: unknown };
     try {
-      const entry = JSON.parse(line) as { id?: unknown; type?: unknown };
-      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
-    } catch {
-      // Skip corrupt lines; write path stays loud on append failure.
+      entry = JSON.parse(line) as { id?: unknown; type?: unknown };
+    } catch (error) {
+      throw Object.assign(
+        new Error("session JSONL contains an unparseable non-empty line", { cause: error }),
+        { code: "session-history-corrupt" as const },
+      );
     }
+    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
   }
   return parentId;
 }

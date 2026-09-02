@@ -15,6 +15,7 @@ import {
   settleProductionGrokHomeCleanup,
 } from "../../src/grok/production-host.ts";
 import {
+  appendGrokSessionMessage,
   classifyGrokInspection,
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
@@ -511,6 +512,28 @@ test("resume fails when session JSONL has a corrupt non-empty line", async () =>
     assert.equal(result.knownFailure?.cause, "session");
     assert.equal(result.knownFailure?.identity?.code, "session-history-corrupt");
     assert.equal(openedSession, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** #617: tree-link parent scan must not wash corrupt JSONL into a parentId=null append. */
+test("append refuses corrupt session JSONL and does not extend the file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-append-corrupt-"));
+  try {
+    const sessionFile = join(root, "session", "session.jsonl");
+    await mkdir(dirname(sessionFile), { recursive: true });
+    const corruptJsonl =
+      `${JSON.stringify({ type: "session", version: 3, id: "corrupt" })}\nnot-json\n`;
+    await writeFile(sessionFile, corruptJsonl, "utf8");
+    assert.throws(
+      () => appendGrokSessionMessage(sessionFile, "user", "after-corruption"),
+      (error: unknown) =>
+        typeof error === "object"
+        && error !== null
+        && (error as { code?: unknown }).code === "session-history-corrupt",
+    );
+    assert.equal(await readFile(sessionFile, "utf8"), corruptJsonl);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
