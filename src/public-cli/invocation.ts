@@ -370,8 +370,8 @@ async function writeRoleInvocationLedger(
  * field shape as admission write).
  * Bare model clears any prior thinking key so absence stays honest.
  * Engine is write-if-present only: undefined leaves any existing key untouched
- * (resume model merge must not erase initial mechanical provenance).
- * Host is write-if-present only the same way (#595 birth host).
+ * (partial markRunRunning updates must not erase engine provenance).
+ * Host is write-if-present only the same way (#595 / #617).
  */
 export async function recordEffectiveInvocationModel(
   runDirectory: string,

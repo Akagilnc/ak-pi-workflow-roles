@@ -1240,11 +1240,14 @@ const SUPPORT_COMMAND_HELP = {
   },
   resume: {
     command: "resume",
-    summary: "Reopen an exact role run whose Pi session principal still exists.",
+    summary:
+      "Resume a role run under the live seat table (model/host/engine); session principal must still exist.",
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",
       "ak-role resume 01abc… \"owner ruling\"",
+      "ak-role --host grok-build resume 01abc…",
+      "ak-role --engine agy resume 01abc…",
     ],
   },
 } as const satisfies Record<string, PublicCommandHelpFacts>;

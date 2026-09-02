@@ -1068,7 +1068,7 @@ test("resume model override is temporary and does not rewrite persistent config"
   });
 });
 
-test("resume model precedence: explicit --model beats admitted.model; model-less resume restores admitted.model incl thinking", async () => {
+test("resume model precedence: live seat table wins bare resume; explicit --model beats seat table", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1113,10 +1113,17 @@ test("resume model precedence: explicit --model beats admitted.model; model-less
       assert.ok(first.terminal?.resume, "first admission must settle resumable");
     }
 
-    // Run A: model-less resume must restore admitted.model including thinking.
+    // Run A: bare resume follows the live seat table (not admitted birth model).
     {
       const runId = "run-model-precedence-a";
       await admitResumable(runId);
+      {
+        const { io } = captureIo();
+        await runAkRole(
+          ["config", "set", "judge", "openai-codex/gpt-5.6-sol:medium"],
+          { packageRoot, home, io },
+        );
+      }
       const { io } = captureIo();
       let modelLessArgs: string[] | undefined;
       const resumed = await runAkRole(["resume", runId], {
@@ -1154,17 +1161,24 @@ test("resume model precedence: explicit --model beats admitted.model; model-less
           },
         }),
       });
-      assert.ok(modelLessArgs, "model-less resume must dispatch a Pi turn");
-      assert.equal(modelLessArgs[modelLessArgs.indexOf("--provider") + 1], "xai");
-      assert.equal(modelLessArgs[modelLessArgs.indexOf("--model") + 1], "grok-4.5");
-      assert.equal(modelLessArgs[modelLessArgs.indexOf("--thinking") + 1], "high");
+      assert.ok(modelLessArgs, "bare resume must dispatch a Pi turn");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--provider") + 1], "openai-codex");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--model") + 1], "gpt-5.6-sol");
+      assert.equal(modelLessArgs[modelLessArgs.indexOf("--thinking") + 1], "medium");
       assert.equal(resumed.exitCode, 0);
     }
 
-    // Run B: an explicit CLI --model on resume must beat admitted.model.
+    // Run B: an explicit CLI --model on resume beats the live seat table.
     {
       const runId = "run-model-precedence-b";
       await admitResumable(runId);
+      {
+        const { io } = captureIo();
+        await runAkRole(
+          ["config", "set", "judge", "xai/grok-4.5:high"],
+          { packageRoot, home, io },
+        );
+      }
       const { io, stdout } = captureIo();
       let explicitArgs: string[] | undefined;
       const resumed = await runAkRole(
