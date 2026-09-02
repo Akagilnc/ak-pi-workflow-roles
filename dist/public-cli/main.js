@@ -17003,11 +17003,12 @@ async function markRunAdmitted(admitted, authority) {
     ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
 }
-async function markRunRunning(runDirectory, effectiveModel, effectiveEngine) {
+async function markRunRunning(runDirectory, effectiveModel, effectiveEngine, effectiveHost) {
   await recordEffectiveInvocationModel(
     runDirectory,
     effectiveModel,
-    effectiveEngine
+    effectiveEngine,
+    effectiveHost
   );
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === void 0) {
@@ -17517,7 +17518,32 @@ async function peekRoleRunRole(home, runId) {
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }
-var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError;
+async function resolveRoleRunBirthHost(home, runId) {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  if (runDirectory === void 0) return "pi";
+  try {
+    const raw = JSON.parse(
+      await readFile7(join11(runDirectory, "invocation.json"), "utf8")
+    );
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw) && typeof raw.host === "string" && raw.host.trim() !== "") {
+      return raw.host;
+    }
+  } catch {
+  }
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk !== void 0) {
+    try {
+      await readFile7(
+        join11(disk.principalWire.sessionDirectory, GROK_ACP_SESSION_BINDING),
+        "utf8"
+      );
+      return "grok-build";
+    } catch {
+    }
+  }
+  return "pi";
+}
+var V1_RESUMABLE_PROVIDERS, AUTO_RESUME_LIMIT, RESUME_TRANSPORT_ENVELOPE, RUN_STATE_FILE, WRITER_LOCK_FILE, RunWriterLeaseHeldError, GROK_ACP_SESSION_BINDING;
 var init_run_lifecycle = __esm({
   "src/public-cli/run-lifecycle.ts"() {
     "use strict";
@@ -17539,6 +17565,7 @@ var init_run_lifecycle = __esm({
         this.name = "RunWriterLeaseHeldError";
       }
     };
+    GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
   }
 });
 
@@ -18742,7 +18769,7 @@ async function writeRoleInvocationLedger(source, role, effectiveModel) {
   const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
   await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
-async function recordEffectiveInvocationModel(runDirectory, model, engine) {
+async function recordEffectiveInvocationModel(runDirectory, model, engine, host) {
   const ledgerPath = join14(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile9(ledgerPath, "utf8"));
   const next = { ...current };
@@ -18757,6 +18784,9 @@ async function recordEffectiveInvocationModel(runDirectory, model, engine) {
   }
   if (engine !== void 0) {
     next.engine = engine;
+  }
+  if (host !== void 0) {
+    next.host = host;
   }
   await writeFile6(
     ledgerPath,
@@ -25754,7 +25784,7 @@ async function dispatchPostAdmissionTurn(input) {
         io
       );
     }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine);
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     if (adapters.beforeDispatch !== void 0) {
       try {
@@ -30991,6 +31021,7 @@ function createRoleEnvironment(env, options) {
     ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
     ...injectModel ? { model: options.seat.selection } : {},
     ...projectSeatEngine(options.seat),
+    ...projectSeatHost(options.seat),
     ...timeoutMs === void 0 ? {} : { timeoutMs },
     ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId },
     ...options.config?.autoResumeLimit === void 0 ? {} : { autoResumeLimit: options.config.autoResumeLimit }
@@ -31130,6 +31161,9 @@ function requireCallableSeat(seat, axis, verb) {
 }
 function projectSeatEngine(seat) {
   return seat.engine === void 0 ? {} : { engine: seat.engine };
+}
+function projectSeatHost(seat) {
+  return { host: seat.host };
 }
 function loadAndValidateConfig(home, packageRoot2) {
   return loadPublicCliConfig(home).then((config) => {
@@ -31503,11 +31537,16 @@ async function runAkRole(argv, env) {
         );
       }
       const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : resumeRole === "reviewer" ? "reviewer" : resumeRole === "merger" ? "merger" : "judge";
+      const birthHost = await resolveRoleRunBirthHost(home, resumeRequest.runId);
+      const resumeInvocation = {
+        ...invocationFromParsed(parsed),
+        host: birthHost
+      };
       const seat = resolveEffectiveSeat(
         config,
         resumeSeatRole,
         credentials,
-        invocationFromParsed(parsed)
+        resumeInvocation
       );
       if (resumeRole === "coder") {
         const result3 = await runPublicCoderResume(

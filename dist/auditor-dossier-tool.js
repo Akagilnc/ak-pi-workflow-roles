@@ -4,9 +4,10 @@ export const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier";
 /** Resolve the exact run binding already carried by the parent record session. */
 export function auditorRunDirectory(context) {
     const sessionFile = context.sessionManager?.getSessionFile?.();
-    if (sessionFile !== undefined)
-        return resolve(dirname(dirname(sessionFile)));
-    return undefined;
+    if (sessionFile === undefined)
+        return undefined;
+    // Sole layout: <run>/session/session.jsonl → climb two levels to the run directory.
+    return resolve(dirname(dirname(sessionFile)));
 }
 /** The one shared, run-bound dossier locator exposed to every auditor seat. */
 export function createAuditorDossierTool(runDirectory) {

@@ -80,6 +80,7 @@ import { runPublicAnalyst } from "./analyst-run.ts";
 import {
   AUTO_RESUME_LIMIT,
   peekRoleRunRole,
+  resolveRoleRunBirthHost,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -402,6 +403,7 @@ function createRoleEnvironment(
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
     ...(injectModel ? { model: options.seat.selection } : {}),
     ...projectSeatEngine(options.seat),
+    ...projectSeatHost(options.seat),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
     ...(options.config?.autoResumeLimit === undefined
@@ -612,6 +614,13 @@ function projectSeatEngine(
   seat: Readonly<{ engine?: string }>,
 ): { engine: string } | Record<PropertyKey, never> {
   return seat.engine === undefined ? {} : { engine: seat.engine };
+}
+
+/** Single seat.host → run-options projection (#595 birth host). */
+function projectSeatHost(
+  seat: Readonly<{ host: string }>,
+): { host: string } {
+  return { host: seat.host };
 }
 
 function loadAndValidateConfig(
@@ -1079,12 +1088,19 @@ export async function runAkRole(
               : resumeRole === "merger"
                 ? "merger"
                 : "judge";
+      // Bare resume reuses the run's birth host (#595); never the live seat table.
+      // --host on resume remains structurally refused above.
+      const birthHost = await resolveRoleRunBirthHost(home, resumeRequest.runId);
+      const resumeInvocation = {
+        ...invocationFromParsed(parsed),
+        host: birthHost,
+      };
       // Temporary model/thinking override for this resume only — never persists.
       const seat = resolveEffectiveSeat(
         config,
         resumeSeatRole,
         credentials,
-        invocationFromParsed(parsed),
+        resumeInvocation,
       );
       if (resumeRole === "coder") {
         const result = await runPublicCoderResume(
