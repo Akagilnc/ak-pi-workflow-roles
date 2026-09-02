@@ -15145,8 +15145,12 @@ async function savePublicCliConfig(config, home) {
   const path = publicCliConfigPath(home);
   await mkdir(dirname4(path), { recursive: true });
   const normalized = parsePublicCliConfig(config);
-  await writeFile(path, `${JSON.stringify(normalized, null, 2)}
-`, "utf8");
+  await writeFile(
+    path,
+    `${JSON.stringify(serializePublicCliConfig(normalized), null, 2)}
+`,
+    "utf8"
+  );
 }
 function setPersistentSeatConfig(config, seat, selection) {
   const previous = config.seats[seat];
@@ -15293,6 +15297,17 @@ function formatModelSpec(selection) {
   const base = `${selection.provider}/${selection.model}`;
   return selection.thinking === void 0 ? base : `${base}:${selection.thinking}`;
 }
+function serializePublicCliConfig(config) {
+  return {
+    // Known seats win on any key clash; by construction the two maps are
+    // disjoint after parse, but prefer owned rows if a caller stuffed both.
+    seats: {
+      ...config.unknownSeats ?? {},
+      ...config.seats
+    },
+    ...config.autoResumeLimit === void 0 ? {} : { autoResumeLimit: config.autoResumeLimit }
+  };
+}
 function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
@@ -15302,11 +15317,20 @@ function parsePublicCliConfig(value) {
   if (record4.autoResumeLimit !== void 0) {
     autoResumeLimit = parseAutoResumeLimit(record4.autoResumeLimit);
   }
+  const unknownSeats = {};
+  if (record4.unknownSeats !== void 0) {
+    if (record4.unknownSeats === null || typeof record4.unknownSeats !== "object" || Array.isArray(record4.unknownSeats)) {
+      throw new Error("public CLI config.unknownSeats must be an object");
+    }
+    Object.assign(unknownSeats, record4.unknownSeats);
+  }
+  const withOpaque = (seats2) => ({
+    seats: seats2,
+    ...autoResumeLimit === void 0 ? {} : { autoResumeLimit },
+    ...Object.keys(unknownSeats).length === 0 ? {} : { unknownSeats }
+  });
   if (record4.seats === void 0) {
-    return {
-      seats: {},
-      ...autoResumeLimit === void 0 ? {} : { autoResumeLimit }
-    };
+    return withOpaque({});
   }
   if (record4.seats === null || typeof record4.seats !== "object" || Array.isArray(record4.seats)) {
     throw new Error("public CLI config.seats must be an object");
@@ -15315,15 +15339,13 @@ function parsePublicCliConfig(value) {
   for (const [key, raw] of Object.entries(
     record4.seats
   )) {
-    if (!PUBLIC_CONFIGURABLE_SEATS.includes(key)) {
-      throw new Error(`unknown configurable seat in config: ${key}`);
+    if (!isPublicConfigurableSeat(key)) {
+      unknownSeats[key] = raw;
+      continue;
     }
     seats[key] = parseSeatModelConfig(raw, key);
   }
-  return {
-    seats,
-    ...autoResumeLimit === void 0 ? {} : { autoResumeLimit }
-  };
+  return withOpaque(seats);
 }
 function parseSeatModelConfig(value, seat) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
