@@ -33,7 +33,6 @@ import {
 import { createRecordSession } from "../archivist-record-entry.ts";
 import type {
   HostAssistantTurnResult,
-  HostInstitutionalModelSelection,
   HostInstitutionalSessionEvent,
   HostInstitutionalSessionHandle,
   HostInstitutionalSessionOptions,
@@ -61,90 +60,6 @@ function streamIdleTimeoutFromUnknown(value: unknown): StreamIdleTimeoutError | 
   return match !== null && match[1] !== undefined
     ? new StreamIdleTimeoutError(Number(match[1]))
     : undefined;
-}
-
-// ── Legacy openInProcessAgentSession (preserved for Navigator B) ───────────
-
-type OpenInProcessAgentSessionBase = {
-  readonly cwd: string;
-  readonly agentDir?: string;
-  readonly model: Model<Api>;
-  readonly modelRuntime: ModelRuntime;
-  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  readonly systemPrompt?: string;
-  readonly customTools?: ToolDefinition[];
-  readonly noTools?: "all" | "builtin";
-  readonly tools?: string[];
-};
-
-export type OpenInProcessAgentSessionOptions = 
-  | (OpenInProcessAgentSessionBase & {
-      readonly sessionManager: SessionManager;
-      readonly kind?: never;
-      readonly subject?: never;
-      readonly parent?: never;
-    })
-  | (OpenInProcessAgentSessionBase & {
-      readonly sessionManager?: undefined;
-      readonly kind: string;
-      readonly subject?: string;
-      readonly parent?: { getSessionFile(): string | undefined };
-    });
-
-function resolveSessionManager(options: OpenInProcessAgentSessionOptions): SessionManager {
-  if (options.sessionManager !== undefined) return options.sessionManager;
-  return createRecordSession({
-    cwd: options.cwd,
-    kind: options.kind,
-    ...(options.subject === undefined ? {} : { subject: options.subject }),
-    ...(options.parent === undefined ? {} : { parent: options.parent }),
-  });
-}
-
-export async function openInProcessAgentSession(
-  options: OpenInProcessAgentSessionOptions,
-): Promise<{ session: Awaited<ReturnType<typeof createAgentSession>>["session"]; dispose(): void }> {
-  const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
-  const sessionManager = resolveSessionManager(options);
-
-  const createArgs: Parameters<typeof createAgentSession>[0] = {
-    cwd: options.cwd,
-    model: options.model,
-    thinkingLevel: options.thinkingLevel ?? "off",
-    modelRuntime: options.modelRuntime,
-    sessionManager,
-    settingsManager: settings,
-    ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
-    ...(options.tools === undefined ? {} : { tools: options.tools }),
-    ...(options.customTools === undefined ? {} : { customTools: options.customTools }),
-  };
-
-  if (options.agentDir !== undefined) {
-    const loader = new DefaultResourceLoader({
-      cwd: options.cwd,
-      agentDir: options.agentDir,
-      settingsManager: settings,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-      ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
-    });
-    await loader.reload();
-    createArgs.agentDir = options.agentDir;
-    createArgs.resourceLoader = loader;
-  } else if (options.systemPrompt !== undefined) {
-    throw new Error("openInProcessAgentSession requires agentDir when systemPrompt is set");
-  }
-
-  const { session } = await createAgentSession(createArgs);
-  return {
-    session,
-    dispose() {
-      session.dispose();
-    },
-  };
 }
 
 // ── Stream / remote error projection helpers ───────────────────────────────
@@ -321,7 +236,21 @@ export async function openPiInstitutionalSession(
     const foundModel = typeof childRegistry.find === "function"
       ? childRegistry.find(selection.provider, selection.model)
       : undefined;
-    const providerDefaultModel = childProvider?.getModels?.()[0];
+
+    const withTypedReason = (error: Error, reason: "auth" | "model" | "thinking"): Error =>
+      Object.assign(error, { reason });
+
+    // Existing Navigator/model contract (pre-#590): unknown provider or model is
+    // typed unavailable/model — never auth. Auth runs only after the selection
+    // resolves to a known provider surface.
+    if (childProvider === undefined) {
+      throw withTypedReason(
+        new Error(`${label} model is unavailable: ${selection.provider}/${selection.model}`),
+        "model",
+      );
+    }
+
+    const providerDefaultModel = childProvider.getModels?.()[0];
     const fallbackApi = providerDefaultModel?.api
       ?? (childProvider as any)?.api
       ?? (selection.provider === "openai-codex" ? "openai-codex-responses" : "openai-completions");
@@ -341,10 +270,16 @@ export async function openPiInstitutionalSession(
     let resolution: { auth: { baseUrl?: string; apiKey?: string; headers?: Record<string, string | null> }; env?: Record<string, string> } | undefined;
     if (typeof childRegistry.getProviderAuth === "function") {
       resolution = await childRegistry.getProviderAuth(selection.provider).catch((error: unknown) => {
-        throw new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        throw withTypedReason(
+          new Error(`${label} authentication failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }),
+          "auth",
+        );
       });
       if (resolution === undefined) {
-        throw new Error(`${label} authentication failed: provider is not configured: ${selection.provider}`);
+        throw withTypedReason(
+          new Error(`${label} authentication failed: provider is not configured: ${selection.provider}`),
+          "auth",
+        );
       }
     }
 
@@ -352,7 +287,10 @@ export async function openPiInstitutionalSession(
     if (typeof childRegistry.getApiKeyAndHeaders === "function") {
       authResult = await childRegistry.getApiKeyAndHeaders(modelToUse as any);
       if (authResult && !authResult.ok) {
-        throw new Error(`${label} authentication failed: ${authResult.error}`);
+        throw withTypedReason(
+          new Error(`${label} authentication failed: ${authResult.error}`),
+          "auth",
+        );
       }
     }
 
@@ -422,17 +360,40 @@ export async function openPiInstitutionalSession(
             options.signal === undefined ? {} : { parentSignal: options.signal },
           );
           let observedHttpStatus: number | undefined;
+          let observedHttpPayload: ReturnType<typeof projectConfirmedRemotePayload> | undefined;
           try {
             const requestSignal = request?.signal;
             const streamSignal = requestSignal === undefined
               ? idle.signal
               : AbortSignal.any([idle.signal, requestSignal]);
             const priorOnResponse = request?.onResponse;
+            const priorFetch = request?.fetch;
+            const baseFetch = priorFetch ?? globalThis.fetch.bind(globalThis);
+            // Capture wire status from the real Response before the provider SDK
+            // folds non-2xx into errorMessage-only assistant stops (no free-text parse).
+            // A structured Response is testimony — including 5xx. Local/unrecognized
+            // failures never produce a Response, so they stay unlabelled.
+            const statusAwareFetch: typeof fetch = async (input, init) => {
+              const response = await baseFetch(input, init);
+              if (isNonSuccessHttpStatus(response?.status)) {
+                observedHttpStatus = response.status;
+                try {
+                  const parsed: unknown = JSON.parse(await response.clone().text());
+                  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+                    observedHttpPayload = projectConfirmedRemotePayload(parsed);
+                  }
+                } catch {
+                  // Payload observation must not break the provider stream.
+                }
+              }
+              return response;
+            };
             const retriedRequest: ProviderStreamOptions = {
               ...(request ?? {}),
               ...(resolvedEnv === undefined ? {} : { env: resolvedEnv }),
               signal: streamSignal,
               maxRetries: 0,
+              fetch: statusAwareFetch,
               onResponse: async (
                 response: { status: number; headers: Record<string, string> },
                 resModel: Model<Api>,
@@ -443,7 +404,10 @@ export async function openPiInstitutionalSession(
             };
 
             if (childProvider === undefined) {
-              throw new Error(`${label} provider not found: ${model.provider}`);
+              throw withTypedReason(
+                new Error(`${label} provider not found: ${model.provider}`),
+                "model",
+              );
             }
 
             const source = simple
@@ -479,7 +443,25 @@ export async function openPiInstitutionalSession(
               ) {
                 continue;
               }
-              streamFailureValue = idleFailure ?? new Error(errorMessage, { cause: response });
+              const failure = idleFailure ?? new Error(errorMessage, { cause: response });
+              // Only structured status: onResponse observation or fields already on the
+              // assistant message. Never parse errorMessage prose for HTTP status.
+              const httpStatus = numericHttpStatus(observedHttpStatus)
+                ?? numericHttpStatus((response as { statusCode?: unknown }).statusCode)
+                ?? numericHttpStatus((response as { status?: unknown }).status);
+              if (httpStatus !== undefined) {
+                Object.assign(failure, {
+                  statusCode: httpStatus,
+                  status: httpStatus,
+                  ...(observedHttpPayload ?? {}),
+                });
+                Object.assign(response, {
+                  statusCode: httpStatus,
+                  status: httpStatus,
+                  ...(observedHttpPayload ?? {}),
+                });
+              }
+              streamFailureValue = failure;
             }
             for (const ev of attemptEvents) {
               wrapped.push(ev as any);
@@ -514,13 +496,25 @@ export async function openPiInstitutionalSession(
               continue;
             }
             const typedFailure = idleFailure ?? failure;
-            // Hold the primary provider failure at the adapter boundary (ADR
-            // 0018 / 失败诚实宪法). Consumers that surface transport failures
-            // read this so the real cause is never masked by a projected
-            // step-machine "error" response.
-            streamFailureValue = typedFailure;
             const projected = projectStructuredRemote(failure);
             const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
+            const payload = projectConfirmedRemotePayload({
+              body: projected.body ?? observedHttpPayload?.body,
+              code: projected.code ?? observedHttpPayload?.code,
+              errno: projected.errno ?? observedHttpPayload?.errno,
+            });
+            // Hold the primary provider failure at the adapter boundary (ADR
+            // 0018 / 失败诚实宪法). Attach observed HTTP status when held so
+            // host-neutral consumers (navigator/auditor) can classify auth/quota
+            // without reading free-text errorMessage.
+            if (
+              httpStatus !== undefined
+              && typeof typedFailure === "object"
+              && typedFailure !== null
+            ) {
+              Object.assign(typedFailure, { statusCode: httpStatus, status: httpStatus, ...payload });
+            }
+            streamFailureValue = typedFailure;
             const response = {
               role: "assistant" as const,
               content: [] as [],
@@ -533,9 +527,7 @@ export async function openPiInstitutionalSession(
               timestamp: Date.now(),
               ...(projected.diagnostics === undefined ? {} : { diagnostics: projected.diagnostics }),
               ...(httpStatus === undefined ? {} : { status: httpStatus, statusCode: httpStatus }),
-              ...(projected.body === undefined ? {} : { body: projected.body }),
-              ...(projected.code === undefined ? {} : { code: projected.code }),
-              ...(projected.errno === undefined ? {} : { errno: projected.errno }),
+              ...payload,
             } as unknown as AssistantMessage;
             wrapped.push({ type: "error", reason: "error", error: response });
             wrapped.end(response);
@@ -640,10 +632,14 @@ export async function openPiInstitutionalSession(
     }
 
     // 7. Create AgentSession
+    // Existing Navigator contract: requested thinking must stick after open. Pi
+    // clamps unsupported levels; if max was requested and not applied, fail as
+    // typed unavailable/thinking (pre-#590 attendance setModel check).
+    const requestedThinking = options.selection.thinking === "max" ? "max" : "off";
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      thinkingLevel: (options.selection.thinking ?? "off") as any,
+      thinkingLevel: requestedThinking as any,
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -653,6 +649,15 @@ export async function openPiInstitutionalSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
+    if (requestedThinking === "max" && session.thinkingLevel !== "max") {
+      session.dispose();
+      throw withTypedReason(
+        new Error(
+          `${label} thinking level max is unavailable for ${selection.provider}/${selection.model}`,
+        ),
+        "thinking",
+      );
+    }
 
     // 8. Event subscriptions
     const listeners = new Set<(event: HostInstitutionalSessionEvent) => void>();
