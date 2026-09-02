@@ -173,12 +173,25 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
 
 test("installed composition without --ak-role emits no tool-execution observation records", async () => {
   const manifest = await loadRawPackageManifest();
-  // Role-less observation: no activation substrate (no git seed, no durable session).
-  await withHermeticHome({ prefix: "ak-tool-observation-no-role-" }, async ({ home, agentDir }) => {
+  // Role-less observation: no role admission. Package entrypoint still loads; give it a
+  // session under hermetic home/.ak-roles so ambient sitian path-derives (#604) instead
+  // of falling through to real books/<cwd-basename> (was books/workspace).
+  await withActivationHome({ prefix: "ak-tool-observation-no-role-" }, async ({ home, agentDir }) => {
     const cwd = resolve(home, "workspace");
     await mkdir(cwd, { recursive: true });
+    const sessionDirectory = resolve(
+      home,
+      ".ak-roles",
+      "books",
+      basename(home),
+      "runs",
+      "no-role-observation",
+      "session",
+    );
+    await mkdir(sessionDirectory, { recursive: true });
     const result = await runPiSubprocess([
-      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-session",
+      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+      "--session-dir", sessionDirectory,
       "-e", packageEntrypoint(manifest),
       "-e", resolve(packageRoot, "test/fixtures/tool-observation-bash-provider.ts"),
       "--provider", "ak-tool-observation-bash",

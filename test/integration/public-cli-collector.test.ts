@@ -46,8 +46,6 @@ function receipt() {
 
 test("typed groups travel from real output settlement into the report artifact", async () => {
   const home = await mkdtemp(join(tmpdir(), "collector-groups-"));
-  const priorHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     const project = join(home, "project");
     await mkdir(project);
@@ -82,8 +80,6 @@ test("typed groups travel from real output settlement into the report artifact",
     assert.deepEqual(artifact.receipt.groups, receipt().groups);
     assert.equal(stdout.length > 0, true);
   } finally {
-    if (priorHome === undefined) delete process.env.HOME;
-    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 });

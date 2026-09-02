@@ -309,6 +309,8 @@ async function installFromTarball(
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
   await withHermeticHome({ prefix: "ak-cold-matrix-" }, async ({ home }) => {
+    // #604: hermetic home is also the package user profile (test preload).
+    // Fresh profile ⇒ blank seats; no real-home snapshot/restore.
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
     const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
@@ -328,11 +330,17 @@ test("one cold install exercises all public roles plus automatic Navigator gates
 
     await writeFile(
       resolve(piAgentDir, "auth.json"),
-      JSON.stringify({ "openai-codex": { type: "oauth", access: "test" } }),
+      JSON.stringify({
+        "openai-codex": { type: "oauth", access: "test" },
+        xai: { type: "api-key", access: "test" },
+        "kimi-coding": { type: "api-key", access: "test" },
+      }),
       "utf8",
     );
 
-    const project = resolve(home, "work");
+    // Book key under hermetic package home (test user-profile preload).
+    const bookKey = `work-604-${Date.now().toString(36)}`;
+    const project = resolve(home, bookKey);
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     execFileSync(
@@ -451,6 +459,24 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "gleaner-left");
       assert.equal(flagValue(args, "--ak-gleaner-left-base"), "HEAD");
+      assert.equal(args.includes("--no-skills"), true);
+      assert.equal(args.includes("-e"), true);
+      const entry = flagValue(args, "-e");
+      assert.ok(entry);
+      assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
+    }
+
+    // inspector — direct 察院 command; Internal --ak-role inspector, no ambient skills.
+    {
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["inspector", "--project", project, "Review this material."],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("inspector", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "inspector");
       assert.equal(args.includes("--no-skills"), true);
       assert.equal(args.includes("-e"), true);
       const entry = flagValue(args, "-e");

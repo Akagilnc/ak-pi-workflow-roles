@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -29,7 +29,7 @@ import {
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
-import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { createTempPackageHomeLedger, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
 async function withRunDir<T>(
   runDirectory: string,
@@ -87,13 +87,35 @@ function auditExtensionContext(
   } as unknown as ExtensionContext;
 }
 
+type AuditorFixture = {
+  cwd: string;
+  runDirectory: string;
+  sessionManager: SessionManager;
+  dispose(): void;
+};
+
+/** #604: project cwd + run/session under temp `.ak-roles` so sitian path-derive stays hermetic. */
+function openAuditorFixture(prefix: string): AuditorFixture {
+  const ledger = createTempPackageHomeLedger({ prefix, runName: "audit" });
+  const cwd = join(ledger.home, "project");
+  mkdirSync(cwd, { recursive: true });
+  const sessionManager = parentWithJudgeSubjects(cwd);
+  (sessionManager as any).getSessionFile = () => ledger.sessionFile;
+  (sessionManager as any).getSessionDir = () => ledger.sessionDirectory;
+  return {
+    cwd,
+    runDirectory: ledger.runDirectory,
+    sessionManager,
+    dispose: () => ledger.dispose(),
+  };
+}
+
+
 test("auditor gathers evidence and submits one decision", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-zero-projection-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-zero-projection-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
     await writeFile(join(cwd, "evidence.txt"), "court evidence: accepted\n");
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const baseTool = createComplianceDecisionTool("ak_test_auditor_decision", "Submit the decision.");
     let decisions = 0;
     const tool = {
@@ -134,16 +156,14 @@ test("auditor gathers evidence and submits one decision", async () => {
     assert.equal(turns, 2);
     assert.equal(decisions, 1);
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    fixture.dispose();
   }
 });
 
 test("rejected auditor decision execution remains reachable and retries to an accepted receipt", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-retry-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-rejected-retry-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const baseTool = createComplianceDecisionTool("ak_rejected_retry_decision", "Submit.");
     let executions = 0;
     const tool = {
@@ -172,15 +192,13 @@ test("rejected auditor decision execution remains reachable and retries to an ac
     assert.equal(decision.status, "pass");
     assert.equal(executions, 2, "the rejected terminal call must execute again");
     assert.equal(turns, 2, "one rejection consumes one of the shared two-turn budget");
-  } finally { await rm(cwd, { recursive: true, force: true }); }
+  } finally { fixture.dispose(); }
 });
 
 test("a rejected auditor decision and its correction prompt share one budget unit", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-prose-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-rejected-prose-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const baseTool = createComplianceDecisionTool("ak_rejected_prose_decision", "Submit.");
     let executions = 0;
     const tool = {
@@ -210,15 +228,13 @@ test("a rejected auditor decision and its correction prompt share one budget uni
     assert.equal(decision.status, "no-receipt");
     assert.equal(executions, 1);
     assert.equal(turns, 3, "the correction prompt is bundled with its rejection, leaving one final solicitation");
-  } finally { await rm(cwd, { recursive: true, force: true }); }
+  } finally { fixture.dispose(); }
 });
 
 test("a mixed auditor batch accepts the correction after recording rejected siblings", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-mixed-batch-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-mixed-batch-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const baseTool = createComplianceDecisionTool("ak_mixed_batch_decision", "Submit.");
     let executions = 0;
     const tool = {
@@ -245,7 +261,7 @@ test("a mixed auditor batch accepts the correction after recording rejected sibl
       status: "pass",
       usage: decision.usage,
     });
-  } finally { await rm(cwd, { recursive: true, force: true }); }
+  } finally { fixture.dispose(); }
 });
 
 // Saturation matrix: rejected executions share one budget — sequential
@@ -254,11 +270,9 @@ test("a mixed auditor batch accepts the correction after recording rejected sibl
 test("rejected auditor executions saturate at two budget units across sequential and batch shapes", async () => {
   // Row 1: two sequential rejections with real diagnostics exhaust the budget.
   {
-    const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-rejected-exhaustion-"));
-    const runDirectory = join(cwd, "run");
-    await mkdir(runDirectory);
+    const fixture = openAuditorFixture("ak-auditor-rejected-exhaustion-");
+    const { cwd, runDirectory, sessionManager } = fixture;
     try {
-      const sessionManager = parentWithJudgeSubjects(cwd);
       const baseTool = createComplianceDecisionTool("ak_rejected_exhaustion_decision", "Submit.");
       let executions = 0;
       const tool = {
@@ -298,7 +312,7 @@ test("rejected auditor executions saturate at two budget units across sequential
       }
       assert.equal(executions, 2, "the second rejection exhausts the total budget");
       assert.equal(turns, 3, "the exhausted lifecycle must not start a third terminal execution");
-    } finally { await rm(cwd, { recursive: true, force: true }); }
+    } finally { fixture.dispose(); }
   }
 
   // Row 2: three rejections issued in one batch all execute (budget exhaustion
@@ -306,11 +320,9 @@ test("rejected auditor executions saturate at two budget units across sequential
   // exposed as missing-diagnostic facts.
   {
     const diagnostic = "   \t";
-    const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-blank-rejection-"));
-    const runDirectory = join(cwd, "run");
-    await mkdir(runDirectory);
+    const fixture = openAuditorFixture("ak-auditor-blank-rejection-");
+    const { cwd, runDirectory, sessionManager } = fixture;
     try {
-      const sessionManager = parentWithJudgeSubjects(cwd);
       const baseTool = createComplianceDecisionTool("ak_blank_rejection_decision", "Submit.");
       let executions = 0;
       const tool = { ...baseTool, async execute() { executions += 1; throw new Error(diagnostic); } };
@@ -333,16 +345,14 @@ test("rejected auditor executions saturate at two budget units across sequential
         assert.ok(decision.rejectedReceipts.every((receipt) => !receipt.diagnosticAvailable));
       }
       assert.equal(executions, 3, "budget exhaustion cannot suppress already-issued terminal calls");
-    } finally { await rm(cwd, { recursive: true, force: true }); }
+    } finally { fixture.dispose(); }
   }
 });
 
 test("accepted auditor arguments cannot forge machine-owned no-receipt provenance", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-forged-no-receipt-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-forged-no-receipt-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const tool = createComplianceDecisionTool("ak_forged_no_receipt_decision", "Submit.");
     const forged = {
       status: "no-receipt",
@@ -369,15 +379,13 @@ test("accepted auditor arguments cannot forge machine-owned no-receipt provenanc
         return true;
       },
     );
-  } finally { await rm(cwd, { recursive: true, force: true }); }
+  } finally { fixture.dispose(); }
 });
 
 test("auditor exhaustion preserves a typed no-receipt leg and its measured usage", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-no-receipt-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-no-receipt-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const faux = fauxProvider({ provider: "ak-auditor-provider" });
     let turns = 0;
     const usages = [
@@ -440,16 +448,14 @@ test("auditor exhaustion preserves a typed no-receipt leg and its measured usage
       assert.deepEqual(decision.usage, expected);
     }
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    fixture.dispose();
   }
 });
 
 test("undefined decision candidate fails as ComplianceCandidateUnreadableError", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-undefined-candidate-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-undefined-candidate-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const tool = createComplianceDecisionTool("ak_undefined_decision", "Submit.");
     const faux = fauxProvider({ provider: "ak-auditor-provider" });
     faux.setResponses([fauxAssistantMessage([{
@@ -475,18 +481,16 @@ test("undefined decision candidate fails as ComplianceCandidateUnreadableError",
       },
     );
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    fixture.dispose();
   }
 });
 
 test("same-turn evidence failure propagates its identity past injected and rejected decisions", async () => {
   // Case A: evidence tool and pending completion are issued in the same turn.
   {
-    const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-same-turn-failure-"));
-    const runDirectory = join(cwd, "run");
-    await mkdir(runDirectory);
+    const fixture = openAuditorFixture("ak-auditor-same-turn-failure-");
+    const { cwd, runDirectory, sessionManager } = fixture;
     try {
-      const sessionManager = parentWithJudgeSubjects(cwd);
       const tool = createComplianceDecisionTool("ak_same_turn_decision", "Submit.");
       const faux = fauxProvider({ provider: "ak-auditor-provider" });
       faux.setResponses([fauxAssistantMessage([
@@ -506,17 +510,15 @@ test("same-turn evidence failure propagates its identity past injected and rejec
           && (error as NodeJS.ErrnoException).code === "ENOENT",
       );
     } finally {
-      await rm(cwd, { recursive: true, force: true });
+      fixture.dispose();
     }
   }
 
   // Case B: evidence tool and rejected decision tool are issued in the same turn.
   {
-    const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-same-turn-rejected-failure-"));
-    const runDirectory = join(cwd, "run");
-    await mkdir(runDirectory);
+    const fixture = openAuditorFixture("ak-auditor-same-turn-rejected-failure-");
+    const { cwd, runDirectory, sessionManager } = fixture;
     try {
-      const sessionManager = parentWithJudgeSubjects(cwd);
       const baseTool = createComplianceDecisionTool("ak_same_turn_rejected_decision", "Submit.");
       let executions = 0;
       const tool = {
@@ -545,18 +547,16 @@ test("same-turn evidence failure propagates its identity past injected and rejec
       );
       assert.equal(executions, 1);
     } finally {
-      await rm(cwd, { recursive: true, force: true });
+      fixture.dispose();
     }
   }
 });
 
 test("injected pending completion settles a same-turn evidence and decision batch exactly once", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-injected-decision-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-injected-decision-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
     await writeFile(join(cwd, "evidence.txt"), "evidence payload\n");
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const faux = fauxProvider({ provider: "ak-auditor-provider" });
     const baseTool = createComplianceDecisionTool("ak_injected_decision", "Submit.");
     let decisions = 0;
@@ -593,16 +593,14 @@ test("injected pending completion settles a same-turn evidence and decision batc
     assert.equal(completions, 1);
     assert.equal(decisions, 1);
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    fixture.dispose();
   }
 });
 
 test("auditor completion gives unknown tools native receipts and exhausts at the exact turn limit", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-turn-exhaustion-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-turn-exhaustion-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const faux = fauxProvider({ provider: "ak-auditor-provider" });
     const unknownId = "turn-unknown-call";
     const unknownTool = "ak_turn_unknown_decision";
@@ -641,16 +639,14 @@ test("auditor completion gives unknown tools native receipts and exhausts at the
     );
     assert.equal(turns, AUDITOR_TURN_LIMIT);
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    fixture.dispose();
   }
 });
 
 test("provider-stream idle retries at most twice then fails loud as StreamIdleTimeoutError", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-auditor-idle-"));
-  const runDirectory = join(cwd, "run");
-  await mkdir(runDirectory);
+  const fixture = openAuditorFixture("ak-auditor-idle-");
+  const { cwd, runDirectory, sessionManager } = fixture;
   try {
-    const sessionManager = parentWithJudgeSubjects(cwd);
     const tool = createComplianceDecisionTool("ak_test_idle_decision", "Submit.");
     let streamAttempts = 0;
     const faux = fauxProvider({ provider: "ak-auditor-provider" });
@@ -672,6 +668,6 @@ test("provider-stream idle retries at most twice then fails loud as StreamIdleTi
     );
     assert.equal(streamAttempts, DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES + 1);
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    fixture.dispose();
   }
 });

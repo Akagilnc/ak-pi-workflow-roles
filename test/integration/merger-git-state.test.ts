@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { createProductionMergerGitState } from "../../src/merger-git-state.ts";
 
 const git = (cwd: string, ...args: string[]) =>
@@ -14,10 +14,12 @@ const git = (cwd: string, ...args: string[]) =>
   }).trim();
 
 /** Module-level base with base/source/target commits; each case clones locally. */
+let baseTemplateRoot: string | undefined;
 let baseTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
 async function baseTemplate() {
   baseTemplateMemo ??= (async () => {
     const root = await mkdtemp(resolve(tmpdir(), "ak-merger-base-"));
+    baseTemplateRoot = root;
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
     git(root, "config", "user.email", "merger@test.local");
@@ -41,6 +43,12 @@ async function baseTemplate() {
   })();
   return baseTemplateMemo;
 }
+
+after(async () => {
+  if (baseTemplateRoot === undefined) return;
+  await rm(baseTemplateRoot, { recursive: true, force: true });
+  baseTemplateRoot = undefined;
+});
 
 async function conflictedRepo() {
   const template = await baseTemplate();

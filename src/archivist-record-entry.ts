@@ -16,7 +16,7 @@ import {
   errorText,
   pathContainedIn,
   physicallyContainedIn,
-  resolveActivationLedgerHome,
+  resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
@@ -137,7 +137,8 @@ function assertRecentFinalFileUnderSessionDir(
 export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  const ledgerHome = resolveActivationLedgerHome();
+  // Path → ledger home is owned by topology (explicit env.home nests via parent path).
+  const ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
 
   let sessionDir: string;
   let parentSession: string | undefined;

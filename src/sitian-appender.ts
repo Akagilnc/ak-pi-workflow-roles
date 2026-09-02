@@ -14,6 +14,7 @@ import {
   errorText,
   physicallyContainedIn,
   resolveActivationLedgerHome,
+  resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
 import {
   SitianInfrastructureError,
@@ -94,7 +95,11 @@ export function resolveSitianRecordPathInLedger(
 
 /** Compute a write destination from ambient ledger topology (ADR 0065). */
 export function resolveSitianRecordPath(input: SitianRecordInput): SitianRecordPath {
-  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
+  const ledgerHome =
+    input.home !== undefined && input.home.length > 0
+      ? resolveActivationLedgerHome(input.home)
+      : resolveActivationLedgerHomeForPath(input.sessionParent);
+  return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 
 /**

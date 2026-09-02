@@ -31,6 +31,7 @@ export type OptionOwner =
   | "merger"
   | "notary"
   | "gleaner-left"
+  | "inspector"
   | "analyst";
 
 /**
@@ -402,6 +403,11 @@ const GLEANER_LEFT_OPTIONS = [
       zh: "必填；无锚定合并候选 diff 的比较基线 revision。",
     },
   },
+] as const satisfies readonly PublicOptionDefinition[];
+
+const INSPECTOR_OPTIONS = [
+  bindOwner("inspector", SHARED_PROJECT_SEMANTICS),
+  bindOwner("inspector", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const COUNTERSIGN_OPTIONS = [
@@ -791,6 +797,7 @@ export const PUBLIC_OPTION_TABLE = {
   doctor: DOCTOR_OPTIONS,
   merger: MERGER_OPTIONS,
   notary: NOTARY_OPTIONS,
+  inspector: INSPECTOR_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
@@ -808,6 +815,7 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "doctor",
   "merger",
   "notary",
+  "inspector",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
@@ -1178,6 +1186,14 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role merger [options] <instruction>"],
     examples: [
       'ak-role merger --project /path/to/worktree "Reconcile the active merge."',
+    ],
+  },
+  inspector: {
+    command: "inspector",
+    summary: "Direct Inspector (察院) complexity and test-quality check; pass or bounce.",
+    usage: ["ak-role inspector [options] [instruction]"],
+    examples: [
+      'ak-role inspector --attach ./change.patch "Review this material."',
     ],
   },
   notary: {

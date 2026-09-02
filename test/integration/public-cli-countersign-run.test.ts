@@ -46,17 +46,13 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
-  const priorHome = process.env.HOME;
   const priorPath = process.env.PATH;
-  process.env.HOME = home;
   process.env.PATH = `${binDir}:${priorPath ?? ""}`;
   try {
     return await scenario(home);
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
-    if (priorHome === undefined) delete process.env.HOME;
-    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -331,7 +327,7 @@ test("public countersign diarist station: issue face/comments/ADR from gh seam; 
     assert.ok(result.appended >= 1);
 
     // Durable volume only — typed sourceKind/sourceRef; no transcript locks.
-    const volume = await readTicketProvenance(582, project);
+    const volume = await readTicketProvenance(582, project, home);
     const kindsSeen = new Set(volume.entries.map((e) => e.sourceKind));
     const sourceRefs = volume.entries.map((e) => e.sourceRef);
     assert.ok(kindsSeen.has("issue-body-comment"));
@@ -426,7 +422,7 @@ test("public countersign diarist station: bound ticket issue-source failure is t
         error.code === "diarist-issue-source",
     );
 
-    const volume = await readTicketProvenance(582, project);
+    const volume = await readTicketProvenance(582, project, home);
     assert.equal(volume.entries.length, 0);
     assert.equal(volume.diagnostics.length, 1);
     assert.equal(
@@ -474,7 +470,7 @@ test("public countersign diarist station: issue-unavailable fetcher fails typed 
         error.reason === "issue-unavailable",
     );
 
-    const volume = await readTicketProvenance(582, project);
+    const volume = await readTicketProvenance(582, project, home);
     assert.equal(volume.diagnostics.length, 1);
     assert.equal(volume.diagnostics[0]!.diagnosticKind, "issue-source-failed");
     assert.equal(volume.diagnostics[0]!.reason, "issue-unavailable");
@@ -850,7 +846,7 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
     const observingHost = {
       async executeTurn(request: RoleTurnRequest) {
         turnStarted = true;
-        const read = await readTicketProvenance(582, project);
+        const read = await readTicketProvenance(582, project, home);
         volumeAtTurn = read.entries.length;
         assert.ok(
           (volumeAtTurn ?? 0) >= 1,
@@ -879,7 +875,7 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
     assert.equal(result.exitCode, 0);
     assert.equal(turnStarted, true);
     assert.ok((volumeAtTurn ?? 0) >= 1);
-    const final = await readTicketProvenance(582, project);
+    const final = await readTicketProvenance(582, project, home);
     assert.ok(final.entries.length >= 1);
   });
 });
@@ -1003,7 +999,7 @@ test("public countersign path: unbound resolve+verify binds ticket and runs diar
     ) as { ticketNumber?: number };
     assert.equal(inv.ticketNumber, 582);
     // Diary station ran for the bound ticket (volume established on disk).
-    const volume = await readTicketProvenance(582, project);
+    const volume = await readTicketProvenance(582, project, home);
     assert.ok(volume.recordFile);
     await readFile(volume.recordFile, "utf8");
   });

@@ -29,9 +29,7 @@ export function issuePiDurablePrincipalCoordinates(
   readonly bookKey: string;
   readonly runDirectory: string;
 } {
-  const ledgerHome = resolveActivationLedgerHome(
-    request.home === undefined ? undefined : () => request.home!,
-  );
+  const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
   const runDirectory = join(
     activationBookDirectory(ledgerHome, bookKey),

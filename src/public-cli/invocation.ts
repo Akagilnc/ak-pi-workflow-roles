@@ -15,6 +15,7 @@ import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import {
   activationBookDirectory,
   ensureRealDirectoryTree,
+  homeFromRunDirectory,
   pathContainedIn,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
@@ -131,6 +132,10 @@ export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
   readonly baseRevision: string;
 };
 
+export type AdmittedInspectorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "inspector";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -211,6 +216,7 @@ export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCountersignInvocation
   | AdmittedGleanerLeftInvocation
+  | AdmittedInspectorInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -251,9 +257,7 @@ export function issueAdmissionPlacement(
   const principal = authority.issue(request);
   const { sessionDirectory, sessionFile } = authority.decode(principal);
   const runDirectory = join(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(
-    request.home === undefined ? undefined : () => request.home!,
-  );
+  const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
   return {
     principal,
@@ -310,24 +314,7 @@ function effectiveModelLedgerFields(
   };
 }
 
-/** Recover the machine home that owns a run directory under `.ak-roles/`. */
-export function homeFromRunDirectory(runDirectory: string): string {
-  const marker = `${sep}.ak-roles${sep}`;
-  const idx = runDirectory.indexOf(marker);
-  if (idx !== -1) {
-    return runDirectory.slice(0, idx);
-  }
-  const altMarker = ".ak-roles";
-  const altIdx = runDirectory.indexOf(altMarker);
-  if (altIdx !== -1) {
-    const candidate = runDirectory.slice(0, altIdx);
-    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
-  }
-  if (typeof process.env.HOME === "string" && process.env.HOME.length > 0) {
-    return process.env.HOME;
-  }
-  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
-}
+export { homeFromRunDirectory };
 
 /**
  * Persist one `invocation.json` identity page for the public run.
@@ -547,6 +534,7 @@ export type ParseInstructionArgvResult = {
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
 export type ParseJudgeArgvResult = ParseInstructionArgvResult;
 export type ParseCountersignArgvResult = ParseInstructionArgvResult;
+export type ParseInspectorArgvResult = ParseInstructionArgvResult;
 
 /** Positive ticket number shared by countersign/notary/analyst faces. */
 export function parsePositiveTicketNumber(
@@ -567,7 +555,7 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign",
+  owner: "judge" | "countersign" | "inspector",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -807,6 +795,10 @@ export function parseCountersignArgv(args: readonly string[]): ParseCountersignA
   return parseInstructionArgv(args, "countersign");
 }
 
+export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvResult {
+  return parseInstructionArgv(args, "inspector");
+}
+
 /**
  * Parse Coder-specific argv after the `coder` token.
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
@@ -992,13 +984,22 @@ export type AdmitJudgeInvocationOptions = {
   model?: InvocationEffectiveModel;
 };
 
+export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
+  correlationId?: string;
+};
+
 /**
- * Atomically admit a Judge Role run: freeze Attachments, persist the request,
- * and reserve session placement under the #78 ledger book.
+ * Shared instruction-seat admission for Judge and Inspector: project check,
+ * principal/placement issue, attachment freeze, ticket extract, admitted-request
+ * and invocation ledger write. CorrelationId is projected only when supplied
+ * (Inspector). Countersign keeps its own path for ticket-override specialty.
  */
-export async function admitJudgeInvocation(
-  options: AdmitJudgeInvocationOptions,
-): Promise<AdmittedJudgeInvocation> {
+async function admitStandardMaterialInvocation<
+  R extends "judge" | "inspector",
+>(
+  role: R,
+  options: AdmitJudgeInvocationOptions & { correlationId?: string },
+): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
   // Empty project override must not reach resolve("") → cwd (silent default).
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
@@ -1015,7 +1016,7 @@ export async function admitJudgeInvocation(
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
-    role: "judge",
+    role,
     home: options.home,
   });
   const attachmentsDirectory = join(runDirectory, "attachments");
@@ -1027,17 +1028,22 @@ export async function admitJudgeInvocation(
     attachmentsDirectory,
   );
   const ticketFields = ticketAdmissionFields(ticketNumber);
+  const correlationFields =
+    options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId };
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
-    role: "judge" as const,
+    role,
     runId,
     bookKey,
     projectRoot,
     runDirectory,
     principal,
     ...ticketFields,
+    ...correlationFields,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -1053,10 +1059,14 @@ export async function admitJudgeInvocation(
     sessionDirectory,
     sessionFile,
   });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+  await writeRoleInvocationLedger(
+    { ...admitted, sessionDirectory, sessionFile },
+    admitted.role,
+    options.model,
+  );
 
   return {
-    role: "judge",
+    role,
     runId,
     bookKey,
     projectRoot,
@@ -1067,10 +1077,31 @@ export async function admitJudgeInvocation(
     principal,
     admittedRequestPath,
     ...ticketFields,
+    ...correlationFields,
   };
 }
 
-/** Shared prompt transport for instruction-seat roles (judge/countersign). */
+/**
+ * Atomically admit a Judge Role run: freeze Attachments, persist the request,
+ * and reserve session placement under the #78 ledger book.
+ */
+export async function admitJudgeInvocation(
+  options: AdmitJudgeInvocationOptions,
+): Promise<AdmittedJudgeInvocation> {
+  return admitStandardMaterialInvocation("judge", options);
+}
+
+/**
+ * Admit a direct Inspector (察院) run: freeze attachments, persist the request,
+ * and reserve session placement. Same instruction-seat face as Judge (#568).
+ */
+export async function admitInspectorInvocation(
+  options: AdmitInspectorInvocationOptions,
+): Promise<AdmittedInspectorInvocation> {
+  return admitStandardMaterialInvocation("inspector", options);
+}
+
+/** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
 function buildInstructionTransportPrompt(
   admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
   engineMaterial?: EngineSessionMaterial,
@@ -1089,6 +1120,13 @@ function buildInstructionTransportPrompt(
 /** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+
+export function buildInspectorTransportPrompt(
+  admitted: AdmittedInspectorInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   return buildInstructionTransportPrompt(admitted, engineMaterial);
@@ -1947,7 +1985,7 @@ export async function resolveDoctorCaseRunsPath(options: {
   issueNumber: number;
   runs?: string;
 }): Promise<string> {
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const ledgerHome = resolveActivationLedgerHome(options.home);
   const defaultRuns = join(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",

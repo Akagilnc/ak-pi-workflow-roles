@@ -144,14 +144,10 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "analyst-338-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -205,7 +201,7 @@ test("analyst #338 issue compute-if-missing: no page → public CLI computes, wr
       const body = await readOrComputeAnalystIssuePage({
         mode: "issue",
         projectRoot: ISSUE_ROOT,
-      });
+      }, { home });
       assert.equal(body.mode, "issue");
       assert.equal(body.page.kind, "analyst-issue-metrics");
       assert.equal(body.page.projectRoot, physicalPathIdentity(ISSUE_ROOT));
@@ -364,7 +360,7 @@ test("analyst #338 model-groups library compute-if-missing: uncomputed roots →
       const body = await runAnalyst({
         mode: "model-groups",
         projectRoots: [MODELS_A_ROOT, MODELS_B_ROOT],
-      });
+      }, { home });
 
       assert.equal(body.mode, "model-groups");
       assert.equal(body.page.kind, "analyst-model-groups");
@@ -501,7 +497,7 @@ test("analyst #338 single-run damage: unreadable exclusion on page; retrieval st
       const body = await readOrComputeAnalystIssuePage({
         mode: "issue",
         projectRoot: NEG_ROOT,
-      });
+      }, { home });
       assert.equal(body.mode, "issue");
       assert.equal(body.page.kind, "analyst-issue-metrics");
       assert.equal(body.page.projectRoot, physicalPathIdentity(NEG_ROOT));
@@ -532,12 +528,12 @@ test("analyst #338 single-run damage: unreadable exclusion on page; retrieval st
 
 test("analyst #338 cached page must match requested ticket scope or recompute", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       // Root-only compute leaves a page without issueNumber binding.
       const rootOnly = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_ROOT,
-      });
+      }, { home });
       assert.equal(rootOnly.page.issueNumber, undefined);
 
       const ticket = 6611;
@@ -546,7 +542,7 @@ test("analyst #338 cached page must match requested ticket scope or recompute", 
         projectRoot: ISSUE_ROOT,
         ticketNumber: ticket,
         issueNumber: ticket,
-      });
+      }, { home });
       assert.equal(scoped.page.issueNumber, ticket);
       const disk = JSON.parse(
         await readFile(scoped.pagePath, "utf8"),
@@ -559,7 +555,7 @@ test("analyst #338 cached page must match requested ticket scope or recompute", 
         projectRoot: ISSUE_ROOT,
         ticketNumber: ticket,
         issueNumber: ticket,
-      });
+      }, { home });
       assert.equal(again.page.issueNumber, ticket);
       assert.deepEqual(again.page, disk);
 
@@ -570,7 +566,7 @@ test("analyst #338 cached page must match requested ticket scope or recompute", 
         projectRoot: ISSUE_ROOT,
         ticketNumber: other,
         issueNumber: other,
-      });
+      }, { home });
       assert.equal(switched.page.issueNumber, other);
     });
   });
@@ -578,14 +574,14 @@ test("analyst #338 cached page must match requested ticket scope or recompute", 
 
 test("analyst #338 unscoped read must not reuse a ticket-scoped cached page", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       const ticket = 6613;
       const scoped = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_ROOT,
         ticketNumber: ticket,
         issueNumber: ticket,
-      });
+      }, { home });
       assert.equal(scoped.page.issueNumber, ticket);
       const scopedDisk = JSON.parse(
         await readFile(scoped.pagePath, "utf8"),
@@ -597,7 +593,7 @@ test("analyst #338 unscoped read must not reuse a ticket-scoped cached page", as
       const unscoped = await readOrComputeAnalystIssuePage({
         mode: "issue",
         projectRoot: ISSUE_ROOT,
-      });
+      }, { home });
       assert.equal(unscoped.page.issueNumber, undefined);
       assert.notDeepEqual(unscoped.page, scopedDisk);
 

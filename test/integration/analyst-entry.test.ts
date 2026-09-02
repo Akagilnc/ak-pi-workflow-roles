@@ -764,7 +764,7 @@ test("analyst issue-mode entry: fixture page+static family registry hand-equal; 
       const first = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_PROJECT_ROOT,
-      });
+      }, { home });
 
       assert.equal(first.mode, "issue");
       assert.equal(first.pagePath, pagePath);
@@ -980,7 +980,7 @@ test("analyst issue-mode entry: fixture page+static family registry hand-equal; 
       const second = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_PROJECT_ROOT,
-      });
+      }, { home });
       assert.deepEqual(second.page, first.page);
       assert.equal(await readFile(pagePath, "utf8"), firstBytes);
       const onDiskAgain = JSON.parse(await readFile(pagePath, "utf8")) as AnalystIssueMetricsPage;
@@ -1012,7 +1012,7 @@ test("analyst issue-mode entry: null terminal artifact is terminal-artifact unre
       const result = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_PROJECT_ROOT,
-      });
+      }, { home });
 
       assert.equal(
         result.page.legs.some((leg) => leg.runId === LEG_A1_RUN),
@@ -1068,7 +1068,7 @@ test("analyst issue-mode entry: analyst path symlink into consumer repo is refus
           runAnalyst({
             mode: "issue",
             projectRoot: ISSUE_PROJECT_ROOT,
-          }),
+          }, { home }),
         (error: unknown) => {
           assert.ok(error instanceof ActivationLedgerError);
           assert.match(error.message, /symbolic link/i);

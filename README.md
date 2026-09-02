@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `gleaner-left`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `gleaner-left`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `inspector`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
 
 ## Install
 
@@ -15,11 +15,10 @@ Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global 
 
 ### Test channel (`next`)
 
-Family / dogfood installs use the same package under dist-tag `next`, on a dedicated `HOME` so the test surface never shares AK config, ledger, book, or `PI_CODING_AGENT_DIR` with the host install. Do not mount or copy host credentials into the test home; do not use a book/worktree as a stand-in for install isolation. No second global npm.
+Family / dogfood installs use the same package under dist-tag `next`. Pi installation surface is isolated via `PI_CODING_AGENT_DIR` (package config, ledger, and books remain machine-scoped under user home, never following `HOME`). Do not mount or copy host credentials into the test surface; do not use a book/worktree as a stand-in for install isolation. No second global npm.
 
 ```bash
-export HOME=/path/to/test-home          # dedicated test HOME
-export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+export PI_CODING_AGENT_DIR="/path/to/test-surface/.pi/agent"
 export PATH="$PI_CODING_AGENT_DIR/npm/node_modules/.bin:$PATH"
 ```
 
@@ -39,7 +38,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Global `--model` / `--host` / `--engine` override the table for that resume only. When the live host differs from the run's birth host, the target host rebuilds from `session/session.jsonl` (Pi↔grok). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, and Notary remain one-shot. Countersign and Gleaner-Left accept manual resume (#599).
+`ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Global `--model` / `--host` / `--engine` override the table for that resume only. When the live host differs from the run's birth host, the target host rebuilds from `session/session.jsonl` (Pi↔grok). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, Notary, and Inspector remain one-shot. Countersign and Gleaner-Left accept manual resume (#599).
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
@@ -48,7 +47,7 @@ Seat and Gate-officer configuration:
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# Gate officers (automatic on submission; not caller commands except direct notary)
+# Gate officers (automatic on submission; inspector and notary also have direct commands)
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
@@ -106,6 +105,9 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 # notary — document-fidelity check on one retained source run; one-shot; optional --ticket for court diary
 ak-role notary --source-run <runId@role|path>
 ak-role notary --source-run <runId@role|path> --ticket 582
+
+# inspector — direct complexity and test-quality check; one-shot
+ak-role inspector --attach ./change.patch "Review this material."
 
 # countersign — ticket-court five questions; optional --ticket (diarist pipeline refreshes court diary first)
 ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
@@ -196,6 +198,13 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--project` | — | `path` | no | no | option | — | Project root with one ordinary in-progress merge (defaults to cwd). |
+| `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
+
+### `inspector`
+
+| Spelling | Aliases | Value | Required | Repeatable | Form | Modes/Phases | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | no | no | option | — | Project root for ledger identity (defaults to process cwd). |
 | `--attach` | — | `path` | no | yes | option | — | Attach a regular file; frozen at admission (repeatable). |
 
 ### `notary`

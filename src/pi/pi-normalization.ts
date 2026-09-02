@@ -177,6 +177,7 @@ export type NormalizePiSessionAttemptOptions = {
   readonly sessionFile: string;
   readonly cwd?: string | undefined;
   readonly subject?: SitianSubject | undefined;
+  readonly home?: string | undefined;
 };
 
 /**
@@ -234,6 +235,8 @@ export async function normalizePiSessionAttempt(
           error: error instanceof Error ? error.message : String(error),
         },
         source: "pi-normalization",
+        sessionParent: options.sessionFile,
+        ...(options.home !== undefined ? { home: options.home } : {}),
       });
       pointers.push(ptr);
     }
@@ -255,6 +258,8 @@ export async function normalizePiSessionAttempt(
       payload: interval,
       timestamp: interval.startedAt,
       source: "pi-normalization",
+      sessionParent: options.sessionFile,
+      ...(options.home !== undefined ? { home: options.home } : {}),
     });
     pointers.push(ptr);
   }
@@ -277,6 +282,8 @@ export async function normalizePiSessionAttempt(
     ...(aggregatedUsage !== undefined ? { usage: aggregatedUsage } : {}),
     timestamp: summaryTimestamp,
     source: "pi-normalization",
+    sessionParent: options.sessionFile,
+    ...(options.home !== undefined ? { home: options.home } : {}),
   });
   pointers.push(summaryPtr);
 
