@@ -16,6 +16,7 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
+import { GROK_ACP_SESSION_BINDING } from "../grok/session-identity.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -28,13 +29,20 @@ export {
 } from "../typed-provider-http.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
+import {
+  appendEngineSessionMaterial,
+  engineSessionMaterialFromOptions,
+  type EngineSessionMaterial,
+} from "../package-resources/engine-material.ts";
 import { THINKING_LEVELS } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
   type AdmittedCoderInvocation,
+  type AdmittedCountersignInvocation,
   type AdmittedFixerInvocation,
+  type AdmittedGleanerLeftInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
   type AdmittedReviewerInvocation,
@@ -104,12 +112,35 @@ export type PublicResumeRequest = {
 };
 
 /**
- * Unique continuation-prompt selector for manual/auto resume (#471).
- * Message present → return bytes unchanged; absent → package transport envelope.
- * Zero parse, zero classify, zero narrow.
+ * Unique continuation-prompt selector for manual/auto resume (#471 / #600).
+ * Message present → base bytes unchanged; absent → package transport envelope.
+ * When engine material is present, append structured engine coordinates (same
+ * delivery as initial transport prompts). Zero parse, zero classify, zero narrow.
  */
-export function selectResumeContinuationPrompt(message?: string): string {
-  return message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
+export function selectResumeContinuationPrompt(
+  message?: string,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const base = message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
+  return appendEngineSessionMaterial([base], engineMaterial).join("\n");
+}
+
+/**
+ * Resume continuation with engine material resolved from the seat env (#600).
+ * Seat table / invocation engine axis rides the same prompt seam as initial runs.
+ */
+export function buildResumeContinuationPrompt(options: {
+  packageRoot: string;
+  engine?: string;
+  message?: string;
+}): string {
+  return selectResumeContinuationPrompt(
+    options.message,
+    engineSessionMaterialFromOptions({
+      ...(options.engine === undefined ? {} : { engine: options.engine }),
+      packageRoot: options.packageRoot,
+    }),
+  );
 }
 
 const RUN_STATE_FILE = "run-state.json";
@@ -391,21 +422,23 @@ export async function markRunAdmitted(
 
 /**
  * Shared dispatch execution seam: record the effective launch model (initial or
- * resume override) and optional initial effective engine onto invocation.json
- * when known, then transition to running.
+ * resume override) and effective engine onto invocation.json when known, then
+ * transition to running.
  * Role runners must not coordinate lifecycle ledger writes themselves.
- * Engine is write-if-present only — callers that omit it (resume paths)
- * never touch the engine key.
+ * Engine is write-if-present only — omit leaves any existing key untouched;
+ * resume paths that carry a seat engine must pass it so the ledger stays current.
  */
 export async function markRunRunning(
   runDirectory: string,
   effectiveModel?: InvocationEffectiveModel,
   effectiveEngine?: string,
+  effectiveHost?: string,
 ): Promise<void> {
   await recordEffectiveInvocationModel(
     runDirectory,
     effectiveModel,
     effectiveEngine,
+    effectiveHost,
   );
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
@@ -890,6 +923,18 @@ export type LoadedResumableReviewerRun = {
   readonly observation?: TypedHttp429Observation;
 };
 
+export type LoadedResumableCountersignRun = {
+  readonly admitted: AdmittedCountersignInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+export type LoadedResumableGleanerLeftRun = {
+  readonly admitted: AdmittedGleanerLeftInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
 /**
  * Load a resumable Judge run for resume. Rejects unknown, terminal,
  * non-resumable, and non-Judge IDs without replaying dispatch.
@@ -1089,6 +1134,85 @@ export async function loadResumableReviewerRun(
   };
 }
 
+/**
+ * Load a resumable Countersign run for resume (#599). Ticket binding and
+ * attachments restore from the admitted request; diarist does not re-run.
+ */
+export async function loadResumableCountersignRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableCountersignRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "countersign") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not countersign`,
+    );
+  }
+  const admitted: AdmittedCountersignInvocation = {
+    role: "countersign",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+/**
+ * Load a resumable Gleaner-Left run for resume (#599). Fixed base restores from
+ * the admitted request so continuation stays comparison-correct.
+ */
+export async function loadResumableGleanerLeftRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableGleanerLeftRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "gleaner-left") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not gleaner-left`,
+    );
+  }
+  const baseRevision = loaded.admittedFields.baseRevision;
+  if (baseRevision === undefined || baseRevision.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted gleaner-left base revision is missing: ${runId}`,
+    );
+  }
+  const admitted: AdmittedGleanerLeftInvocation = {
+    role: "gleaner-left",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    baseRevision,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
 export type LoadedResumableMergerRun = {
   readonly admitted: AdmittedMergerInvocation;
   readonly run: RoleRunRecord;
@@ -1170,4 +1294,47 @@ export async function peekRoleRunRole(
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
+}
+
+/**
+ * Birth host for bare resume (#595).
+ * Prefer the typed `host` field on invocation.json; for pre-#595 runs without it,
+ * presence of session/grok-acp-session.json ⇒ grok-build, else pi.
+ * Never invents host from the live seat table.
+ */
+export async function resolveRoleRunBirthHost(
+  home: string,
+  runId: string,
+): Promise<string> {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  if (runDirectory === undefined) return "pi";
+  try {
+    const raw: unknown = JSON.parse(
+      await readFile(join(runDirectory, "invocation.json"), "utf8"),
+    );
+    if (
+      raw !== null &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      typeof (raw as { host?: unknown }).host === "string" &&
+      (raw as { host: string }).host.trim() !== ""
+    ) {
+      return (raw as { host: string }).host;
+    }
+  } catch {
+    // Fall through to legacy artifact probe.
+  }
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk !== undefined) {
+    try {
+      await readFile(
+        join(disk.principalWire.sessionDirectory, GROK_ACP_SESSION_BINDING),
+        "utf8",
+      );
+      return "grok-build";
+    } catch {
+      // Missing or unreadable binding ⇒ Pi birth.
+    }
+  }
+  return "pi";
 }

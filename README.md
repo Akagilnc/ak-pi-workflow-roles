@@ -38,7 +38,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId> [message]` reopens that run's exact Pi session. Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same session continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, Notary, Countersign, and Gleaner-Left remain one-shot. The model resolves from the **current seat configuration**; pass `--model` explicitly when identity matters (#552 ruling).
+`ak-role resume <runId> [message]` reopens that run's exact Pi session. Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same session continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, and Notary remain one-shot. Countersign and Gleaner-Left accept manual resume (#599). The model resolves from the **current seat configuration**; pass `--model` explicitly when identity matters (#552 ruling).
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
@@ -63,7 +63,7 @@ ak-role config set-auto-resume-limit 3
 
 **Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes. All public callable roles and their institutional sub-legs (soul audit, doctor audit, navigator, reviewer evidence children) are host-neutral on the shared in-process institutional session seam.
 
-For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. Configuration usage and refusal text are owned by `ak-role config` / `ak-role help config`.
+For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. Configuration usage and refusal text are owned by `ak-role config` / `ak-role help config`. The persistent file is machine-wide and shared across CLI builds: seat keys this build does not know are skipped on read (not an error); unknown field-level keys on known seats keep their existing tolerance.
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned ([ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)). Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
 
@@ -74,10 +74,10 @@ Gate submission gate: on completing-side submissions the package may spawn the G
 The examples below are usage sketches; option identity, aliases, requiredness, and mode faces are owned by `ak-role help <command>`, not by a second flag contract here.
 
 ```bash
-# countersign — ticket-court review before work starts; one-shot
+# countersign — ticket-court review before work starts; resume continues the exact session
 ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"
 
-# gleaner-left — unanchored pre-merge memorials; one-shot; --base required; instruction may be empty; callers must not pass directional instruction
+# gleaner-left — unanchored pre-merge memorials; resume continues the exact session; --base required; instruction may be empty; callers must not pass directional instruction
 ak-role gleaner-left --base main
 
 # judge — adjudicate the supplied materials
@@ -135,7 +135,7 @@ Generated from `src/public-cli/option-definitions.ts`. Prefer `ak-role help <com
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--model` | — | `provider/model` | no | no | option | — | Override the effective seat model for this invocation (before or after the command). |
 | `--thinking` | — | `level` | no | no | option | — | Override thinking level: off\|minimal\|low\|medium\|high\|xhigh\|max. |
-| `--engine` | — | `name` | no | no | option | — | Optional labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role). |
+| `--engine` | — | `name` | no | no | option | — | Labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role). |
 | `--host` | — | `name` | no | no | option | — | Select the named main-session host adapter for this invocation. |
 | `--help` | `-h` | — | no | no | option | — | Show public CLI help and exit. |
 

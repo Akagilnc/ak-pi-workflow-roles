@@ -353,11 +353,13 @@ async function writeRoleInvocationLedger(
  * Bare model clears any prior thinking key so absence stays honest.
  * Engine is write-if-present only: undefined leaves any existing key untouched
  * (resume model merge must not erase initial mechanical provenance).
+ * Host is write-if-present only the same way (#595 birth host).
  */
 export async function recordEffectiveInvocationModel(
   runDirectory: string,
   model?: InvocationEffectiveModel,
   engine?: string,
+  host?: string,
 ): Promise<void> {
   const ledgerPath = join(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<
@@ -376,6 +378,9 @@ export async function recordEffectiveInvocationModel(
   }
   if (engine !== undefined) {
     next.engine = engine;
+  }
+  if (host !== undefined) {
+    next.host = host;
   }
   await writeFile(
     ledgerPath,
