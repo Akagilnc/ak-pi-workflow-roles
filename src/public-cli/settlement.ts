@@ -821,13 +821,22 @@ async function loadBoundAuditorVolumes(
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
   const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
+  // Keyed prefix on the transport token line only (#600 / 8e767152). Resume may
+  // append engine handbook presentation after the token; settlement must not
+  // treat those prose lines as a real user turn or key on their shape.
+  const isResumeEnvelopeBytes = (value: unknown): boolean => {
+    if (typeof value !== "string") return false;
+    const nl = value.indexOf("\n");
+    const firstLine = nl === -1 ? value : value.slice(0, nl);
+    return firstLine === RESUME_ENVELOPE;
+  };
   const isResumeEnvelope = (msg: unknown): boolean => {
     if (!isRecord(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
-    if (text === RESUME_ENVELOPE) return true;
+    if (isResumeEnvelopeBytes(text)) return true;
     const content = (msg as { content?: unknown }).content;
     if (Array.isArray(content)) {
-      return content.some((p) => isRecord(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+      return content.some((p) => isRecord(p) && (isResumeEnvelopeBytes(p.text) || isResumeEnvelopeBytes(p.content)));
     }
     return false;
   };
