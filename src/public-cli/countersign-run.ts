@@ -1,7 +1,7 @@
 /**
  * Public Countersign Role run: admit ticket materials → diarist pipeline step →
  * shared post-admission coordinator → settle Terminal result
- * (#572 / ADR 0074 / ADR 0075). One-shot: 署/封驳/上呈，无 resume.
+ * (#572 / ADR 0074 / ADR 0075). #599: manual resume continues the exact session.
  * Diarist is a prior station on the court pipeline, not a countersign call.
  * Unbound admission may resolve a ticket via diarist pre-court LLM assertion
  * (#582 / diarist-resolves-ticket-llm-layer) before the diary station runs.
@@ -32,10 +32,16 @@ import {
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
 import {
+  runPostAdmissionManualResume,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  loadResumableCountersignRun,
+  markRunAdmitted,
+  selectResumeContinuationPrompt,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleCountersignTerminalResult,
@@ -136,10 +142,7 @@ export async function runPublicCountersign(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleCountersignTerminalResult(admitted, authority),
-      // Accepted receipts and failure terminals both present via shared path.
-      shouldPresentSettled: () => true,
+    adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
         await resolveCountersignTicketBinding(admitted, env);
         // Re-project activation so Notary gate flag carries the post-admission binding.
@@ -149,8 +152,78 @@ export async function runPublicCountersign(
         );
         await runCountersignDiaristStation(admitted, env);
       },
-    },
+    }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function countersignAdapters(options?: {
+  beforeDispatch?: (
+    admitted: AdmittedCountersignInvocation,
+  ) => void | Promise<void>;
+}) {
+  return {
+    trySettle: (admitted: AdmittedCountersignInvocation, authority: DurablePrincipalAuthority) =>
+      trySettleCountersignTerminalResult(admitted, authority),
+    // Accepted receipts and failure terminals both present via shared path.
+    shouldPresentSettled: () => true,
+    ...(options?.beforeDispatch === undefined
+      ? {}
+      : { beforeDispatch: options.beforeDispatch }),
+  };
+}
+
+/**
+ * Resume a previously admitted Countersign run (#599 / DK-3).
+ * Restores role/ticket/attachments/session identity; diarist does not re-run.
+ */
+export async function runPublicCountersignResume(
+  request: PublicResumeRequest,
+  env: CountersignRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedCountersignInvocation;
+  terminal?: TerminalResult;
+}> {
+  let loaded;
+  try {
+    loaded = await loadResumableCountersignRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  const { admitted } = loaded;
+  const turnRequest = buildCountersignTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message),
+    },
+  });
+
+  return await runPostAdmissionManualResume({
+    admitted,
+    env,
+    io,
+    request: turnRequest,
+    adapters: countersignAdapters(),
   });
 }
 

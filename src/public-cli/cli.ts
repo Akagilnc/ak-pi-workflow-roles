@@ -67,8 +67,8 @@ import {
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
-import { runPublicCountersign } from "./countersign-run.ts";
-import { runPublicGleanerLeft } from "./gleaner-left-run.ts";
+import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
+import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
 import { ONE_SHOT_ROLES } from "../packaged-role-registry.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
@@ -1078,7 +1078,11 @@ export async function runAkRole(
               ? "reviewer"
               : resumeRole === "merger"
                 ? "merger"
-                : "judge";
+                : resumeRole === "countersign"
+                  ? "countersign"
+                  : resumeRole === "gleaner-left"
+                    ? "gleaner-left"
+                    : "judge";
       // Temporary model/thinking override for this resume only — never persists.
       const seat = resolveEffectiveSeat(
         config,
@@ -1166,6 +1170,46 @@ export async function runAkRole(
           ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
         };
       }
+      if (resumeRole === "countersign") {
+        const result = await runPublicCountersignResume(
+          resumeRequest,
+          createRoleEnvironment(env, {
+            role: "countersign",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true,
+          }),
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
+      if (resumeRole === "gleaner-left") {
+        const result = await runPublicGleanerLeftResume(
+          resumeRequest,
+          createRoleEnvironment(env, {
+            role: "gleaner-left",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true,
+          }),
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
       const result = await runPublicResume(
         resumeRequest,
         createRoleEnvironment(env, {
@@ -1215,7 +1259,7 @@ export async function runAkRole(
       };
     }
 
-    // Countersign ticket-court run path (#572 / ADR 0074) — one-shot.
+    // Countersign ticket-court run path (#572 / ADR 0074); #599 resume allowed.
     if (parsed.command === "countersign") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
@@ -1240,7 +1284,7 @@ export async function runAkRole(
       };
     }
 
-    // Gleaner-Left pre-merge memorial run path (#502 / ADR 0067) — one-shot.
+    // Gleaner-Left pre-merge memorial run path (#502 / ADR 0067); #599 resume allowed.
     if (parsed.command === "gleaner-left") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
