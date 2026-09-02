@@ -87,3 +87,49 @@ test("withTestUserProfileEnv child: package home = temp; realMachineHome stays o
     rmSync(spacedRoot, { recursive: true, force: true });
   }
 });
+
+test("unavailable mode: userInfo / packageMachineHome throw ERR_SYSTEM_ERROR", async () => {
+  const env = withTestUserProfileEnv({ ...process.env }, { mode: "unavailable" });
+  assert.equal(env.AK_TEST_USER_PROFILE_MODE, "unavailable");
+  assert.ok(
+    (env.NODE_OPTIONS ?? "").includes("test-user-profile-preload.cjs"),
+    `NODE_OPTIONS must require shared preload, got ${env.NODE_OPTIONS}`,
+  );
+
+  const result = await runTestSubprocess(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "-e",
+      [
+        "import { userInfo } from \"node:os\";",
+        `import { packageMachineHome } from ${JSON.stringify(
+          new URL("../../src/activation-ledger-topology.ts", import.meta.url).href,
+        )};`,
+        "function codeOf(fn) {",
+        "  try { fn(); return null; }",
+        "  catch (e) { return e && typeof e === \"object\" && \"code\" in e ? e.code : null; }",
+        "}",
+        "console.log(JSON.stringify({",
+        "  userInfoCode: codeOf(() => userInfo()),",
+        "  packageHomeCode: codeOf(() => packageMachineHome()),",
+        "}));",
+      ].join("\n"),
+    ],
+    {
+      cwd: process.cwd(),
+      env,
+      timeoutMs: 15_000,
+      owner: "test-user-profile-preload-unavailable",
+    },
+  );
+  assert.equal(result.code, 0, result.stderr);
+  const body = JSON.parse(result.stdout.trim()) as {
+    userInfoCode: string | null;
+    packageHomeCode: string | null;
+  };
+  assert.equal(body.userInfoCode, "ERR_SYSTEM_ERROR");
+  assert.equal(body.packageHomeCode, "ERR_SYSTEM_ERROR");
+});
