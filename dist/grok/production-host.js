@@ -755,7 +755,7 @@ async function openPiInstitutionalSession(options) {
     const resolvedApiKey = authResult?.apiKey ?? resolution?.auth?.apiKey;
     const resolvedHeaders = authResult?.headers ?? resolution?.auth?.headers;
     const resolvedEnv = authResult?.env ?? resolution?.env;
-    const effectiveBaseUrl = resolution?.auth?.baseUrl ?? foundModel?.baseUrl ?? childProvider?.baseUrl ?? modelToUse.baseUrl;
+    const effectiveBaseUrl = resolution?.auth?.baseUrl ?? modelToUse.baseUrl;
     const effectiveModel = {
       ...modelToUse,
       baseUrl: effectiveBaseUrl
@@ -820,8 +820,6 @@ async function openPiInstitutionalSession(options) {
             };
             const retriedRequest = {
               ...request ?? {},
-              ...resolvedApiKey === void 0 ? {} : { apiKey: resolvedApiKey },
-              ...resolvedHeaders === void 0 ? {} : { headers: resolvedHeaders },
               ...resolvedEnv === void 0 ? {} : { env: resolvedEnv },
               signal: streamSignal,
               maxRetries: 0,
@@ -10988,6 +10986,7 @@ function createWorkerSubmissionGate() {
   let prefixReminded = false;
   let unfinishedReasonBounces = 0;
   let record4;
+  let sessionParent;
   const head = (cwd) => {
     try {
       return git3(cwd, ["rev-parse", "HEAD"]);
@@ -10996,10 +10995,21 @@ function createWorkerSubmissionGate() {
       return null;
     }
   };
+  const gateSitian = (cwd, payload) => {
+    sitianReport({
+      level: "event",
+      kind: "gate",
+      cwd,
+      ...sessionParent === void 0 ? {} : { sessionParent },
+      payload,
+      source: "worker-submission-gates"
+    });
+  };
   return {
     arm(cwd, parent) {
       uninstallPackageWorkerHooks(cwd);
       root = cwd;
+      sessionParent = parent?.getSessionFile();
       record4 = createRecordSession({
         cwd,
         kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
@@ -11019,17 +11029,10 @@ function createWorkerSubmissionGate() {
         version: 1,
         head: baseline
       });
-      sitianReport({
-        level: "event",
-        kind: "gate",
-        cwd,
-        ...parent?.getSessionFile() ? { sessionParent: parent.getSessionFile() } : {},
-        payload: {
-          type: WORKER_COMMIT_BASELINE_ENTRY_TYPE,
-          version: 1,
-          head: baseline
-        },
-        source: "worker-submission-gates"
+      gateSitian(cwd, {
+        type: WORKER_COMMIT_BASELINE_ENTRY_TYPE,
+        version: 1,
+        head: baseline
       });
     },
     assertAcceptable(status, details) {
@@ -11045,15 +11048,9 @@ function createWorkerSubmissionGate() {
       if (!headMoved && !reminded) {
         reminded = true;
         record4?.appendCustomEntry(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
-        sitianReport({
-          level: "event",
-          kind: "gate",
-          cwd: root,
-          payload: {
-            type: WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
-            version: 1
-          },
-          source: "worker-submission-gates"
+        gateSitian(root, {
+          type: WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE,
+          version: 1
         });
         throw new WorkerCommitReminderError();
       }
@@ -11065,15 +11062,9 @@ function createWorkerSubmissionGate() {
       }
       prefixReminded = true;
       record4?.appendCustomEntry(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE, { version: 1 });
-      sitianReport({
-        level: "event",
-        kind: "gate",
-        cwd: root,
-        payload: {
-          type: WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
-          version: 1
-        },
-        source: "worker-submission-gates"
+      gateSitian(root, {
+        type: WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE,
+        version: 1
       });
       throw new WorkerPrefixReminderError();
     }

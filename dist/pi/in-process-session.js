@@ -192,7 +192,7 @@ async function openPiInstitutionalSession(options) {
     const resolvedApiKey = authResult?.apiKey ?? resolution?.auth?.apiKey;
     const resolvedHeaders = authResult?.headers ?? resolution?.auth?.headers;
     const resolvedEnv = authResult?.env ?? resolution?.env;
-    const effectiveBaseUrl = resolution?.auth?.baseUrl ?? foundModel?.baseUrl ?? childProvider?.baseUrl ?? modelToUse.baseUrl;
+    const effectiveBaseUrl = resolution?.auth?.baseUrl ?? modelToUse.baseUrl;
     const effectiveModel = {
       ...modelToUse,
       baseUrl: effectiveBaseUrl
@@ -257,8 +257,6 @@ async function openPiInstitutionalSession(options) {
             };
             const retriedRequest = {
               ...request ?? {},
-              ...resolvedApiKey === void 0 ? {} : { apiKey: resolvedApiKey },
-              ...resolvedHeaders === void 0 ? {} : { headers: resolvedHeaders },
               ...resolvedEnv === void 0 ? {} : { env: resolvedEnv },
               signal: streamSignal,
               maxRetries: 0,

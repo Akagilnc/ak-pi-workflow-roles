@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
@@ -819,6 +819,49 @@ export function machineLedgerHome(home: string): string {
   return join(home, ".ak-roles");
 }
 
+/**
+ * #604: temporary package home whose run/session paths sit under `.ak-roles/`
+ * so path-derive never falls through to the real machine home. Prefer this over
+ * bare mkdtemp run dirs whenever archivist/sitian/ledger may resolve from session.
+ */
+export function createTempPackageHomeLedger(input: {
+  prefix: string;
+  runName?: string;
+}): {
+  home: string;
+  bookKey: string;
+  ledgerHome: string;
+  runDirectory: string;
+  sessionDirectory: string;
+  sessionFile: string;
+  dispose(): void;
+} {
+  const home = mkdtempSync(join(tmpdir(), input.prefix));
+  const bookKey = basename(home);
+  const ledgerHome = machineLedgerHome(home);
+  const runDirectory = join(
+    ledgerHome,
+    "books",
+    bookKey,
+    "runs",
+    input.runName ?? "test-run",
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  mkdirSync(sessionDirectory, { recursive: true });
+  const sessionFile = join(sessionDirectory, "session.jsonl");
+  return {
+    home,
+    bookKey,
+    ledgerHome,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    dispose() {
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
+}
+
 /** Book key for a git cwd whose common-dir host basename is the directory name. */
 export function activationBookKeyFor(cwd: string): string {
   return basename(cwd);
@@ -1017,8 +1060,9 @@ export interface InProcessPiOptions {
   /**
    * Opt-in at activation-owning tests only: real parent SessionManager whose
    * getSessionFile/getSessionDir share a persisted directory under the machine
-   * ledger book (ADR 0048). Requires hermetic HOME and a git cwd. Generic
-   * in-process callers must leave this unset so they incur no git discovery or
+   * ledger book (ADR 0048). Requires explicit `home` (or `agentDir` under that
+   * home) and a git cwd — never process.env.HOME (#604). Generic in-process
+   * callers must leave this unset so they incur no git discovery or
    * durable-session persistence. cwd/Navigator subject semantics stay fixture-owned.
    */
   activationLedgerSession?: boolean;
