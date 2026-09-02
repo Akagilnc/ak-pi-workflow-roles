@@ -165,7 +165,7 @@ ak-role resume <runId> "<裁定>"
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--model` | — | `provider/model` | 否 | 否 | option | — | 覆盖本调用有效席位模型（可置于子命令前或后）。 |
 | `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off\|minimal\|low\|medium\|high\|xhigh\|max。 |
-| `--engine` | — | `name` | 否 | 否 | option | — | 本调用可选劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。 |
+| `--engine` | — | `name` | 否 | 否 | option | — | 本调用劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。 |
 | `--host` | — | `name` | 否 | 否 | option | — | 为本调用选择具名主会话宿主适配器。 |
 | `--help` | `-h` | — | 否 | 否 | option | — | 显示公开 CLI 帮助并退出。 |
 
