@@ -61,6 +61,14 @@ export type PublicCliConfig = {
    * bound (ADR 0035).
    */
   autoResumeLimit?: number;
+  /**
+   * #592: opaque seat rows this build does not own. Carried through every
+   * parse→save cycle so a write never silently erases neighboring-line rows
+   * in the shared machine-wide file (same survival duty as #422's sibling
+   * top-level key). Never consulted by resolveEffectiveSeat /
+   * effectiveSeatConfigurations — read consumption still skips them.
+   */
+  unknownSeats?: Record<string, unknown>;
 };
 
 export type EffectiveSource = "persistent" | "startup" | "invocation" | "unconfigured";
@@ -133,7 +141,13 @@ export async function savePublicCliConfig(
   const path = publicCliConfigPath(home);
   await mkdir(dirname(path), { recursive: true });
   const normalized = parsePublicCliConfig(config);
-  await writeFile(path, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  // Fold the opaque bucket back under seats for the on-disk shape. Do not
+  // emit unknownSeats as a top-level key — neighboring lines read seats only.
+  await writeFile(
+    path,
+    `${JSON.stringify(serializePublicCliConfig(normalized), null, 2)}\n`,
+    "utf8",
+  );
 }
 
 export function setPersistentSeatConfig(
@@ -399,22 +413,64 @@ export function buildSeatModelCliArgs(model: SeatModelConfig | undefined): strin
   ];
 }
 
+/**
+ * Disk document shape for public-cli.json. Unknown seat rows live under
+ * `seats` (not a parallel top-level key) so every build — old or new — sees
+ * one seats map.
+ */
+function serializePublicCliConfig(config: PublicCliConfig): {
+  seats: Record<string, unknown>;
+  autoResumeLimit?: number;
+} {
+  return {
+    // Known seats win on any key clash; by construction the two maps are
+    // disjoint after parse, but prefer owned rows if a caller stuffed both.
+    seats: {
+      ...(config.unknownSeats ?? {}),
+      ...config.seats,
+    },
+    ...(config.autoResumeLimit === undefined
+      ? {}
+      : { autoResumeLimit: config.autoResumeLimit }),
+  };
+}
+
 function parsePublicCliConfig(value: unknown): PublicCliConfig {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
   }
-  const record = value as { seats?: unknown; autoResumeLimit?: unknown };
+  const record = value as {
+    seats?: unknown;
+    autoResumeLimit?: unknown;
+    unknownSeats?: unknown;
+  };
   // #422 round-trip preservation: the sibling top-level key must survive every
   // parse→save cycle; an unknown-key drop would silently erase it on any write.
   let autoResumeLimit: number | undefined;
   if (record.autoResumeLimit !== undefined) {
     autoResumeLimit = parseAutoResumeLimit(record.autoResumeLimit);
   }
+  // #592: opaque bucket may already be present on an in-memory round-trip
+  // (load→set→save calls parse again). Carry it before seats iteration so a
+  // disk-shaped seats map and a memory-shaped bucket both survive.
+  const unknownSeats: Record<string, unknown> = {};
+  if (record.unknownSeats !== undefined) {
+    if (
+      record.unknownSeats === null ||
+      typeof record.unknownSeats !== "object" ||
+      Array.isArray(record.unknownSeats)
+    ) {
+      throw new Error("public CLI config.unknownSeats must be an object");
+    }
+    Object.assign(unknownSeats, record.unknownSeats as Record<string, unknown>);
+  }
+  const withOpaque = (seats: PublicCliConfig["seats"]): PublicCliConfig => ({
+    seats,
+    ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
+    ...(Object.keys(unknownSeats).length === 0 ? {} : { unknownSeats }),
+  });
   if (record.seats === undefined) {
-    return {
-      seats: {},
-      ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
-    };
+    return withOpaque({});
   }
   if (
     record.seats === null ||
@@ -427,15 +483,17 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   for (const [key, raw] of Object.entries(
     record.seats as Record<string, unknown>,
   )) {
-    if (!(PUBLIC_CONFIGURABLE_SEATS as readonly string[]).includes(key)) {
-      throw new Error(`unknown configurable seat in config: ${key}`);
+    // #592: shared machine-wide public-cli.json may hold seat rows a newer CLI
+    // wrote. Do not consume them (resolve/enum stay owned-seat only), but keep
+    // the raw value in the opaque bucket so save can put them back under seats.
+    // Unknown field-level keys on known seats keep their existing tolerance.
+    if (!isPublicConfigurableSeat(key)) {
+      unknownSeats[key] = raw;
+      continue;
     }
-    seats[key as PublicConfigurableSeat] = parseSeatModelConfig(raw, key);
+    seats[key] = parseSeatModelConfig(raw, key);
   }
-  return {
-    seats,
-    ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
-  };
+  return withOpaque(seats);
 }
 
 function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfig {
