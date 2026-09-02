@@ -444,6 +444,8 @@ test("host-neutral native factory opens without parent modelRegistry and reports
     seedGitRepository(root);
     const faux = fauxProvider({ provider: "nav-host-model", api: "openai-completions" });
     const model = faux.getModel();
+    // Pi only keeps thinking "max" when the model declares reasoning and maps max.
+    Object.assign(model, { reasoning: true, thinkingLevelMap: { max: "max" } });
     // Explicit path: withInstitutionalProviderFixture owns PI_CODING_AGENT_DIR.
     const setting = join(root, "navigator-model.json");
     await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}:max` }));
@@ -494,9 +496,11 @@ test("host-neutral native factory opens without parent modelRegistry and reports
         modelSettingPath: setting,
         tool: createNavigatorPrepareTool(() => {}),
       }),
+      // Unknown provider is typed unavailable/model (pre-#590 Navigator contract);
+      // auth runs only after the selection resolves to a known provider surface.
       (error: unknown) => error instanceof NavigatorUnavailableError
-        && error.unavailableSource === "auth"
-        && error.unavailableCause === "auth",
+        && error.unavailableSource === "model"
+        && error.unavailableCause === "model",
     );
   } catch (error) {
     await cleanupTempDir(root, error);
@@ -562,6 +566,8 @@ test("host-neutral native factory prefers institutional-resolution navigator sea
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const faux = fauxProvider({ provider: "nav-page-seat", api: "openai-completions" });
     const model = faux.getModel();
+    // Page seat requests thinking max — model must declare the level map.
+    Object.assign(model, { reasoning: true, thinkingLevelMap: { max: "max" } });
     await writeFile(
       join(runDirectory, "institutional-resolution.json"),
       `${JSON.stringify({
