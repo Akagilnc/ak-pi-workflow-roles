@@ -11,6 +11,10 @@ import {
   assertLegalEngineName,
 } from "../package-resources/engine-material.ts";
 import {
+  resolveConfiguredProvinceOfficer,
+  type ConfiguredProvinceOfficerResolution,
+} from "../institutional-resolution.ts";
+import {
   clearPersistentSeatConfig,
   effectiveSeatConfigurations,
   formatModelSpec,
@@ -18,7 +22,6 @@ import {
   loadCredentialProviders,
   loadPublicCliConfig,
   parseModelSpec,
-  resolveConfiguredProvinceOfficer,
   resolveEffectiveSeat,
   savePublicCliConfig,
   seatModelOnly,
@@ -774,10 +777,11 @@ function renderRoles(seats: readonly EffectiveSeat[]): string {
  * #620 typed config display row. Non-subordinate seats stay on the persistent
  * disk face; notary/inspector may surface inherit-gatekeeper without startup.
  * Presentation formats these fields; tests assert the projection, not TSV.
+ * source reuses the institutional authority domain — no parallel union.
  */
 export type ConfigDisplaySeat = {
   readonly seat: PublicConfigurableSeat;
-  readonly source: "persistent" | "inherit-gatekeeper" | "unconfigured";
+  readonly source: ConfiguredProvinceOfficerResolution["source"];
   readonly selection?: EffectiveSeat["selection"];
   readonly engine?: string;
   readonly host?: string;
@@ -795,7 +799,7 @@ function diskAxes(disk: PublicCliConfig["seats"][PublicConfigurableSeat]): {
 
 /**
  * Single-seat config projection (#620).
- * - notary/inspector: configured province rule (own > gatekeeper), never startup
+ * - notary/inspector: institutional authority result (own > gatekeeper), never startup
  * - all other seats: disk model only (persistent face; no startup fill-in)
  */
 export function projectConfigSeatDisplay(

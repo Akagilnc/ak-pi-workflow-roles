@@ -16,7 +16,6 @@ import {
   loadPublicCliConfig,
   parseModelSpec,
   publicCliConfigPath,
-  resolveConfiguredProvinceOfficer,
   resolveEffectiveSeat,
   savePublicCliConfig,
   setPersistentSeatConfig,
@@ -203,12 +202,9 @@ test("#620 config display: inherit only under gatekeeper; coder-only stays disk 
   );
 });
 
-// #620: sole resolver carries selection+source; direct path consumes it unchanged.
+// #620: direct path consumes institutional authority (own > gatekeeper > unconfigured).
 test("#620 subordinate seats: own persistent > inherit-gatekeeper > unconfigured (no startup)", () => {
   const empty: PublicCliConfig = { seats: {} };
-  assert.deepEqual(resolveConfiguredProvinceOfficer(empty, "notary"), {
-    source: "unconfigured",
-  });
   assert.equal(resolveEffectiveSeat(empty, "notary", CODEX_CREDS).source, "unconfigured");
   assert.equal(resolveEffectiveSeat(empty, "inspector", CODEX_CREDS).source, "unconfigured");
   assert.equal(resolveEffectiveSeat(empty, "notary", CODEX_CREDS).selection, undefined);
@@ -217,14 +213,6 @@ test("#620 subordinate seats: own persistent > inherit-gatekeeper > unconfigured
     provider: "openai-codex",
     model: "gpt-5.6-sol",
     thinking: "low",
-  });
-  assert.deepEqual(resolveConfiguredProvinceOfficer(gateOnly, "notary"), {
-    source: "inherit-gatekeeper",
-    selection: {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "low",
-    },
   });
   const inheritedNotary = resolveEffectiveSeat(gateOnly, "notary", CODEX_CREDS);
   assert.equal(inheritedNotary.source, "inherit-gatekeeper");
