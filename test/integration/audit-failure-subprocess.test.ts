@@ -5,7 +5,7 @@ import { existsSync, renameSync, rmSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
 import {
@@ -175,10 +175,12 @@ function restoreReviewerGitTreeAfterInjection(cwd: string): void {
 }
 
 /** One shared review-target clone for the whole file — rows cp -R it. */
+let reviewerTargetTemplateRoot: string | undefined;
 let reviewerTargetTemplateMemo: Promise<string> | undefined;
 async function reviewerTargetTemplate(): Promise<string> {
   reviewerTargetTemplateMemo ??= (async () => {
     const root = await mkdtemp(resolve(tmpdir(), "ak-reviewer-fatal-template-"));
+    reviewerTargetTemplateRoot = root;
     execFileSync("git", ["clone", "--quiet", "--no-hardlinks", packageRoot, root], {
       stdio: "ignore",
     });
@@ -186,6 +188,12 @@ async function reviewerTargetTemplate(): Promise<string> {
   })();
   return reviewerTargetTemplateMemo;
 }
+
+after(async () => {
+  if (reviewerTargetTemplateRoot === undefined) return;
+  await rm(reviewerTargetTemplateRoot, { recursive: true, force: true });
+  reviewerTargetTemplateRoot = undefined;
+});
 
 async function materializeReviewerTarget(dest: string): Promise<void> {
   const template = await reviewerTargetTemplate();

@@ -26,7 +26,8 @@ async function withParent(run: (context: any, faux: ReturnType<typeof fauxProvid
     // #518 S3: institutional children resolve auth from agentDir/models.json, not parent getProvider.
     const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
     try {
-      await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
+      // #604: durable parent session under hermetic .ak-roles so auditor sitian never hits real home.
+      await withInProcessPi({ cwd: home, home, agentDir, activationLedgerSession: true, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
         // Shared seat table for gatekeeper province + inspector/notary officers.
         await writeInstitutionalSeatTable(home, {
           gatekeeper: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
@@ -375,7 +376,7 @@ test("Gatekeeper real entry maps missing, corrupt, and absent-seat resolution pa
       const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent" });
       faux.setResponses([fauxAssistantMessage("parent")]);
       await withInProcessPi(
-        { cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} },
+        { cwd: home, home, agentDir, activationLedgerSession: true, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} },
         async ({ session, model }) => {
           await tc.setup(home);
           const result = await runGatekeeper({

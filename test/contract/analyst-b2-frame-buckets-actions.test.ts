@@ -162,14 +162,10 @@ function assertRunMetrics(actual: AnalystB2RunMetrics, expected: AnalystB2RunMet
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "analyst-b2-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -217,11 +213,11 @@ test("analyst B2 kernel: out-of-frame tool intervals clip so tool+model ≡ wall
 });
 
 test("analyst B2 via runAnalyst: PRD five-frame + overlap fixture hand-equal (union/complement/median/bash first line)", async () => {
-  await withTempHome(async () => {
+  await withTempHome(async (home) => {
     const result = await runAnalyst({
       mode: "issue",
       projectRoot: ISSUE_PROJECT_ROOT,
-    });
+    }, { home });
 
     const section = b2Section(result.page);
     assert.equal(section.kind, "analyst-b2-frame-buckets-actions");

@@ -200,7 +200,7 @@ test("public runner decoy face (illegal UTF-8 / malformed fence) admits unbound"
       },
     );
 
-    const ledgerHome = resolveActivationLedgerHome(() => home);
+    const ledgerHome = resolveActivationLedgerHome(home);
     const bookKey = resolveBookKeyFromGit(project);
     const bookDir = activationBookDirectory(ledgerHome, bookKey);
     const runDirectory = join(bookDir, "runs", `${runId}@judge`);
@@ -280,7 +280,7 @@ test("public runner typed face: freeze/admit → durable pages → resume → bo
     );
     assert.ok(first.terminal?.resume, "typed-face run must be resumable after 429");
 
-    const ledgerHome = resolveActivationLedgerHome(() => home);
+    const ledgerHome = resolveActivationLedgerHome(home);
     const bookKey = resolveBookKeyFromGit(project);
     const bookDir = activationBookDirectory(ledgerHome, bookKey);
     const runDirectory = join(bookDir, "runs", `${runId}@judge`);

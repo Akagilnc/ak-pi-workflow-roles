@@ -140,14 +140,10 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "analyst-c2-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -161,24 +157,24 @@ function roleStats(
 
 test("analyst C2 cohort: side-by-side group metrics join index by issueNumber; vacancy + merged ratios", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       // Persist issue pages (issue mode) carrying typed issueNumber;
       // real entry also maintains the unique issueNumber→projectRoot index rows.
       const page201 = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_201_ROOT,
         issueNumber: 201,
-      });
+      }, { home });
       const page202 = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_202_ROOT,
         issueNumber: 202,
-      });
+      }, { home });
       const page203 = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_203_ROOT,
         issueNumber: 203,
-      });
+      }, { home });
 
       assert.equal(page201.mode, "issue");
       assert.equal(page201.page.issueNumber, 201);
@@ -213,7 +209,7 @@ test("analyst C2 cohort: side-by-side group metrics join index by issueNumber; v
             issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
           },
         ],
-      });
+      }, { home });
 
       assert.equal(result.mode, "cohort");
       assert.equal(result.groups.length, 2);
@@ -303,7 +299,7 @@ test("analyst C2 cohort: side-by-side group metrics join index by issueNumber; v
             issues: [issueRef(ISSUE_203_ROOT, 203), absentRef(204)],
           },
         ],
-      });
+      }, { home });
       assert.deepEqual(again, result);
     });
   });
@@ -311,7 +307,7 @@ test("analyst C2 cohort: side-by-side group metrics join index by issueNumber; v
 
 test("analyst C2 cohort: all-absent group yields typed vacancy aggregates (no 0/∞ stand-in)", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       // No issue-mode production → no index rows → every issue is vacancy.
       const result = await runAnalyst({
         mode: "cohort",
@@ -319,7 +315,7 @@ test("analyst C2 cohort: all-absent group yields typed vacancy aggregates (no 0/
           { groupLabel: "left", issues: [absentRef(901), absentRef(902)] },
           { groupLabel: "right", issues: [absentRef(903)] },
         ],
-      });
+      }, { home });
 
       assert.equal(result.mode, "cohort");
       const left = result.groups[0]!;
@@ -349,13 +345,13 @@ test("analyst C2 cohort: all-absent group yields typed vacancy aggregates (no 0/
 
 test("analyst C2 cohort: index hit + page missing recomputes via sole kernel (not washed to absent)", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       // Real entry produces page + unique index row.
       const produced = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_201_ROOT,
         issueNumber: 201,
-      });
+      }, { home });
       const expectedWall = produced.page.totalElapsedMs;
       const expectedRuns = produced.page.legs.map((leg) => leg.runId).sort();
       // Remove page, keep index row — #338 compute-if-missing must restore it.
@@ -367,7 +363,7 @@ test("analyst C2 cohort: index hit + page missing recomputes via sole kernel (no
           { groupLabel: "left", issues: [issueRef(ISSUE_201_ROOT, 201)] },
           { groupLabel: "right", issues: [absentRef(999)] },
         ],
-      });
+      }, { home });
 
       assert.equal(result.mode, "cohort");
       assert.deepEqual(result.groups[0]!.issues, [

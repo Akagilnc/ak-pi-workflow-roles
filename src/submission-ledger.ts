@@ -1,4 +1,7 @@
-import { resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import {
+  resolveActivationLedgerHome,
+  tryHomeFromAkRolesPath,
+} from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 
@@ -81,9 +84,7 @@ export type AuditEscalationSubmissionProjection = Extract<TerminalRoleOutcome, {
 export type ClosedSubmissionProjection = SealedSubmissionProjection | AuditEscalationSubmissionProjection;
 
 function submissionRecordFile(cwd: string, runId: string, home?: string): string {
-  const ledgerHome = resolveActivationLedgerHome(
-    home === undefined ? undefined : () => home,
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
   return resolveSitianRecordPathInLedger({
     level: "event",
     kind: "candidate",
@@ -97,7 +98,7 @@ async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: str
   const { records } = await readSitianRecords(file);
   return {
     file,
-    owned: records.filter((record) => typeof record.subject === "object" && record.subject?.runId === runId),
+    owned: records.filter((record) => typeof record.subject === "object" && record.subject !== null && (record.subject as { runId?: string }).runId === runId),
   };
 }
 
@@ -157,8 +158,8 @@ export async function readLatestSubmissionOutcome(
 
 type LedgerState = { prior?: RecordPointer; sealed: boolean; sequence: number };
 
-async function restoreState(cwd: string, runId: string): Promise<LedgerState> {
-  const { file, owned } = await readOwnedSubmissionRecords(cwd, runId);
+async function restoreState(cwd: string, runId: string, home?: string): Promise<LedgerState> {
+  const { file, owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   const last = owned.at(-1);
   return {
     ...(last === undefined ? {} : { prior: { identity: last.identity, recordFile: file, kind: last.kind, level: last.level } }),
@@ -176,17 +177,39 @@ export function createSubmissionLedgerHost(
   outputTools: ReadonlyMap<string, TerminalRoleName>,
   failInfrastructure: (error: unknown, context: HostContext) => never = (error) => { throw error; },
   projectClosure: (projection: ClosedSubmissionProjection, context: HostContext) => void | Promise<void> = () => undefined,
+  options?: { home?: string },
 ): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
   type PendingCandidate = { toolCallId: string; toolName: TerminatingToolName; role: TerminalRoleName; result: HostToolResult<unknown>; context: HostContext; auditProjection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> };
   const rounds = new Map<string, PendingCandidate[]>();
+  const resolveHomeFromContext = (context: HostContext): string | undefined => {
+    if (options?.home !== undefined) return options.home;
+    const sessionFile = context.sessionManager.getSessionFile?.() || context.sessionManager.getSessionDir?.();
+    return typeof sessionFile === "string" && sessionFile.length > 0
+      ? tryHomeFromAkRolesPath(sessionFile)
+      : undefined;
+  };
   const stateFor = (context: HostContext, runId: string) => states.get(runId) ?? (() => {
-    const pending = restoreState(context.cwd, runId);
+    const home = resolveHomeFromContext(context);
+    const pending = restoreState(context.cwd, runId, home);
     states.set(runId, pending);
     return pending;
   })();
   const appendFor = (state: LedgerState, context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
-    const pointer = sitianReport({ level: "event", kind: event.type, subject: { runId, attemptId }, ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }), payload: event, source: "role-runtime", cwd: context.cwd });
+    // Home only — must match submissionRecordFile topology (cwd + runId hash under
+    // ledger home). Do not pass sessionParent: that nests under the session dir and
+    // breaks restoreState reads which resolve the hash path without sessionParent.
+    const home = resolveHomeFromContext(context);
+    const pointer = sitianReport({
+      level: "event",
+      kind: event.type,
+      subject: { runId, attemptId },
+      ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }),
+      payload: event,
+      source: "role-runtime",
+      cwd: context.cwd,
+      ...(home !== undefined ? { home } : {}),
+    });
     state.prior = pointer;
     return pointer;
   };

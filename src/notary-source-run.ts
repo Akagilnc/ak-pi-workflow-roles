@@ -83,9 +83,7 @@ export async function resolveNotarySourceRunLocator(options: {
     throw new NotarySourceRunError("notary --source-run requires a run locator");
   }
 
-  const ledgerHome = resolveActivationLedgerHome(
-    options.home === undefined ? undefined : () => options.home!,
-  );
+  const ledgerHome = resolveActivationLedgerHome(options.home);
   const bookKey = resolveBookKeyFromGit(options.projectRoot);
   const bookRunsRoot = join(activationBookDirectory(ledgerHome, bookKey), "runs");
 

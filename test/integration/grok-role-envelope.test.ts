@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+/** #604: nest grok run dirs under home/.ak-roles so session path-derive finds package home. */
+function grokRunDirectory(home: string, runName: string): string {
+  return join(home, ".ak-roles", "books", "grok-test", "runs", runName);
+}
+
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, type DoctorCase } from "../../src/doctor-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -51,6 +56,7 @@ test("Grok projection maps public activations onto the shared envelope", () => {
     { role: "notary", sourceRun: "/source" },
     { role: "countersign", ticketNumber: 582 },
     { role: "gleaner-left", baseRevision: "HEAD" },
+    { role: "inspector" },
   ];
   for (const activation of activations) {
     const flags = projectGrokActivationFlags({ activation } as RoleTurnRequest);
@@ -81,10 +87,8 @@ test("Grok projection maps public activations onto the shared envelope", () => {
 
 test("Grok MCP projection activates shared Judge materials and all active AK tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   // Tool-list contract is engine-free; ambient factory AK_ROLE_ENGINE must not leak detour.
   delete process.env.AK_ROLE_ENGINE;
@@ -94,7 +98,7 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
       principal: {}, activation: { role: "judge" }, methods: [],
       continuation: { kind: "initial", prompt: "decide" },
       model: { provider: "xai", model: "grok-4.6" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-run"),
+      agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "judge-run"),
     } as RoleTurnRequest;
     const prepared = await prepareGrokRoleEnvelope({
       request,
@@ -116,7 +120,6 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
     await rm(root, { recursive: true, force: true });
@@ -134,9 +137,7 @@ test("Grok Skill expansion evidence aligns with the packaged canonical binding",
 
 test("Grok MCP projection expands the canonical Coder tdd Skill from typed methods", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
@@ -146,7 +147,7 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
       principal: {}, activation: { role: "coder", phase: "apply", taskPath }, methods: [{ kind: "skill", path: tddPath }],
       continuation: { kind: "initial", prompt: "decide" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "coder-run"),
+      agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "coder-run"),
     } as RoleTurnRequest;
     const prepared = await prepareGrokRoleEnvelope({
       request,
@@ -174,7 +175,6 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -194,7 +194,7 @@ test("Grok typed infrastructureFailure aborts the round and closeRound returns k
         principal: {}, activation: { role: "judge" }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-infra"),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "judge-infra"),
       } as RoleTurnRequest,
       socketPath: join(root, "mcp.sock"),
       dependencies: {
@@ -254,7 +254,7 @@ test("Grok infra abort fills knownFailure before hanging tool_result projection 
         principal: {}, activation: { role: "judge" }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-infra-race"),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "judge-infra-race"),
       } as RoleTurnRequest,
       socketPath: join(root, "mcp.sock"),
       dependencies: {
@@ -331,7 +331,7 @@ test("Grok pre-execution observation failure terminates as typed InfrastructureF
         principal: {}, activation: { role: "judge" }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-preexec-infra"),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "judge-preexec-infra"),
       } as RoleTurnRequest,
       socketPath: join(root, "mcp.sock"),
       dependencies: {
@@ -379,9 +379,7 @@ test("Grok pre-execution observation failure terminates as typed InfrastructureF
 
 test("Grok MCP projection routes a correctable rejection as a structured non-pass", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-reject-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
@@ -395,7 +393,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       principal: {}, activation: { role: "coder", phase: "apply", taskPath }, methods: [{ kind: "skill", path: wrongTddPath }],
       continuation: { kind: "initial", prompt: "decide" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "coder-run"),
+      agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "coder-run"),
     } as RoleTurnRequest;
     const prepared = await prepareGrokRoleEnvelope({
       request,
@@ -434,7 +432,6 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -442,9 +439,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
 
 test("public Notary --ticket: admit→activation→ACP systemPromptOverride folds typed bound", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-ticket-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     // Real public admission needs a git project book + retained source-run under ledger.
@@ -639,7 +634,6 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -647,15 +641,13 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
 
 test("Grok MCP projection seals only after closeRound typed boundary; terminal candidate alone does not accept", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
     // Production run face is `<runId>@<role>`; settlement reads bare admitted.runId.
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ac";
-    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const runDirectory = grokRunDirectory(root, `${runId}@notary`);
     const request = {
       principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
       continuation: { kind: "initial", prompt: "attest" },
@@ -727,7 +719,6 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -735,13 +726,11 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
 
 test("Grok accepted closeRound books navigator attendance onto parent session for extractNavigatorFact", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-nav-books-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ae";
-    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const runDirectory = grokRunDirectory(root, `${runId}@notary`);
     const subjectKey = join(root, "work");
     const prepared = await prepareGrokRoleEnvelope({
       request: {
@@ -840,7 +829,6 @@ test("Grok accepted closeRound books navigator attendance onto parent session fo
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -848,10 +836,8 @@ test("Grok accepted closeRound books navigator attendance onto parent session fo
 
 test("Grok prepare keeps existing durable session history on resume", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-session-"));
-  const priorHome = process.env.HOME;
-  process.env.HOME = root;
   try {
-    const runDirectory = join(root, "runs", "resume-run");
+    const runDirectory = grokRunDirectory(root, "resume-run");
     const sessionPath = join(runDirectory, "session", "session.jsonl");
     const subjectKey = join(root, "work");
     await mkdir(join(runDirectory, "session"), { recursive: true });
@@ -929,20 +915,17 @@ test("Grok prepare keeps existing durable session history on resume", async () =
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("Grok delayed sibling after terminal candidate is not early-accepted at closeRound", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-sibling-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
-    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const runDirectory = grokRunDirectory(root, `${runId}@notary`);
     const prepared = await prepareGrokRoleEnvelope({
       request: {
         principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
@@ -995,7 +978,6 @@ test("Grok delayed sibling after terminal candidate is not early-accepted at clo
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -1014,7 +996,7 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
       principal: {}, activation: { role: "notary", sourceRun: "/source" }, methods: [],
       continuation: { kind: "initial", prompt: "decide" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@notary`),
+      agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, `${runId}@notary`),
     } as RoleTurnRequest;
     const prompts: Array<Readonly<Record<string, unknown>>> = [];
     let promptCount = 0;
@@ -1100,7 +1082,7 @@ test("Grok MCP projection extracts typed evidence keys from failInfrastructure t
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a7";
-    const runDir = join(root, "runs", `${runId}@doctor`);
+    const runDir = grokRunDirectory(root, `${runId}@doctor`);
     const casePath = join(root, "case.json");
     const zero = { count: 0, sources: [] as string[] };
     const patient: DoctorCase = {
@@ -1207,7 +1189,7 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
         principal: {}, activation: { role: "coder", phase: "plan", taskPath }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@coder`),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, `${runId}@coder`),
       } as RoleTurnRequest,
       socketPath,
       dependencies: {

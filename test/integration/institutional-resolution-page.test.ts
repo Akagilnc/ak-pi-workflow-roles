@@ -80,7 +80,9 @@ test("run-lifecycle dispatch-resume seam refreshes institutional resolution and 
   const { markRunRunning } = await import("../../src/public-cli/run-lifecycle.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
   await withActivationHome({ prefix: "ak-test-invocation-truth-" }, async ({ home }) => {
-    const runDir = join(home, "run");
+    // #604: runDirectory must sit under home/.ak-roles so homeFromRunDirectory
+    // (recordEffectiveInvocationModel / markRunRunning) path-derives package home.
+    const runDir = join(home, ".ak-roles", "books", "test-book", "runs", "0195-test-run@coder");
     const sessionDir = join(runDir, "session");
     await (await import("node:fs/promises")).mkdir(sessionDir, { recursive: true });
 

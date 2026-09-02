@@ -177,10 +177,12 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
     const { sitianReport, readSitianRecords } = await import("../../src/sitian-facade.ts");
 
     // Case 1: run-summary with usage
+    // #604: explicit home — packageMachineHome ignores process.env.HOME.
     const summaryPtr = sitianReport({
       level: "run-summary",
       kind: "settlement-summary",
       cwd: project,
+      home,
       subject: { runId: "r-sum-1", attemptId: "att-1" },
       payload: { status: "completed" },
       usage: { promptTokens: 42, completionTokens: 18, totalTokens: 60 },
@@ -197,6 +199,7 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
       level: "event",
       kind: "gate",
       cwd: project,
+      home,
       subject: { runId: "r-evt-1" },
       payload: { reminder: true },
       raw: { sessionFile: rawFile, entryId: "entry-99" },
@@ -213,6 +216,7 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
       level: "protocol-snapshot",
       kind: "auditor-roles",
       cwd: project,
+      home,
       subject: "snap-sub-1",
       payload: { state: "initialized" },
     });

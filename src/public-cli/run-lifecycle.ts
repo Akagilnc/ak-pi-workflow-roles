@@ -83,7 +83,8 @@ export type RoleRunRecord = {
     | "merger"
     | "notary"
     | "countersign"
-    | "gleaner-left";
+    | "gleaner-left"
+    | "inspector";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -242,7 +243,8 @@ async function readRoleRunStateDisk(
     record.role !== "merger" &&
     record.role !== "notary" &&
     record.role !== "countersign" &&
-    record.role !== "gleaner-left"
+    record.role !== "gleaner-left" &&
+    record.role !== "inspector"
   ) {
     return undefined;
   }
@@ -621,7 +623,7 @@ export async function findRunDirectoryById(
   runId: string,
 ): Promise<string | undefined> {
   if (runId.trim() === "") return undefined;
-  const ledgerHome = resolveActivationLedgerHome(() => home);
+  const ledgerHome = resolveActivationLedgerHome(home);
   const booksRoot = join(ledgerHome, "books");
   let bookKeys: string[];
   try {
@@ -1290,6 +1292,7 @@ export async function peekRoleRunRole(
   | "notary"
   | "countersign"
   | "gleaner-left"
+  | "inspector"
   | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);
