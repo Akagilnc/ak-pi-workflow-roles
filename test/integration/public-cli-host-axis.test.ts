@@ -61,12 +61,24 @@ test("host selection failures are canonical and stop before role turn", async ()
   const pi: NamedRoleTurnHostAdapter = { name: "pi", create() { return { ok: true, host: countingHost }; } };
   const missing = await runAkRole(["judge", "--host", "missing", "x"], base(home, [pi]));
   assert.equal(missing.exitCode, 1);
-  assert.deepEqual(missing.hostFailure, { kind: "host-unregistered", host: "missing", seat: "judge", model: "openai-codex/gpt-5.6-sol" });
+  assert.deepEqual(missing.hostFailure, {
+    kind: "host-unregistered",
+    host: "missing",
+    seat: "judge",
+    model: "openai-codex/gpt-5.6-sol",
+    registeredHosts: ["pi"],
+  });
   assert.equal(turnCalls, 0);
 
   const mismatch = await runAkRole(["judge", "--host", "grok-build", "x"], base(home, [pi, adapter("grok-build", [], false)]));
   assert.equal(mismatch.exitCode, 1);
-  assert.deepEqual(mismatch.hostFailure, { kind: "host-model-mismatch", host: "grok-build", seat: "judge", model: "openai-codex/gpt-5.6-sol" });
+  assert.deepEqual(mismatch.hostFailure, {
+    kind: "host-model-mismatch",
+    host: "grok-build",
+    seat: "judge",
+    model: "openai-codex/gpt-5.6-sol",
+    registeredHosts: ["pi", "grok-build"],
+  });
   assert.equal(turnCalls, 0);
 }));
 
@@ -138,18 +150,7 @@ test("production adapter table registers grok-build and keeps pi selectable", as
   assert.equal(explicitPi.hostFailure, undefined);
   assert.equal(piTurns, 2);
 
-  // Non-xai model on grok-build: registered, rejected by the selected adapter (not unregistered).
-  const mismatch = await runAkRole(["judge", "--host", "grok-build", "x"], productionBase(home, countingPi));
-  assert.equal(mismatch.exitCode, 1);
-  assert.deepEqual(mismatch.hostFailure, {
-    kind: "host-model-mismatch",
-    host: "grok-build",
-    seat: "judge",
-    model: "openai-codex/gpt-5.6-sol",
-  });
-  assert.equal(piTurns, 2, "host-model-mismatch must stop before any turn");
-
-  // Unregistered name still fails without fallback; production table lists both hosts in the diagnostic path.
+  // Unregistered name still fails without fallback; production table lists both hosts as typed fields.
   const missing = await runAkRole(["judge", "--host", "missing", "x"], productionBase(home, countingPi));
   assert.equal(missing.exitCode, 1);
   assert.deepEqual(missing.hostFailure, {
@@ -157,23 +158,49 @@ test("production adapter table registers grok-build and keeps pi selectable", as
     host: "missing",
     seat: "judge",
     model: "openai-codex/gpt-5.6-sol",
+    registeredHosts: ["pi", "grok-build"],
   });
   assert.equal(piTurns, 2);
 }));
 
-test("production grok-build adapter accepts xai selection without falling back to pi", async () => homeTest(async (home) => {
-  let piTurns = 0;
-  const countingPi: RoleTurnHost = {
-    executeTurn: async () => {
-      piTurns += 1;
-      throw new Error("pi adapter must not run when grok-build is selected");
-    },
-  };
-
-  await runAkRole(["config", "set", "judge", "xai/grok-4.6:high"], productionBase(home));
-  const result = await runAkRole(["judge", "--host", "grok-build", "x"], productionBase(home, countingPi));
-
-  // Selection must succeed (not host-unregistered / host-model-mismatch). Turn outcome is #511 live, not this ticket.
-  assert.equal(result.hostFailure, undefined);
-  assert.equal(piTurns, 0);
+test("grok-build selection and execution have no provider restriction", async () => homeTest(async (home) => {
+  // Lowest real public-call adapter seam: injected grok-build host actually runs.
+  // Live production Grok is #590 acceptance, not this regression.
+  for (const spec of ["openai-codex/gpt-5.6-sol:high", "xai/grok-4.6:high"] as const) {
+    let piTurns = 0;
+    let grokTurns = 0;
+    const grokProviders: Array<string | undefined> = [];
+    const grokHost: RoleTurnHost = {
+      executeTurn: async (request) => {
+        grokTurns += 1;
+        grokProviders.push(request.model?.provider);
+        return { code: 1, stderr: "grok-stub-stop", timedOut: false };
+      },
+    };
+    const adapters: NamedRoleTurnHostAdapter[] = [
+      {
+        name: "pi",
+        create() {
+          return {
+            ok: true,
+            host: {
+              executeTurn: async () => {
+                piTurns += 1;
+                throw new Error("pi adapter must not run when grok-build is selected");
+              },
+            },
+          };
+        },
+      },
+      { name: "grok-build", create: () => ({ ok: true, host: grokHost }) },
+    ];
+    await configureJudge(home);
+    await runAkRole(["config", "set", "judge", spec], base(home, []));
+    const result = await runAkRole(["judge", "--host", "grok-build", "x"], base(home, adapters));
+    assert.equal(result.hostFailure, undefined, spec);
+    assert.equal(result.exitCode, 1, spec);
+    assert.equal(piTurns, 0, spec);
+    assert.equal(grokTurns, 1, spec);
+    assert.equal(grokProviders[0], spec.split("/")[0], spec);
+  }
 }));

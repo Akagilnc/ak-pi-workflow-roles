@@ -1,5 +1,5 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { executeEvidenceChild } from "./evidence-child-executor.ts";
+import type { HostContext } from "./host-contracts.ts";
 import type { AcceptedReviewerLeg } from "./reviewer-dispatch.ts";
 
 export type ReviewerChildExecuteOptions = Readonly<{
@@ -27,7 +27,7 @@ export function projectSharedChildFailure(error: unknown): unknown {
 }
 
 /** Reviewer policy adapter over the shared evidence-child lifecycle seam. */
-export async function executeReviewerChild(workspace: string, leg: AcceptedReviewerLeg, context: ExtensionContext, options: ReviewerChildExecuteOptions = {}) {
+export async function executeReviewerChild(workspace: string, leg: AcceptedReviewerLeg, context: HostContext, options: ReviewerChildExecuteOptions = {}) {
   try {
     return await executeEvidenceChild(workspace, leg.prompt, context, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
