@@ -7,8 +7,12 @@
  * binary still resolves from the operator home. Callers pass that isolated home
  * into S6 as request.home (bash-seatbelt.ts: "callers must pass the isolated home").
  * Auth is copied from the operator home into grok-home for the turn and scrubbed
- * on settle; the session dossier directly written under grok-home survives settlement
- * (ADR 0048 / ADR 0077 / #594).
+ * on settle together with AK seatbelt hook residue; the session dossier directly
+ * written under grok-home survives settlement (ADR 0048 / ADR 0077 / #594).
+ *
+ * Known residual risk: a hard process crash between auth copy and settle can leave
+ * auth.json in the retained run ledger for one crash window. The next open scrubs
+ * residual auth before recopying; single-crash-window residue is accepted.
  */
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,10 +35,13 @@ import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
 import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import { createComposedGrokRoleTurnHost } from "./role-envelope.ts";
 import {
+  assertControlledGrokAuthIsNotSymlink,
+  assertControlledGrokHomeIsRealDirectory,
   connectGrokAcpStdio,
   controlledGrokChildEnv,
   inspectControlledGrok,
   prepareControlledGrokHome,
+  scrubAkBashSeatbeltHooks,
   type GrokCapabilityDeclaration,
 } from "./role-turn-host.ts";
 import { createGrokSessionIdentityAuthority } from "./session-identity.ts";
@@ -73,11 +80,12 @@ export const NO_PRODUCTION_GROK_PRIMARY_FAILURE = {
 } as const satisfies ProductionGrokPrimaryFailure;
 
 /**
- * Sole cleanup settlement for production controlled homes: scrub auth secrets (auth.json)
- * while preserving the session dossier under the runDirectory ledger.
- * Cleanup failure is never silenced. When a primary failure is present and cleanup
- * also fails, both surface as AggregateError (including primary value `undefined`);
- * cleanup success rethrows the primary value as-is.
+ * Sole cleanup settlement for production controlled homes: scrub auth secrets
+ * (auth.json) and AK seatbelt hook residue while preserving the session dossier
+ * under the runDirectory ledger. Refuses symlink home/auth so rm never follows a
+ * redirect (#594 F1/F4). Cleanup failure is never silenced. When a primary failure
+ * is present and cleanup also fails, both surface as AggregateError (including
+ * primary value `undefined`); cleanup success rethrows the primary value as-is.
  */
 export async function settleProductionGrokHomeCleanup(
   controlledHome: string,
@@ -85,7 +93,11 @@ export async function settleProductionGrokHomeCleanup(
   concurrentMessage: string,
 ): Promise<void> {
   try {
-    await rm(join(controlledHome, "auth.json"), { force: true });
+    await assertControlledGrokHomeIsRealDirectory(controlledHome);
+    const authPath = join(controlledHome, "auth.json");
+    await assertControlledGrokAuthIsNotSymlink(authPath);
+    await rm(authPath, { force: true });
+    await scrubAkBashSeatbeltHooks(controlledHome);
   } catch (cleanupFailure) {
     if (primaryFailure.present) {
       throw new AggregateError([primaryFailure.value, cleanupFailure], concurrentMessage, {
@@ -151,9 +163,10 @@ export async function bindProductionGrokIsolation(
 
 /**
  * Bind isolation under runDirectory, run the turn body, always scrub auth.json
- * via settleProductionGrokHomeCleanup (no silent catch) while preserving the
- * session dossier under runDirectory/grok-home. Success, typed-result, and throw
- * paths all clean up; cleanup failure and primary+cleanup both surface.
+ * and AK seatbelt hooks via settleProductionGrokHomeCleanup (no silent catch)
+ * while preserving the session dossier under runDirectory/grok-home. Success,
+ * typed-result, and throw paths all clean up; cleanup failure and primary+cleanup
+ * both surface.
  */
 export async function withProductionGrokIsolation<T>(
   runDirectory: string,

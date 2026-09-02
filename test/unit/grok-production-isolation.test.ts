@@ -3,14 +3,15 @@
  * authority createProductionGrokRoleTurnHost consumes for GROK_HOME/HOME, auth
  * root, and binary resolve. S6 seatbelt hang-on-request.home is covered by
  * grok-role-turn-host tests — this file proves the binding and cleanup settlement,
- * not executeTurn home rewrite or end-to-end seatbelt installation.
+ * including residual auth/hook scrub and symlink refusal (#594 F1/F3/F4).
  */
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { installGrokPreToolUseDeny } from "../../src/grok/bash-seatbelt.ts";
 import {
   bindProductionGrokIsolation,
   NO_PRODUCTION_GROK_PRIMARY_FAILURE,
@@ -68,7 +69,7 @@ test("production isolation binding shares one home for GROK_HOME, auth, and bina
   }
 });
 
-test("withProductionGrokIsolation scrubs auth.json after success while preserving the session dossier", async () => {
+test("withProductionGrokIsolation scrubs auth.json and AK seatbelt hooks after success while preserving the session dossier", async () => {
   const operatorHome = await seedOperatorHome();
   const runDirectory = await seedRunDirectory();
   let observedHome = "";
@@ -79,7 +80,9 @@ test("withProductionGrokIsolation scrubs auth.json after success while preservin
         await readFile(join(binding.controlledHome, "auth.json"), "utf8"),
         "SECRET-AUTH\n",
       );
-      // Simulate native grok live session dossier written during turn
+      // Simulate Fixer PreToolUse install + native grok live session dossier.
+      await installGrokPreToolUseDeny(binding.controlledHome);
+      await access(join(binding.controlledHome, "hooks", "ak-bash-seatbelt.json"));
       const sessionDir = join(binding.controlledHome, "sessions", "cwd-encoded", "session-123");
       await mkdir(sessionDir, { recursive: true });
       await writeFile(join(sessionDir, "updates.jsonl"), '{"type":"message","text":"hello"}\n', "utf8");
@@ -90,6 +93,9 @@ test("withProductionGrokIsolation scrubs auth.json after success while preservin
     await access(observedHome);
     // auth.json is scrubbed
     await assert.rejects(access(join(observedHome, "auth.json")));
+    // AK seatbelt hook residue is scrubbed (#594 F1) so resume inspect stays clean
+    await assert.rejects(access(join(observedHome, "hooks", "ak-bash-seatbelt.json")));
+    await assert.rejects(access(join(observedHome, "hooks", "ak-bash-seatbelt.mjs")));
     // Session dossier survives settlement (#594 acceptance bite)
     const sessionFile = join(observedHome, "sessions", "cwd-encoded", "session-123", "updates.jsonl");
     assert.equal(await readFile(sessionFile, "utf8"), '{"type":"message","text":"hello"}\n');
@@ -166,6 +172,71 @@ test("openProductionGrokHome does not leak auth when auth copy fails", async () 
   } finally {
     await rm(runDirectory, { recursive: true, force: true });
     await rm(operatorHome, { recursive: true, force: true });
+  }
+});
+
+test("openProductionGrokHome scrubs crash-window residual auth before recopying", async () => {
+  const operatorHome = await seedOperatorHome();
+  const runDirectory = await seedRunDirectory();
+  const controlledHome = join(runDirectory, "grok-home");
+  try {
+    await mkdir(controlledHome, { recursive: true });
+    await writeFile(join(controlledHome, "auth.json"), "STALE-CRASH-AUTH\n", "utf8");
+    const opened = await openProductionGrokHome(runDirectory, operatorHome);
+    assert.equal(opened, controlledHome);
+    assert.equal(await readFile(join(controlledHome, "auth.json"), "utf8"), "SECRET-AUTH\n");
+  } finally {
+    await rm(runDirectory, { recursive: true, force: true });
+    await rm(operatorHome, { recursive: true, force: true });
+  }
+});
+
+test("openProductionGrokHome refuses a symlinked grok-home before auth copy", async () => {
+  const operatorHome = await seedOperatorHome();
+  const runDirectory = await seedRunDirectory();
+  const escapeTarget = await mkdtemp(join(tmpdir(), "ak-grok-escape-"));
+  try {
+    await symlink(escapeTarget, join(runDirectory, "grok-home"));
+    await assert.rejects(
+      () => openProductionGrokHome(runDirectory, operatorHome),
+      (error: unknown) => {
+        const match = (value: unknown) =>
+          value instanceof Error && /must not be a symlink/.test(value.message);
+        // open primary + settle cleanup both refuse the same symlink → AggregateError.
+        if (error instanceof AggregateError) return error.errors.some(match);
+        return match(error);
+      },
+    );
+    // Escape target must not receive operator credentials.
+    await assert.rejects(access(join(escapeTarget, "auth.json")));
+  } finally {
+    await rm(runDirectory, { recursive: true, force: true });
+    await rm(operatorHome, { recursive: true, force: true });
+    await rm(escapeTarget, { recursive: true, force: true });
+  }
+});
+
+test("settleProductionGrokHomeCleanup refuses symlinked auth destination", async () => {
+  const controlledHome = await mkdtemp(join(tmpdir(), "ak-grok-settle-symlink-"));
+  const escapeTarget = await mkdtemp(join(tmpdir(), "ak-grok-auth-escape-"));
+  const escapeAuth = join(escapeTarget, "auth.json");
+  try {
+    await writeFile(escapeAuth, "OUTSIDE-SECRET\n", "utf8");
+    await symlink(escapeAuth, join(controlledHome, "auth.json"));
+    await assert.rejects(
+      () =>
+        settleProductionGrokHomeCleanup(
+          controlledHome,
+          NO_PRODUCTION_GROK_PRIMARY_FAILURE,
+          TURN_CLEANUP_MESSAGE,
+        ),
+      (error: unknown) => error instanceof Error && /must not be a symlink/.test(error.message),
+    );
+    // Outside target must survive — settle must not follow the symlink.
+    assert.equal(await readFile(escapeAuth, "utf8"), "OUTSIDE-SECRET\n");
+  } finally {
+    await rm(controlledHome, { recursive: true, force: true });
+    await rm(escapeTarget, { recursive: true, force: true });
   }
 });
 
