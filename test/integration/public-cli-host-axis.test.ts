@@ -916,11 +916,17 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
     assert.equal(observedPiTransition.previousHost, "grok-build");
     assert.equal(observedPiTransition.priorNativeRecords, grokBefore);
 
-    // Production Pi delivery: priorNativeRecords appear once in continuation prompt argv.
-    const promptDeliveries = receivedArgs.filter((arg) =>
-      arg.includes(observedPiTransition!.priorNativeRecords),
+    // Production Pi delivery: exactly one argv payload carries priorNativeRecords, and that
+    // payload contains the records substring exactly once (not double-spliced).
+    const records = observedPiTransition.priorNativeRecords;
+    const promptDeliveries = receivedArgs.filter((arg) => arg.includes(records));
+    assert.equal(promptDeliveries.length, 1, "exactly one argv element must carry prior native records");
+    const promptPayload = promptDeliveries[0]!;
+    assert.equal(
+      promptPayload.split(records).length - 1,
+      1,
+      "priorNativeRecords must occur exactly once inside the Pi continuation prompt payload",
     );
-    assert.equal(promptDeliveries.length, 1, "prior native must be delivered once into Pi prompt argv");
 
     // Source grok-home unchanged.
     assert.equal(await readFile(grokUpdatesFile, "utf8"), grokBefore);
