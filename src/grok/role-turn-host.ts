@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, open, realpath } from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -36,6 +36,14 @@ export type GrokPreparedTurn = Readonly<{
   systemPrompt: { readonly body: string; readonly materials: readonly unknown[] };
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
+  /**
+   * Host abort signal armed only by typed infrastructure failure (envelope
+   * rememberInfrastructureFailure / non-correctable MCP catch). Lawful
+   * context.abort() (seal / non-sole) does not arm it. executeTurn races
+   * session/prompt against this so infra declarations terminate even when
+   * ACP never resolves (#593).
+   */
+  abortSignal?: AbortSignal;
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
   closeRound(): Promise<
     | { readonly accepted: true }
@@ -85,6 +93,10 @@ function failure(cause: "activation" | "session" | "output", name: string, code:
 }
 
 type RpcReply = { readonly id?: unknown; readonly method?: unknown; readonly params?: unknown; readonly result?: unknown; readonly error?: unknown };
+
+function hostAbortedError(): Error & { readonly code: "host-aborted" } {
+  return Object.assign(new Error("Grok host aborted"), { code: "host-aborted" as const });
+}
 
 function acpError(code: string, message: string, cause?: unknown): Error & { readonly code: string } {
   return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { code });
@@ -274,15 +286,70 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           }
           if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
           let prompt = prepared.prompt;
-          for (let attempt = 0; attempt < 8; attempt += 1) {
-            const result = await connection.request("session/prompt", {
-              sessionId,
-              prompt: [{ type: "text", text: prompt }],
+          const abortSignal = prepared.abortSignal;
+          const activeConnection = connection;
+          /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
+          const promptOrAbort = async (
+            params: Readonly<Record<string, unknown>>,
+          ): Promise<Readonly<Record<string, unknown>>> => {
+            if (abortSignal?.aborted) {
+              // Prefer closeRound's typed failure over a bare abort race winner.
+              throw hostAbortedError();
+            }
+            const promptRequest = activeConnection.request("session/prompt", params);
+            if (abortSignal === undefined) return promptRequest;
+            return new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
+              let settled = false;
+              const onAbort = (): void => {
+                if (settled) return;
+                settled = true;
+                promptRequest.catch(() => {});
+                reject(hostAbortedError());
+              };
+              abortSignal.addEventListener("abort", onAbort, { once: true });
+              promptRequest.then(
+                (value) => {
+                  if (settled) return;
+                  settled = true;
+                  abortSignal.removeEventListener("abort", onAbort);
+                  resolve(value);
+                },
+                (error) => {
+                  if (settled) return;
+                  settled = true;
+                  abortSignal.removeEventListener("abort", onAbort);
+                  reject(error);
+                },
+              );
             });
+          };
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            let result: Readonly<Record<string, unknown>>;
+            try {
+              result = await promptOrAbort({
+                sessionId,
+                prompt: [{ type: "text", text: prompt }],
+              });
+            } catch (error) {
+              // Envelope abort (typed infra declaration): closeRound owns the failure record.
+              if (
+                typeof error === "object"
+                && error !== null
+                && (error as { code?: unknown }).code === "host-aborted"
+              ) {
+                const closure = await prepared.closeRound();
+                if ("failure" in closure) {
+                  return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+                }
+                return failure("session", "HostAborted", "host-aborted", { sessionId });
+              }
+              throw error;
+            }
             if (result.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
-            // session/prompt resolution is the sole typed round boundary before seal.
+            // session/prompt resolution is the sole typed round boundary before seal
+            // when the turn ends without host abort; abort path closes above.
             const closure = await prepared.closeRound();
             if (closure.accepted) {
               // Wait for ACP's typed close acknowledgement before tearing down the
@@ -543,10 +610,68 @@ export function classifyGrokInspection(
   return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
 }
 
-/** Copy only Grok's authentication authority into an otherwise isolated home. */
+/** AK Fixer PreToolUse seatbelt files written under controlled GROK_HOME/hooks. */
+export const AK_BASH_SEATBELT_HOOK_FILES = ["ak-bash-seatbelt.json", "ak-bash-seatbelt.mjs"] as const;
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+
+/** Refuse symlink roots so copy/rm never follow a redirected controlled home (#594 F4). */
+export async function assertControlledGrokHomeIsRealDirectory(controlledHome: string): Promise<void> {
+  let st;
+  try {
+    st = await lstat(controlledHome);
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+  if (st.isSymbolicLink()) {
+    throw new Error(`controlled grok home must not be a symlink: ${controlledHome}`);
+  }
+  if (!st.isDirectory()) {
+    throw new Error(`controlled grok home must be a real directory: ${controlledHome}`);
+  }
+}
+
+/** Refuse a symlink credential destination before copy or scrub (#594 F4). */
+export async function assertControlledGrokAuthIsNotSymlink(authPath: string): Promise<void> {
+  let st;
+  try {
+    st = await lstat(authPath);
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+  if (st.isSymbolicLink()) {
+    throw new Error(`controlled grok auth must not be a symlink: ${authPath}`);
+  }
+}
+
+/** Remove AK seatbelt hook residue while leaving sessions/ intact (#594 F1). */
+export async function scrubAkBashSeatbeltHooks(controlledHome: string): Promise<void> {
+  const hooksDir = join(controlledHome, "hooks");
+  for (const name of AK_BASH_SEATBELT_HOOK_FILES) {
+    await rm(join(hooksDir, name), { force: true });
+  }
+}
+
+/**
+ * Copy only Grok's authentication authority into an otherwise isolated home.
+ * Refuses symlink home/auth destinations (no follow). Scrubs crash-window residual
+ * auth.json and AK seatbelt hooks before the copy so the next inspect cannot see
+ * either residue (#594 F1/F3/F4).
+ */
 export async function prepareControlledGrokHome(sourceHome: string, controlledHome: string): Promise<void> {
+  await assertControlledGrokHomeIsRealDirectory(controlledHome);
   await mkdir(controlledHome, { recursive: true, mode: 0o700 });
-  await copyFile(join(sourceHome, ".grok", "auth.json"), join(controlledHome, "auth.json"));
+  await assertControlledGrokHomeIsRealDirectory(controlledHome);
+  const authPath = join(controlledHome, "auth.json");
+  await assertControlledGrokAuthIsNotSymlink(authPath);
+  // Crash-window residue: prior auth.json may still sit in the retained ledger.
+  await rm(authPath, { force: true });
+  await scrubAkBashSeatbeltHooks(controlledHome);
+  await copyFile(join(sourceHome, ".grok", "auth.json"), authPath);
 }
 
 /** First-party structured inspection under the exact environment used by ACP. */

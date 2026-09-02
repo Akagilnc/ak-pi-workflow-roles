@@ -1,6 +1,6 @@
 # grok-4.6 engine method material
 
-This file is packaged technical material for the optional `grok-4.6` labor
+This file is packaged technical material for the `grok-4.6` labor
 engine (Grok CLI on the host).
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path

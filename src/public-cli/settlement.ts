@@ -827,13 +827,22 @@ async function loadBoundAuditorVolumes(
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
   const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
+  // Keyed prefix on the transport token line only (#600 / 8e767152). Resume may
+  // append engine handbook presentation after the token; settlement must not
+  // treat those prose lines as a real user turn or key on their shape.
+  const isResumeEnvelopeBytes = (value: unknown): boolean => {
+    if (typeof value !== "string") return false;
+    const nl = value.indexOf("\n");
+    const firstLine = nl === -1 ? value : value.slice(0, nl);
+    return firstLine === RESUME_ENVELOPE;
+  };
   const isResumeEnvelope = (msg: unknown): boolean => {
     if (!isRecord(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
-    if (text === RESUME_ENVELOPE) return true;
+    if (isResumeEnvelopeBytes(text)) return true;
     const content = (msg as { content?: unknown }).content;
     if (Array.isArray(content)) {
-      return content.some((p) => isRecord(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+      return content.some((p) => isRecord(p) && (isResumeEnvelopeBytes(p.text) || isResumeEnvelopeBytes(p.content)));
     }
     return false;
   };
@@ -3086,7 +3095,25 @@ type OneShotAcceptedSettlementSpec = {
     sealed: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
   ) => Extract<TerminalRoleOutcome, { kind: "accepted" }>;
   readonly tryAcceptDetails: (details: unknown) => boolean;
+  /**
+   * When true, residual reverse-scan is bounded to the current attempt
+   * (entries after the latest top-level user turn). Resumable one-shot seats
+   * need this so a prior attempt residual cannot mask the current provider
+   * failure (#599). Notary stays whole-session (true one-shot).
+   */
+  readonly residualScanCurrentAttemptOnly?: boolean;
 };
+
+/** Latest top-level user message index; 0 when the session has none (initial attempt). */
+function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "message" && entry.message?.role === "user") {
+      return i;
+    }
+  }
+  return 0;
+}
 
 async function settleLawfulOneShotAcceptedTerminalResult(
   admitted: AdmittedNotaryInvocation | AdmittedCountersignInvocation | AdmittedGleanerLeftInvocation | AdmittedInspectorInvocation,
@@ -3100,8 +3127,13 @@ async function settleLawfulOneShotAcceptedTerminalResult(
   if (roleOutcome?.role !== spec.role) {
     // No usable release → existing non-zero failure channel with candidate (#475 / ADR 0055).
     // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
+    // Resumable seats bound the scan to the current attempt so multi-attempt
+    // resume timeout/no-output is not masked by a prior residual (#599).
+    const scanStart = spec.residualScanCurrentAttemptOnly === true
+      ? currentAttemptStartIndex(entries)
+      : 0;
     let acceptedNonUsable: unknown | undefined;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
+    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(
@@ -3228,6 +3260,7 @@ async function settleLawfulCountersignTerminalResult(
     role: "countersign",
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "给事中回执无显式 署/封驳/上呈",
+    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedCountersignOutput),
     projectAccepted: (sealed) => {
       const verdict = validateRecordedCountersignOutput(sealed.decisiveFacts);
@@ -3280,6 +3313,7 @@ async function settleLawfulGleanerLeftTerminalResult(
     role: "gleaner-left",
     toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "左拾遗回执无显式 completed",
+    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedGleanerLeftOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedGleanerLeftOutput(sealed.decisiveFacts);

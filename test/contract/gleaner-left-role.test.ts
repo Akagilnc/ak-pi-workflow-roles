@@ -15,7 +15,7 @@ import { ONE_SHOT_ROLES, PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-
 import { AUTOMATIC_CONFIGURABLE_SEATS } from "../../src/public-cli/registry.ts";
 import { GATE_OFFICER_SEATS } from "../../src/public-cli/config.ts";
 
-test("gleaner-left is a callable one-shot seat with unanchored materials", () => {
+test("gleaner-left is a callable seat with unanchored materials (resume allowed)", () => {
   const record = PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === "gleaner-left");
   assert.ok(record);
   assert.equal(record.outputTool, GLEANER_LEFT_OUTPUT_TOOL_NAME);
@@ -23,7 +23,7 @@ test("gleaner-left is a callable one-shot seat with unanchored materials", () =>
     [...MAIN_ROLE_SESSION_MATERIALS["gleaner-left"]],
     ["CLAUDE.md", "souls/gleaner-left.md", "souls/quality-law.md"],
   );
-  assert.equal(ONE_SHOT_ROLES.includes("gleaner-left"), true);
+  assert.equal(ONE_SHOT_ROLES.includes("gleaner-left"), false);
   assert.equal(
     (AUTOMATIC_CONFIGURABLE_SEATS as readonly string[]).includes("gleaner-left"),
     false,

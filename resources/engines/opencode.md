@@ -1,6 +1,6 @@
 # opencode engine method material
 
-This file is packaged technical material for the optional `opencode` labor
+This file is packaged technical material for the `opencode` labor
 engine (OpenCode CLI on the host; the GLM cheap-pool leg runs through it).
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path
