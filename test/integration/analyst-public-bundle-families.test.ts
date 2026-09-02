@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -27,6 +27,9 @@ import {
   analystIssuePagePath,
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
+import { fixtureHome, withBusinessRepo } from "../helpers/analyst-fixture-kit.ts";
+import { withPackageMachineHomeGuard } from "../helpers/package-machine-home-guard.ts";
+import { seedGitRepository } from "../helpers/pi-test-harness.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const BOOK = "fixture-book";
@@ -39,15 +42,14 @@ type PageWithMetricFamilies = AnalystIssueMetricsPage & {
   readonly gateCycles?: AnalystGateCyclesSection;
 };
 
-import {
-  withBusinessRepo,
-  withTempHome,
-} from "../helpers/analyst-fixture-kit.ts";
-
 /**
  * Public single-bundle regression: dist/public-cli/main.js must assemble B1–B4
  * plus #446 gate-cycles without a sibling analyst-metric-families/ directory
  * next to the bin.
+ *
+ * #604: cold bin uses packageMachineHome (ignores process.env.HOME). Seed a
+ * unique book under the machine ledger via the cross-process guard, and run
+ * the bin from a temp git cwd whose basename is that book key — no HOME seam.
  */
 test("public ak-role bundle assembles B1-B4 + gate-cycles metric families without sibling family dir", async () => {
   const buildUrl = pathToFileURL(join(packageRoot, "scripts/build-package.mjs")).href;
@@ -60,8 +62,9 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   // that footgun; keep the CI shape locally (same pattern as host-pi-runtime).
   const binDir = await mkdtemp(join("/tmp", "analyst-bundle-bin-"));
   const binPath = join(binDir, "main.js");
+  const project = await mkdtemp(join("/tmp", "analyst-bundle-cwd-"));
   await withBusinessRepo(async () => {
-    await withTempHome(async (home) => {
+    await withPackageMachineHomeGuard(async (guard) => {
       try {
         const previousCwd = process.cwd();
         process.chdir(packageRoot);
@@ -75,24 +78,26 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
           recursive: true,
           force: true,
         });
-        // #399: issue CLI is bare/--ticket from cwd book. Seed fixture runs under
-        // packageRoot's git book key, then bare-call the public bundle.
-        const { resolveBookKeyFromGit } = await import("../../src/activation-ledger-git.ts");
-        const bookKey = resolveBookKeyFromGit(packageRoot);
-        const srcBook = join(home, ".ak-roles", "books", BOOK);
-        const dstBook = join(home, ".ak-roles", "books", bookKey);
+
+        seedGitRepository(project);
+        const bookKey = basename(project);
+        guard.trackBook(bookKey);
+        const srcBook = join(fixtureHome, "books", BOOK);
+        const dstBook = join(guard.ledgerHome, "books", bookKey);
         await cp(srcBook, dstBook, { recursive: true });
+
         const result = execFileSync(
           process.execPath,
           [binPath, "analyst"],
           {
-            cwd: packageRoot,
+            cwd: project,
             encoding: "utf8",
-            env: { ...process.env, HOME: home },
+            // Cold bin has no HOME override — package home is the machine home.
+            env: process.env,
           },
         );
         assert.match(result, /analyst-issue-metrics|"mode"\s*:\s*"issue"/);
-        const pagePath = analystIssuePagePath(join(home, ".ak-roles"), { bookKey });
+        const pagePath = analystIssuePagePath(guard.ledgerHome, { bookKey });
         const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
         assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
         assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
@@ -106,6 +111,7 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
         assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
       } finally {
         await rm(binDir, { recursive: true, force: true });
+        await rm(project, { recursive: true, force: true });
       }
     });
   });

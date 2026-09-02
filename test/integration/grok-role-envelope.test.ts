@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+/** #604: nest grok run dirs under home/.ak-roles so session path-derive finds package home. */
+function grokRunDirectory(home: string, runName: string): string {
+  return join(home, ".ak-roles", "books", "grok-test", "runs", runName);
+}
+
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, type DoctorCase } from "../../src/doctor-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -92,7 +97,7 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
       principal: {}, activation: { role: "judge" }, methods: [],
       continuation: { kind: "initial", prompt: "decide" },
       model: { provider: "xai", model: "grok-4.6" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-run"),
+      agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "judge-run"),
     } as RoleTurnRequest;
     const prepared = await prepareGrokRoleEnvelope({
       request,
@@ -141,7 +146,7 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
       principal: {}, activation: { role: "coder", phase: "apply", taskPath }, methods: [{ kind: "skill", path: tddPath }],
       continuation: { kind: "initial", prompt: "decide" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "coder-run"),
+      agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "coder-run"),
     } as RoleTurnRequest;
     const prepared = await prepareGrokRoleEnvelope({
       request,
@@ -188,7 +193,7 @@ test("Grok typed infrastructureFailure aborts the round and closeRound returns k
         principal: {}, activation: { role: "judge" }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-infra"),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "judge-infra"),
       } as RoleTurnRequest,
       socketPath: join(root, "mcp.sock"),
       dependencies: {
@@ -248,7 +253,7 @@ test("Grok infra abort fills knownFailure before hanging tool_result projection 
         principal: {}, activation: { role: "judge" }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-infra-race"),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "judge-infra-race"),
       } as RoleTurnRequest,
       socketPath: join(root, "mcp.sock"),
       dependencies: {
@@ -325,7 +330,7 @@ test("Grok pre-execution observation failure terminates as typed InfrastructureF
         principal: {}, activation: { role: "judge" }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: join(root, "runs", "judge-preexec-infra"),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "judge-preexec-infra"),
       } as RoleTurnRequest,
       socketPath: join(root, "mcp.sock"),
       dependencies: {
@@ -387,7 +392,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       principal: {}, activation: { role: "coder", phase: "apply", taskPath }, methods: [{ kind: "skill", path: wrongTddPath }],
       continuation: { kind: "initial", prompt: "decide" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", "coder-run"),
+      agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "coder-run"),
     } as RoleTurnRequest;
     const prepared = await prepareGrokRoleEnvelope({
       request,
@@ -641,7 +646,7 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
     const socketPath = join(root, "mcp.sock");
     // Production run face is `<runId>@<role>`; settlement reads bare admitted.runId.
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ac";
-    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const runDirectory = grokRunDirectory(root, `${runId}@notary`);
     const request = {
       principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
       continuation: { kind: "initial", prompt: "attest" },
@@ -724,7 +729,7 @@ test("Grok accepted closeRound books navigator attendance onto parent session fo
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ae";
-    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const runDirectory = grokRunDirectory(root, `${runId}@notary`);
     const subjectKey = join(root, "work");
     const prepared = await prepareGrokRoleEnvelope({
       request: {
@@ -800,7 +805,7 @@ test("Grok accepted closeRound books navigator attendance onto parent session fo
 test("Grok prepare keeps existing durable session history on resume", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-session-"));
   try {
-    const runDirectory = join(root, "runs", "resume-run");
+    const runDirectory = grokRunDirectory(root, "resume-run");
     const sessionPath = join(runDirectory, "session", "session.jsonl");
     const subjectKey = join(root, "work");
     await mkdir(join(runDirectory, "session"), { recursive: true });
@@ -888,7 +893,7 @@ test("Grok delayed sibling after terminal candidate is not early-accepted at clo
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
-    const runDirectory = join(root, "runs", `${runId}@notary`);
+    const runDirectory = grokRunDirectory(root, `${runId}@notary`);
     const prepared = await prepareGrokRoleEnvelope({
       request: {
         principal: {}, activation: { role: "notary", sourceRun: join(root, "source-run") }, methods: [],
@@ -959,7 +964,7 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
       principal: {}, activation: { role: "notary", sourceRun: "/source" }, methods: [],
       continuation: { kind: "initial", prompt: "decide" },
       model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-      agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@notary`),
+      agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, `${runId}@notary`),
     } as RoleTurnRequest;
     const prompts: Array<Readonly<Record<string, unknown>>> = [];
     let promptCount = 0;
@@ -1045,7 +1050,7 @@ test("Grok MCP projection extracts typed evidence keys from failInfrastructure t
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a7";
-    const runDir = join(root, "runs", `${runId}@doctor`);
+    const runDir = grokRunDirectory(root, `${runId}@doctor`);
     const casePath = join(root, "case.json");
     const zero = { count: 0, sources: [] as string[] };
     const patient: DoctorCase = {
@@ -1152,7 +1157,7 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
         principal: {}, activation: { role: "coder", phase: "plan", taskPath }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: join(root, "runs", `${runId}@coder`),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, `${runId}@coder`),
       } as RoleTurnRequest,
       socketPath,
       dependencies: {
