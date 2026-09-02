@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
 import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -452,6 +453,9 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
       sessionIdentity: {
         async load() { return boundSessionId; },
         async bind(_p, sessionId) { boundSessionId = sessionId; },
+        resolveSessionFile(principal) {
+          return piDurablePrincipalAuthority.decode(principal).sessionFile;
+        },
       },
       recordCapabilities: async () => {},
       connect: async () => ({
@@ -596,37 +600,106 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
       );
     }
 
-    await seedResumableJudge({
-      home,
-      project,
-      runId,
-      hostAdapters: [{
-        name: "grok-build",
-        create: () => ({
-          ok: true as const,
-          host: createMinimalHost(async (request) => {
-            const { sessionDirectory, sessionFile } =
-              piDurablePrincipalAuthority.decode(request.principal);
-            await mkdir(sessionDirectory, { recursive: true });
-            await writeFile(sessionFile, "", "utf8");
-            const grokDir = join(
-              request.runDirectory,
-              "grok-home",
-              "sessions",
-              "encoded-cwd",
-              "s1",
-            );
-            await mkdir(grokDir, { recursive: true });
-            await writeFile(join(grokDir, "updates.jsonl"), GROK_UPDATES, "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "openai-codex",
-            });
-            return { code: 1, stderr: "quota", timedOut: false };
+    // Birth on real Grok prepare path (header layout ownership) — do not hand-write session.jsonl.
+    {
+      const { io, stderr } = captureIo();
+      const birth = await runAkRole(["judge", `seed-${runId}`], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        createRunId: () => runId,
+        io,
+        principalAuthority: piDurablePrincipalAuthority,
+        hostAdapters: [{
+          name: "grok-build",
+          create: () => ({
+            ok: true as const,
+            host: createGrokRoleTurnHost({
+              sessionIdentity: {
+                async load() { return undefined; },
+                async bind() {},
+                resolveSessionFile(principal) {
+                  return piDurablePrincipalAuthority.decode(principal).sessionFile;
+                },
+              },
+              recordCapabilities: async () => {},
+              connect: async () => ({
+                async request(method) {
+                  if (method === "initialize") return {};
+                  if (method === "session/new") return { sessionId: "grok-birth-s1" };
+                  if (method === "session/prompt") return { stopReason: "end_turn" };
+                  return {};
+                },
+                notify() {},
+                async close() {},
+              }),
+              inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
+              prepare: async (request) => {
+                const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+                // Production envelope owns header layout (isAvailable / resumable).
+                const prepared = await prepareGrokRoleEnvelope({
+                  request,
+                  sessionFile,
+                  socketPath: join(request.runDirectory, "mcp-birth.sock"),
+                  dependencies: {
+                    loadJudgeSoul: async () => "JUDGE SOUL",
+                    auditSoulCompliance: async () => ({ status: "pass" }),
+                    activationTraceWriter: async () => {},
+                  },
+                });
+                // Native Grok volume under ADR 0077 path (not Pi JSONL writeback).
+                const grokDir = join(
+                  request.runDirectory,
+                  "grok-home",
+                  "sessions",
+                  "encoded-cwd",
+                  "s1",
+                );
+                await mkdir(grokDir, { recursive: true });
+                await writeFile(join(grokDir, "updates.jsonl"), GROK_UPDATES, "utf8");
+                return {
+                  ...prepared,
+                  closeRound: async () => {
+                    await prepared.closeRound();
+                    await observeTyped429ViaProductionHandler({
+                      runDirectory: request.runDirectory,
+                      provider: "openai-codex",
+                    });
+                    return {
+                      accepted: false as const,
+                      failure: {
+                        cause: "provider" as const,
+                        identity: { name: "rate_limit", code: 429 },
+                      },
+                    };
+                  },
+                };
+              },
+            }),
           }),
-        }),
-      }],
-    });
+        }],
+      });
+      assert.equal(birth.exitCode, 1, stderr.join(""));
+      assert.ok(birth.terminal?.resume, "real Grok birth 429 must be publicly resumable");
+    }
+
+    {
+      const books = await readdir(join(home, ".ak-roles", "books"));
+      const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
+      const admitted = JSON.parse(
+        await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+      ) as { sessionFile: string; sessionDirectory: string };
+      // admitted-request top-level sessionFile is the isAvailable coordinate (opaque principal on disk).
+      const st = await lstat(admitted.sessionFile);
+      assert.equal(st.isFile() && !st.isSymbolicLink(), true, "Grok birth must mint durable session principal file");
+      const header = JSON.parse((await readFile(admitted.sessionFile, "utf8")).trim().split("\n")[0]!);
+      assert.equal(header.type, "session");
+      assert.ok(
+        (await readFile(join(runDirectory, "grok-home", "sessions", "encoded-cwd", "s1", "updates.jsonl"), "utf8"))
+          .includes(GROK_PRIOR_MARKER),
+      );
+    }
 
     // Switch live seat to pi for the cross-host resume.
     {

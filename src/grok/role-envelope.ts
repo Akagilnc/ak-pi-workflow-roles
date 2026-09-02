@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,6 +127,8 @@ export function createComposedGrokRoleTurnHost(
     prepare: (request) => prepareGrokRoleEnvelope({
       request,
       dependencies: config.roleRuntimeDependencies,
+      // Same durable-principal path settlement uses for isAvailable (#617 DK-4 layout).
+      sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
       socketPath: config.socketPath?.(request) ?? `/tmp/ak-grok-mcp-${randomUUID()}.sock`,
     }),
   });
@@ -136,6 +138,12 @@ export async function prepareGrokRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
   readonly socketPath: string;
+  /**
+   * Durable principal session path (header layout only).
+   * Production passes DurablePrincipalAuthority.decode(principal).sessionFile so
+   * isAvailable and envelope mint the same file. Tests may omit → runDirectory default.
+   */
+  readonly sessionFile?: string;
 }): Promise<GrokPreparedTurn> {
   const { request } = options;
   const flags = projectGrokActivationFlags(request);
@@ -162,10 +170,27 @@ export async function prepareGrokRoleEnvelope(options: {
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
 
-  // Activation ledger still needs a durable session principal path (header materialize).
-  // #617 DK-4 forbids Grok conversation/tool writeback into Pi JSONL — layout only here.
-  let sessionFile = join(request.runDirectory, "session", "session.jsonl");
+  // Durable principal file for isAvailable / resumable settlement (public-cli).
+  // #617 DK-4: header layout only — never Grok conversation/tool writeback into Pi JSONL.
+  let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
+  if (request.continuation.kind !== "resume") {
+    try {
+      await writeFile(
+        sessionFile,
+        `${JSON.stringify({
+          type: "session",
+          version: 3,
+          id: runId,
+          timestamp: new Date().toISOString(),
+          cwd: request.cwd,
+        })}\n`,
+        { encoding: "utf8", flag: "wx" },
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",

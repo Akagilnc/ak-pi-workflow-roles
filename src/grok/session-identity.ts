@@ -12,6 +12,9 @@ export function createGrokSessionIdentityAuthority(authority: DurablePrincipalAu
   const bindingPath = (principal: DurablePrincipal): string =>
     join(authority.decode(principal).sessionDirectory, GROK_ACP_SESSION_BINDING);
   return {
+    resolveSessionFile(principal) {
+      return authority.decode(principal).sessionFile;
+    },
     async load(principal) {
       try {
         const value: unknown = JSON.parse(await readFile(bindingPath(principal), "utf8"));
