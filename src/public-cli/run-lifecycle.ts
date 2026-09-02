@@ -16,7 +16,6 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import { GROK_ACP_SESSION_BINDING } from "../grok/session-identity.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -1296,46 +1295,3 @@ export async function peekRoleRunRole(
   return run?.role;
 }
 
-/**
- * Recorded host on a run's invocation page (#595 provenance).
- * Prefer the typed `host` field; for pre-#595 runs without it,
- * presence of session/grok-acp-session.json ⇒ grok-build, else pi.
- * #617: resume host selection no longer consults this — live seat table owns it.
- * Kept for dossier/legacy readers that still need the recorded birth host.
- */
-export async function resolveRoleRunBirthHost(
-  home: string,
-  runId: string,
-): Promise<string> {
-  const runDirectory = await findRunDirectoryById(home, runId);
-  if (runDirectory === undefined) return "pi";
-  try {
-    const raw: unknown = JSON.parse(
-      await readFile(join(runDirectory, "invocation.json"), "utf8"),
-    );
-    if (
-      raw !== null &&
-      typeof raw === "object" &&
-      !Array.isArray(raw) &&
-      typeof (raw as { host?: unknown }).host === "string" &&
-      (raw as { host: string }).host.trim() !== ""
-    ) {
-      return (raw as { host: string }).host;
-    }
-  } catch {
-    // Fall through to legacy artifact probe.
-  }
-  const disk = await readRoleRunStateDisk(runDirectory);
-  if (disk !== undefined) {
-    try {
-      await readFile(
-        join(disk.principalWire.sessionDirectory, GROK_ACP_SESSION_BINDING),
-        "utf8",
-      );
-      return "grok-build";
-    } catch {
-      // Missing or unreadable binding ⇒ Pi birth.
-    }
-  }
-  return "pi";
-}
