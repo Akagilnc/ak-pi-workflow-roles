@@ -18,7 +18,6 @@ import {
   classifyGrokInspection,
   controlledGrokChildEnv,
   createGrokRoleTurnHost,
-  formatGrokRebuildHistoryContext,
   inspectControlledGrok,
   projectGrokRebuildHistory,
   type GrokAcpConnection,
@@ -39,6 +38,25 @@ const request = {
   model: { provider: "xai", model: "grok-4.5" }, cwd: "/work", home: "/home/user",
   agentDir: "/agent", runDirectory: "/run",
 } as RoleTurnRequest;
+
+/** Writable runDirectory for tests that reach durable JSONL append. */
+async function withWritableRunRequest(
+  fn: (local: RoleTurnRequest) => Promise<void>,
+  overrides: Partial<RoleTurnRequest> = {},
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-run-"));
+  try {
+    await fn({
+      ...request,
+      ...overrides,
+      runDirectory: join(root, "run"),
+      home: overrides.home ?? join(root, "home"),
+      agentDir: overrides.agentDir ?? join(root, "agent"),
+    } as RoleTurnRequest);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 function prepared(
   closeRound: GrokPreparedTurn["closeRound"],
@@ -314,6 +332,7 @@ process.stdout.write(JSON.stringify({
       NO_PRODUCTION_GROK_PRIMARY_FAILURE,
       "test settle before resume",
     );
+    // Resume requires the sole JSONL authority; host append already created it.
     const resumeResult = await host.executeTurn({
       ...localRequest,
       continuation: { kind: "resume", prompt: "continue after 429" },
@@ -333,7 +352,13 @@ test("grok resume always session/new and rebinds even when an ACP binding exists
   const root = await mkdtemp(join(tmpdir(), "ak-grok-rebind-"));
   try {
     const runDirectory = join(root, "run");
-    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const sessionDir = join(runDirectory, "session");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, "session.jsonl"),
+      `${JSON.stringify({ type: "session", version: 3, id: "rebind" })}\n`,
+      "utf8",
+    );
     const principal = {};
     const bound: string[] = [];
     const sessionCalls: Array<[string, unknown]> = [];
@@ -373,63 +398,25 @@ test("grok resume always session/new and rebinds even when an ACP binding exists
   }
 });
 
-/**
- * #617 DK-1: resume projects full structured JSONL history (user/assistant text +
- * toolCall.arguments + toolResult.details) into ACP embeddedContext — never text-only.
- * Fixture is a real Pi-shaped escalate→resume chain (frozen 471 volume).
- */
-test("resume rebuilds Pi-shaped toolCall/toolResult history into the ACP prompt", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-jsonl-rebuild-"));
+/** #617: missing sole JSONL authority must not open a blank Grok session. */
+test("resume fails when session JSONL is missing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-missing-jsonl-"));
   try {
-    const fixtureSession = join(
-      packageRoot,
-      "test/fixtures/471-resume-chain/01a03c71-4710-7000-8000-escalate-resume01@judge/session/session.jsonl",
-    );
-    const prior = await readFile(fixtureSession, "utf8");
-    const projected = projectGrokRebuildHistory(prior);
-    const toolCalls = projected.filter((t) => t.kind === "toolCall");
-    const toolResults = projected.filter((t) => t.kind === "toolResult");
-    assert.ok(toolCalls.length >= 2, "fixture must retain assistant toolCall leaves");
-    assert.ok(toolResults.length >= 2, "fixture must retain paired toolResult leaves");
-    const escalateCall = toolCalls.find(
-      (t) => t.kind === "toolCall" && t.name === "ak_judge_output"
-        && typeof t.arguments === "object" && t.arguments !== null
-        && (t.arguments as { judgeStatus?: unknown }).judgeStatus === "escalate",
-    );
-    assert.ok(escalateCall, "toolCall.arguments must keep judgeStatus=escalate");
-    const escalateResult = toolResults.find(
-      (t) => t.kind === "toolResult" && t.toolName === "ak_judge_output"
-        && typeof t.details === "object" && t.details !== null
-        && (t.details as { judgeStatus?: unknown }).judgeStatus === "escalate",
-    );
-    assert.ok(escalateResult, "toolResult.details must keep judgeStatus=escalate");
-    assert.equal(
-      escalateResult && escalateCall && escalateResult.toolCallId === escalateCall.id,
-      true,
-      "toolResult must pair to its toolCall id",
-    );
-
     const runDirectory = join(root, "run");
-    const sessionDir = join(runDirectory, "session");
-    await mkdir(sessionDir, { recursive: true });
-    await writeFile(join(sessionDir, "session.jsonl"), prior, "utf8");
-
-    const prompts: unknown[] = [];
-    const bound: string[] = [];
+    await mkdir(runDirectory, { recursive: true });
+    let openedSession = false;
     const host = createGrokRoleTurnHost({
       sessionIdentity: {
-        async load() { return "old-binding"; },
-        async bind(_p, id) { bound.push(id); },
+        async load() { return undefined; },
+        async bind() {},
       },
       recordCapabilities: async () => {},
       connect: async () => ({
-        async request(method, params) {
+        async request(method) {
           if (method === "initialize") return {};
-          if (method === "session/new") return { sessionId: "rebuilt-from-jsonl" };
-          if (method === "session/load") return { sessionId: "must-not-load" };
-          if (method === "session/prompt") {
-            prompts.push(params);
-            return { stopReason: "end_turn" };
+          if (method === "session/new") {
+            openedSession = true;
+            return { sessionId: "must-not-open" };
           }
           return {};
         },
@@ -437,69 +424,101 @@ test("resume rebuilds Pi-shaped toolCall/toolResult history into the ACP prompt"
         async close() {},
       }),
       inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-      prepare: async () => ({
-        ...prepared(async () => ({ accepted: true })),
-        prompt: "continue-now",
-      }),
+      prepare: async () => prepared(async () => ({ accepted: true })),
     });
-
     const result = await host.executeTurn({
       ...request,
       runDirectory,
-      continuation: { kind: "resume", prompt: "continue-now" },
+      continuation: { kind: "resume", prompt: "continue" },
     } as RoleTurnRequest);
-    assert.equal(result.code, 0);
-    assert.deepEqual(bound, ["rebuilt-from-jsonl"]);
-    assert.equal(prompts.length, 1);
-    const promptParams = prompts[0] as { prompt?: unknown[] };
-    const parts = promptParams.prompt ?? [];
-    const textPart = parts.find((p) => typeof p === "object" && p !== null && (p as { type?: string }).type === "text") as
-      | { text?: string }
-      | undefined;
-    const resourcePart = parts.find((p) => typeof p === "object" && p !== null && (p as { type?: string }).type === "resource") as
-      | { resource?: { text?: string; uri?: string } }
-      | undefined;
-    assert.equal(textPart?.text, "continue-now");
-    assert.equal(resourcePart?.resource?.uri, "context://ak-role/session-history");
-    // Host delivers the same projector output — structured fields, not text-only.
-    assert.equal(resourcePart?.resource?.text, formatGrokRebuildHistoryContext(projected));
-    assert.equal(
-      resourcePart?.resource?.text?.includes(JSON.stringify(escalateCall!.arguments)),
-      true,
+    assert.equal(result.code, null);
+    assert.equal(result.knownFailure?.cause, "session");
+    assert.equal(result.knownFailure?.identity?.code, "session-history-missing");
+    assert.equal(openedSession, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** #617: unparseable non-empty JSONL lines fail through session knownFailure. */
+test("resume fails when session JSONL has a corrupt non-empty line", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-corrupt-jsonl-"));
+  try {
+    const runDirectory = join(root, "run");
+    const sessionDir = join(runDirectory, "session");
+    await mkdir(sessionDir, { recursive: true });
+    const corruptJsonl =
+      `${JSON.stringify({ type: "session", version: 3, id: "corrupt" })}\nnot-json\n`;
+    await writeFile(join(sessionDir, "session.jsonl"), corruptJsonl, "utf8");
+    assert.throws(
+      () => projectGrokRebuildHistory(corruptJsonl),
+      (error: unknown) =>
+        typeof error === "object"
+        && error !== null
+        && (error as { code?: unknown }).code === "session-history-corrupt",
     );
-    assert.equal(
-      resourcePart?.resource?.text?.includes(JSON.stringify(escalateResult!.details)),
-      true,
-    );
+    let openedSession = false;
+    const host = createGrokRoleTurnHost({
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+      },
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          if (method === "initialize") return {};
+          if (method === "session/new") {
+            openedSession = true;
+            return { sessionId: "must-not-open" };
+          }
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: true })),
+    });
+    const result = await host.executeTurn({
+      ...request,
+      runDirectory,
+      continuation: { kind: "resume", prompt: "continue" },
+    } as RoleTurnRequest);
+    assert.equal(result.code, null);
+    assert.equal(result.knownFailure?.cause, "session");
+    assert.equal(result.knownFailure?.identity?.code, "session-history-corrupt");
+    assert.equal(openedSession, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "gpt-5.6-sol" }] } } };
-        if (method === "session/new") return { sessionId: "s-non-xai" };
-        if (method === "session/prompt") return { stopReason: "end_turn" };
-        return {};
-      },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(async () => ({ accepted: true })),
-  });
+  await withWritableRunRequest(async (local) => {
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "gpt-5.6-sol" }] } } };
+          if (method === "session/new") return { sessionId: "s-non-xai" };
+          if (method === "session/prompt") return { stopReason: "end_turn" };
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: true })),
+    });
 
-  const result = await host.executeTurn({
-    ...request,
-    model: { provider: "openai-codex", model: "gpt-5.6-sol" },
+    const result = await host.executeTurn({
+      ...local,
+      model: { provider: "openai-codex", model: "gpt-5.6-sol" },
+    });
+    assert.equal(result.knownFailure, undefined);
+    assert.equal(result.code, 0);
   });
-  assert.equal(result.knownFailure, undefined);
-  assert.equal(result.code, 0);
 });
 
 test("grok host rejects a model absent from typed ACP capabilities", async () => {
@@ -532,249 +551,263 @@ test("grok host rejects a model absent from typed ACP capabilities", async () =>
 });
 
 test("grok host serializes concurrent ACP prompts", async () => {
-  let releaseFirst!: () => void;
-  const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
-  let firstStarted!: () => void;
-  const firstPromptStarted = new Promise<void>((resolve) => { firstStarted = resolve; });
-  let promptCount = 0;
-  let session = 0;
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        if (method === "session/new") return { sessionId: `s${++session}` };
-        if (method === "session/prompt") {
-          promptCount++;
-          if (promptCount === 1) {
-            firstStarted();
-            await firstBlocked;
+  await withWritableRunRequest(async (local) => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstStarted!: () => void;
+    const firstPromptStarted = new Promise<void>((resolve) => { firstStarted = resolve; });
+    let promptCount = 0;
+    let session = 0;
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          if (method === "session/new") return { sessionId: `s${++session}` };
+          if (method === "session/prompt") {
+            promptCount++;
+            if (promptCount === 1) {
+              firstStarted();
+              await firstBlocked;
+            }
+            return { stopReason: "end_turn" };
           }
-          return { stopReason: "end_turn" };
-        }
-        return {};
-      },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(async () => ({ accepted: true })),
-  });
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: true })),
+    });
 
-  const first = host.executeTurn(request);
-  const second = host.executeTurn(request);
-  await firstPromptStarted;
-  assert.equal(promptCount, 1);
-  releaseFirst();
-  await Promise.all([first, second]);
-  assert.equal(promptCount, 2);
+    const first = host.executeTurn(local);
+    const second = host.executeTurn(local);
+    await firstPromptStarted;
+    assert.equal(promptCount, 1);
+    releaseFirst();
+    await Promise.all([first, second]);
+    assert.equal(promptCount, 2);
+  });
 });
 
 test("grok refusal is a typed failure and cancels instead of closing as accepted", async () => {
-  const calls: string[] = [];
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        calls.push(method);
-        if (method === "session/new") return { sessionId: "refused" };
-        if (method === "session/prompt") return { stopReason: "refusal" };
-        return {};
-      },
-      notify(method) { calls.push(method); },
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(async () => assert.fail("refusal must not close the ledger round")),
-  });
+  await withWritableRunRequest(async (local) => {
+    const calls: string[] = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          calls.push(method);
+          if (method === "session/new") return { sessionId: "refused" };
+          if (method === "session/prompt") return { stopReason: "refusal" };
+          return {};
+        },
+        notify(method) { calls.push(method); },
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => assert.fail("refusal must not close the ledger round")),
+    });
 
-  const result = await host.executeTurn(request);
-  assert.equal(result.knownFailure?.identity?.code, "refusal");
-  assert.equal(calls.includes("session/close"), false);
-  assert.equal(calls.includes("session/cancel"), true);
+    const result = await host.executeTurn(local);
+    assert.equal(result.knownFailure?.identity?.code, "refusal");
+    assert.equal(calls.includes("session/close"), false);
+    assert.equal(calls.includes("session/cancel"), true);
+  });
 });
 
 test("grok host delivers a typed rejection and resubmits in the same ACP session", async () => {
-  const prompts: unknown[] = [];
-  let rounds = 0;
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method, params) {
-        if (method === "session/new") return { sessionId: "retry-session" };
-        if (method === "session/prompt") { prompts.push(params); return { stopReason: "end_turn" }; }
-        return {};
-      },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(async () => ++rounds === 1
-      ? { accepted: false, retry: { code: "non-sole-round", toolCallIds: ["bad"] } }
-      : { accepted: true }),
-  });
+  await withWritableRunRequest(async (local) => {
+    const prompts: unknown[] = [];
+    let rounds = 0;
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          if (method === "session/new") return { sessionId: "retry-session" };
+          if (method === "session/prompt") { prompts.push(params); return { stopReason: "end_turn" }; }
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ++rounds === 1
+        ? { accepted: false, retry: { code: "non-sole-round", toolCallIds: ["bad"] } }
+        : { accepted: true }),
+    });
 
-  assert.equal((await host.executeTurn(request)).code, 0);
-  assert.equal(prompts.length, 2);
-  assert.equal((prompts[0] as { sessionId: string }).sessionId, "retry-session");
-  assert.equal((prompts[1] as { sessionId: string }).sessionId, "retry-session");
+    assert.equal((await host.executeTurn(local)).code, 0);
+    assert.equal(prompts.length, 2);
+    assert.equal((prompts[0] as { sessionId: string }).sessionId, "retry-session");
+    assert.equal((prompts[1] as { sessionId: string }).sessionId, "retry-session");
+  });
 });
 
 test("grok host aborts a hanging session/prompt when prepare abortSignal fires", async () => {
-  const cancels: unknown[] = [];
-  const closes: string[] = [];
-  const abort = new AbortController();
-  const knownFailure = {
-    cause: "output" as const,
-    identity: { name: "InfrastructureFailure", code: "role-infrastructure-failure" },
-    diagnostic: "engine auth timed out",
-  };
-  let releasePrompt: (() => void) | undefined;
-  const promptHang = new Promise<Readonly<Record<string, unknown>>>((resolve) => {
-    releasePrompt = () => resolve({ stopReason: "end_turn" });
-  });
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        if (method === "session/new") return { sessionId: "abort-session" };
-        if (method === "session/prompt") return promptHang;
-        return {};
-      },
-      notify(method, params) { cancels.push([method, params]); },
-      async close() { closes.push("close"); },
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(
-      async () => ({ accepted: false, failure: knownFailure }),
-      [{}],
-      [],
-      { abortSignal: abort.signal },
-    ),
-  });
+  await withWritableRunRequest(async (local) => {
+    const cancels: unknown[] = [];
+    const closes: string[] = [];
+    const abort = new AbortController();
+    const knownFailure = {
+      cause: "output" as const,
+      identity: { name: "InfrastructureFailure", code: "role-infrastructure-failure" },
+      diagnostic: "engine auth timed out",
+    };
+    let releasePrompt: (() => void) | undefined;
+    const promptHang = new Promise<Readonly<Record<string, unknown>>>((resolve) => {
+      releasePrompt = () => resolve({ stopReason: "end_turn" });
+    });
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          if (method === "session/new") return { sessionId: "abort-session" };
+          if (method === "session/prompt") return promptHang;
+          return {};
+        },
+        notify(method, params) { cancels.push([method, params]); },
+        async close() { closes.push("close"); },
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(
+        async () => ({ accepted: false, failure: knownFailure }),
+        [{}],
+        [],
+        { abortSignal: abort.signal },
+      ),
+    });
 
-  const turn = host.executeTurn(request);
-  // Let session/prompt start hanging, then fire the envelope abort (infra declaration path).
-  await Promise.resolve();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  abort.abort();
-  const result = await Promise.race([
-    turn,
-    new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("#593: abortSignal did not terminate hanging session/prompt")), 1000);
-    }),
-  ]);
-  assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
-  assert.deepEqual(cancels, [["session/cancel", { sessionId: "abort-session" }]]);
-  assert.deepEqual(closes, ["close"]);
-  // Hang resolver must not be required for loud terminal.
-  releasePrompt?.();
+    const turn = host.executeTurn(local);
+    // Let session/prompt start hanging, then fire the envelope abort (infra declaration path).
+    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    abort.abort();
+    const result = await Promise.race([
+      turn,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("#593: abortSignal did not terminate hanging session/prompt")), 1000);
+      }),
+    ]);
+    assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
+    assert.deepEqual(cancels, [["session/cancel", { sessionId: "abort-session" }]]);
+    assert.deepEqual(closes, ["close"]);
+    // Hang resolver must not be required for loud terminal.
+    releasePrompt?.();
+  });
 });
 
 test("grok host does not send session/prompt when abortSignal is already aborted", async () => {
-  const promptCalls: unknown[] = [];
-  const knownFailure = {
-    cause: "output" as const,
-    identity: { name: "InfrastructureFailure", code: "pre-aborted" },
-    diagnostic: "already aborted",
-  };
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method, params) {
-        if (method === "session/new") return { sessionId: "pre-aborted-session" };
-        if (method === "session/prompt") {
-          promptCalls.push(params);
-          return { stopReason: "end_turn" };
-        }
-        return {};
-      },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(
-      async () => ({ accepted: false, failure: knownFailure }),
-      [{}],
-      [],
-      { abortSignal: AbortSignal.abort() },
-    ),
-  });
+  await withWritableRunRequest(async (local) => {
+    const promptCalls: unknown[] = [];
+    const knownFailure = {
+      cause: "output" as const,
+      identity: { name: "InfrastructureFailure", code: "pre-aborted" },
+      diagnostic: "already aborted",
+    };
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          if (method === "session/new") return { sessionId: "pre-aborted-session" };
+          if (method === "session/prompt") {
+            promptCalls.push(params);
+            return { stopReason: "end_turn" };
+          }
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(
+        async () => ({ accepted: false, failure: knownFailure }),
+        [{}],
+        [],
+        { abortSignal: AbortSignal.abort() },
+      ),
+    });
 
-  const result = await host.executeTurn(request);
-  assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
-  assert.equal(promptCalls.length, 0, "session/prompt must not be sent when already aborted");
+    const result = await host.executeTurn(local);
+    assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
+    assert.equal(promptCalls.length, 0, "session/prompt must not be sent when already aborted");
+  });
 });
 
 test("grok host drains late in-flight prompt rejection after abort wins race", async () => {
-  const abort = new AbortController();
-  const knownFailure = {
-    cause: "output" as const,
-    identity: { name: "InfrastructureFailure", code: "in-flight-aborted" },
-    diagnostic: "infra failure",
-  };
-  let rejectPrompt: ((err: Error) => void) | undefined;
-  const promptPromise = new Promise<Readonly<Record<string, unknown>>>((_, reject) => {
-    rejectPrompt = reject;
-  });
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        if (method === "session/new") return { sessionId: "drain-session" };
-        if (method === "session/prompt") return promptPromise;
-        return {};
-      },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(
-      async () => ({ accepted: false, failure: knownFailure }),
-      [{}],
-      [],
-      { abortSignal: abort.signal },
-    ),
-  });
+  await withWritableRunRequest(async (local) => {
+    const abort = new AbortController();
+    const knownFailure = {
+      cause: "output" as const,
+      identity: { name: "InfrastructureFailure", code: "in-flight-aborted" },
+      diagnostic: "infra failure",
+    };
+    let rejectPrompt: ((err: Error) => void) | undefined;
+    const promptPromise = new Promise<Readonly<Record<string, unknown>>>((_, reject) => {
+      rejectPrompt = reject;
+    });
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          if (method === "session/new") return { sessionId: "drain-session" };
+          if (method === "session/prompt") return promptPromise;
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(
+        async () => ({ accepted: false, failure: knownFailure }),
+        [{}],
+        [],
+        { abortSignal: abort.signal },
+      ),
+    });
 
-  const turn = host.executeTurn(request);
-  await Promise.resolve();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  abort.abort();
-  const result = await turn;
-  assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
-  // Rejecting late after abort won race must be safely drained without unhandled rejection
-  rejectPrompt?.(new Error("late ACP socket disconnect"));
+    const turn = host.executeTurn(local);
+    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    abort.abort();
+    const result = await turn;
+    assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
+    // Rejecting late after abort won race must be safely drained without unhandled rejection
+    rejectPrompt?.(new Error("late ACP socket disconnect"));
+  });
 });
 
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
-  const cancels: unknown[] = [];
-  const knownFailure = {
-    cause: "output",
-    identity: { name: "MissingSubmission", code: "round-ended-without-submission" },
-  } as const;
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        if (method === "session/new") return { sessionId: "s1" };
-        return {};
-      },
-      // Do not assert.fail here: production swallows notify errors in finally.
-      notify(method, params) { cancels.push([method, params]); },
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(async () => ({ accepted: false, failure: knownFailure })),
+  await withWritableRunRequest(async (local) => {
+    const cancels: unknown[] = [];
+    const knownFailure = {
+      cause: "output",
+      identity: { name: "MissingSubmission", code: "round-ended-without-submission" },
+    } as const;
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          if (method === "session/new") return { sessionId: "s1" };
+          return {};
+        },
+        // Do not assert.fail here: production swallows notify errors in finally.
+        notify(method, params) { cancels.push([method, params]); },
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: false, failure: knownFailure })),
+    });
+    assert.deepEqual(await host.executeTurn(local), { code: null, stderr: "", timedOut: false, knownFailure });
+    assert.deepEqual(cancels, [["session/cancel", { sessionId: "s1" }]]);
   });
-  assert.deepEqual(await host.executeTurn(request), { code: null, stderr: "", timedOut: false, knownFailure });
-  assert.deepEqual(cancels, [["session/cancel", { sessionId: "s1" }]]);
 });
 
 test("structured inspect classifies builtin, AK, and private sources by provenance", () => {
@@ -874,31 +907,33 @@ test("inspect→activation surfaces provenance infrastructure failure without pr
 
 test("grok host enters session/new when inspect akActive is empty but prepared MCP is present", async () => {
   // External packageRoot is injected at prepare, not via Grok-native inspect paths.
-  const methods: string[] = [];
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        methods.push(method);
-        if (method === "initialize") return canDenyInitializeMeta();
-        if (method === "session/new") return { sessionId: "s-external" };
-        if (method === "session/prompt") return { stopReason: "end_turn" };
-        if (method === "session/close") return {};
-        throw new Error(method);
-      },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: [] }),
-    prepare: async () => prepared(
-      async () => ({ accepted: true }),
-      [{ name: "ak-judge", command: "node", args: ["relay.js"] }],
-    ),
+  await withWritableRunRequest(async (local) => {
+    const methods: string[] = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          methods.push(method);
+          if (method === "initialize") return canDenyInitializeMeta();
+          if (method === "session/new") return { sessionId: "s-external" };
+          if (method === "session/prompt") return { stopReason: "end_turn" };
+          if (method === "session/close") return {};
+          throw new Error(method);
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: [] }),
+      prepare: async () => prepared(
+        async () => ({ accepted: true }),
+        [{ name: "ak-judge", command: "node", args: ["relay.js"] }],
+      ),
+    });
+    assert.deepEqual(await host.executeTurn(local), { code: 0, stderr: "", timedOut: false });
+    assert.equal(methods.includes("session/new"), true);
+    assert.equal(methods.includes("session/prompt"), true);
   });
-  assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
-  assert.equal(methods.includes("session/new"), true);
-  assert.equal(methods.includes("session/prompt"), true);
 });
 
 test("grok host rejects ak-config-missing only when prepared MCP servers are absent", async () => {
@@ -921,31 +956,33 @@ test("grok host rejects ak-config-missing only when prepared MCP servers are abs
 });
 
 test("grok host keeps session/close failure loud after typed round acceptance", async () => {
-  const connection: GrokAcpConnection = {
-    async request(method) {
-      if (method === "initialize") return canDenyInitializeMeta();
-      if (method === "session/new") return { sessionId: "s-close-boom" };
-      if (method === "session/prompt") return { stopReason: "end_turn" };
-      if (method === "session/close") {
-        throw Object.assign(new Error("unexpected close fault"), { code: "acp-permission-missing-allow-once" });
-      }
-      throw new Error(method);
-    },
-    notify() {},
-    async close() {},
-  };
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => connection,
-    inspect: async () => ({ privateActive: [], akActive: [] }),
-    prepare: async () => prepared(async () => ({ accepted: true }), [{}]),
+  await withWritableRunRequest(async (local) => {
+    const connection: GrokAcpConnection = {
+      async request(method) {
+        if (method === "initialize") return canDenyInitializeMeta();
+        if (method === "session/new") return { sessionId: "s-close-boom" };
+        if (method === "session/prompt") return { stopReason: "end_turn" };
+        if (method === "session/close") {
+          throw Object.assign(new Error("unexpected close fault"), { code: "acp-permission-missing-allow-once" });
+        }
+        throw new Error(method);
+      },
+      notify() {},
+      async close() {},
+    };
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => connection,
+      inspect: async () => ({ privateActive: [], akActive: [] }),
+      prepare: async () => prepared(async () => ({ accepted: true }), [{}]),
+    });
+    await assert.rejects(
+      () => host.executeTurn(local),
+      (error: unknown) =>
+        error instanceof Error
+        && error.message === "unexpected close fault"
+        && (error as { code?: unknown }).code === "acp-permission-missing-allow-once",
+    );
   });
-  await assert.rejects(
-    () => host.executeTurn(request),
-    (error: unknown) =>
-      error instanceof Error
-      && error.message === "unexpected close fault"
-      && (error as { code?: unknown }).code === "acp-permission-missing-allow-once",
-  );
 });
