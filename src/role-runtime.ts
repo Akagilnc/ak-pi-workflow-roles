@@ -67,7 +67,7 @@ import {
   type GleanerLeftRuntimeDependencies,
 } from "./gleaner-left-role.ts";
 import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_BASE_FLAG } from "./gleaner-left-contracts.ts";
-import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -543,6 +543,25 @@ export const ROLE_FLAG = {
   },
 } as const;
 
+/** Host-neutral in-process role help for Navigator prepare (Pi and Grok share this). */
+export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
+  const metadata = packagedRoleMetadata(role);
+  const lines = [
+    `Usage: ak-role ${role}`,
+    ROLE_FLAG.definition.description,
+  ];
+  if (metadata?.inputFlag !== undefined) {
+    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
+  }
+  if (metadata?.phaseFlag !== undefined) {
+    lines.push(
+      `  --${metadata.phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
+    );
+  }
+  lines.push(`Public next-command form: ak-role ${role}`);
+  return lines.join("\n");
+}
+
 type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybookReadFailure"> &
   Partial<Pick<NavigatorAttendance, "knownRoutePlaybookReadFailure">>;
 
@@ -572,7 +591,7 @@ export type RoleRuntimeDependencies = {
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
+  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -1016,7 +1035,7 @@ export function createRoleRuntimeExtension(
           };
           pendingNavigatorPresentation = { event, report };
         }
-        attendance.dispose();
+        await attendance.dispose();
         void settlePromise.catch(() => undefined);
       })();
       pendingNavigatorSettlement = pending;
@@ -1048,7 +1067,7 @@ export function createRoleRuntimeExtension(
       }
       return { action: "continue" as const };
     });
-    roleHost.on("before_agent_start", (event, ctx) => {
+    roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
@@ -1084,7 +1103,7 @@ export function createRoleRuntimeExtension(
               authority,
               subjectProvenance,
             };
-            navigatorAttendance.setWorkContext(navigatorWorkContext);
+            await navigatorAttendance.setWorkContext(navigatorWorkContext);
           }
         }
       }
@@ -1260,7 +1279,7 @@ export function createRoleRuntimeExtension(
           // Teardown must not mask the original role failure cause.
         }
       }
-      navigatorAttendance?.dispose();
+      await navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
@@ -1516,7 +1535,7 @@ export function createRoleRuntimeExtension(
         failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
-      navigatorAttendance?.dispose();
+      await navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       const runtime: ActivationRuntime = {
         event,
@@ -1568,7 +1587,12 @@ export function createRoleRuntimeExtension(
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           } else {
             try {
-              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(roleHost, entry.role) });
+              work = await dependencies.loadNavigatorWorkContext({
+                context: ctx,
+                role: entry.role,
+                phase: navigatorPhase(roleHost, entry.role),
+                getFlag: (name) => roleHost.getFlag(name),
+              });
               contextError = work.contextError;
             } catch (error) {
               // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
