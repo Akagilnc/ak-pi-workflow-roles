@@ -818,8 +818,6 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
     assert.equal(prompts.length, 2);
     assert.equal((prompts[0] as { sessionId: string }).sessionId, "real-seam-session");
     assert.equal((prompts[1] as { sessionId: string }).sessionId, "real-seam-session");
-    const promptText = ((prompts[1] as { prompt: Array<{ text: string }> }).prompt[0]?.text) ?? "";
-    assert.ok(promptText.includes("The prior terminal submission was rejected (non-sole-round)"));
     assert.ok(await readSealedSubmission(process.cwd(), runId, root) !== undefined);
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;

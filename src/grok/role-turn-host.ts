@@ -37,9 +37,11 @@ export type GrokPreparedTurn = Readonly<{
   /** Effective user prompt after host-side input transform (canonical Skill invocation). */
   prompt: string;
   /**
-   * Host abort signal armed by envelope `context.abort()` (failInfrastructure).
-   * executeTurn races session/prompt against this so typed infra declarations
-   * terminate even when ACP never resolves (#593).
+   * Host abort signal armed only by typed infrastructure failure (envelope
+   * rememberInfrastructureFailure / non-correctable MCP catch). Lawful
+   * context.abort() (seal / non-sole) does not arm it. executeTurn races
+   * session/prompt against this so infra declarations terminate even when
+   * ACP never resolves (#593).
    */
   abortSignal?: AbortSignal;
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */

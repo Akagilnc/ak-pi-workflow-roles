@@ -204,8 +204,8 @@ export async function prepareGrokRoleEnvelope(options: {
     },
     abort() {
       // Lawful abort (non-sole rejection / seal / audit-escalation in submission-ledger)
-      // must not poison ACP retry prompts (#593 r1). Infra declarations arm hostAbort
-      // directly via rememberInfrastructureFailure.
+      // must not poison ACP retry prompts (#593 r1). hostAbort is armed only by typed
+      // infra: rememberInfrastructureFailure and non-correctable MCP catch.
     },
   };
 
@@ -493,9 +493,9 @@ export async function prepareGrokRoleEnvelope(options: {
       await emit("turn_end", { turnIndex: 0, calls: roundCalls });
     }
     // Infrastructure failure outranks accepted closure / correctable retry: the
-    // declaration already aborted the host; "already declared" is not success (#593).
-    // Note: context.abort() also runs on lawful seal and non-sole rejection
-    // (submission-ledger turn_end) — bare abort is not a failure discriminant.
+    // declaration already aborted hostAbort; "already declared" is not success (#593).
+    // Lawful seal / non-sole rejection still call context.abort() (ledger), but that
+    // path does not arm hostAbort — only infrastructureRoundFailure is terminal here.
     if (infrastructureRoundFailure !== undefined) {
       return { accepted: false as const, failure: infrastructureRoundFailure };
     }
