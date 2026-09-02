@@ -5,7 +5,7 @@
  * initial role facades before entering; manual resume never re-admits.
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
@@ -56,6 +56,19 @@ import {
   type TerminalResult,
 } from "./terminal.ts";
 import { runWithAutoResumeLoop } from "./auto-resume.ts";
+
+/** Previous main-session host recorded on invocation.json, if any. */
+async function readInvocationHost(runDirectory: string): Promise<string | undefined> {
+  try {
+    const raw = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as {
+      host?: unknown;
+    };
+    return typeof raw.host === "string" && raw.host.trim() !== "" ? raw.host : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
 
 export type PostAdmissionEnv = {
   home: string;
@@ -245,6 +258,19 @@ export async function dispatchPostAdmissionTurn<
         io,
       )) as { exitCode: number; admitted: A; terminal: T };
     }
+    // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
+    // Only a real host switch gets hostTransition; same-host resume must not re-inject.
+    const previousHost = await readInvocationHost(admitted.runDirectory);
+    const liveHost = env.host;
+    const hostTransition =
+      previousHost !== undefined
+      && liveHost !== undefined
+      && previousHost !== liveHost
+        ? { previousHost }
+        : undefined;
+    const turnRequest: RoleTurnRequest =
+      hostTransition === undefined ? request : { ...request, hostTransition };
+
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     // beforeDispatch (e.g. countersign diarist station) runs after running is
@@ -270,7 +296,7 @@ export async function dispatchPostAdmissionTurn<
 
     let result: RoleTurnResult;
     try {
-      result = await env.roleTurnHost.executeTurn(request);
+      result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       return (await presentControlledFailure(
         admitted,

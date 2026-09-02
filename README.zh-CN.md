@@ -38,7 +38,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（调用旗 → 席位持久 → 包默认）。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。全局 `--model` / `--host` / `--engine` 仅覆盖本次 resume。现行表 host 与出生宿主不同时，前序宿主的原生卷宗作为 context 交付目标宿主；各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`，Grok：`runDirectory/grok-home`），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎、察院仍为一次性，无 resume；给事中、左拾遗可手动 resume（#599）。
+`ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（调用旗 → 席位持久 → 包默认）。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。全局 `--model` / `--host` / `--engine` 仅覆盖本次 resume。真实换宿主时（现行席位 host 与上一次 invocation host 不同），将前序宿主原生卷宗一次性作为 context 交付目标宿主；同宿主续跑不重复注入。各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`，Grok：`runDirectory/grok-home`），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎、察院仍为一次性，无 resume；给事中、左拾遗可手动 resume（#599）。
 
 大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 

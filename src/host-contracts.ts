@@ -135,6 +135,15 @@ export type RoleTurnModelConfig = {
   readonly thinking?: string;
 };
 
+/**
+ * Typed cross-host resume handoff (#617 DK-4).
+ * Present only when this turn's live host differs from the previous invocation host.
+ * Adapters load the previous host's native records as opaque context once per transition.
+ */
+export type RoleTurnHostTransition = {
+  readonly previousHost: string;
+};
+
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
   readonly principal: DurablePrincipal;
@@ -149,6 +158,8 @@ export type RoleTurnRequest = {
   readonly runDirectory: string;
   readonly correlationId?: string;
   readonly timeoutMs?: number;
+  /** Set by post-admission only on a real host switch; never on same-host resume. */
+  readonly hostTransition?: RoleTurnHostTransition;
 };
 
 /** Turn result — only fields upper layers currently consume. */

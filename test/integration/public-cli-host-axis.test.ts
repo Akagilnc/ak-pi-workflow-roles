@@ -8,13 +8,14 @@ import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
-import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
-import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import {
+  createMinimalHost,
+  roleTurnHostFromLegacyPiRunner,
+} from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
@@ -377,29 +378,90 @@ test("bare resume follows live seat table host when it drifts from birth host", 
   });
 });
 
-test("cross-host resume Pi -> Grok: prior native records enter target context, source unchanged, target writes only native volume", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-pi-to-grok-"));
-  try {
-    const runDirectory = join(root, "run");
-    const piSessionDir = join(runDirectory, "session");
-    await mkdir(piSessionDir, { recursive: true });
-    const piSessionFile = join(piSessionDir, "session.jsonl");
-    const rawPiSession = `{"type":"session","id":"run-pi-1"}\n{"type":"message","id":"m1","message":{"role":"user","content":"pi user input"}}\n{"type":"message","id":"m2","message":{"role":"assistant","content":"pi assistant output"}}\n`;
-    await writeFile(piSessionFile, rawPiSession, "utf8");
+/** Unique prior-native marker bytes — content oracle, never a free-text label lock. */
+const PI_PRIOR_MARKER = "pi-prior-native-marker-617-dk4";
+const GROK_PRIOR_MARKER = "grok-prior-native-marker-617-dk4";
 
-    const promptCalls: Array<Readonly<Record<string, unknown>>> = [];
+function extractPriorNativeResource(
+  promptParams: Readonly<Record<string, unknown>> | undefined,
+): { uri?: unknown; mimeType?: unknown; text?: unknown } | undefined {
+  const parts = promptParams?.prompt;
+  if (!Array.isArray(parts)) return undefined;
+  for (const part of parts) {
+    if (typeof part !== "object" || part === null) continue;
+    const record = part as { type?: unknown; resource?: { uri?: unknown; mimeType?: unknown; text?: unknown } };
+    if (record.type !== "resource") continue;
+    if (record.resource?.mimeType === "application/x-ak-prior-native") return record.resource;
+  }
+  return undefined;
+}
+
+/**
+ * #617 DK-4 public tracer: ak-role resume Pi→Grok hands prior Pi native bytes once on
+ * host transition; source Pi volume unchanged; same-host Grok resume does not re-inject.
+ */
+test("public resume Pi→Grok hands prior native once on host transition; same-host does not re-inject", async () => {
+  await withHermeticHome({ prefix: "ak-dk4-pi-to-grok-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-dk4-pi-to-grok";
+    const PI_SESSION_SEED =
+      `${JSON.stringify({ type: "session", id: runId })}\n`
+      + `${JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: PI_PRIOR_MARKER } })}\n`;
+
+    await seedResumableJudge({
+      home,
+      project,
+      runId,
+      afterTurn: async (_runDirectory, sessionDirectory) => {
+        await writeFile(join(sessionDirectory, "session.jsonl"), PI_SESSION_SEED, "utf8");
+      },
+    });
+
+    const books = await readdir(join(home, ".ak-roles", "books"));
+    const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
+    const piSessionFile = join(runDirectory, "session", "session.jsonl");
+    const piBefore = await readFile(piSessionFile, "utf8");
+    assert.ok(piBefore.includes(PI_PRIOR_MARKER));
+
+    {
+      const { io, stderr } = captureIo();
+      assert.equal(
+        (await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], {
+          packageRoot, home, io,
+        })).exitCode,
+        0,
+        stderr.join(""),
+      );
+      assert.equal(
+        (await runAkRole(["config", "set-host", "judge", "grok-build"], {
+          packageRoot, home, io,
+        })).exitCode,
+        0,
+        stderr.join(""),
+      );
+    }
+
+    const transitionPrompts: Array<Readonly<Record<string, unknown>>> = [];
+    const sameHostPrompts: Array<Readonly<Record<string, unknown>>> = [];
+    let grokResumeCount = 0;
+    let boundSessionId: string | undefined;
+
     const grokHost = createGrokRoleTurnHost({
       sessionIdentity: {
-        async load() { return undefined; },
-        async bind() {},
+        async load() { return boundSessionId; },
+        async bind(_p, sessionId) { boundSessionId = sessionId; },
       },
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method, params) {
           if (method === "initialize") return {};
-          if (method === "session/new") return { sessionId: "grok-s1" };
+          if (method === "session/new") return { sessionId: "grok-dk4-s1" };
+          if (method === "session/load") return { sessionId: boundSessionId ?? "grok-dk4-s1" };
           if (method === "session/prompt") {
-            promptCalls.push(params);
+            if (grokResumeCount === 1) transitionPrompts.push(params);
+            else sameHostPrompts.push(params);
             return { stopReason: "end_turn" };
           }
           if (method === "session/close") return {};
@@ -413,93 +475,263 @@ test("cross-host resume Pi -> Grok: prior native records enter target context, s
         mcpServers: [{ name: "ak-role" }],
         systemPrompt: { body: "law", materials: [] },
         prompt: request.continuation.prompt,
-        closeRound: async () => ({ accepted: true }),
+        closeRound: async () => {
+          // Keep resumable so the same-host second resume can fire.
+          await observeTyped429ViaProductionHandler({
+            runDirectory: request.runDirectory,
+            provider: "openai-codex",
+          });
+          return {
+            accepted: false as const,
+            failure: {
+              cause: "provider" as const,
+              identity: { name: "rate_limit", code: 429 },
+            },
+          };
+        },
       }),
     });
 
-    const result = await grokHost.executeTurn({
-      principal: {},
-      activation: { role: "judge" },
-      methods: [],
-      continuation: { kind: "resume", prompt: "continue on grok" },
-      cwd: root,
-      home: root,
-      agentDir: join(root, "agent"),
-      runDirectory,
-    });
+    const grokAdapter: NamedRoleTurnHostAdapter = {
+      name: "grok-build",
+      create() {
+        grokResumeCount += 1;
+        return { ok: true as const, host: grokHost };
+      },
+    };
 
-    assert.equal(result.code, 0);
-    // 1. Prior Pi records enter target Grok context in session/prompt.
-    assert.equal(promptCalls.length, 1);
-    const promptParts = promptCalls[0]?.prompt as Array<{ type?: string; text?: string }>;
-    assert.ok(Array.isArray(promptParts));
-    const priorContextPart = promptParts.find((part) => part.text?.includes("[Prior session context (pi)]:"));
-    assert.ok(priorContextPart !== undefined, "Prior Pi session context must be delivered to Grok");
-    assert.ok(priorContextPart.text?.includes("pi user input"));
-    assert.ok(priorContextPart.text?.includes("pi assistant output"));
+    // 1. Public resume: Pi → Grok host transition.
+    {
+      const { io, stderr } = captureIo();
+      const first = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        io,
+        principalAuthority: piDurablePrincipalAuthority,
+        hostAdapters: [
+          { name: "pi", create() { throw new Error("pi must not run on grok-build seat"); } },
+          grokAdapter,
+        ],
+      });
+      assert.equal(first.exitCode, 1, stderr.join(""));
+      assert.ok(first.terminal?.resume, "first Grok leg must stay resumable");
+    }
 
-    // 2. Source Pi session file is completely unchanged.
-    const currentPiSession = await readFile(piSessionFile, "utf8");
-    assert.equal(currentPiSession, rawPiSession, "Source Pi session file must remain untouched");
+    assert.equal(grokResumeCount, 1);
+    assert.equal(transitionPrompts.length, 1);
+    const prior = extractPriorNativeResource(transitionPrompts[0]);
+    assert.equal(prior?.uri, "ak-role:prior-native/pi");
+    assert.equal(prior?.mimeType, "application/x-ak-prior-native");
+    assert.equal(typeof prior?.text, "string");
+    assert.ok(String(prior?.text).includes(PI_PRIOR_MARKER), "transition must deliver prior Pi native bytes");
 
-    // 3. Target did not write any entries or mutate Pi session file.
-    const currentPiEntries = currentPiSession.trim().split("\n");
-    assert.equal(currentPiEntries.length, 3);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    // Prior native seed survives; public-cli may append attempt_history, but Grok must not
+    // strip or rewrite the prior marker line (no conversation writeback into Pi JSONL).
+    const afterTransition = await readFile(piSessionFile, "utf8");
+    assert.ok(afterTransition.includes(PI_PRIOR_MARKER));
+    assert.ok(
+      afterTransition.includes(piBefore.trim().split("\n").find((line) => line.includes(PI_PRIOR_MARKER))!),
+      "Grok leg must leave the prior Pi native marker line intact",
+    );
+
+    // 2. Same-host Grok resume: no re-injection.
+    {
+      const { io, stderr } = captureIo();
+      const second = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        io,
+        principalAuthority: piDurablePrincipalAuthority,
+        hostAdapters: [
+          { name: "pi", create() { throw new Error("pi must not run on grok-build seat"); } },
+          grokAdapter,
+        ],
+      });
+      assert.equal(second.exitCode, 1, stderr.join(""));
+    }
+    assert.equal(grokResumeCount, 2);
+    assert.equal(sameHostPrompts.length, 1);
+    assert.equal(
+      extractPriorNativeResource(sameHostPrompts[0]),
+      undefined,
+      "same-host Grok resume must not re-inject prior Pi native resource",
+    );
+    assert.ok((await readFile(piSessionFile, "utf8")).includes(PI_PRIOR_MARKER));
+  });
 });
 
-test("cross-host resume Grok -> Pi: prior native records enter target context, source unchanged, target writes only native volume", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-to-pi-"));
-  try {
-    const runDirectory = join(root, "run");
-    const grokSessionDir = join(runDirectory, "grok-home", "sessions", "encoded-cwd", "grok-s1");
-    await mkdir(grokSessionDir, { recursive: true });
-    const grokUpdatesFile = join(grokSessionDir, "updates.jsonl");
-    const rawGrokUpdates = `{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"grok prior analysis"}}\n{"sessionUpdate":"tool_call","toolCallId":"c1","title":"grok_tool"}\n`;
-    await writeFile(grokUpdatesFile, rawGrokUpdates, "utf8");
+/**
+ * #617 DK-4 public tracer: ak-role resume Grok→Pi hands prior Grok native bytes on
+ * host transition; source grok-home unchanged; Pi --session stays on Pi native path.
+ */
+test("public resume Grok→Pi hands prior native on host transition; source grok-home unchanged", async () => {
+  await withHermeticHome({ prefix: "ak-dk4-grok-to-pi-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-dk4-grok-to-pi";
+    const GROK_UPDATES =
+      `${JSON.stringify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: GROK_PRIOR_MARKER } })}\n`;
+
+    // Seat grok-build before birth so invocation.host is grok-build.
+    {
+      const { io, stderr } = captureIo();
+      assert.equal(
+        (await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], {
+          packageRoot, home, io,
+        })).exitCode,
+        0,
+        stderr.join(""),
+      );
+      assert.equal(
+        (await runAkRole(["config", "set-host", "judge", "grok-build"], {
+          packageRoot, home, io,
+        })).exitCode,
+        0,
+        stderr.join(""),
+      );
+    }
+
+    await seedResumableJudge({
+      home,
+      project,
+      runId,
+      hostAdapters: [{
+        name: "grok-build",
+        create: () => ({
+          ok: true as const,
+          host: createMinimalHost(async (request) => {
+            const { sessionDirectory, sessionFile } =
+              piDurablePrincipalAuthority.decode(request.principal);
+            await mkdir(sessionDirectory, { recursive: true });
+            await writeFile(sessionFile, "", "utf8");
+            const grokDir = join(
+              request.runDirectory,
+              "grok-home",
+              "sessions",
+              "encoded-cwd",
+              "s1",
+            );
+            await mkdir(grokDir, { recursive: true });
+            await writeFile(join(grokDir, "updates.jsonl"), GROK_UPDATES, "utf8");
+            await observeTyped429ViaProductionHandler({
+              runDirectory: request.runDirectory,
+              provider: "openai-codex",
+            });
+            return { code: 1, stderr: "quota", timedOut: false };
+          }),
+        }),
+      }],
+    });
+
+    // Switch live seat to pi for the cross-host resume.
+    {
+      const { io, stderr } = captureIo();
+      assert.equal(
+        (await runAkRole(["config", "set-host", "judge", "pi"], {
+          packageRoot, home, io,
+        })).exitCode,
+        0,
+        stderr.join(""),
+      );
+    }
+
+    const books = await readdir(join(home, ".ak-roles", "books"));
+    const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
+    const grokUpdatesFile = join(
+      runDirectory,
+      "grok-home",
+      "sessions",
+      "encoded-cwd",
+      "s1",
+      "updates.jsonl",
+    );
+    const grokBefore = await readFile(grokUpdatesFile, "utf8");
+    assert.ok(grokBefore.includes(GROK_PRIOR_MARKER));
+
+    // Ensure invocation still records grok-build as previous host before Pi resume.
+    const invPath = join(runDirectory, "invocation.json");
+    const inv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
+    assert.equal(inv.host, "grok-build", "birth host must remain grok-build until Pi resume");
 
     let receivedArgs: readonly string[] = [];
-    const piHost = createPiRoleTurnHost({
+    // roleTurnHostFromLegacyPiRunner → createPiRoleTurnHost (real hostTransition path).
+    const piHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      spawnRunner: async (args) => {
+      piRunner: async (args) => {
         receivedArgs = args;
-        return { code: 0, stderr: "", timedOut: false };
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        // Seal accepted so public resume settles lawfully without a real model.
+        await writeFile(
+          sessionFile,
+          `${JSON.stringify({
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { judgeStatus: "converged" },
+            },
+          })}\n`,
+          "utf8",
+        );
+        return {
+          code: 0,
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+          sealedAcceptance: {
+            role: "judge" as const,
+            details: { judgeStatus: "converged" },
+          },
+        };
       },
     });
 
-    const result = await piHost.executeTurn({
-      principal: fixturePrincipal(join(runDirectory, "session")),
-      activation: { role: "judge" },
-      methods: [],
-      continuation: { kind: "resume", prompt: "continue on pi" },
-      cwd: root,
-      home: root,
-      agentDir: join(root, "agent"),
-      runDirectory,
-    });
+    {
+      const { io, stderr } = captureIo();
+      const resumed = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        io,
+        principalAuthority: piDurablePrincipalAuthority,
+        hostAdapters: [
+          {
+            name: "pi",
+            create() { return { ok: true as const, host: piHost }; },
+          },
+          {
+            name: "grok-build",
+            create() { throw new Error("grok must not run on pi seat"); },
+          },
+        ],
+      });
+      assert.equal(resumed.exitCode, 0, stderr.join(""));
+      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    }
 
-    assert.equal(result.code, 0);
+    // Prior Grok native content appears in Pi continuation argv (content oracle, not a label lock).
+    const promptWithPrior = receivedArgs.find((arg) => arg.includes(GROK_PRIOR_MARKER));
+    assert.ok(promptWithPrior !== undefined, "Pi resume must receive prior Grok native bytes");
 
-    // 1. Prior Grok records enter target Pi context.
-    const promptArg = receivedArgs.find((arg) => arg.includes("[Prior session context (grok)]:"));
-    assert.ok(promptArg !== undefined, "Prior Grok records must be delivered in Pi continuation prompt");
-    assert.ok(promptArg.includes("grok prior analysis"));
-    assert.ok(promptArg.includes("continue on pi"));
+    // Source grok-home unchanged.
+    assert.equal(await readFile(grokUpdatesFile, "utf8"), grokBefore);
 
-    // 2. Source Grok updates file is completely unchanged.
-    const currentGrokUpdates = await readFile(grokUpdatesFile, "utf8");
-    assert.equal(currentGrokUpdates, rawGrokUpdates, "Source Grok updates file must remain untouched");
+    // Pi native session path only — never grok-home as --session.
+    const sessionIdx = receivedArgs.indexOf("--session");
+    assert.ok(sessionIdx >= 0);
+    const sessionPath = receivedArgs[sessionIdx + 1] ?? "";
+    assert.ok(sessionPath.includes(`${join("session", "session.jsonl")}`));
+    assert.equal(sessionPath.includes("grok-home"), false);
 
-    // 3. Pi writes only its native volume (uses --session on Pi session file).
-    const sessionArgIdx = receivedArgs.indexOf("--session");
-    assert.ok(sessionArgIdx >= 0);
-    const sessionPath = receivedArgs[sessionArgIdx + 1];
-    assert.ok(sessionPath?.includes(join("session", "session.jsonl")));
-    assert.ok(!sessionPath?.includes("grok-home"));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    const afterInv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
+    assert.equal(afterInv.host, "pi");
+  });
 });
