@@ -1058,6 +1058,8 @@ export async function createMockProviderServer(
 ): Promise<{ server: Server; baseUrl: string; close: () => Promise<void> }> {
   const server = createServer(async (req, res) => {
     try {
+      // Prevent keep-alive sockets from holding the test process ~10s after close.
+      res.setHeader("Connection", "close");
       observers.onRequest?.({ headers: req.headers });
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -1171,8 +1173,45 @@ export async function createMockProviderServer(
         // stream path records a transport failure (streamFailure) instead of a
         // flattened normal completion — preserving typed transport_failure
         // classification through the OpenAI-completions round-trip.
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: { message: message.errorMessage ?? message.stopReason } }));
+        // When the scripted assistant message holds a direct statusCode/status,
+        // mirror it as the HTTP status so auth/quota classification stays typed
+        // through institutional open (host-neutral navigator/auditor children).
+        const messageRecord = message as unknown as {
+          statusCode?: unknown;
+          status?: unknown;
+          body?: unknown;
+          code?: unknown;
+          errno?: unknown;
+        };
+        const heldStatus = typeof messageRecord.statusCode === "number"
+          ? messageRecord.statusCode
+          : typeof messageRecord.status === "number"
+            ? messageRecord.status
+            : undefined;
+        // Only a scripted HTTP status becomes a structured Response. Defaulting
+        // unstructured error-stop to synthetic 500 would wash local/unrecognized
+        // failures as provider 5xx testimony (失败诚实).
+        if (heldStatus !== undefined && heldStatus >= 400 && heldStatus < 600) {
+          res.writeHead(heldStatus, { "content-type": "application/json" });
+          res.end(JSON.stringify({
+            error: { message: message.errorMessage ?? message.stopReason },
+            ...(messageRecord.body === undefined ? {} : { body: messageRecord.body }),
+            ...(messageRecord.code === undefined ? {} : { code: messageRecord.code }),
+            ...(messageRecord.errno === undefined ? {} : { errno: messageRecord.errno }),
+          }));
+          return;
+        }
+        // 2xx SSE with an error object: SDK folds the original message into
+        // error-stop without a non-success HTTP status (no synthetic 5xx testimony).
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        res.write(`data: ${JSON.stringify({
+          error: { message: message.errorMessage ?? message.stopReason },
+        })}\n\ndata: [DONE]\n\n`);
+        res.end();
         return;
       }
       const toolCalls = message.content
@@ -1231,6 +1270,10 @@ export async function createMockProviderServer(
       res.end(JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error) } }));
     }
   });
+  // Node defaults keep-alive ~5–10s; force immediate idle close so fixture teardown
+  // does not leave sockets holding the test process after closeAllConnections.
+  server.keepAliveTimeout = 1;
+  server.headersTimeout = 2;
   observers.onServer?.(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -1409,6 +1452,11 @@ export async function withInstitutionalProviderFixture<T>(
   process.env.PI_CODING_AGENT_DIR = tempAgentDir;
   try {
     const modelsPath = resolve(tempAgentDir, "models.json");
+    const model = faux.getModel() as {
+      id: string;
+      reasoning?: boolean;
+      thinkingLevelMap?: Record<string, string>;
+    };
     await writeFile(modelsPath, JSON.stringify({
       providers: {
         [faux.provider.id]: {
@@ -1416,10 +1464,15 @@ export async function withInstitutionalProviderFixture<T>(
           api: "openai-completions",
           apiKey: "test",
           models: [{
-            id: faux.getModel().id,
-            name: faux.getModel().id,
+            id: model.id,
+            name: model.id,
             api: "openai-completions",
-            reasoning: false,
+            // Preserve faux model reasoning / thinking map so institutional
+            // children honor Navigator :max the same way the parent session does.
+            reasoning: model.reasoning === true,
+            ...(model.thinkingLevelMap === undefined
+              ? {}
+              : { thinkingLevelMap: model.thinkingLevelMap }),
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 128000,
@@ -1476,19 +1529,29 @@ export async function seedAgentDirModelsJsonFromFaux(
               baseUrl: mock.baseUrl,
               api: "openai-completions",
               apiKey: "test",
-              models: [
-                {
-                  id: faux.getModel().id,
-                  name: faux.getModel().id,
+              models: (() => {
+                const model = faux.getModel() as {
+                  id: string;
+                  reasoning?: boolean;
+                  thinkingLevelMap?: Record<string, string>;
+                };
+                return [{
+                  id: model.id,
+                  name: model.id,
                   api: "openai-completions",
-                  reasoning: false,
+                  // Preserve faux model reasoning / thinking map so institutional
+                  // children honor Navigator :max the same way the parent session does.
+                  reasoning: model.reasoning === true,
+                  ...(model.thinkingLevelMap === undefined
+                    ? {}
+                    : { thinkingLevelMap: model.thinkingLevelMap }),
                   input: ["text"],
                   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                   contextWindow: 128000,
                   maxTokens: 16384,
                   compat: { requiresToolResultName: true },
-                },
-              ],
+                }];
+              })(),
             },
           },
         },

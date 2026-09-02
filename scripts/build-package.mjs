@@ -10,6 +10,11 @@ const entries = [
   "navigator-invocation-identity",
   "navigator-attendance",
   // Navigator package-graph dependencies used by attendance settlement.
+  // navigator-session-contracts is a static import of the published attendance root
+  // (#590: published non-bundle graph must stay closed under its own relative edges).
+  "evidence-child-executor",
+  "navigator-session-contracts",
+  "pi/in-process-session",
   "activation-ledger-git",
   "activation-ledger-topology",
   "activation-reconciliation",
@@ -78,10 +83,18 @@ export async function buildPackageArtifacts() {
     bundle: false,
     packages: "external",
   });
+  // Rewrite both static `from ".ts"` and dynamic `import(".ts")` so published
+  // non-bundle modules never leave unloadable .ts relative edges (#590).
   for (const name of entries) {
     const path = `dist/${name}.js`;
     const source = await readFile(path, "utf8");
-    await writeFile(path, source.replaceAll(/(from\s*["'][^"']+)\.ts(["'])/g, "$1.js$2"));
+    await writeFile(
+      path,
+      source.replaceAll(
+        /(from\s*|import\s*\(\s*)(["'])([^"']+)\.ts\2/g,
+        "$1$2$3.js$2",
+      ),
+    );
   }
   await buildPublicAkRoleBin();
   await buildGrokProductionHost();
