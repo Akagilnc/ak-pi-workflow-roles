@@ -864,6 +864,7 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
     assert.equal(inv.host, "grok-build", "birth host must remain grok-build until Pi resume");
 
     let observedPiTransition: RoleTurnRequest["hostTransition"];
+    let inboundResumePrompt: string | undefined;
     let receivedArgs: readonly string[] = [];
     // roleTurnHostFromLegacyPiRunner → createPiRoleTurnHost (real hostTransition path).
     // Reuse #502 scriptedTerminatingToolSession for sealed accepted session shape.
@@ -883,6 +884,8 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
     const piHost: RoleTurnHost = {
       async executeTurn(request) {
         observedPiTransition = request.hostTransition;
+        inboundResumePrompt =
+          request.continuation.kind === "resume" ? request.continuation.prompt : undefined;
         return innerPi.executeTurn(request);
       },
     };
@@ -912,10 +915,20 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
     }
 
     // Typed hostTransition carries prior native bytes equal to grok-home source exactly.
-    // One Pi executeTurn observed below — delivery is the typed field on that sole request.
     assert.ok(observedPiTransition !== undefined);
     assert.equal(observedPiTransition.previousHost, "grok-build");
     assert.equal(observedPiTransition.priorNativeRecords, grokBefore);
+    assert.equal(typeof inboundResumePrompt, "string");
+
+    // Pi adapter must fold priorNativeRecords into the form argv prompt exactly once:
+    // production compose is `${prior}\n\n${continuation.prompt}` (src/pi/role-turn-host.ts).
+    // Exact equality of the last argv element proves delivery through the adapter;
+    // double-splice or drop would fail this identity.
+    assert.equal(
+      receivedArgs.at(-1),
+      `${observedPiTransition.priorNativeRecords}\n\n${inboundResumePrompt}`,
+      "Pi argv prompt must equal priorNativeRecords delivered once through the adapter",
+    );
 
     // Source grok-home unchanged.
     assert.equal(await readFile(grokUpdatesFile, "utf8"), grokBefore);
