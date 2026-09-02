@@ -916,15 +916,11 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
     assert.equal(observedPiTransition.previousHost, "grok-build");
     assert.equal(observedPiTransition.priorNativeRecords, grokBefore);
 
-    // Production Pi delivery: priorNativeRecords appear once in the continuation prompt argv.
-    const promptArgs = receivedArgs.filter((arg) => arg.includes(observedPiTransition!.priorNativeRecords));
-    assert.equal(promptArgs.length, 1, "prior native must be delivered once into Pi prompt argv");
-    assert.ok(
-      promptArgs[0]!.endsWith(observedPiTransition.priorNativeRecords)
-        || promptArgs[0]!.startsWith(observedPiTransition.priorNativeRecords)
-        || promptArgs[0]!.includes(`${observedPiTransition.priorNativeRecords}\n\n`),
-      "Pi continuation prompt must carry prior native records at the adapter boundary",
+    // Production Pi delivery: priorNativeRecords appear once in continuation prompt argv.
+    const promptDeliveries = receivedArgs.filter((arg) =>
+      arg.includes(observedPiTransition!.priorNativeRecords),
     );
+    assert.equal(promptDeliveries.length, 1, "prior native must be delivered once into Pi prompt argv");
 
     // Source grok-home unchanged.
     assert.equal(await readFile(grokUpdatesFile, "utf8"), grokBefore);

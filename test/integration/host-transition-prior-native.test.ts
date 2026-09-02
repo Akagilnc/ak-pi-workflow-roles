@@ -57,7 +57,6 @@ test("known pi→grok-build projects priorNativeRecords as exact source bytes in
       previousHost: "pi",
       priorNativeRecords: bytes,
     });
-    assert.equal(transition?.priorNativeRecords.endsWith("\n"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

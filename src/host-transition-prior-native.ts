@@ -7,10 +7,10 @@ import { join } from "node:path";
 
 import type { RoleTurnHostTransition } from "./host-contracts.ts";
 
-export const KNOWN_ROLE_TURN_HOSTS = ["pi", "grok-build"] as const;
-export type KnownRoleTurnHost = (typeof KNOWN_ROLE_TURN_HOSTS)[number];
+const KNOWN_ROLE_TURN_HOSTS = ["pi", "grok-build"] as const;
+type KnownRoleTurnHost = (typeof KNOWN_ROLE_TURN_HOSTS)[number];
 
-export function isKnownRoleTurnHost(value: string): value is KnownRoleTurnHost {
+function isKnownRoleTurnHost(value: string): value is KnownRoleTurnHost {
   return (KNOWN_ROLE_TURN_HOSTS as readonly string[]).includes(value);
 }
 
@@ -67,7 +67,8 @@ export async function projectHostTransitionPriorNative(input: {
   readonly runDirectory: string;
   readonly piSessionFile: string;
 }): Promise<RoleTurnHostTransition | undefined> {
-  if (!shouldProjectHostTransition(input.previousHost, input.liveHost)) {
+  if (input.previousHost === input.liveHost) return undefined;
+  if (!isKnownRoleTurnHost(input.previousHost) || !isKnownRoleTurnHost(input.liveHost)) {
     return undefined;
   }
   if (input.previousHost === "pi") {
@@ -83,13 +84,4 @@ export async function projectHostTransitionPriorNative(input: {
     previousHost: "grok-build",
     priorNativeRecords: records ?? "",
   };
-}
-
-/** Pure host-pair gate: known switch only. No I/O. */
-export function shouldProjectHostTransition(
-  previousHost: string,
-  liveHost: string,
-): previousHost is KnownRoleTurnHost {
-  if (previousHost === liveHost) return false;
-  return isKnownRoleTurnHost(previousHost) && isKnownRoleTurnHost(liveHost);
 }
