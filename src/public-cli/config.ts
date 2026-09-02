@@ -21,8 +21,6 @@ import {
   publicStartupCandidates,
 } from "./registry.ts";
 
-export { seatModelOnly };
-
 /** Province officers that may carry a persistent model override (#453). */
 export const GATE_OFFICER_SEATS = [
   "gatekeeper",
