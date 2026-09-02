@@ -157,28 +157,20 @@ const SCENARIOS: readonly DutyScenario[] = [
   {
     id: "misaligned-but-both-quoted",
     ticketNumber: 62103,
-    // Ticket lists engine then cross-host; verdict lists cross-host then engine.
-    // Both sides copy diary quotes verbatim — only order/packaging differs ("对不上").
-    // Must pass (DK-2 of #621: 判词与票面对不对得上不归符宝郎).
+    // True 对不上: ticket only binds DK-2 engine; verdict only binds DK-1 cross-host.
+    // Each side is fully quoted in diary — an alignment-checking notary would bounce;
+    // duty-correct notary must pass (DK-2 of #621: 判词与票面对不对得上不归符宝郎).
+    // Quotes stay byte-faithful to diary (no paraphrase that invites pedantic bounce).
     ticketFace: [
       "#62103 fixture ticket face",
       "",
       "## Scope",
-      "1. 引擎：引擎应该是我想要就要不想要就不要（DK-2）。",
-      "2. 跨宿主：理论上就是一个session文件。跨宿主也能加（DK-1）。",
+      "1. 引擎应该是我想要就要不想要就不要（DK-2）。",
     ].join("\n"),
     verdict: {
       judgeStatus: "continue",
-      // Order swapped vs ticket; quotes stay byte-faithful to diary — no paraphrase.
-      fixSummary: [
-        "按 DK-1 与 DK-2 原话：",
-        "跨宿主——理论上就是一个session文件。跨宿主也能加；",
-        "引擎——引擎应该是我想要就要不想要就不要。",
-      ].join(""),
-      classes: [
-        { name: "cross-host", disposition: "fix_now" },
-        { name: "engine", disposition: "fix_now" },
-      ],
+      fixSummary: "理论上就是一个session文件。跨宿主也能加（DK-1）。",
+      classes: [{ name: "cross-host", disposition: "fix_now" }],
     },
     diary: [
       {
@@ -468,9 +460,25 @@ async function withLiveNotaryHome<T>(
   }
 }
 
+/** True only for infra/transport loss — never for wrong typed business status. */
+function isStandaloneTransportLoss(input: {
+  readonly exitCode: number;
+  readonly terminal: { readonly roleOutcome?: { readonly kind?: string } } | undefined;
+  readonly stderr: readonly string[];
+}): boolean {
+  if (input.exitCode !== 0) return true;
+  if (input.terminal === undefined) return true;
+  if (input.terminal.roleOutcome?.kind === "failure") return true;
+  if (input.terminal.roleOutcome?.kind === "no_receipt") return true;
+  const errText = input.stderr.join("");
+  return /timed out|timeout|authentication failed|provider is not configured/i.test(
+    errText,
+  );
+}
+
 describe(
   "#621 live Notary duty acceptance",
-  // +1 gate leg; pass scenarios may take a second live attempt.
+  // +1 gate leg; transport-only retries may add one attempt each.
   { concurrency: 1, timeout: LIVE_TIMEOUT_MS * (SCENARIOS.length + 3) },
   () => {
     for (const [index, scenario] of SCENARIOS.entries()) {
@@ -484,13 +492,12 @@ describe(
             return;
           }
 
-          // Live LLM legs: one retry on pass-expect when a pedantic bounce lands.
-          // Bounce-expect never retries (false pass would hide the duty failure).
-          const maxAttempts = scenario.expect === "pass" ? 2 : 1;
-          let lastError: unknown;
-          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-            try {
-              await withLiveNotaryHome(async ({ home, project, agentDir }) => {
+          // Only transport/infra loss retries once. Wrong typed status fails immediately.
+          let transportRetries = 0;
+          for (;;) {
+            const outcome = await withLiveNotaryHome(
+              async ({ home, project, agentDir }) => {
+                const attempt = transportRetries + 1;
                 const runId = `01a06210-6210-7000-8000-${String(index * 10 + attempt).padStart(12, "0")}`;
                 const sourceRunPath = await seedSourceRun({
                   home,
@@ -520,42 +527,61 @@ describe(
                       `01a06211-6210-7000-8000-${String(index * 10 + attempt).padStart(12, "0")}`,
                   },
                 );
+                return { result, stderr };
+              },
+            );
 
-                assert.equal(
-                  result.exitCode,
-                  0,
-                  `${scenario.id}: exitCode=0; stderr=${stderr.join("").slice(0, 2000)}`,
-                );
-                assert.ok(result.terminal, `${scenario.id}: terminal present`);
-                assert.equal(result.terminal.roleOutcome.kind, "accepted");
-                assert.equal(result.terminal.roleOutcome.role, "notary");
-                const status = result.terminal.roleOutcome.status;
-                const facts = result.terminal.roleOutcome.decisiveFacts as {
-                  findings?: unknown;
-                  findingsCount?: unknown;
-                };
-                assert.equal(status, scenario.expect, scenario.id);
-                if (scenario.expect === "bounce") {
-                  // Typed structural proof only — no findings text lock (锚定宪法).
-                  if (Array.isArray(facts.findings)) {
-                    assertNotaryStatus(status, "bounce", facts.findings, scenario.id);
-                  } else {
-                    assert.ok(
-                      typeof facts.findingsCount === "number" &&
-                        facts.findingsCount > 0,
-                      `${scenario.id}: bounce must retain non-empty findings structure (count=${String(facts.findingsCount)}; facts=${JSON.stringify(facts)})`,
-                    );
-                  }
-                }
-              });
-              lastError = undefined;
-              break;
-            } catch (error) {
-              lastError = error;
-              if (attempt === maxAttempts) throw error;
+            if (
+              isStandaloneTransportLoss({
+                exitCode: outcome.result.exitCode,
+                terminal: outcome.result.terminal,
+                stderr: outcome.stderr,
+              })
+            ) {
+              if (transportRetries === 0) {
+                transportRetries += 1;
+                continue;
+              }
+              assert.equal(
+                outcome.result.exitCode,
+                0,
+                `${scenario.id}: exitCode=0 after transport retry; stderr=${outcome.stderr.join("").slice(0, 2000)}`,
+              );
+              assert.ok(
+                outcome.result.terminal,
+                `${scenario.id}: terminal present after transport retry`,
+              );
             }
+
+            assert.equal(
+              outcome.result.exitCode,
+              0,
+              `${scenario.id}: exitCode=0; stderr=${outcome.stderr.join("").slice(0, 2000)}`,
+            );
+            assert.ok(outcome.result.terminal, `${scenario.id}: terminal present`);
+            assert.equal(outcome.result.terminal.roleOutcome.kind, "accepted");
+            assert.equal(outcome.result.terminal.roleOutcome.role, "notary");
+            const status = outcome.result.terminal.roleOutcome.status;
+            const facts = outcome.result.terminal.roleOutcome.decisiveFacts as {
+              findings?: unknown;
+              findingsCount?: unknown;
+            };
+            // Business status: no retry. Wrong status fails the test immediately.
+            assert.equal(status, scenario.expect, scenario.id);
+            if (scenario.expect === "bounce") {
+              // Typed structural proof only — no findings text lock (锚定宪法).
+              if (Array.isArray(facts.findings)) {
+                assertNotaryStatus(status, "bounce", facts.findings, scenario.id);
+              } else {
+                assert.ok(
+                  typeof facts.findingsCount === "number" &&
+                    facts.findingsCount > 0,
+                  `${scenario.id}: bounce must retain non-empty findings structure (count=${String(facts.findingsCount)}; facts=${JSON.stringify(facts)})`,
+                );
+              }
+            }
+            break;
           }
-          if (lastError !== undefined) throw lastError;
         },
       );
     }
@@ -579,176 +605,171 @@ describe(
         const scenario = SCENARIOS[0]!;
         assert.equal(scenario.id, "rebuild-session-without-quote");
 
-        // Live transport may 5xx once; retry the whole gate leg once on transport_failure.
-        let gateError: unknown;
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
-          try {
-            await withActivationHome(
-              { prefix: "ak-notary-gate-live-" },
-              async ({ home, agentDir }) => {
-                // withActivationHome sets PI_OFFLINE=1; institutional live children need network.
-                const previousOffline = process.env.PI_OFFLINE;
-                const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-                delete process.env.PI_OFFLINE;
-                // Auth for ModelRegistry.getProviderAuth (reads getAgentDir()/auth.json).
-                await copyFile(
-                  join(live.agentDir, "auth.json"),
-                  join(agentDir, "auth.json"),
-                );
+        // Only typed transport_failure retries once. Wrong business status fails immediately.
+        let transportRetries = 0;
+        for (;;) {
+          const result = await withActivationHome(
+            { prefix: "ak-notary-gate-live-" },
+            async ({ home, agentDir }) => {
+              // withActivationHome sets PI_OFFLINE=1; institutional live children need network.
+              const previousOffline = process.env.PI_OFFLINE;
+              const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+              delete process.env.PI_OFFLINE;
+              // Auth for ModelRegistry.getProviderAuth (reads getAgentDir()/auth.json).
+              await copyFile(
+                join(live.agentDir, "auth.json"),
+                join(agentDir, "auth.json"),
+              );
 
+              try {
+                // Parent stays faux; only gate seats use real provider/model.
+                const faux = fauxProvider({
+                  api: "gatekeeper-parent",
+                  provider: "gatekeeper-parent",
+                  tokenSize: { min: 1000, max: 1000 },
+                });
+                faux.setResponses([fauxAssistantMessage("parent")]);
+                const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
                 try {
-                  // Parent stays faux; only gate seats use real provider/model.
-                  const faux = fauxProvider({
-                    api: "gatekeeper-parent",
-                    provider: "gatekeeper-parent",
-                    tokenSize: { min: 1000, max: 1000 },
-                  });
-                  faux.setResponses([fauxAssistantMessage("parent")]);
-                  const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-                  try {
-                    await withInProcessPi(
-                      {
+                  return await withInProcessPi(
+                    {
+                      cwd: home,
+                      home,
+                      agentDir,
+                      activationLedgerSession: true,
+                      faux,
+                      modelsPath: null,
+                      noExtensions: true,
+                      noTools: "builtin",
+                      mode: "print",
+                      systemPrompt: "BASE",
+                      flags: {},
+                    },
+                    async ({ session, model }) => {
+                      const credentials = await loadCredentialProviders(agentDir);
+                      const provider =
+                        credentials["openai-codex"] === true
+                          ? "openai-codex"
+                          : "xai";
+                      const seatModel =
+                        provider === "openai-codex"
+                          ? "gpt-5.6-sol"
+                          : "grok-4.5";
+                      await writeInstitutionalSeatTable(home, {
+                        ...parentInheritedSeats({
+                          provider: model.provider,
+                          model: model.id,
+                        }),
+                        gatekeeper: {
+                          provider,
+                          model: seatModel,
+                          thinking: "low",
+                        },
+                        notary: {
+                          provider,
+                          model: seatModel,
+                          thinking: "low",
+                        },
+                      });
+
+                      // Production-shaped discoverable materials (NOT in subject.material):
+                      // ticket face on disk + parent session context + 起居录 volume.
+                      const attachmentsDir = join(home, "attachments");
+                      await mkdir(attachmentsDir, { recursive: true });
+                      await writeFile(
+                        join(attachmentsDir, "00-ticket-face.md"),
+                        `${scenario.ticketFace}\n`,
+                        "utf8",
+                      );
+                      await seedDiary(scenario, home, home);
+                      session.sessionManager.appendMessage({
+                        role: "user",
+                        content: [
+                          {
+                            type: "text",
+                            text: [
+                              `大理寺审票 #${scenario.ticketNumber}。`,
+                              "票面见 attachments/00-ticket-face.md 与下列摘录：",
+                              scenario.ticketFace,
+                            ].join("\n"),
+                          },
+                        ],
+                      } as never);
+                      // Judge runs bind AK_ROLE_RUN_DIR; officer self-fetch may follow it.
+                      process.env.AK_ROLE_RUN_DIR = home;
+
+                      // Production judge subject: verdict JSON only (judge-role.ts).
+                      const verdict = {
+                        ...scenario.verdict,
+                        note: `票 #${scenario.ticketNumber}`,
+                      };
+                      const material = JSON.stringify(verdict);
+
+                      const context = {
                         cwd: home,
-                        home,
-                        agentDir,
-                        activationLedgerSession: true,
-                        faux,
-                        modelsPath: null,
-                        noExtensions: true,
-                        noTools: "builtin",
-                        mode: "print",
-                        systemPrompt: "BASE",
-                        flags: {},
-                      },
-                      async ({ session, model }) => {
-                        const credentials = await loadCredentialProviders(agentDir);
-                        const provider =
-                          credentials["openai-codex"] === true
-                            ? "openai-codex"
-                            : "xai";
-                        const seatModel =
-                          provider === "openai-codex"
-                            ? "gpt-5.6-sol"
-                            : "grok-4.5";
-                        await writeInstitutionalSeatTable(home, {
-                          ...parentInheritedSeats({
-                            provider: model.provider,
-                            model: model.id,
-                          }),
-                          gatekeeper: {
-                            provider,
-                            model: seatModel,
-                            thinking: "low",
+                        model,
+                        modelRegistry: {
+                          getProvider() {
+                            return undefined;
                           },
-                          notary: {
-                            provider,
-                            model: seatModel,
-                            thinking: "low",
+                          find() {
+                            return model;
                           },
-                        });
-
-                        // Production-shaped discoverable materials (NOT in subject.material):
-                        // ticket face on disk + parent session context + 起居录 volume.
-                        const attachmentsDir = join(home, "attachments");
-                        await mkdir(attachmentsDir, { recursive: true });
-                        await writeFile(
-                          join(attachmentsDir, "00-ticket-face.md"),
-                          `${scenario.ticketFace}\n`,
-                          "utf8",
-                        );
-                        await seedDiary(scenario, home, home);
-                        session.sessionManager.appendMessage({
-                          role: "user",
-                          content: [
-                            {
-                              type: "text",
-                              text: [
-                                `大理寺审票 #${scenario.ticketNumber}。`,
-                                "票面见 attachments/00-ticket-face.md 与下列摘录：",
-                                scenario.ticketFace,
-                              ].join("\n"),
-                            },
-                          ],
-                        } as never);
-                        // Judge runs bind AK_ROLE_RUN_DIR; officer self-fetch may follow it.
-                        process.env.AK_ROLE_RUN_DIR = home;
-
-                        // Production judge subject: verdict JSON only (judge-role.ts).
-                        const verdict = {
-                          ...scenario.verdict,
-                          note: `票 #${scenario.ticketNumber}`,
-                        };
-                        const material = JSON.stringify(verdict);
-
-                        const context = {
-                          cwd: home,
-                          model,
-                          modelRegistry: {
-                            getProvider() {
-                              return undefined;
-                            },
-                            find() {
-                              return model;
-                            },
-                            async getProviderAuth() {
-                              return { auth: {} };
-                            },
-                            async getApiKeyAndHeaders() {
-                              return { ok: true };
-                            },
+                          async getProviderAuth() {
+                            return { auth: {} };
                           },
-                          thinkingLevel: "off" as const,
-                          sessionManager: session.sessionManager,
-                          runDirectory: home,
-                        };
+                          async getApiKeyAndHeaders() {
+                            return { ok: true };
+                          },
+                        },
+                        thinkingLevel: "off" as const,
+                        sessionManager: session.sessionManager,
+                        runDirectory: home,
+                      };
 
-                        const result: GatekeeperResult = await runGatekeeper({
-                          context: context as never,
-                          runDirectory: home,
-                          subject: { kind: "judge_draft", material },
-                        });
-
-                        if (result.status === "transport_failure" && attempt < 2) {
-                          throw Object.assign(new Error("gate transport_failure retry"), {
-                            gateResult: result,
-                          });
-                        }
-
-                        assert.equal(
-                          result.status,
-                          "bounce",
-                          `gate path status; got ${JSON.stringify(result).slice(0, 1500)}`,
-                        );
-                        if (result.status === "bounce") {
-                          assert.equal(result.officer, "notary");
-                          assertNotaryStatus(
-                            result.status,
-                            "bounce",
-                            result.findings,
-                            "gatekeeper→notary",
-                          );
-                        }
-                      },
-                    );
-                  } finally {
-                    await seeded.close();
-                  }
+                      return await runGatekeeper({
+                        context: context as never,
+                        runDirectory: home,
+                        subject: { kind: "judge_draft", material },
+                      });
+                    },
+                  );
                 } finally {
-                  if (previousOffline === undefined) delete process.env.PI_OFFLINE;
-                  else process.env.PI_OFFLINE = previousOffline;
-                  if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-                  else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+                  await seeded.close();
                 }
-              },
-            );
-            gateError = undefined;
-            break;
-          } catch (error) {
-            gateError = error;
-            if (attempt === 2) throw error;
+              } finally {
+                if (previousOffline === undefined) delete process.env.PI_OFFLINE;
+                else process.env.PI_OFFLINE = previousOffline;
+                if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+                else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+              }
+            },
+          );
+
+          if (result.status === "transport_failure") {
+            if (transportRetries === 0) {
+              transportRetries += 1;
+              continue;
+            }
           }
+
+          // Business status: no retry.
+          assert.equal(
+            result.status,
+            "bounce",
+            `gate path status; got ${JSON.stringify(result).slice(0, 1500)}`,
+          );
+          if (result.status === "bounce") {
+            assert.equal(result.officer, "notary");
+            assertNotaryStatus(
+              result.status,
+              "bounce",
+              result.findings,
+              "gatekeeper→notary",
+            );
+          }
+          break;
         }
-        if (gateError !== undefined) throw gateError;
       },
     );
   },
