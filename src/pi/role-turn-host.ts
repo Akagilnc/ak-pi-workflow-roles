@@ -407,7 +407,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       if (
         request.continuation.kind === "resume"
         && priorNative !== undefined
-        && priorNative.trim() !== ""
+        && priorNative.length > 0
       ) {
         effectiveRequest = {
           ...request,

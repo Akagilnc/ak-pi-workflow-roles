@@ -277,7 +277,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           const priorNativeRecords =
             continuation.kind === "resume"
             && request.hostTransition !== undefined
-            && request.hostTransition.priorNativeRecords.trim() !== ""
+            && request.hostTransition.priorNativeRecords.length > 0
               ? request.hostTransition.priorNativeRecords
               : undefined;
           if (continuation.kind === "resume") {
