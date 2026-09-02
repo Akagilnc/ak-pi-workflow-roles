@@ -111,9 +111,7 @@ async function withSharedHome<T>(run: (home: string, project: string) => Promise
   const home = await mkdtemp(join(tmpdir(), "ak-public-role-table-"));
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
-  const priorHome = process.env.HOME;
   const priorPath = process.env.PATH;
-  process.env.HOME = home;
   process.env.PATH = `${binDir}:${priorPath ?? ""}`;
   try {
     const project = join(home, "work");
@@ -123,8 +121,6 @@ async function withSharedHome<T>(run: (home: string, project: string) => Promise
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
-    if (priorHome === undefined) delete process.env.HOME;
-    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -657,8 +653,6 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
 async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt") {
   const providerPath = resolve(packageRoot, "test/fixtures/merger-baseline-provider.ts");
   const home = await mkdtemp(join(tmpdir(), `ak-public-merger-${residual ?? "accepted"}-`));
-  const priorHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     const project = join(home, "work");
     await mkdir(project);
@@ -712,8 +706,6 @@ async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt"
       },
     );
   } finally {
-    if (priorHome === undefined) delete process.env.HOME;
-    else process.env.HOME = priorHome;
     await rm(home, { recursive: true, force: true });
   }
 }

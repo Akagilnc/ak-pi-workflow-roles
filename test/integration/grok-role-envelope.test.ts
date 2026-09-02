@@ -80,10 +80,8 @@ test("Grok projection maps public activations onto the shared envelope", () => {
 
 test("Grok MCP projection activates shared Judge materials and all active AK tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   // Tool-list contract is engine-free; ambient factory AK_ROLE_ENGINE must not leak detour.
   delete process.env.AK_ROLE_ENGINE;
@@ -115,7 +113,6 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
     await rm(root, { recursive: true, force: true });
@@ -133,9 +130,7 @@ test("Grok Skill expansion evidence aligns with the packaged canonical binding",
 
 test("Grok MCP projection expands the canonical Coder tdd Skill from typed methods", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
@@ -173,7 +168,6 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -181,9 +175,7 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
 
 test("Grok MCP projection routes a correctable rejection as a structured non-pass", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-reject-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
@@ -233,7 +225,6 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -241,9 +232,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
 
 test("public Notary --ticket: admit→activation→ACP systemPromptOverride folds typed bound", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-ticket-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     // Real public admission needs a git project book + retained source-run under ledger.
@@ -438,7 +427,6 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -446,9 +434,7 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
 
 test("Grok MCP projection seals only after closeRound typed boundary; terminal candidate alone does not accept", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
@@ -526,7 +512,6 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -534,9 +519,7 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
 
 test("Grok accepted closeRound books navigator attendance onto parent session for extractNavigatorFact", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-nav-books-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ae";
@@ -608,7 +591,6 @@ test("Grok accepted closeRound books navigator attendance onto parent session fo
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
@@ -616,8 +598,6 @@ test("Grok accepted closeRound books navigator attendance onto parent session fo
 
 test("Grok prepare keeps existing durable session history on resume", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-session-"));
-  const priorHome = process.env.HOME;
-  process.env.HOME = root;
   try {
     const runDirectory = join(root, "runs", "resume-run");
     const sessionPath = join(runDirectory, "session", "session.jsonl");
@@ -697,16 +677,13 @@ test("Grok prepare keeps existing durable session history on resume", async () =
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("Grok delayed sibling after terminal candidate is not early-accepted at closeRound", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-sibling-"));
-  const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
-  process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
@@ -763,7 +740,6 @@ test("Grok delayed sibling after terminal candidate is not early-accepted at clo
       await prepared.dispose?.();
     }
   } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }

@@ -297,7 +297,10 @@ export async function openPiInstitutionalSession(
     const resolvedApiKey = authResult?.apiKey ?? resolution?.auth?.apiKey;
     const resolvedHeaders = authResult?.headers ?? resolution?.auth?.headers;
     const resolvedEnv = authResult?.env ?? resolution?.env;
-    const effectiveBaseUrl = resolution?.auth?.baseUrl ?? modelToUse.baseUrl;
+    const effectiveBaseUrl = resolution?.auth?.baseUrl
+      ?? foundModel?.baseUrl
+      ?? (childProvider as any)?.baseUrl
+      ?? modelToUse.baseUrl;
 
     const effectiveModel: Model<Api> = {
       ...modelToUse,
@@ -390,6 +393,8 @@ export async function openPiInstitutionalSession(
             };
             const retriedRequest: ProviderStreamOptions = {
               ...(request ?? {}),
+              ...(resolvedApiKey === undefined ? {} : { apiKey: resolvedApiKey }),
+              ...(resolvedHeaders === undefined ? {} : { headers: resolvedHeaders }),
               ...(resolvedEnv === undefined ? {} : { env: resolvedEnv }),
               signal: streamSignal,
               maxRetries: 0,

@@ -247,9 +247,7 @@ export async function readOrComputeAnalystIssuePage(
    */
   options?: { readonly scanProjectRoot?: string; readonly home?: string },
 ): Promise<AnalystIssueModeResult> {
-  const ledgerHome = resolveActivationLedgerHome(
-    options?.home === undefined ? undefined : () => options.home,
-  );
+  const ledgerHome = resolveActivationLedgerHome(options?.home);
   const projectRoot = physicalPathIdentity(input.projectRoot);
   const bookKey = resolveIssueBookKey(input);
   const issueNumber = input.ticketNumber ?? input.issueNumber;
@@ -304,9 +302,7 @@ async function runAnalystIssueMode(
 ): Promise<AnalystIssueModeResult> {
   // Programmatic issue/sweep entry boundary — same finite non-negative rule as attach schema.
   assertAnalystChangedLinesInput(input.changedLines);
-  const ledgerHome = resolveActivationLedgerHome(
-    home === undefined ? undefined : () => home,
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
   const projectRoot = input.projectRoot;
   // Sweep entries carry projectRoot only; issue mode may add ticketNumber (C4).
   const ticketNumber =
@@ -375,9 +371,7 @@ async function runAnalystSweepMode(
   input: AnalystSweepModeInput,
   home?: string,
 ): Promise<AnalystSweepModeResult> {
-  const ledgerHome = resolveActivationLedgerHome(
-    home === undefined ? undefined : () => home,
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
 
   const issuePages: AnalystIssueModeResult[] = [];
   for (const entry of input.mergedPullRequests) {
@@ -394,9 +388,7 @@ async function runAnalystModelGroupsMode(
   input: AnalystModelGroupsModeInput,
   home?: string,
 ): Promise<AnalystModelGroupsModeResult> {
-  const ledgerHome = resolveActivationLedgerHome(
-    home === undefined ? undefined : () => home,
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
 
   const runs: AnalystReadableRunFacts[] = [];
   const unreadable: AnalystUnreadableRun[] = [];
@@ -492,9 +484,7 @@ export async function runAnalyst(
     return runAnalystSweepMode(input, options?.home);
   }
   if (input.mode === "cohort") {
-    const ledgerHome = resolveActivationLedgerHome(
-      options?.home === undefined ? undefined : () => options.home,
-    );
+    const ledgerHome = resolveActivationLedgerHome(options?.home);
     return runAnalystCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
       // Real ledger book keys drive book scope. Only `root:` + an absolute path
       // is a synthetic sweep/legacy address key; a real book basename may be

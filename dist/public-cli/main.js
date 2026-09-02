@@ -109,16 +109,12 @@ function packageMachineHome() {
   return resolve2(userInfo().homedir);
 }
 function tryHomeFromAkRolesPath(path) {
-  const marker = `${sep}.ak-roles${sep}`;
-  const idx = path.indexOf(marker);
-  if (idx !== -1) {
-    return path.slice(0, idx);
+  const match = /(^|[\\/])\.ak-roles(?=[\\/]|$)/.exec(path);
+  if (!match) return void 0;
+  if (match.index === 0) {
+    return match[1] === "" ? "" : match[1];
   }
-  const altMarker = ".ak-roles";
-  const altIdx = path.indexOf(altMarker);
-  if (altIdx === -1) return void 0;
-  const candidate = path.slice(0, altIdx);
-  return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  return path.slice(0, match.index);
 }
 function homeFromRunDirectory(runDirectory) {
   const home = tryHomeFromAkRolesPath(runDirectory);
@@ -130,7 +126,7 @@ function homeFromRunDirectory(runDirectory) {
   return home;
 }
 function resolveActivationLedgerHome(home) {
-  const processHome = typeof home === "string" ? home : home?.() ?? packageMachineHome();
+  const processHome = typeof home === "string" ? home : packageMachineHome();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute2(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
@@ -367,9 +363,7 @@ function encode(coordinates) {
   return coordinates;
 }
 function issuePiDurablePrincipalCoordinates(request) {
-  const ledgerHome = resolveActivationLedgerHome(
-    request.home === void 0 ? void 0 : () => request.home
-  );
+  const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
   const runDirectory = join3(
     activationBookDirectory(ledgerHome, bookKey),
@@ -17149,7 +17143,7 @@ async function acquireRunWriterLease(runDirectory, onCleanupFailure) {
 }
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
-  const ledgerHome = resolveActivationLedgerHome(() => home);
+  const ledgerHome = resolveActivationLedgerHome(home);
   const booksRoot = join11(ledgerHome, "books");
   let bookKeys;
   try {
@@ -17621,9 +17615,7 @@ async function resolveNotarySourceRunLocator(options) {
   if (raw === "") {
     throw new NotarySourceRunError("notary --source-run requires a run locator");
   }
-  const ledgerHome = resolveActivationLedgerHome(
-    options.home === void 0 ? void 0 : () => options.home
-  );
+  const ledgerHome = resolveActivationLedgerHome(options.home);
   const bookKey = resolveBookKeyFromGit(options.projectRoot);
   const bookRunsRoot = join12(activationBookDirectory(ledgerHome, bookKey), "runs");
   let candidate;
@@ -18704,9 +18696,7 @@ function issueAdmissionPlacement(authority, request) {
   const principal = authority.issue(request);
   const { sessionDirectory, sessionFile } = authority.decode(principal);
   const runDirectory = join14(sessionDirectory, "..");
-  const ledgerHome = resolveActivationLedgerHome(
-    request.home === void 0 ? void 0 : () => request.home
-  );
+  const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
   return {
     principal,
@@ -19795,7 +19785,7 @@ function parseDoctorArgv(args) {
   };
 }
 async function resolveDoctorCaseRunsPath(options) {
-  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const ledgerHome = resolveActivationLedgerHome(options.home);
   const defaultRuns = join14(
     activationBookDirectory(ledgerHome, options.bookKey),
     "issues",
@@ -21547,9 +21537,7 @@ function isAuditEscalationTerminalProjection(value) {
   return candidate.kind === "audit_escalation" && typeof candidate.role === "string" && candidate.status === "audit_escalation" && typeof candidate.decisiveFacts === "object" && candidate.decisiveFacts !== null;
 }
 function submissionRecordFile(cwd, runId, home) {
-  const ledgerHome = resolveActivationLedgerHome(
-    home === void 0 ? void 0 : () => home
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
   return resolveSitianRecordPathInLedger({
     level: "event",
     kind: "candidate",
@@ -29517,9 +29505,7 @@ async function classifyScopedRun(input) {
   };
 }
 async function scanAnalystIssueRuns(input) {
-  const ledgerHome = resolveActivationLedgerHome(
-    input.home === void 0 ? void 0 : () => input.home
-  );
+  const ledgerHome = resolveActivationLedgerHome(input.home);
   const scopeTicketNumber = input.ticketNumber;
   const booksRoot = join30(ledgerHome, "books");
   let wholeBook = false;
@@ -30584,9 +30570,7 @@ function resolveIssueBookKey(input) {
   return resolveAnalystBookKey(input.projectRoot);
 }
 async function readOrComputeAnalystIssuePage(input, options) {
-  const ledgerHome = resolveActivationLedgerHome(
-    options?.home === void 0 ? void 0 : () => options.home
-  );
+  const ledgerHome = resolveActivationLedgerHome(options?.home);
   const projectRoot = physicalPathIdentity(input.projectRoot);
   const bookKey = resolveIssueBookKey(input);
   const issueNumber = input.ticketNumber ?? input.issueNumber;
@@ -30626,9 +30610,7 @@ async function readOrComputeAnalystIssuePage(input, options) {
 }
 async function runAnalystIssueMode(input, precomputedScan, scanProjectRoot, home) {
   assertAnalystChangedLinesInput(input.changedLines);
-  const ledgerHome = resolveActivationLedgerHome(
-    home === void 0 ? void 0 : () => home
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
   const projectRoot = input.projectRoot;
   const ticketNumber = "ticketNumber" in input ? input.ticketNumber : void 0;
   const inputBookKey = "bookKey" in input && typeof input.bookKey === "string" && input.bookKey.trim() !== "" ? input.bookKey : void 0;
@@ -30663,9 +30645,7 @@ async function runAnalystIssueMode(input, precomputedScan, scanProjectRoot, home
   return { mode: "issue", page, pagePath };
 }
 async function runAnalystSweepMode(input, home) {
-  const ledgerHome = resolveActivationLedgerHome(
-    home === void 0 ? void 0 : () => home
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
   const issuePages = [];
   for (const entry of input.mergedPullRequests) {
     issuePages.push(await runAnalystIssueMode(entry, void 0, void 0, home));
@@ -30675,9 +30655,7 @@ async function runAnalystSweepMode(input, home) {
   return { mode: "sweep", issuePages, index, indexPath };
 }
 async function runAnalystModelGroupsMode(input, home) {
-  const ledgerHome = resolveActivationLedgerHome(
-    home === void 0 ? void 0 : () => home
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
   const runs = [];
   const unreadable = [];
   const seen = /* @__PURE__ */ new Set();
@@ -30725,9 +30703,7 @@ async function runAnalyst(input, options) {
     return runAnalystSweepMode(input, options?.home);
   }
   if (input.mode === "cohort") {
-    const ledgerHome = resolveActivationLedgerHome(
-      options?.home === void 0 ? void 0 : () => options.home
-    );
+    const ledgerHome = resolveActivationLedgerHome(options?.home);
     return runAnalystCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
       const realBookKey = bookKey !== void 0 && !isSyntheticAnalystBookKey(bookKey) ? bookKey : void 0;
       const ensured = await readOrComputeAnalystIssuePage({
@@ -30880,9 +30856,7 @@ async function buildAnalystSweepModeInputFromAttachmentPaths(attachmentPaths) {
 async function runPublicAnalyst(argv, _env, io, parseAnalystArgv2) {
   try {
     const parsed = parseAnalystArgv2(argv);
-    const ledgerHome = resolveActivationLedgerHome(
-      _env.home === void 0 ? void 0 : () => _env.home
-    );
+    const ledgerHome = resolveActivationLedgerHome(_env.home);
     if (parsed.query === "sweep") {
       const input2 = await buildAnalystSweepModeInputFromAttachmentPaths(
         parsed.attachmentPaths

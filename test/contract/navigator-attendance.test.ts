@@ -422,7 +422,9 @@ test("model settings are exact and typed settlement projection ignores prose and
   // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
 
-function hostContextFor(root: string, sessionFile = join(root, "session", "session.jsonl")) {
+function hostContextFor(root: string, sessionFile?: string) {
+  const bookKey = basename(root);
+  const file = sessionFile ?? join(root, ".ak-roles", "books", bookKey, "runs", "nav", "session", "session.jsonl");
   return {
     cwd: root,
     mode: "print" as const,
@@ -431,8 +433,8 @@ function hostContextFor(root: string, sessionFile = join(root, "session", "sessi
       getLeafEntry: () => undefined,
       getLeafId: () => null,
       getEntries: () => [],
-      getSessionDir: () => dirname(sessionFile),
-      getSessionFile: () => sessionFile,
+      getSessionDir: () => dirname(file),
+      getSessionFile: () => file,
     },
     abort() {},
   };
@@ -562,7 +564,8 @@ test("host-neutral native factory prefers institutional-resolution navigator sea
   const root = await mkdtemp(join(tmpdir(), "navigator-institutional-seat-"));
   try {
     seedGitRepository(root);
-    const runDirectory = join(root, "run");
+    const bookKey = basename(root);
+    const runDirectory = join(root, ".ak-roles", "books", bookKey, "runs", "page-seat");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const faux = fauxProvider({ provider: "nav-page-seat", api: "openai-completions" });
     const model = faux.getModel();

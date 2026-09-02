@@ -228,14 +228,10 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "analyst-gate-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 }

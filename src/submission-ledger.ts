@@ -89,9 +89,7 @@ export type AuditEscalationSubmissionProjection = Extract<TerminalRoleOutcome, {
 export type ClosedSubmissionProjection = SealedSubmissionProjection | AuditEscalationSubmissionProjection;
 
 function submissionRecordFile(cwd: string, runId: string, home?: string): string {
-  const ledgerHome = resolveActivationLedgerHome(
-    home === undefined ? undefined : () => home,
-  );
+  const ledgerHome = resolveActivationLedgerHome(home);
   return resolveSitianRecordPathInLedger({
     level: "event",
     kind: "candidate",

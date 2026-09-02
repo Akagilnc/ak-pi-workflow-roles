@@ -185,8 +185,6 @@ async function withBookScopeWorld<T>(
 ): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "analyst-399-home-"));
   const mainRoot = await mkdtemp(join(tmpdir(), "analyst-399-main-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   let worktreeRoot = "";
   let worktree2Root = "";
   try {
@@ -252,8 +250,6 @@ async function withBookScopeWorld<T>(
 
     return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
     await rm(mainRoot, { recursive: true, force: true });
     if (worktreeRoot) await rm(worktreeRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -377,8 +373,6 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
 test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-399-nongit-home-"));
   const nonGit = await mkdtemp(join(tmpdir(), "analyst-399-nongit-cwd-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   const previousCwd = process.cwd();
   try {
     await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
@@ -392,8 +386,6 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
     assert.equal(after, before);
   } finally {
     process.chdir(previousCwd);
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
     await rm(nonGit, { recursive: true, force: true });
   }
@@ -404,8 +396,6 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
   const home = await mkdtemp(join(tmpdir(), "analyst-399-d5-home-"));
   const repoA = await mkdtemp(join(tmpdir(), "analyst-399-d5-a-"));
   const repoB = await mkdtemp(join(tmpdir(), "analyst-399-d5-b-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   const previousCwd = process.cwd();
   try {
     for (const repo of [repoA, repoB]) {
@@ -469,8 +459,6 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
     );
   } finally {
     process.chdir(previousCwd);
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
     await rm(repoA, { recursive: true, force: true });
     await rm(repoB, { recursive: true, force: true });

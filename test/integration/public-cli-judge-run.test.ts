@@ -262,24 +262,16 @@ test(
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as any);
-      const previousHome = process.env.HOME;
-      process.env.HOME = home;
-      let retained: Array<{ content?: any[] }>;
-      try {
-        const recordFile = resolveSitianRecordPath({
-          level: "event",
-          kind: "auditor",
-          cwd: project,
-          sessionParent: sessionFile,
-        }).recordFile;
-        retained = (await readSitianRecords(recordFile)).records.flatMap((record) => {
-          const payload = record.payload as { response?: { content?: any[] } } | undefined;
-          return payload?.response === undefined ? [] : [payload.response];
-        });
-      } finally {
-        if (previousHome === undefined) delete process.env.HOME;
-        else process.env.HOME = previousHome;
-      }
+      const recordFile = resolveSitianRecordPath({
+        level: "event",
+        kind: "auditor",
+        cwd: project,
+        sessionParent: sessionFile,
+      }).recordFile;
+      const retained = (await readSitianRecords(recordFile)).records.flatMap((record) => {
+        const payload = record.payload as { response?: { content?: any[] } } | undefined;
+        return payload?.response === undefined ? [] : [payload.response];
+      });
       assert.ok(retained.length >= 1, "retained auditor response must still land");
       const retainedResponse = retained[0];
       assert.ok(retainedResponse);

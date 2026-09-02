@@ -82,9 +82,7 @@ test("401-F1: raw-existing legacy rows upsert without localeCompare crash", () =
 test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other book; wrong book absent", async () => {
   const home = await mkdtemp(join(tmpdir(), "analyst-412-entry-"));
   const repo = await mkdtemp(join(tmpdir(), "analyst-412-repo-"));
-  const previousHome = process.env.HOME;
   const previousCwd = process.cwd();
-  process.env.HOME = home;
   try {
     // Real Git repository cwd — book identity comes from the same true source
     // (git common-dir host directory) the issue/sweep path uses.
@@ -264,8 +262,6 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
     ]);
   } finally {
     process.chdir(previousCwd);
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
     await rm(repo, { recursive: true, force: true });
   }
