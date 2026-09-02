@@ -342,6 +342,8 @@ export async function prepareGrokRoleEnvelope(options: {
     const diagnostic = textDiagnostic(content)
       ?? (typeof record.code === "string" && record.code.length > 0 ? record.code : undefined)
       ?? "role infrastructure failure";
+    // Slot first, then abort: host-aborted closeRound must observe the filled fact
+    // even while tool_result projection is still in flight (#593 r3).
     infrastructureRoundFailure = {
       cause: "output",
       identity: {
@@ -354,6 +356,28 @@ export async function prepareGrokRoleEnvelope(options: {
       details: record,
     };
     hostAbort.abort();
+  }
+  /**
+   * One non-correctable infra pathway for execute throws and pre-execution emits:
+   * build fact → fill closeRound slot → arm hostAbort. Projection may follow.
+   */
+  function declareRoundInfrastructureFailure(error: unknown): {
+    content: ContentPart[];
+    details: Record<string, unknown>;
+  } {
+    const diagnostic = error instanceof Error ? error.message : String(error);
+    const content: ContentPart[] = [{ type: "text", text: diagnostic }];
+    const errorCode = typeof (error as unknown as { code?: unknown })?.code === "string"
+      ? (error as unknown as { code: string }).code
+      : "ak-tool-execution-failed";
+    const details: Record<string, unknown> = {
+      ...buildNavigatorInfrastructureFailureFact(),
+      ...extractInfrastructureFailureEvidence(error),
+      cause: "infrastructure",
+      code: errorCode,
+    };
+    rememberInfrastructureFailure(details, content);
+    return { content, details };
   }
   async function projectToolResult(
     toolCallId: string,
@@ -430,10 +454,40 @@ export async function prepareGrokRoleEnvelope(options: {
                 }],
               },
             });
-            await emit("tool_execution_start", { toolCallId, toolName: name });
-            const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} }))
-              .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
-            if (blocked) throw new Error(`AK tool blocked: ${name}`);
+            try {
+              await emit("tool_execution_start", { toolCallId, toolName: name });
+              const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} }))
+                .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
+              if (blocked) {
+                // Lawful seatbelt/block stays bare RPC rejection — not infrastructure (#593 r3).
+                reply(socket, rpc.id, undefined, new Error(`AK tool blocked: ${name}`));
+                return;
+              }
+            } catch (error) {
+              // Pre-execution emit failure (e.g. observation writer) shares the same
+              // non-correctable infra pathway as execute throws (#593 r3).
+              const declared = declareRoundInfrastructureFailure(error);
+              try {
+                const projected = await projectToolResult(toolCallId, name, {
+                  content: declared.content,
+                  details: declared.details,
+                  isError: true,
+                });
+                reply(socket, rpc.id, {
+                  content: projected.content,
+                  structuredContent: projected.details,
+                  isError: true,
+                });
+              } catch {
+                // Slot already filled; durable projection may have partially failed.
+                reply(socket, rpc.id, {
+                  content: declared.content,
+                  structuredContent: declared.details,
+                  isError: true,
+                });
+              }
+              return;
+            }
             try {
               const result = await tool.execute(toolCallId, (params?.arguments ?? {}) as never, undefined, undefined, context);
               const projected = await projectToolResult(toolCallId, name, {
@@ -446,10 +500,11 @@ export async function prepareGrokRoleEnvelope(options: {
               // in the same round instead of becoming silent post-seal anomalies.
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
-              const diagnostic = error instanceof Error ? error.message : String(error);
-              const content: ContentPart[] = [{ type: "text", text: diagnostic }];
+              let content: ContentPart[];
               let details: Record<string, unknown>;
               if (isCorrectableExecuteError(error)) {
+                const diagnostic = error instanceof Error ? error.message : String(error);
+                content = [{ type: "text", text: diagnostic }];
                 if (error instanceof GatekeeperDecisionError) {
                   details = { ...error.result };
                 } else if (
@@ -464,18 +519,8 @@ export async function prepareGrokRoleEnvelope(options: {
                   details = { code: error instanceof Error && error.name ? error.name : "correctable-submission-error" };
                 }
               } else {
-                const errorCode = typeof (error as unknown as { code?: unknown })?.code === "string"
-                  ? (error as unknown as { code: string }).code
-                  : "ak-tool-execution-failed";
-                details = {
-                  ...buildNavigatorInfrastructureFailureFact(),
-                  ...extractInfrastructureFailureEvidence(error),
-                  cause: "infrastructure",
-                  code: errorCode,
-                };
-                // Interrupt hanging session/prompt immediately. Durable failure record
-                // still lands via projectToolResult (pending infra details win when set).
-                hostAbort.abort();
+                // Slot-before-abort; projectToolResult may still project durable details.
+                ({ content, details } = declareRoundInfrastructureFailure(error));
               }
               // The shared envelope's tool_result handler is the sole classifier:
               // it projects either the structured submission non-pass (correctable
