@@ -15,11 +15,10 @@ Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global 
 
 ### Test channel (`next`)
 
-Family / dogfood installs use the same package under dist-tag `next`, on a dedicated `HOME` so the test surface never shares AK config, ledger, book, or `PI_CODING_AGENT_DIR` with the host install. Do not mount or copy host credentials into the test home; do not use a book/worktree as a stand-in for install isolation. No second global npm.
+Family / dogfood installs use the same package under dist-tag `next`. Pi installation surface is isolated via `PI_CODING_AGENT_DIR` (package config, ledger, and books remain machine-scoped under user home, never following `HOME`). Do not mount or copy host credentials into the test surface; do not use a book/worktree as a stand-in for install isolation. No second global npm.
 
 ```bash
-export HOME=/path/to/test-home          # dedicated test HOME
-export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+export PI_CODING_AGENT_DIR="/path/to/test-surface/.pi/agent"
 export PATH="$PI_CODING_AGENT_DIR/npm/node_modules/.bin:$PATH"
 ```
 

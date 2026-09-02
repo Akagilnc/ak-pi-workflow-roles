@@ -245,9 +245,11 @@ export async function readOrComputeAnalystIssuePage(
    * root inside the already-selected book — a miss must never widen to a
    * whole-book scan for one index row. Not a public CLI face.
    */
-  options?: { readonly scanProjectRoot?: string },
+  options?: { readonly scanProjectRoot?: string; readonly home?: string },
 ): Promise<AnalystIssueModeResult> {
-  const ledgerHome = resolveActivationLedgerHome();
+  const ledgerHome = resolveActivationLedgerHome(
+    options?.home === undefined ? undefined : () => options.home,
+  );
   const projectRoot = physicalPathIdentity(input.projectRoot);
   const bookKey = resolveIssueBookKey(input);
   const issueNumber = input.ticketNumber ?? input.issueNumber;
@@ -280,7 +282,7 @@ export async function readOrComputeAnalystIssuePage(
   }
 
   try {
-    return await runAnalystIssueMode(input, undefined, options?.scanProjectRoot);
+    return await runAnalystIssueMode(input, undefined, options?.scanProjectRoot, options?.home);
   } catch (error) {
     if (error instanceof AnalystIssueComputeError) throw error;
     throw new AnalystIssueComputeError({
@@ -298,10 +300,13 @@ async function runAnalystIssueMode(
   precomputedScan?: AnalystScopedRunScan,
   /** Cohort ensure conjunction (#412): scan this root inside the selected book. */
   scanProjectRoot?: string,
+  home?: string,
 ): Promise<AnalystIssueModeResult> {
   // Programmatic issue/sweep entry boundary — same finite non-negative rule as attach schema.
   assertAnalystChangedLinesInput(input.changedLines);
-  const ledgerHome = resolveActivationLedgerHome();
+  const ledgerHome = resolveActivationLedgerHome(
+    home === undefined ? undefined : () => home,
+  );
   const projectRoot = input.projectRoot;
   // Sweep entries carry projectRoot only; issue mode may add ticketNumber (C4).
   const ticketNumber =
@@ -317,10 +322,11 @@ async function runAnalystIssueMode(
           bookKey: inputBookKey,
           ...(scanProjectRoot === undefined ? {} : { projectRoot: scanProjectRoot }),
           ...(ticketNumber === undefined ? {} : { ticketNumber }),
+          ...(home === undefined ? {} : { home }),
         })
       : ticketNumber === undefined
-      ? await scanAnalystIssueRuns({ projectRoot })
-      : await scanAnalystIssueRuns({ projectRoot, ticketNumber }));
+      ? await scanAnalystIssueRuns({ projectRoot, ...(home === undefined ? {} : { home }) })
+      : await scanAnalystIssueRuns({ projectRoot, ticketNumber, ...(home === undefined ? {} : { home }) }));
 
   // exactOptionalPropertyTypes: only pass optional faces when caller supplied them.
   const issueNumber =
@@ -367,12 +373,15 @@ async function runAnalystIssueMode(
 
 async function runAnalystSweepMode(
   input: AnalystSweepModeInput,
+  home?: string,
 ): Promise<AnalystSweepModeResult> {
-  const ledgerHome = resolveActivationLedgerHome();
+  const ledgerHome = resolveActivationLedgerHome(
+    home === undefined ? undefined : () => home,
+  );
 
   const issuePages: AnalystIssueModeResult[] = [];
   for (const entry of input.mergedPullRequests) {
-    issuePages.push(await runAnalystIssueMode(entry));
+    issuePages.push(await runAnalystIssueMode(entry, undefined, undefined, home));
   }
 
   const upserts = issuePages.map((result) => rowFromIssueMetricsPage(result.page));
@@ -383,8 +392,11 @@ async function runAnalystSweepMode(
 
 async function runAnalystModelGroupsMode(
   input: AnalystModelGroupsModeInput,
+  home?: string,
 ): Promise<AnalystModelGroupsModeResult> {
-  const ledgerHome = resolveActivationLedgerHome();
+  const ledgerHome = resolveActivationLedgerHome(
+    home === undefined ? undefined : () => home,
+  );
 
   const runs: AnalystReadableRunFacts[] = [];
   const unreadable: AnalystUnreadableRun[] = [];
@@ -401,7 +413,7 @@ async function runAnalystModelGroupsMode(
   // One ledger scan per root — shared by #338 ensure-page and model-group aggregate.
   // No second scan pass; sole issue kernel + existing writer when page is missing.
   for (const projectRoot of projectRoots) {
-    const scan = await scanAnalystIssueRuns({ projectRoot });
+    const scan = await scanAnalystIssueRuns({ projectRoot, ...(home === undefined ? {} : { home }) });
     runs.push(...scan.runs);
     unreadable.push(...scan.unreadable);
 
@@ -419,7 +431,7 @@ async function runAnalystModelGroupsMode(
       }
       try {
         // Reuse this root's scan facts — no second ledger walk on compute-if-missing.
-        await runAnalystIssueMode({ mode: "issue", projectRoot }, scan);
+        await runAnalystIssueMode({ mode: "issue", projectRoot }, scan, undefined, home);
       } catch (computeError) {
         if (computeError instanceof AnalystIssueComputeError) throw computeError;
         throw new AnalystIssueComputeError({ bookKey, projectRoot, cause: computeError });
@@ -449,22 +461,40 @@ async function runAnalystModelGroupsMode(
  * - Model-groups mode: issue-set scope → one scan/root (ensure page #338 + aggregate).
  * Metric-family kernels (B/C waves) drop a module under analyst-metric-families/
  * and consume scan facts without opening a second entry or second parse kernel.
- * Machine home is package-owned (ADR 0048) — never an invocation field.
+ * Machine home is package-owned (ADR 0048) — caller may pass explicit home option for isolation.
  * Retrieval compute-if-missing is readOrComputeAnalystIssuePage (not a second kernel).
  */
-export async function runAnalyst(input: AnalystIssueModeInput): Promise<AnalystIssueModeResult>;
-export async function runAnalyst(input: AnalystSweepModeInput): Promise<AnalystSweepModeResult>;
-export async function runAnalyst(input: AnalystCohortModeInput): Promise<AnalystCohortModeResult>;
+export async function runAnalyst(
+  input: AnalystIssueModeInput,
+  options?: { readonly home?: string },
+): Promise<AnalystIssueModeResult>;
+export async function runAnalyst(
+  input: AnalystSweepModeInput,
+  options?: { readonly home?: string },
+): Promise<AnalystSweepModeResult>;
+export async function runAnalyst(
+  input: AnalystCohortModeInput,
+  options?: { readonly home?: string },
+): Promise<AnalystCohortModeResult>;
 export async function runAnalyst(
   input: AnalystModelGroupsModeInput,
+  options?: { readonly home?: string },
 ): Promise<AnalystModelGroupsModeResult>;
-export async function runAnalyst(input: AnalystInput): Promise<AnalystResult>;
-export async function runAnalyst(input: AnalystInput): Promise<AnalystResult> {
+export async function runAnalyst(
+  input: AnalystInput,
+  options?: { readonly home?: string },
+): Promise<AnalystResult>;
+export async function runAnalyst(
+  input: AnalystInput,
+  options?: { readonly home?: string },
+): Promise<AnalystResult> {
   if (input.mode === "sweep") {
-    return runAnalystSweepMode(input);
+    return runAnalystSweepMode(input, options?.home);
   }
   if (input.mode === "cohort") {
-    const ledgerHome = resolveActivationLedgerHome();
+    const ledgerHome = resolveActivationLedgerHome(
+      options?.home === undefined ? undefined : () => options.home,
+    );
     return runAnalystCohortMode(ledgerHome, input, async ({ projectRoot, issueNumber, bookKey }) => {
       // Real ledger book keys drive book scope. Only `root:` + an absolute path
       // is a synthetic sweep/legacy address key; a real book basename may be
@@ -485,12 +515,12 @@ export async function runAnalyst(input: AnalystInput): Promise<AnalystResult> {
         issueNumber,
         ticketNumber: issueNumber,
         ...(realBookKey === undefined ? {} : { bookKey: realBookKey }),
-      }, { scanProjectRoot: projectRoot });
+      }, { scanProjectRoot: projectRoot, ...(options?.home === undefined ? {} : { home: options.home }) });
       return ensured.page;
     });
   }
   if (input.mode === "model-groups") {
-    return runAnalystModelGroupsMode(input);
+    return runAnalystModelGroupsMode(input, options?.home);
   }
-  return runAnalystIssueMode(input);
+  return runAnalystIssueMode(input, undefined, undefined, options?.home);
 }

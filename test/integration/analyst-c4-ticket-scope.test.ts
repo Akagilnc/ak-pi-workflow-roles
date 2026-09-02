@@ -106,14 +106,14 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
 
 test("analyst C4 ticket path: typed ticketNumber alone admits; no path fallback", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       const result = await runAnalyst({
         mode: "issue",
         bookKey: "fixture-book-c4",
         projectRoot: ISSUE_PRIMARY,
         ticketNumber: SCOPE_TICKET,
         issueNumber: SCOPE_TICKET,
-      });
+      }, { home });
 
       assert.equal(result.mode, "issue");
       assert.equal(result.page.bookKey, "fixture-book-c4");
@@ -138,11 +138,11 @@ test("analyst C4 ticket path: typed ticketNumber alone admits; no path fallback"
 
 test("analyst C4 no-ticketNumber path: sweep/legacy projectRoot path-narrow", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       const result = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_FALLBACK,
-      });
+      }, { home });
 
       assert.equal(result.mode, "issue");
 

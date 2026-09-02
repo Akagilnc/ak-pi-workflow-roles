@@ -15,11 +15,10 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 
 ### 测试通道（`next`）
 
-家族／dogfood 安装面复用同一包，经 dist-tag `next` 取得；测试面自有 `HOME`，其下的 AK config／ledger／book 与 `PI_CODING_AGENT_DIR` 一并独立，不与宿主已装包共享。测试面不挂载、不复制宿主凭据；不以 book／worktree 冒充安装隔离。不装第二份全局 npm。
+家族／dogfood 安装面复用同一包，经 dist-tag `next` 取得；Pi 安装面经 `PI_CODING_AGENT_DIR` 隔离（包配置、账本与 book 仍属于机器用户家目录，不随 `HOME` 漂移），不与宿主已装包共享。测试面不挂载、不复制宿主凭据；不以 book／worktree 冒充安装隔离。不装第二份全局 npm。
 
 ```bash
-export HOME=/path/to/test-home          # 测试面自有 HOME
-export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+export PI_CODING_AGENT_DIR="/path/to/test-surface/.pi/agent"
 export PATH="$PI_CODING_AGENT_DIR/npm/node_modules/.bin:$PATH"
 ```
 

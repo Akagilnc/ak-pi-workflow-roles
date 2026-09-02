@@ -28,6 +28,7 @@ import {
   admitCountersignInvocation,
   bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
+  homeFromRunDirectory,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
@@ -204,10 +205,18 @@ export async function runCountersignDiaristStation(
   if (admitted.ticketNumber === undefined) return undefined;
 
   const issueFace = await loadBoundIssueFace(admitted);
+  // Package home from the admitted run directory — never process.env.HOME (#604).
+  let home: string | undefined;
+  try {
+    home = homeFromRunDirectory(admitted.runDirectory);
+  } catch {
+    home = undefined;
+  }
 
   const result = await runDiarist({
     ticketNumber: admitted.ticketNumber,
     cwd: admitted.projectRoot,
+    ...(home === undefined ? {} : { home }),
     issueFace,
     sessionCwds: [admitted.projectRoot, env.cwd],
     ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
@@ -224,9 +233,16 @@ function persistIssueSourceFailure(
   ticketNumber: number,
   error: DiaristIssueSourceError,
 ): never {
+  let home: string | undefined;
+  try {
+    home = homeFromRunDirectory(admitted.runDirectory);
+  } catch {
+    home = undefined;
+  }
   appendIssueSourceFailureDiagnostic({
     ticketNumber,
     cwd: admitted.projectRoot,
+    ...(home === undefined ? {} : { home }),
     cause: error.message,
     reason: error.reason,
   });

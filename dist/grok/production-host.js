@@ -101,10 +101,27 @@ import {
   realpathSync,
   statSync
 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
+import { userInfo } from "node:os";
 import { basename as basename2, dirname as dirname5, isAbsolute as isAbsolute2, join as join3, relative, resolve as resolve4, sep } from "node:path";
-function resolveActivationLedgerHome(home = () => process.env.HOME ?? homedir2()) {
-  const processHome = home();
+function packageMachineHome() {
+  return resolve4(userInfo().homedir);
+}
+function homeFromRunDirectory(runDirectory) {
+  const marker = `${sep}.ak-roles${sep}`;
+  const idx = runDirectory.indexOf(marker);
+  if (idx !== -1) {
+    return runDirectory.slice(0, idx);
+  }
+  const altMarker = ".ak-roles";
+  const altIdx = runDirectory.indexOf(altMarker);
+  if (altIdx !== -1) {
+    const candidate = runDirectory.slice(0, altIdx);
+    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
+}
+function resolveActivationLedgerHome(home) {
+  const processHome = typeof home === "string" ? home : home?.() ?? packageMachineHome();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute2(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
@@ -421,7 +438,17 @@ function assertRecentFinalFileUnderSessionDir(sessionDir, recentFile) {
 function createRecordSession(options) {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  const ledgerHome = resolveActivationLedgerHome();
+  let ledgerHome;
+  if (typeof parentFile === "string" && parentFile.length > 0) {
+    try {
+      const derived = homeFromRunDirectory(parentFile);
+      ledgerHome = resolveActivationLedgerHome(() => derived);
+    } catch {
+      ledgerHome = resolveActivationLedgerHome();
+    }
+  } else {
+    ledgerHome = resolveActivationLedgerHome();
+  }
   let sessionDir;
   let parentSession;
   if (options.subject !== void 0) {
@@ -2968,7 +2995,20 @@ function resolveSitianRecordPathInLedger(input, ledgerHome) {
   return { sessionDir, recordFile, ledgerHome };
 }
 function resolveSitianRecordPath(input) {
-  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
+  let ledgerHome;
+  if (input.home !== void 0 && input.home.length > 0) {
+    ledgerHome = resolveActivationLedgerHome(() => input.home);
+  } else if (input.sessionParent !== void 0 && input.sessionParent.length > 0) {
+    try {
+      const home = homeFromRunDirectory(input.sessionParent);
+      ledgerHome = resolveActivationLedgerHome(() => home);
+    } catch {
+      ledgerHome = resolveActivationLedgerHome();
+    }
+  } else {
+    ledgerHome = resolveActivationLedgerHome();
+  }
+  return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 function appendSitianRecord(input) {
   try {
@@ -3471,7 +3511,7 @@ async function readInstitutionalSeatSelection(runDirectory, seat) {
 
 // src/navigator-session-contracts.ts
 import { mkdir, readFile as readFile5, writeFile as writeFile3 } from "node:fs/promises";
-import { homedir as homedir3 } from "node:os";
+import { homedir as homedir2 } from "node:os";
 import { dirname as dirname7, join as join8 } from "node:path";
 import { Type as Type10 } from "typebox";
 import { Value as Value2 } from "typebox/value";
@@ -3587,7 +3627,7 @@ var navigatorProviderFailureSchema = Type10.Object({
   ])
 }, { additionalProperties: false });
 function navigatorModelSettingPath() {
-  return join8(process.env.PI_CODING_AGENT_DIR ?? join8(homedir3(), ".pi", "agent"), "navigator-model.json");
+  return join8(process.env.PI_CODING_AGENT_DIR ?? join8(homedir2(), ".pi", "agent"), "navigator-model.json");
 }
 async function readNavigatorModelSetting(path = navigatorModelSettingPath()) {
   try {
@@ -5203,7 +5243,15 @@ function workIdentityFromCwd(cwd) {
   return void 0;
 }
 function isMachineLedgerSessionPath(sessionPath) {
-  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
+  if (physicallyContainedIn(resolveActivationLedgerHome(), sessionPath)) {
+    return true;
+  }
+  try {
+    const home = homeFromRunDirectory(sessionPath);
+    return physicallyContainedIn(resolveActivationLedgerHome(() => home), sessionPath);
+  } catch {
+    return false;
+  }
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
@@ -8103,11 +8151,11 @@ async function readOwnedSubmissionRecords(cwd, runId, home) {
   const { records: records2 } = await readSitianRecords(file);
   return {
     file,
-    owned: records2.filter((record4) => typeof record4.subject === "object" && record4.subject?.runId === runId)
+    owned: records2.filter((record4) => typeof record4.subject === "object" && record4.subject !== null && record4.subject.runId === runId)
   };
 }
-async function restoreState(cwd, runId) {
-  const { file, owned } = await readOwnedSubmissionRecords(cwd, runId);
+async function restoreState(cwd, runId, home) {
+  const { file, owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   const last = owned.at(-1);
   return {
     ...last === void 0 ? {} : { prior: { identity: last.identity, recordFile: file, kind: last.kind, level: last.level } },
@@ -8120,16 +8168,38 @@ async function restoreState(cwd, runId) {
 }
 function createSubmissionLedgerHost(host, outputTools, failInfrastructure2 = (error) => {
   throw error;
-}, projectClosure = () => void 0) {
+}, projectClosure = () => void 0, options) {
   const states = /* @__PURE__ */ new Map();
   const rounds = /* @__PURE__ */ new Map();
+  const resolveHomeFromContext = (context) => {
+    if (options?.home !== void 0) return options.home;
+    const sessionFile = context.sessionManager.getSessionFile?.() || context.sessionManager.getSessionDir?.();
+    if (sessionFile) {
+      try {
+        return homeFromRunDirectory(sessionFile);
+      } catch {
+      }
+    }
+    return void 0;
+  };
   const stateFor = (context, runId) => states.get(runId) ?? (() => {
-    const pending = restoreState(context.cwd, runId);
+    const home = resolveHomeFromContext(context);
+    const pending = restoreState(context.cwd, runId, home);
     states.set(runId, pending);
     return pending;
   })();
   const appendFor = (state, context, runId, attemptId, event) => {
-    const pointer = sitianReport({ level: "event", kind: event.type, subject: { runId, attemptId }, ...state.prior === void 0 ? {} : { priorEventId: state.prior.identity }, payload: event, source: "role-runtime", cwd: context.cwd });
+    const home = resolveHomeFromContext(context);
+    const pointer = sitianReport({
+      level: "event",
+      kind: event.type,
+      subject: { runId, attemptId },
+      ...state.prior === void 0 ? {} : { priorEventId: state.prior.identity },
+      payload: event,
+      source: "role-runtime",
+      cwd: context.cwd,
+      ...home !== void 0 ? { home } : {}
+    });
     state.prior = pointer;
     return pointer;
   };
@@ -8309,6 +8379,9 @@ function namedActivationCause(error) {
     return { identity: "UnknownThrownCause", name: "UnknownThrownCause", message: String(error), evidenceId };
   }
 }
+
+// src/role-runtime.ts
+init_activation_ledger_topology();
 
 // src/activation-ledger.ts
 init_activation_ledger_topology();
@@ -12672,7 +12745,18 @@ function createRoleRuntimeExtension(dependencies) {
       try {
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
-        const ledgerHome = resolveActivationLedgerHome();
+        const sessionFile = ctx.sessionManager.getSessionFile?.() || ctx.sessionManager.getSessionDir?.();
+        let ledgerHome;
+        if (sessionFile) {
+          try {
+            const derivedHome = homeFromRunDirectory(sessionFile);
+            ledgerHome = resolveActivationLedgerHome(() => derivedHome);
+          } catch {
+            ledgerHome = resolveActivationLedgerHome();
+          }
+        } else {
+          ledgerHome = resolveActivationLedgerHome();
+        }
         const session = durableSessionPointer(ctx.sessionManager);
         if (dependencies.createNavigatorAttendance !== void 0) {
           let work;

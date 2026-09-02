@@ -4,9 +4,9 @@ import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
  * Public ak-role CLI dispatcher (roles / config / layered help / Judge run).
  */
 import { realpath } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { packageMachineHome } from "../activation-ledger-topology.ts";
 import {
   assertLegalEngineName,
 } from "../package-resources/engine-material.ts";
@@ -432,7 +432,7 @@ function defaultIo(): CliIo {
 }
 
 function resolveHome(env: CliEnv): string {
-  return env.home ?? process.env.HOME ?? homedir();
+  return env.home ?? packageMachineHome();
 }
 
 function resolveAgentDir(env: CliEnv, home: string): string {

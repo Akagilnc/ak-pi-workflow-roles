@@ -155,7 +155,7 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
       bookKey: "root:foo",
       projectRoot: repo,
       issueNumber: 7,
-    });
+    }, { home });
 
     const pagePath = analystIssuePagePath(ledgerHome, {
       bookKey: "root:foo",
@@ -173,7 +173,7 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
         { groupLabel: "real", issues: [{ bookKey: "root:foo", issueNumber: 7 }] },
         { groupLabel: "vacancy", issues: [{ bookKey: "no-such-book", issueNumber: 8 }] },
       ],
-    })) as AnalystCohortModeResult;
+    }, { home })) as AnalystCohortModeResult;
 
     // Present projection stays bound to the real book (index join face).
     assert.deepEqual(result.groups[0]!.issues, [

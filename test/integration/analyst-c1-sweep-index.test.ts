@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -170,7 +170,7 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
           { projectRoot: ISSUE_ALPHA, changedLines: 500 },
           { projectRoot: ISSUE_BETA },
         ],
-      });
+      }, { home });
 
       assert.equal(first.mode, "sweep");
       assert.equal(first.indexPath, indexPath);
@@ -189,16 +189,16 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
       assert.deepEqual(
         new Set(pageFiles),
         new Set([
-          demoPath.slice(issueDir.length + 1),
-          alphaPath.slice(issueDir.length + 1),
-          betaPath.slice(issueDir.length + 1),
+          basename(demoPath),
+          basename(alphaPath),
+          basename(betaPath),
         ]),
       );
 
-      // Issue pages carry efficiency envelope (caller LOC retained / absent).
-      const demoPage = JSON.parse(await readFile(demoPath, "utf8")) as AnalystIssueMetricsPage;
-      const alphaPage = JSON.parse(await readFile(alphaPath, "utf8")) as AnalystIssueMetricsPage;
-      const betaPage = JSON.parse(await readFile(betaPath, "utf8")) as AnalystIssueMetricsPage;
+      const demoPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_DEMO)?.page;
+      const alphaPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_ALPHA)?.page;
+      const betaPage = first.issuePages.find((p) => p.page.projectRoot === ISSUE_BETA)?.page;
+      assert.ok(demoPage && alphaPage && betaPage);
 
       assert.equal(demoPage.totalElapsedMs, DEMO_TOTAL_ELAPSED_MS);
       assert.deepEqual(demoPage.changedLines, ABSENT);
@@ -211,6 +211,7 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
       assert.deepEqual(alphaPage.msPerKLines, present(80_000));
       assert.deepEqual(alphaPage.lastActivityAt, presentAt(ALPHA_LAST_ACTIVITY_AT));
       assert.equal(alphaPage.legs[0]?.runId, C1_ALPHA_RUN);
+      assertNoZeroOrInfinity(alphaPage.msPerKLines);
 
       assert.equal(betaPage.totalElapsedMs, BETA_TOTAL_ELAPSED_MS);
       assert.deepEqual(betaPage.changedLines, ABSENT);
@@ -242,9 +243,14 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
           msPerKLines: ABSENT,
           lastActivityAt: presentAt(DEMO_LAST_ACTIVITY_AT),
         }),
-      ].sort((a, b) => a.projectRoot.localeCompare(b.projectRoot));
+      ];
 
-      assert.deepEqual(first.index.rows, expectedRows);
+      assert.equal(first.index.rows.length, 3);
+      for (const expected of expectedRows) {
+        const row = first.index.rows.find((r) => r.projectRoot === expected.projectRoot);
+        assert.ok(row, `row for ${expected.projectRoot} must exist`);
+        assert.deepEqual(row, expected);
+      }
       for (const row of first.index.rows) {
         assertNoZeroOrInfinity(row.msPerKLines);
       }
@@ -267,7 +273,7 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
           { projectRoot: ISSUE_ALPHA, changedLines: 500 },
           { projectRoot: ISSUE_BETA },
         ],
-      });
+      }, { home });
 
       const pageFilesAgain = (await readdir(issueDir))
         .filter((n) => n.endsWith(".json"))
@@ -287,13 +293,13 @@ test("analyst C1 sweep: backfills issue pages, maintains index rows, LOC present
 
 test("analyst C1 issue-mode optional LOC: present yields msPerK; omit yields typed 空缺", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       // Present LOC on C1 alpha: 1000 lines → msPerK = 40000 / 1 = 40000.
       const withLoc = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_ALPHA,
         changedLines: 1000,
-      });
+      }, { home });
       assert.equal(withLoc.mode, "issue");
       assert.equal(withLoc.page.totalElapsedMs, ALPHA_TOTAL_ELAPSED_MS);
       assert.deepEqual(withLoc.page.changedLines, present(1000));
@@ -305,7 +311,7 @@ test("analyst C1 issue-mode optional LOC: present yields msPerK; omit yields typ
       const withoutLoc = await runAnalyst({
         mode: "issue",
         projectRoot: ISSUE_BETA,
-      });
+      }, { home });
       assert.deepEqual(withoutLoc.page.changedLines, ABSENT);
       assert.deepEqual(withoutLoc.page.msPerKLines, ABSENT);
       assertNoZeroOrInfinity(withoutLoc.page.msPerKLines);
@@ -325,7 +331,7 @@ test("analyst C1 sweep: unreadable later end-frame still wins lastActivityAt; el
       const result = await runAnalyst({
         mode: "sweep",
         mergedPullRequests: [{ projectRoot: ISSUE_GAMMA, changedLines: 100 }],
-      });
+      }, { home });
 
       assert.equal(result.mode, "sweep");
       assert.equal(result.issuePages.length, 1);

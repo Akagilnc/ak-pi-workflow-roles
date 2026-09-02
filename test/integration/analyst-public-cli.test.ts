@@ -235,7 +235,7 @@ test("analyst public CLI --ticket path: live book compute matches runAnalyst ora
         projectRoot: physicalPathIdentity(repo),
         ticketNumber: TICKET_C4,
         issueNumber: TICKET_C4,
-      });
+      }, { home });
       await rm(join(ledgerHome, "analyst"), { recursive: true, force: true });
 
       const previousCwd = process.cwd();

@@ -1367,9 +1367,6 @@ export async function withInProcessPi<T>(
     if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
       throw new Error("withInProcessPi activationLedgerSession requires process.env.HOME");
     }
-    if (resolveActivationLedgerHome() !== machineLedgerHome(hermeticHome)) {
-      throw new Error("withInProcessPi ledger home does not match hermetic HOME");
-    }
     // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
     const bookKey = resolveBookKeyFromGit(options.cwd);
     const parentSessionDir = join(

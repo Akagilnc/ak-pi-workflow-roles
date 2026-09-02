@@ -258,7 +258,9 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
   assert.equal(subjectPath(ledgerSession, "/repo"), "/repo/.ak/work");
   assert.equal(subjectPath("", "/repo"), "/repo/.ak/work");
   assert.equal(subjectPath(ledgerSession, issue), issue);
-  assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak-roles/books/repo/issues/28");
+  // Any `.ak-roles/books/...` tree is ledger topology (ADR 0048 / #604), not work identity —
+  // even a mislocated tree under a repo root derives subject from cwd, never the ledger path.
+  assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak/work");
 
   const home = await mkdtemp(join(tmpdir(), "ak-nav-physical-"));
   const previousHome = process.env.HOME;

@@ -94,3 +94,28 @@ export function createReviewerAgentRunner(dependencies = {}) {
         shutdown: () => workspaceOwner.shutdown(),
     };
 }
+/**
+ * Host-level Reviewer binding: each accepted dispatch gets a fresh one-shot runner.
+ * Auto-resume turns must not reuse the inner one-shot slot.
+ */
+export function createPerDispatchReviewerAgent(dependencies = {}) {
+    const active = new Set();
+    return {
+        async run(dispatch, options) {
+            const runner = createReviewerAgentRunner(dependencies);
+            active.add(runner);
+            try {
+                return await runner.run(dispatch, options);
+            }
+            finally {
+                active.delete(runner);
+                await runner.shutdown();
+            }
+        },
+        async shutdown() {
+            const runners = [...active];
+            active.clear();
+            await Promise.all(runners.map((runner) => runner.shutdown()));
+        },
+    };
+}

@@ -4,7 +4,7 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /**
@@ -22,14 +22,35 @@ export class ActivationLedgerError extends Error {
   }
 }
 
+/** Real machine home via passwd/user profile — never process.env.HOME. */
+export function packageMachineHome(): string {
+  return resolve(userInfo().homedir);
+}
+
+/** Recover the machine home that owns a run directory under `.ak-roles/`. */
+export function homeFromRunDirectory(runDirectory: string): string {
+  const marker = `${sep}.ak-roles${sep}`;
+  const idx = runDirectory.indexOf(marker);
+  if (idx !== -1) {
+    return runDirectory.slice(0, idx);
+  }
+  const altMarker = ".ak-roles";
+  const altIdx = runDirectory.indexOf(altMarker);
+  if (altIdx !== -1) {
+    const candidate = runDirectory.slice(0, altIdx);
+    return candidate.endsWith("/") || candidate.endsWith("\\") ? candidate.slice(0, -1) : candidate;
+  }
+  throw new Error(`cannot resolve home from runDirectory: ${runDirectory}`);
+}
+
 /**
  * Sole package-owned machine home (ADR 0048 / #78): one enumerable family under
- * the process home directory. No env override — relative or invocation-varying
+ * the user passwd/profile home directory. No env override — relative or invocation-varying
  * homes would split the family and can write into a consumer repository.
- * Process home must already be absolute; relative HOME is rejected before any write.
+ * Process home must already be absolute; relative home is rejected before any write.
  */
-export function resolveActivationLedgerHome(home: () => string = () => process.env.HOME ?? homedir()): string {
-  const processHome = home();
+export function resolveActivationLedgerHome(home?: (() => string | undefined) | string): string {
+  const processHome = typeof home === "string" ? home : (home?.() ?? packageMachineHome());
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`,

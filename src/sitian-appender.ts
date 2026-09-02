@@ -12,6 +12,7 @@ import {
   activationBookDirectory,
   ensureRealDirectoryTree,
   errorText,
+  homeFromRunDirectory,
   physicallyContainedIn,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -94,7 +95,20 @@ export function resolveSitianRecordPathInLedger(
 
 /** Compute a write destination from ambient ledger topology (ADR 0065). */
 export function resolveSitianRecordPath(input: SitianRecordInput): SitianRecordPath {
-  return resolveSitianRecordPathInLedger(input, resolveActivationLedgerHome());
+  let ledgerHome: string;
+  if (input.home !== undefined && input.home.length > 0) {
+    ledgerHome = resolveActivationLedgerHome(() => input.home!);
+  } else if (input.sessionParent !== undefined && input.sessionParent.length > 0) {
+    try {
+      const home = homeFromRunDirectory(input.sessionParent);
+      ledgerHome = resolveActivationLedgerHome(() => home);
+    } catch {
+      ledgerHome = resolveActivationLedgerHome();
+    }
+  } else {
+    ledgerHome = resolveActivationLedgerHome();
+  }
+  return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 
 /**
