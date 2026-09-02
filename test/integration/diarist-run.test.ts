@@ -119,17 +119,18 @@ async function seedCcSession(
 }
 
 test("runDiarist always establishes volume + md (empty court)", async () => {
-  await withDiaristProject("ak-diarist-empty-vol-", async ({ project }) => {
+  await withDiaristProject("ak-diarist-empty-vol-", async ({ project, home }) => {
     const result = await runDiarist({
       ticketNumber: 1,
       cwd: project,
+          home,
       packageRoot,
     });
     assert.equal(result.collectorStatus, "skipped-no-fresh");
     assert.equal(result.appended, 0);
     await access(result.volumeRecordFile);
     await access(result.humanViewFile);
-    const read = await readTicketProvenance(1, project);
+    const read = await readTicketProvenance(1, project, home);
     assert.equal(read.entries.length, 0);
   });
 });
@@ -146,13 +147,14 @@ test("runDiarist: collector failure does not advance watermark; true cause appen
       const first = await runDiarist({
         ticketNumber: 9,
         cwd: project,
+          home,
         packageRoot,
       });
       assert.equal(first.collectorStatus, "failed");
       assert.ok(
         first.collectorError !== undefined && first.collectorError.length > 0,
       );
-      const diary = await readTicketProvenance(9, project);
+      const diary = await readTicketProvenance(9, project, home);
       assert.equal(diary.entries.length, 0);
       assert.equal(diary.diagnostics.length, 1);
       assert.equal(
@@ -168,20 +170,21 @@ test("runDiarist: collector failure does not advance watermark; true cause appen
       )?.payload as Record<string, unknown>;
       assert.equal(rawPayload.sourceKind, undefined);
       await access(first.humanViewFile);
-      assert.equal(readOfferedIdentities(9, project).size, 0);
+      assert.equal(readOfferedIdentities(9, project, home).size, 0);
 
       // Reinstall PATH hermes so the retry court crosses a real successful collector.
       await installHermesFixture(binDir, { selectAllCandidates: true });
       const second = await runDiarist({
         ticketNumber: 9,
         cwd: project,
+          home,
         packageRoot,
       });
       assert.equal(second.freshCount, 2);
       assert.equal(second.collectorStatus, "ok");
       assert.equal(second.appended, 2);
 
-      const afterOk = await readTicketProvenance(9, project);
+      const afterOk = await readTicketProvenance(9, project, home);
       assert.equal(afterOk.diagnostics.length, 1);
       assert.equal(afterOk.diagnostics[0]!.diagnosticKind, "collector-failed");
       assert.equal(afterOk.entries.length, 2);
@@ -208,12 +211,13 @@ test("runDiarist watermark: empty-selection advances; partial/second-court only 
       const first = await runDiarist({
         ticketNumber: 7,
         cwd: project,
+          home,
         packageRoot,
       });
       assert.equal(first.freshCount, 2);
       assert.equal(first.collectorStatus, "ok");
       assert.equal(first.appended, 1);
-      assert.equal(readOfferedIdentities(7, project).size, 2);
+      assert.equal(readOfferedIdentities(7, project, home).size, 2);
 
       // New block only offered; empty selection advances its watermark.
       await seedCcSession(home, project, [
@@ -227,17 +231,19 @@ test("runDiarist watermark: empty-selection advances; partial/second-court only 
       const second = await runDiarist({
         ticketNumber: 7,
         cwd: project,
+          home,
         packageRoot,
       });
       assert.equal(second.freshCount, 1);
       assert.equal(second.collectorStatus, "empty-selection");
       assert.equal(second.appended, 0);
-      assert.equal(readOfferedIdentities(7, project).size, 3);
+      assert.equal(readOfferedIdentities(7, project, home).size, 3);
 
       // Same set after empty-selection: no re-offer (watermark advanced).
       const third = await runDiarist({
         ticketNumber: 7,
         cwd: project,
+          home,
         packageRoot,
       });
       assert.equal(third.freshCount, 0);
@@ -282,11 +288,13 @@ for (const corruption of WATERMARK_CORRUPTIONS) {
         await runDiarist({
           ticketNumber: 10,
           cwd: project,
+          home,
           packageRoot,
         });
         const { offeredWatermarkFile } = resolveTicketProvenanceVolume(
           10,
           project,
+          home,
         );
         await corruption.prepare(offeredWatermarkFile);
         await seedCcSession(home, project, [
@@ -298,6 +306,7 @@ for (const corruption of WATERMARK_CORRUPTIONS) {
             runDiarist({
               ticketNumber: 10,
               cwd: project,
+          home,
               packageRoot,
             }),
           (error: unknown) =>
@@ -322,11 +331,12 @@ test("runDiarist: LLM receives blocks without ticket/keyword (no mechanical pros
       const result = await runDiarist({
         ticketNumber: 582,
         cwd: project,
+          home,
         packageRoot,
       });
       assert.equal(result.freshCount, 1);
       assert.equal(result.appended, 1);
-      const read = await readTicketProvenance(582, project);
+      const read = await readTicketProvenance(582, project, home);
       assert.equal(read.entries[0]!.transcript, anaphora);
     },
     { selectAllCandidates: true },
@@ -355,6 +365,7 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
       const first = await runDiarist({
         ticketNumber: 582,
         cwd: project,
+          home,
         packageRoot,
         issueFace: face,
       });
@@ -364,7 +375,7 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
       assert.equal(first.rejectedQuotes, 1);
       await access(first.humanViewFile);
 
-      const read1 = await readTicketProvenance(582, project);
+      const read1 = await readTicketProvenance(582, project, home);
       assert.equal(read1.entries.length, 1);
       assert.equal(read1.entries[0]!.basis.method, "llm-semantic");
       assert.equal(read1.entries[0]!.transcript, good);
@@ -382,20 +393,21 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
         cwd: project,
         entry: read1.entries[0]!,
       });
-      const afterIdem = await readTicketProvenance(582, project);
+      const afterIdem = await readTicketProvenance(582, project, home);
       assert.equal(afterIdem.records.length, beforeRecords);
       assert.equal(afterIdem.entries.length, 1);
 
       const second = await runDiarist({
         ticketNumber: 582,
         cwd: project,
+          home,
         packageRoot,
         issueFace: face,
       });
       assert.equal(second.freshCount, 0);
       assert.equal(second.collectorStatus, "skipped-no-fresh");
       assert.equal(second.appended, 0);
-      const read2 = await readTicketProvenance(582, project);
+      const read2 = await readTicketProvenance(582, project, home);
       assert.equal(read2.entries.length, 1);
     },
     {
@@ -446,6 +458,7 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
       const result = await runDiarist({
         ticketNumber: 99,
         cwd: project,
+          home,
         packageRoot,
         issueFace: face,
       });
@@ -453,7 +466,7 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
       assert.equal(result.collectorStatus, "ok");
       assert.ok(result.appended >= 4);
 
-      const volume = await readTicketProvenance(99, project);
+      const volume = await readTicketProvenance(99, project, home);
       const kindsSeen = new Set(volume.entries.map((e) => e.sourceKind));
       const refs = volume.entries.map((e) => e.sourceRef);
       assert.ok(kindsSeen.has("cc-session"));
@@ -617,10 +630,11 @@ test("runDiarist: mid-batch volume failure keeps partial commits; retry is idemp
       await runDiarist({
         ticketNumber: 11,
         cwd: project,
+          home,
         packageRoot,
       });
 
-      const volume = resolveTicketProvenanceVolume(11, project);
+      const volume = resolveTicketProvenanceVolume(11, project, home);
       // Drop offered watermark so uncommitted blocks are re-offered (simulates
       // crash after partial volume commits, before watermark).
       if (existsSync(volume.offeredWatermarkFile)) {
@@ -647,6 +661,7 @@ test("runDiarist: mid-batch volume failure keeps partial commits; retry is idemp
           runDiarist({
             ticketNumber: 11,
             cwd: project,
+          home,
             packageRoot,
           }),
         );
@@ -654,12 +669,12 @@ test("runDiarist: mid-batch volume failure keeps partial commits; retry is idemp
         chmodSync(volume.recordFile, 0o644);
       }
 
-      const partial = await readTicketProvenance(11, project);
+      const partial = await readTicketProvenance(11, project, home);
       assert.equal(partial.entries.length, 1);
       assert.equal(partial.entries[0]!.sourceRef.entryId, "u-a");
       assert.equal(partial.diagnostics.length, 1);
       assert.equal(partial.diagnostics[0]!.diagnosticKind, "quote-verify-failed");
-      assert.equal(readOfferedIdentities(11, project).size, 0);
+      assert.equal(readOfferedIdentities(11, project, home).size, 0);
 
       // Retry: A filtered by volume; B (quote residue) + C re-offered.
       await installHermesFixture(binDir, {
@@ -673,11 +688,12 @@ test("runDiarist: mid-batch volume failure keeps partial commits; retry is idemp
       const second = await runDiarist({
         ticketNumber: 11,
         cwd: project,
+          home,
         packageRoot,
       });
       assert.equal(second.freshCount, 2);
       assert.equal(second.collectorStatus, "ok");
-      const final = await readTicketProvenance(11, project);
+      const final = await readTicketProvenance(11, project, home);
       assert.equal(final.entries.length, 2);
       assert.deepEqual(
         final.entries.map((e) => e.sourceRef.entryId).sort(),
@@ -685,7 +701,7 @@ test("runDiarist: mid-batch volume failure keeps partial commits; retry is idemp
       );
       assert.equal(final.diagnostics.length, 1);
       assert.equal(final.diagnostics[0]!.diagnosticKind, "quote-verify-failed");
-      assert.equal(readOfferedIdentities(11, project).size, 2);
+      assert.equal(readOfferedIdentities(11, project, home).size, 2);
     },
   );
 });
