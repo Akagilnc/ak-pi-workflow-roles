@@ -1,14 +1,20 @@
 /**
- * Production composition for the grok-build RoleTurnHost adapter (#580 / #522).
+ * Production composition for the grok-build RoleTurnHost adapter (#580 / #522 / #594).
  * Owns injectables around the S6 true adapter; does not alter S6 adapter behavior.
  *
  * Isolation contract: subprocess GROK_HOME, Fixer seatbelt hang root, and auth
- * copy share one ephemeral directory outside the retained run ledger. The grok
+ * copy share one directory under the runDirectory ledger (grok-home). The grok
  * binary still resolves from the operator home. Callers pass that isolated home
  * into S6 as request.home (bash-seatbelt.ts: "callers must pass the isolated home").
+ * Auth is copied from the operator home into grok-home for the turn and scrubbed
+ * on settle together with AK seatbelt hook residue; the session dossier directly
+ * written under grok-home survives settlement (ADR 0048 / ADR 0077 / #594).
+ *
+ * Known residual risk: a hard process crash between auth copy and settle can leave
+ * auth.json in the retained run ledger for one crash window. The next open scrubs
+ * residual auth before recopying; single-crash-window residue is accepted.
  */
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,10 +35,13 @@ import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
 import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import { createComposedGrokRoleTurnHost } from "./role-envelope.ts";
 import {
+  assertControlledGrokAuthIsNotSymlink,
+  assertControlledGrokHomeIsRealDirectory,
   connectGrokAcpStdio,
   controlledGrokChildEnv,
   inspectControlledGrok,
   prepareControlledGrokHome,
+  scrubAkBashSeatbeltHooks,
   type GrokCapabilityDeclaration,
 } from "./role-turn-host.ts";
 import { createGrokSessionIdentityAuthority } from "./session-identity.ts";
@@ -71,10 +80,12 @@ export const NO_PRODUCTION_GROK_PRIMARY_FAILURE = {
 } as const satisfies ProductionGrokPrimaryFailure;
 
 /**
- * Sole cleanup settlement for production controlled homes (auth-bearing temp roots).
- * Cleanup failure is never silenced. When a primary failure is present and cleanup
- * also fails, both surface as AggregateError (including primary value `undefined`);
- * cleanup success rethrows the primary value as-is.
+ * Sole cleanup settlement for production controlled homes: scrub auth secrets
+ * (auth.json) and AK seatbelt hook residue while preserving the session dossier
+ * under the runDirectory ledger. Refuses symlink home/auth so rm never follows a
+ * redirect (#594 F1/F4). Cleanup failure is never silenced. When a primary failure
+ * is present and cleanup also fails, both surface as AggregateError (including
+ * primary value `undefined`); cleanup success rethrows the primary value as-is.
  */
 export async function settleProductionGrokHomeCleanup(
   controlledHome: string,
@@ -82,7 +93,11 @@ export async function settleProductionGrokHomeCleanup(
   concurrentMessage: string,
 ): Promise<void> {
   try {
-    await rm(controlledHome, { recursive: true, force: true });
+    await assertControlledGrokHomeIsRealDirectory(controlledHome);
+    const authPath = join(controlledHome, "auth.json");
+    await assertControlledGrokAuthIsNotSymlink(authPath);
+    await rm(authPath, { force: true });
+    await scrubAkBashSeatbeltHooks(controlledHome);
   } catch (cleanupFailure) {
     if (primaryFailure.present) {
       throw new AggregateError([primaryFailure.value, cleanupFailure], concurrentMessage, {
@@ -97,12 +112,15 @@ export async function settleProductionGrokHomeCleanup(
 }
 
 /**
- * Open the production isolation root: auth copy only, never under runDirectory.
- * If auth copy fails after the temp root is created, the root is removed; open
+ * Open the production isolation root under runDirectory: auth copy into grok-home.
+ * If auth copy fails after the root is created, auth secrets are scrubbed; open
  * failure and cleanup failure both surface (AggregateError when concurrent).
  */
-export async function openProductionGrokHome(operatorHome: string): Promise<string> {
-  const controlledHome = await mkdtemp(join(tmpdir(), "ak-grok-home-"));
+export async function openProductionGrokHome(
+  runDirectory: string,
+  operatorHome: string,
+): Promise<string> {
+  const controlledHome = join(runDirectory, "grok-home");
   try {
     await prepareControlledGrokHome(operatorHome, controlledHome);
     return controlledHome;
@@ -130,10 +148,11 @@ function childEnv(controlledHome: string, packageRoot: string): NodeJS.ProcessEn
  * (seatbelt hang root proven separately by S6 seatbelt tests).
  */
 export async function bindProductionGrokIsolation(
+  runDirectory: string,
   operatorHome: string,
   packageRoot: string,
 ): Promise<ProductionGrokIsolationBinding> {
-  const controlledHome = await openProductionGrokHome(operatorHome);
+  const controlledHome = await openProductionGrokHome(runDirectory, operatorHome);
   return {
     operatorHome,
     controlledHome,
@@ -143,11 +162,14 @@ export async function bindProductionGrokIsolation(
 }
 
 /**
- * Bind isolation, run the turn body, always attempt controlledHome cleanup via
- * settleProductionGrokHomeCleanup (no silent catch). Success, typed-result, and
- * throw paths all clean up; cleanup failure and primary+cleanup both surface.
+ * Bind isolation under runDirectory, run the turn body, always scrub auth.json
+ * and AK seatbelt hooks via settleProductionGrokHomeCleanup (no silent catch)
+ * while preserving the session dossier under runDirectory/grok-home. Success,
+ * typed-result, and throw paths all clean up; cleanup failure and primary+cleanup
+ * both surface.
  */
 export async function withProductionGrokIsolation<T>(
+  runDirectory: string,
   operatorHome: string,
   packageRoot: string,
   run: (binding: ProductionGrokIsolationBinding) => Promise<T>,
@@ -156,7 +178,7 @@ export async function withProductionGrokIsolation<T>(
   let primaryFailure: ProductionGrokPrimaryFailure = NO_PRODUCTION_GROK_PRIMARY_FAILURE;
   let value!: T;
   try {
-    binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
+    binding = await bindProductionGrokIsolation(runDirectory, operatorHome, packageRoot);
     value = await run(binding);
   } catch (error) {
     primaryFailure = { present: true, value: error };
@@ -293,7 +315,7 @@ export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOpti
   return {
     executeTurn(request) {
       const execution = serial.then(() =>
-        withProductionGrokIsolation(request.home, packageRoot, async (binding) => {
+        withProductionGrokIsolation(request.runDirectory, request.home, packageRoot, async (binding) => {
           turn = binding;
           try {
             // S6 seatbelt hangs on request.home — same isolated root as GROK_HOME.
