@@ -40,9 +40,10 @@ export type CredentialProviders = {
 export type SeatModelConfig = ModelRef;
 
 /**
- * Persistent seat row (#356/#384/#453/#522): model, engine, and host are
- * independent axes. Axis-only residuals are legal only for notary after model
- * clear; all other seats keep the baseline provider/model required contract.
+ * Persistent seat row (#356/#384/#453/#522/#568): model, engine, and host are
+ * independent axes. Axis-only residuals: notary may keep host/engine after model
+ * clear; inspector may keep engine-only; all other seats keep the baseline
+ * provider/model required contract.
  */
 export type PersistentSeatConfig = {
   provider?: string;
@@ -175,9 +176,9 @@ export function setPersistentSeatConfig(
 /**
  * Clear a gate officer's persistent model override (#453).
  * Scope is GateOfficerSeat only — non-province seats have no destructive clear seam.
- * Only notary may retain host/engine residual axes while model resolution returns
- * to startup / province inheritance. gatekeeper/inspector drop the whole row.
- * Already-absent seats are a no-op.
+ * Notary may retain host/engine residual axes while model resolution returns
+ * to startup / province inheritance. Direct Inspector may retain engine-only.
+ * Gatekeeper drops the whole row. Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(
   config: PublicCliConfig,
@@ -185,7 +186,6 @@ export function clearPersistentSeatConfig(
 ): PublicCliConfig {
   const previous = config.seats[seat];
   if (previous === undefined) return config;
-  // Axis-only residual ownership is notary-only — never widen to other officers.
   if (seat === "notary" && (previous.engine !== undefined || previous.host !== undefined)) {
     return {
       ...config,
@@ -195,6 +195,16 @@ export function clearPersistentSeatConfig(
           ...(previous.engine === undefined ? {} : { engine: previous.engine }),
           ...(previous.host === undefined ? {} : { host: previous.host }),
         },
+      },
+    };
+  }
+  // Direct Inspector engine ownership survives an independent model clear (#568).
+  if (seat === "inspector" && previous.engine !== undefined) {
+    return {
+      ...config,
+      seats: {
+        ...config.seats,
+        inspector: { engine: previous.engine },
       },
     };
   }
@@ -514,8 +524,8 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     // validatePublicCliConfigAxes → assertLegalEngineName (single authority).
     throw new Error(`config seat ${seat} engine must be a string`);
   }
-  // #453/#522: host/engine residual axes are legal only for notary after model clear.
-  // All other seats keep the baseline provider/model required contract.
+  // #453/#522/#568: notary host/engine residual and inspector engine residual
+  // remain legal after model clear. All other seats keep provider/model.
   if (!hasProvider) {
     if (seat === "notary" && (typeof raw.engine === "string" || typeof raw.host === "string")) {
       if (raw.thinking !== undefined) {
@@ -525,6 +535,12 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
         ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
         ...(raw.host === undefined ? {} : { host: raw.host as string }),
       };
+    }
+    if (seat === "inspector" && typeof raw.engine === "string") {
+      if (raw.thinking !== undefined) {
+        throw new Error(`config seat ${seat} thinking requires provider/model`);
+      }
+      return { engine: raw.engine };
     }
     throw new Error(`config seat ${seat} requires provider`);
   }

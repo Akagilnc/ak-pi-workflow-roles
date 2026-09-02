@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-为 [Pi](https://pi.dev) 打包的工作流角色：大理寺（judge）、给事中（countersign）、左拾遗（gleaner-left）、修内司（fixer）、将作监（coder）、御史台（reviewer）、通进司（collector）、太医署（doctor）、校书郎（merger）、符宝郎（notary）、太史（analyst）。English: [README.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.md)。
+为 [Pi](https://pi.dev) 打包的工作流角色：大理寺（judge）、给事中（countersign）、左拾遗（gleaner-left）、修内司（fixer）、将作监（coder）、御史台（reviewer）、通进司（collector）、太医署（doctor）、校书郎（merger）、符宝郎（notary）、察院（inspector）、太史（analyst）。English: [README.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.md)。
 
 ## 安装
 
@@ -39,7 +39,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎、给事中、左拾遗仍为一次性，无 resume。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。
+`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎、给事中、左拾遗、察院仍为一次性，无 resume。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。
 
 大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
@@ -48,7 +48,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# 门下省交卷闸官席（察院/符宝郎，交卷自动出席；给事中票庭由调用者直召，见「调用百官」）
+# 门下省交卷闸官席（察院/符宝郎交卷自动出席，亦可直调；给事中票庭由调用者直召，见「调用百官」）
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
@@ -101,6 +101,9 @@ ak-role merger --project /path/to/worktree "Reconcile the active merge."
 ak-role notary --source-run <runId@role|path>
 ak-role notary --source-run <runId@role|path> --ticket 582
 
+# 察院——直调复杂度与测试质量两轴；一次性
+ak-role inspector --attach ./change.patch "Review this material."
+
 # 给事中——票庭五问；可选 --ticket（起居郎流水线前序工序按票刷新起居录）
 ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
 
@@ -130,7 +133,7 @@ ak-role resume <runId> "<裁定>"
 | **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **审署诏敕与质量保证的省。** 交卷时判断受审物、够不够审、该谁审，派察院或符宝郎；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召（皆非闸派）；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
 | **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实（以起居录为据）／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。票庭流水线在本席 turn 前跑起居郎工序（调用者无感）；交卷闸出席符宝郎。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **左拾遗** | gleaner-left（无交卷闸派发；合并前由调用者传召） | **合并前无锚定风闻。** 对全幅合并候选作冷眼评审；只上弹章、不封驳不裁决。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案。 |
-| **察院** | inspector（无独立 CLI；可由门下省派发） | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。原给事中，ADR 0074 分立。 |
+| **察院** | inspector | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。可被门下省派发，也可 `ak-role inspector` 单独调。原给事中，ADR 0074 分立。 |
 | **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
@@ -230,6 +233,13 @@ ak-role resume <runId> "<裁定>"
 | 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `--project` | — | `path` | 否 | 否 | option | — | 已有进行中 ordinary merge 的项目根（默认 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+
+### `inspector`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
 | `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
 
 ### `notary`

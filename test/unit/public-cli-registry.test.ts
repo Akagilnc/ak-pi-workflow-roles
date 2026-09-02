@@ -96,6 +96,14 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
   },
+  {
+    role: "inspector",
+    phases: [null],
+    outputTool: "ak_inspector_output",
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+  },
 ] as const;
 
 test("public registry exposes callable roles plus automatic configurable seats", () => {
@@ -109,12 +117,14 @@ test("public registry exposes callable roles plus automatic configurable seats",
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("notary"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("countersign"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("gleaner-left"), true);
-  // #453: automatic gate seats join navigator as configurable-only (never caller commands).
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("inspector"), true);
+  // #453/#568: gatekeeper and navigator remain automatic-only; inspector is callable
+  // and still gate-dispatchable.
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
-    [...PUBLIC_CALLABLE_ROLES, "gatekeeper", "inspector", "navigator"],
+    [...PUBLIC_CALLABLE_ROLES, "gatekeeper", "navigator"],
   );
-  for (const automatic of ["gatekeeper", "inspector", "navigator"] as const) {
+  for (const automatic of ["gatekeeper", "navigator"] as const) {
     assert.equal(
       PUBLIC_CONFIGURABLE_SEATS.includes(automatic as never),
       true,
@@ -190,6 +200,7 @@ test("startup model candidates follow #11 package defaults per seat", () => {
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ]);
+  assert.deepEqual(publicStartupCandidates("inspector"), []);
   for (const seat of ["coder", "fixer", "collector", "doctor", "merger", "notary"] as const) {
     assert.deepEqual(publicStartupCandidates(seat), [
       { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
