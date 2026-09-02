@@ -28,10 +28,22 @@ import {
   type GrokPreparedTurn,
   type GrokRoleTurnHostConfig,
 } from "./role-turn-host.ts";
+import {
+  GatekeeperDecisionError,
+  WorkerCommitReminderError,
+  WorkerPrefixReminderError,
+  WorkerUnfinishedReasonReminderError,
+} from "../submission-errors.ts";
+import { isCorrectableSubmissionError } from "../submission-correctable-error.ts";
+import {
+  buildNavigatorInfrastructureFailureFact,
+  NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
+} from "../navigator-invocation-identity.ts";
 
 type Handler = HostEventRegistration[1];
 type RpcRequest = { readonly id: number; readonly token: string; readonly method: string; readonly params?: Record<string, unknown> };
 type ToolCallParams = { readonly name?: unknown; readonly arguments?: unknown };
+type ContentPart = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
 /** Parse the canonical Skill invocation produced by the shared input transform. */
 export function parseCanonicalSkillInvocation(prompt: string): { readonly name: string; readonly userMessage: string } | undefined {
@@ -191,9 +203,9 @@ export async function prepareGrokRoleEnvelope(options: {
       },
     },
     abort() {
-      // failInfrastructure → abort must actually stop the host (#593). Empty
-      // abort left ACP session/prompt hanging after typed infra declarations.
-      if (!hostAbort.signal.aborted) hostAbort.abort();
+      // Lawful abort (non-sole rejection / seal / audit-escalation in submission-ledger)
+      // must not poison ACP retry prompts (#593 r1). Infra declarations arm hostAbort
+      // directly via rememberInfrastructureFailure.
     },
   };
 
@@ -257,6 +269,16 @@ export async function prepareGrokRoleEnvelope(options: {
 
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
+  function extractInfrastructureFailureEvidence(error: unknown): Record<string, unknown> {
+    if (typeof error !== "object" || error === null) return {};
+    const record = error as Record<string, unknown>;
+    const evidence: Record<string, unknown> = {};
+    for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS) {
+      if (!Object.hasOwn(record, key)) continue;
+      evidence[key] = record[key] === undefined ? null : record[key];
+    }
+    return evidence;
+  }
   /** Correctable non-pass must arm the existing rejection state so closeRound returns retry. */
   function rememberProjectedRejection(details: unknown, toolCallId: string): void {
     if (typeof details !== "object" || details === null) return;
@@ -271,9 +293,7 @@ export async function prepareGrokRoleEnvelope(options: {
     if (code === undefined) return;
     rejection = { code, toolCallIds: [toolCallId] };
   }
-  function textDiagnostic(
-    content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>,
-  ): string | undefined {
+  function textDiagnostic(content: ContentPart[]): string | undefined {
     const text = content
       .map((part) => (part.type === "text" ? part.text : ""))
       .join("")
@@ -283,7 +303,7 @@ export async function prepareGrokRoleEnvelope(options: {
   /** Arm closeRound + abort path with the durable infrastructure failure for this round. */
   function rememberInfrastructureFailure(
     details: unknown,
-    content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>,
+    content: ContentPart[],
   ): void {
     if (infrastructureRoundFailure !== undefined) return;
     const record = typeof details === "object" && details !== null && !Array.isArray(details)
@@ -308,13 +328,13 @@ export async function prepareGrokRoleEnvelope(options: {
       diagnostic,
       details: record,
     };
-    if (!hostAbort.signal.aborted) hostAbort.abort();
+    hostAbort.abort();
   }
   async function projectToolResult(
     toolCallId: string,
     toolName: string,
     initial: {
-      content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
+      content: ContentPart[];
       details: unknown;
       isError: boolean;
     },
@@ -387,18 +407,42 @@ export async function prepareGrokRoleEnvelope(options: {
               // in the same round instead of becoming silent post-seal anomalies.
               reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
-              // Synchronous arm before any await only when failInfrastructure already
-              // aborted (or the error is the typed InfrastructureFailure). Correctable
-              // bounces must NOT be pre-labeled infrastructure — tool_result projects
-              // their real code onto the reply and closeRound returns retry (#593).
               const diagnostic = error instanceof Error ? error.message : String(error);
-              const content = [{ type: "text" as const, text: diagnostic }];
-              const details = { cause: "infrastructure" as const, code: "ak-tool-execution-failed" };
-              if (
-                hostAbort.signal.aborted
-                || (error instanceof Error && error.name === "InfrastructureFailure")
-              ) {
-                rememberInfrastructureFailure(details, content);
+              const content: ContentPart[] = [{ type: "text", text: diagnostic }];
+              const isCorrectable = isCorrectableSubmissionError(error)
+                || error instanceof GatekeeperDecisionError
+                || error instanceof WorkerCommitReminderError
+                || error instanceof WorkerPrefixReminderError
+                || error instanceof WorkerUnfinishedReasonReminderError;
+
+              let details: Record<string, unknown>;
+              if (isCorrectable) {
+                if (error instanceof GatekeeperDecisionError) {
+                  details = { ...error.result };
+                } else if (
+                  error instanceof WorkerCommitReminderError
+                  || error instanceof WorkerPrefixReminderError
+                  || error instanceof WorkerUnfinishedReasonReminderError
+                ) {
+                  details = { code: error.code };
+                } else if (typeof (error as unknown as { code?: unknown }).code === "string") {
+                  details = { code: (error as unknown as { code: string }).code };
+                } else {
+                  details = { code: error instanceof Error && error.name ? error.name : "correctable-submission-error" };
+                }
+              } else {
+                const errorCode = typeof (error as unknown as { code?: unknown })?.code === "string"
+                  ? (error as unknown as { code: string }).code
+                  : "ak-tool-execution-failed";
+                details = {
+                  ...buildNavigatorInfrastructureFailureFact(),
+                  ...extractInfrastructureFailureEvidence(error),
+                  cause: "infrastructure",
+                  code: errorCode,
+                };
+                if (error instanceof Error && error.name === "InfrastructureFailure") {
+                  rememberInfrastructureFailure(details, content);
+                }
               }
               // The shared envelope's tool_result handler is the sole classifier:
               // it projects either the structured submission non-pass (correctable
