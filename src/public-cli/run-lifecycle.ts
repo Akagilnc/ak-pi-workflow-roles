@@ -35,7 +35,9 @@ import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
   type AdmittedCoderInvocation,
+  type AdmittedCountersignInvocation,
   type AdmittedFixerInvocation,
+  type AdmittedGleanerLeftInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
   type AdmittedReviewerInvocation,
@@ -893,6 +895,18 @@ export type LoadedResumableReviewerRun = {
   readonly observation?: TypedHttp429Observation;
 };
 
+export type LoadedResumableCountersignRun = {
+  readonly admitted: AdmittedCountersignInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+export type LoadedResumableGleanerLeftRun = {
+  readonly admitted: AdmittedGleanerLeftInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
 /**
  * Load a resumable Judge run for resume. Rejects unknown, terminal,
  * non-resumable, and non-Judge IDs without replaying dispatch.
@@ -1082,6 +1096,85 @@ export async function loadResumableReviewerRun(
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+/**
+ * Load a resumable Countersign run for resume (#599). Ticket binding and
+ * attachments restore from the admitted request; diarist does not re-run.
+ */
+export async function loadResumableCountersignRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableCountersignRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "countersign") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not countersign`,
+    );
+  }
+  const admitted: AdmittedCountersignInvocation = {
+    role: "countersign",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+/**
+ * Load a resumable Gleaner-Left run for resume (#599). Fixed base restores from
+ * the admitted request so continuation stays comparison-correct.
+ */
+export async function loadResumableGleanerLeftRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableGleanerLeftRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "gleaner-left") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not gleaner-left`,
+    );
+  }
+  const baseRevision = loaded.admittedFields.baseRevision;
+  if (baseRevision === undefined || baseRevision.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted gleaner-left base revision is missing: ${runId}`,
+    );
+  }
+  const admitted: AdmittedGleanerLeftInvocation = {
+    role: "gleaner-left",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    baseRevision,
     ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
