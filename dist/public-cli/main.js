@@ -14990,9 +14990,7 @@ var init_packaged_role_registry = __esm({
     ONE_SHOT_ROLES = [
       "collector",
       "doctor",
-      "notary",
-      "countersign",
-      "gleaner-left"
+      "notary"
     ];
     PACKAGED_ROLE_REGISTRY = PUBLIC_ROLE_RECORDS.map(({ sessionMaterials: _omit, ...metadata }) => metadata);
   }
@@ -17456,6 +17454,67 @@ async function loadResumableReviewerRun(home, runId, authority) {
     admittedRequestPath: loaded.run.admittedRequestPath,
     baseRevision,
     authorityRefs: Object.freeze([...loaded.admittedFields.authorityRefs ?? []]),
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
+    ...restoredTicketFields(loaded.admittedFields)
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
+  };
+}
+async function loadResumableCountersignRun(home, runId, authority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "countersign") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not countersign`
+    );
+  }
+  const admitted = {
+    role: "countersign",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
+    ...restoredTicketFields(loaded.admittedFields)
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...loaded.observation === void 0 ? {} : { observation: loaded.observation }
+  };
+}
+async function loadResumableGleanerLeftRun(home, runId, authority) {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "gleaner-left") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not gleaner-left`
+    );
+  }
+  const baseRevision = loaded.admittedFields.baseRevision;
+  if (baseRevision === void 0 || baseRevision.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted gleaner-left base revision is missing: ${runId}`
+    );
+  }
+  const admitted = {
+    role: "gleaner-left",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    baseRevision,
     ...loaded.admittedFields.model === void 0 ? {} : { model: loaded.admittedFields.model },
     ...restoredTicketFields(loaded.admittedFields)
   };
@@ -27684,10 +27743,7 @@ async function runPublicCountersign(argv, env, io, parseCountersignArgv2) {
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted2, authority) => trySettleCountersignTerminalResult(admitted2, authority),
-      // Accepted receipts and failure terminals both present via shared path.
-      shouldPresentSettled: () => true,
+    adapters: countersignAdapters({
       beforeDispatch: async (admitted2) => {
         await resolveCountersignTicketBinding(admitted2, env);
         Object.assign(
@@ -27696,8 +27752,53 @@ async function runPublicCountersign(argv, env, io, parseCountersignArgv2) {
         );
         await runCountersignDiaristStation(admitted2, env);
       }
-    },
+    }),
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+  });
+}
+function countersignAdapters(options) {
+  return {
+    trySettle: (admitted, authority) => trySettleCountersignTerminalResult(admitted, authority),
+    // Accepted receipts and failure terminals both present via shared path.
+    shouldPresentSettled: () => true,
+    ...options?.beforeDispatch === void 0 ? {} : { beforeDispatch: options.beforeDispatch }
+  };
+}
+async function runPublicCountersignResume(request, env, io) {
+  let loaded;
+  try {
+    loaded = await loadResumableCountersignRun(
+      env.home,
+      request.runId,
+      env.principalAuthority
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  const turnRequest = buildCountersignTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
+  });
+  return await runPostAdmissionManualResume({
+    admitted,
+    env,
+    io,
+    request: turnRequest,
+    adapters: countersignAdapters()
   });
 }
 async function resolveCountersignTicketBinding(admitted, env) {
@@ -27860,11 +27961,51 @@ async function runPublicGleanerLeft(argv, env, io, parseGleanerLeftArgv2) {
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted2, authority) => trySettleGleanerLeftTerminalResult(admitted2, authority),
-      shouldPresentSettled: () => true
-    },
+    adapters: gleanerLeftAdapters(),
     ...env.engine === void 0 ? {} : { effectiveEngine: env.engine }
+  });
+}
+function gleanerLeftAdapters() {
+  return {
+    trySettle: (admitted, authority) => trySettleGleanerLeftTerminalResult(admitted, authority),
+    shouldPresentSettled: () => true
+  };
+}
+async function runPublicGleanerLeftResume(request, env, io) {
+  let loaded;
+  try {
+    loaded = await loadResumableGleanerLeftRun(
+      env.home,
+      request.runId,
+      env.principalAuthority
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  const turnRequest = buildGleanerLeftTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.engine === void 0 ? {} : { engine: env.engine },
+    ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
+    ...admitted.correlationId === void 0 && env.correlationId === void 0 ? {} : { correlationId: admitted.correlationId ?? env.correlationId },
+    continuation: {
+      kind: "resume",
+      prompt: selectResumeContinuationPrompt(request.message)
+    }
+  });
+  return await runPostAdmissionManualResume({
+    admitted,
+    env,
+    io,
+    request: turnRequest,
+    adapters: gleanerLeftAdapters()
   });
 }
 var init_gleaner_left_run = __esm({
@@ -31502,7 +31643,7 @@ async function runAkRole(argv, env) {
           `${resumeRole} role runs are one-shot and cannot be resumed`
         );
       }
-      const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : resumeRole === "reviewer" ? "reviewer" : resumeRole === "merger" ? "merger" : "judge";
+      const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : resumeRole === "reviewer" ? "reviewer" : resumeRole === "merger" ? "merger" : resumeRole === "countersign" ? "countersign" : resumeRole === "gleaner-left" ? "gleaner-left" : "judge";
       const seat = resolveEffectiveSeat(
         config,
         resumeSeatRole,
@@ -31574,6 +31715,46 @@ async function runAkRole(argv, env) {
           resumeRequest,
           createRoleEnvironment(env, {
             role: "merger",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true
+          }),
+          io
+        );
+        return {
+          exitCode: result3.exitCode,
+          ...result3.terminal === void 0 ? {} : { terminal: result3.terminal }
+        };
+      }
+      if (resumeRole === "countersign") {
+        const result3 = await runPublicCountersignResume(
+          resumeRequest,
+          createRoleEnvironment(env, {
+            role: "countersign",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+            resume: true
+          }),
+          io
+        );
+        return {
+          exitCode: result3.exitCode,
+          ...result3.terminal === void 0 ? {} : { terminal: result3.terminal }
+        };
+      }
+      if (resumeRole === "gleaner-left") {
+        const result3 = await runPublicGleanerLeftResume(
+          resumeRequest,
+          createRoleEnvironment(env, {
+            role: "gleaner-left",
             home,
             agentDir,
             cwd,
