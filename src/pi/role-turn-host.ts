@@ -5,7 +5,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, appendFile, readFile, readdir, realpath } from "node:fs/promises";
+import { access, appendFile, readFile, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
@@ -389,39 +389,6 @@ export function createDefaultPiSpawnRunner(options: {
   };
 }
 
-function isEnoent(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
-}
-
-/** Read prior Grok native session records as opaque text (#617 DK-4). Absence only is empty. */
-async function readPriorGrokContext(runDirectory: string): Promise<string | undefined> {
-  const grokSessionsDir = join(runDirectory, "grok-home", "sessions");
-  let encodedCwds;
-  try {
-    encodedCwds = await readdir(grokSessionsDir, { withFileTypes: true });
-  } catch (error) {
-    if (isEnoent(error)) return undefined;
-    throw error;
-  }
-  const files: string[] = [];
-  for (const cwdEntry of encodedCwds) {
-    if (!cwdEntry.isDirectory()) continue;
-    const sessionDirs = await readdir(join(grokSessionsDir, cwdEntry.name), { withFileTypes: true });
-    for (const sessEntry of sessionDirs) {
-      if (!sessEntry.isDirectory()) continue;
-      const updatesFile = join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl");
-      try {
-        const content = await readFile(updatesFile, "utf8");
-        if (content.trim().length > 0) files.push(content.trim());
-      } catch (error) {
-        if (!isEnoent(error)) throw error;
-      }
-    }
-  }
-  if (files.length === 0) return undefined;
-  return files.join("\n");
-}
-
 /** Create the production Pi RoleTurnHost (composition-root assembly). */
 export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost {
   const spawnRunner =
@@ -435,22 +402,20 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
       let effectiveRequest = request;
-      // #617 DK-4: opaque Grok context only on typed host transition from grok-build.
+      // #617 DK-4: prior native bytes come only from post-admission hostTransition projection.
+      const priorNative = request.hostTransition?.priorNativeRecords;
       if (
         request.continuation.kind === "resume"
-        && request.hostTransition?.previousHost === "grok-build"
+        && priorNative !== undefined
+        && priorNative.trim() !== ""
       ) {
-        const priorGrok = await readPriorGrokContext(request.runDirectory);
-        if (priorGrok !== undefined && priorGrok.length > 0) {
-          effectiveRequest = {
-            ...request,
-            continuation: {
-              ...request.continuation,
-              // Raw prior native bytes precede the continuation prompt; no locked label contract.
-              prompt: `${priorGrok}\n\n${request.continuation.prompt}`,
-            },
-          };
-        }
+        effectiveRequest = {
+          ...request,
+          continuation: {
+            ...request.continuation,
+            prompt: `${priorNative}\n\n${request.continuation.prompt}`,
+          },
+        };
       }
       const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
       const extraArgs = buildPiTurnExtraArgs(

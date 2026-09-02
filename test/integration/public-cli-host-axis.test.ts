@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
 import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
-import type { RoleTurnHost } from "../../src/host-contracts.ts";
+import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import type { DurablePrincipalAuthority } from "../../src/host-contracts.ts";
 import {
@@ -388,10 +388,6 @@ test("bare resume follows live seat table host when it drifts from birth host", 
   });
 });
 
-/** Unique prior-native marker bytes — content oracle, never a free-text label lock. */
-const PI_PRIOR_MARKER = "pi-prior-native-marker-617-dk4";
-const GROK_PRIOR_MARKER = "grok-prior-native-marker-617-dk4";
-
 function extractPriorNativeResource(
   promptParams: Readonly<Record<string, unknown>> | undefined,
 ): { uri?: unknown; mimeType?: unknown; text?: unknown } | undefined {
@@ -432,7 +428,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     const runId = "run-dk4-pi-to-grok";
     const PI_SESSION_SEED =
       `${JSON.stringify({ type: "session", id: runId })}\n`
-      + `${JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: PI_PRIOR_MARKER } })}\n`;
+      + `${JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: [{ type: "text", text: "pi-birth-turn" }] } })}\n`;
     // Non-default principal sessionFile — prior-native must follow resolveSessionFile, not runDirectory join.
     const HOST_ISSUED_SESSION_LEAF = "host-issued-principal.jsonl";
     const hostIssuedPrincipalAuthority: DurablePrincipalAuthority = {
@@ -486,11 +482,12 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     const piSessionFile = admitted.sessionFile;
     const defaultLeaf = join(admitted.sessionDirectory, "session.jsonl");
     const piBefore = await readFile(piSessionFile, "utf8");
-    assert.ok(piBefore.includes(PI_PRIOR_MARKER));
-    assert.equal(
-      (await readFile(defaultLeaf, "utf8")).includes(PI_PRIOR_MARKER),
-      false,
-      "default session.jsonl must not hold the prior marker (coordinate divergence probe)",
+    assert.ok(piBefore.trim().length > 0);
+    const defaultLeafBytes = await readFile(defaultLeaf, "utf8");
+    assert.notEqual(
+      defaultLeafBytes.trim(),
+      piBefore.trim(),
+      "default session.jsonl must differ from host-issued principal file",
     );
 
     {
@@ -517,6 +514,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     let boundSessionId: string | undefined;
     let preparedInstance: Awaited<ReturnType<typeof prepareGrokRoleEnvelope>> | undefined;
     let activeRunDirectory: string | undefined;
+    const observedTransitions: Array<RoleTurnRequest["hostTransition"]> = [];
 
     const grokHost = createGrokRoleTurnHost({
       sessionIdentity: {
@@ -574,6 +572,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
       inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
       // Production envelope owns session layout + MCP/custom paths under test for DK-4 writeback ban.
       prepare: async (request) => {
+        observedTransitions.push(request.hostTransition);
         activeRunDirectory = request.runDirectory;
         const sessionFile = hostIssuedPrincipalAuthority.decode(request.principal).sessionFile;
         const prepared = await prepareGrokRoleEnvelope({
@@ -637,16 +636,18 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
 
     assert.equal(grokResumeCount, 1);
     assert.equal(transitionPrompts.length, 1);
+    assert.equal(observedTransitions.length >= 1, true);
+    const firstTransition = observedTransitions[0];
+    assert.ok(firstTransition !== undefined);
+    assert.equal(firstTransition.previousHost, "pi");
+    // Typed priorNativeRecords equal host-issued principal source bytes (not default leaf).
+    assert.equal(firstTransition.priorNativeRecords, piBefore.trim());
+    assert.notEqual(firstTransition.priorNativeRecords, defaultLeafBytes.trim());
     const prior = extractPriorNativeResource(transitionPrompts[0]);
     assert.equal(prior?.uri, "ak-role:prior-native/pi");
     assert.equal(prior?.mimeType, "application/x-ak-prior-native");
-    assert.equal(typeof prior?.text, "string");
-    assert.ok(String(prior?.text).includes(PI_PRIOR_MARKER), "transition must deliver prior Pi native bytes from host-issued principal file");
-    assert.equal(
-      String(prior?.text).includes("default-leaf"),
-      false,
-      "prior-native must not be read from default session.jsonl join path",
-    );
+    // Resource text is the typed field, not free-prose scanning.
+    assert.equal(prior?.text, firstTransition.priorNativeRecords);
 
     // DK-4: after subtracting settlement attempt_history, Pi JSONL conversation rows must be
     // byte-identical structured equals — Grok must not append message/tool/custom conversation.
@@ -678,9 +679,14 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     assert.equal(grokResumeCount, 2);
     assert.equal(sameHostPrompts.length, 1);
     assert.equal(
+      observedTransitions[1],
+      undefined,
+      "same-host Grok resume must not carry hostTransition",
+    );
+    assert.equal(
       extractPriorNativeResource(sameHostPrompts[0]),
       undefined,
-      "same-host Grok resume must not re-inject prior Pi native resource",
+      "same-host Grok resume must not deliver prior-native resource",
     );
     const afterSameHost = await readFile(piSessionFile, "utf8");
     assert.deepEqual(
@@ -705,7 +711,7 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
     seedGitProject(project);
     const runId = "run-dk4-grok-to-pi";
     const GROK_UPDATES =
-      `${JSON.stringify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: GROK_PRIOR_MARKER } })}\n`;
+      `${JSON.stringify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "grok-birth-turn" } })}\n`;
 
     // Seat grok-build before birth so invocation.host is grok-build.
     {
@@ -821,9 +827,9 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
       assert.equal(st.isFile() && !st.isSymbolicLink(), true, "Grok birth must mint durable session principal file");
       const header = JSON.parse((await readFile(admitted.sessionFile, "utf8")).trim().split("\n")[0]!);
       assert.equal(header.type, "session");
-      assert.ok(
-        (await readFile(join(runDirectory, "grok-home", "sessions", "encoded-cwd", "s1", "updates.jsonl"), "utf8"))
-          .includes(GROK_PRIOR_MARKER),
+      assert.equal(
+        (await readFile(join(runDirectory, "grok-home", "sessions", "encoded-cwd", "s1", "updates.jsonl"), "utf8")).trim(),
+        GROK_UPDATES.trim(),
       );
     }
 
@@ -850,13 +856,14 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
       "updates.jsonl",
     );
     const grokBefore = await readFile(grokUpdatesFile, "utf8");
-    assert.ok(grokBefore.includes(GROK_PRIOR_MARKER));
+    assert.equal(grokBefore.trim(), GROK_UPDATES.trim());
 
     // Ensure invocation still records grok-build as previous host before Pi resume.
     const invPath = join(runDirectory, "invocation.json");
     const inv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
     assert.equal(inv.host, "grok-build", "birth host must remain grok-build until Pi resume");
 
+    let observedPiTransition: RoleTurnRequest["hostTransition"];
     let receivedArgs: readonly string[] = [];
     // roleTurnHostFromLegacyPiRunner → createPiRoleTurnHost (real hostTransition path).
     // Reuse #502 scriptedTerminatingToolSession for sealed accepted session shape.
@@ -865,7 +872,7 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       details: { judgeStatus: "converged" },
     });
-    const piHost = roleTurnHostFromLegacyPiRunner({
+    const innerPi = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       piRunner: async (args, options) => {
@@ -873,6 +880,12 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
         return sealAccepted(args, options);
       },
     });
+    const piHost: RoleTurnHost = {
+      async executeTurn(request) {
+        observedPiTransition = request.hostTransition;
+        return innerPi.executeTurn(request);
+      },
+    };
 
     {
       const { io, stderr } = captureIo();
@@ -898,9 +911,10 @@ test("public resume Grok→Pi hands prior native on host transition; source grok
       assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     }
 
-    // Prior Grok native content appears in Pi continuation argv (content oracle, not a label lock).
-    const promptWithPrior = receivedArgs.find((arg) => arg.includes(GROK_PRIOR_MARKER));
-    assert.ok(promptWithPrior !== undefined, "Pi resume must receive prior Grok native bytes");
+    // Typed hostTransition carries prior native bytes equal to grok-home source.
+    assert.ok(observedPiTransition !== undefined);
+    assert.equal(observedPiTransition.previousHost, "grok-build");
+    assert.equal(observedPiTransition.priorNativeRecords, grokBefore.trim());
 
     // Source grok-home unchanged.
     assert.equal(await readFile(grokUpdatesFile, "utf8"), grokBefore);

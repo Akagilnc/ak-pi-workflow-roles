@@ -18,6 +18,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
+import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   missingCredentialPreDispatchFailure,
@@ -259,14 +260,17 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
-    // Only a real host switch gets hostTransition; same-host resume must not re-inject.
+    // Single authority projectHostTransitionPriorNative owns known-host prior bytes.
     const previousHost = await readInvocationHost(admitted.runDirectory);
     const liveHost = env.host;
     const hostTransition =
-      previousHost !== undefined
-      && liveHost !== undefined
-      && previousHost !== liveHost
-        ? { previousHost }
+      previousHost !== undefined && liveHost !== undefined && admitted.principal !== undefined
+        ? await projectHostTransitionPriorNative({
+            previousHost,
+            liveHost,
+            runDirectory: admitted.runDirectory,
+            piSessionFile: env.principalAuthority.decode(admitted.principal).sessionFile,
+          })
         : undefined;
     const turnRequest: RoleTurnRequest =
       hostTransition === undefined ? request : { ...request, hostTransition };

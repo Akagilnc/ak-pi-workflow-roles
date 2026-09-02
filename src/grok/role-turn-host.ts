@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -61,18 +61,6 @@ export function renderGrokSystemPromptOverride(authority: {
   readonly materials: readonly unknown[];
 }): string {
   return renderAgentStartMaterials(authority.body, authority.materials);
-}
-
-/** Read prior Pi native session bytes as opaque context (#617 DK-4). ENOENT only → absent. */
-async function readPriorPiNativeContext(sessionFile: string): Promise<string | undefined> {
-  try {
-    const raw = await readFile(sessionFile, "utf8");
-    const trimmed = raw.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
 }
 
 export type GrokCapabilityDeclaration = Readonly<{
@@ -285,18 +273,14 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             });
           }
 
-          let priorPiContext: string | undefined;
+          // #617 DK-4: prior native bytes come only from post-admission hostTransition projection.
+          const priorNativeRecords =
+            continuation.kind === "resume"
+            && request.hostTransition !== undefined
+            && request.hostTransition.priorNativeRecords.trim() !== ""
+              ? request.hostTransition.priorNativeRecords
+              : undefined;
           if (continuation.kind === "resume") {
-            // #617 DK-4: opaque Pi context only on typed host transition from a non-Grok host.
-            if (
-              request.hostTransition !== undefined
-              && request.hostTransition.previousHost !== "grok-build"
-            ) {
-              // Same durable-principal coordinate as envelope layout / isAvailable.
-              priorPiContext = await readPriorPiNativeContext(
-                config.sessionIdentity.resolveSessionFile(request.principal),
-              );
-            }
             const boundSessionId = await config.sessionIdentity.load(request.principal);
             if (boundSessionId !== undefined && boundSessionId !== "") {
               // Same-host Grok resume reuses native ACP session via session/load.
@@ -345,7 +329,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           let prompt = prepared.prompt;
           const abortSignal = prepared.abortSignal;
           const activeConnection = connection;
-          let deliverPriorContext = priorPiContext !== undefined;
+          let deliverPriorContext = priorNativeRecords !== undefined;
 
           /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
           const promptOrAbort = async (
@@ -386,15 +370,15 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             let result: Readonly<Record<string, unknown>>;
             try {
               const promptParts: Array<Record<string, unknown>> = [];
-              if (deliverPriorContext && priorPiContext !== undefined) {
+              if (deliverPriorContext && priorNativeRecords !== undefined) {
                 deliverPriorContext = false;
-                // Structured opaque resource — not a GrokRebuild schema; raw native bytes only.
+                // Structured opaque resource — typed priorNativeRecords only, no path re-resolve.
                 promptParts.push({
                   type: "resource",
                   resource: {
-                    uri: "ak-role:prior-native/pi",
+                    uri: `ak-role:prior-native/${request.hostTransition!.previousHost}`,
                     mimeType: "application/x-ak-prior-native",
-                    text: priorPiContext,
+                    text: priorNativeRecords,
                   },
                 });
               }
