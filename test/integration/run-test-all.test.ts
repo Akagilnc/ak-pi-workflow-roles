@@ -60,6 +60,11 @@ const TICKET_HEAVYWEIGHT = [
 type ChildRecord = {
   argv: string[];
   home?: string;
+  /** #549 AC3 probe proof recorded before owning process deletes default HOME (#612). */
+  homeProbe?: {
+    sentinel: string;
+    modelsWritten: boolean;
+  };
 };
 
 async function writePathNodeShim(
@@ -77,16 +82,24 @@ setInterval(() => {}, 1000);
 const code = Number.isFinite(exits[n]) ? exits[n] : exits[exits.length - 1] ?? 0;
 process.exit(code);
 `;
-  // Optional #549 AC3 probe: write models.json + sentinel only via $HOME.
+  // Optional #549 AC3 probe: write models.json + sentinel only via $HOME,
+  // then carry proof on the record channel. Parent must not read the child
+  // HOME after run-test-all exits — #612 deletes that process-owned root.
   const homeProbe = `
+let homeProbe;
 if (process.env.AK_549_HOME_PROBE_SENTINEL && n === 0) {
   const { mkdirSync } = require("node:fs");
   const { dirname, join } = require("node:path");
   const home = process.env.HOME;
   const modelsPath = join(home, ".pi", "agent", "models.json");
+  const sentinelPath = join(home, process.env.AK_549_HOME_PROBE_SENTINEL);
   mkdirSync(dirname(modelsPath), { recursive: true });
   writeFileSync(modelsPath, JSON.stringify({ providers: { probe: true } }) + "\\n");
-  writeFileSync(join(home, process.env.AK_549_HOME_PROBE_SENTINEL), "fixture-poison-sentinel");
+  writeFileSync(sentinelPath, "fixture-poison-sentinel");
+  homeProbe = {
+    sentinel: readFileSync(sentinelPath, "utf8"),
+    modelsWritten: existsSync(modelsPath),
+  };
 }
 `;
   const source = `#!${process.execPath}
@@ -99,15 +112,16 @@ if (!recordPath) {
 const counterPath = recordPath + ".count";
 const n = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) : 0;
 writeFileSync(counterPath, String(n + 1));
-appendFileSync(
+${homeProbe}appendFileSync(
   recordPath,
   JSON.stringify({
     argv: process.argv.slice(1),
     index: n,
     home: process.env.HOME,
+    ...(homeProbe ? { homeProbe } : {}),
   }) + "\\n",
 );
-${homeProbe}${signalSelf}`;
+${signalSelf}`;
   await writeFile(join(binDir, "node"), source, "utf8");
   await chmod(join(binDir, "node"), 0o755);
 }
@@ -130,9 +144,17 @@ function parseRecords(raw: string): ChildRecord[] {
         argv: string[];
         index: number;
         home?: string;
+        homeProbe?: { sentinel: string; modelsWritten: boolean };
       };
       const record: ChildRecord = { argv: parsed.argv };
       if (typeof parsed.home === "string") record.home = parsed.home;
+      if (
+        parsed.homeProbe &&
+        typeof parsed.homeProbe.sentinel === "string" &&
+        typeof parsed.homeProbe.modelsWritten === "boolean"
+      ) {
+        record.homeProbe = parsed.homeProbe;
+      }
       return record;
     });
 }
@@ -215,6 +237,8 @@ test("package.json test entries wire HOME redirect preload or run-test-all owner
 /**
  * AC3 (#549): real test:all child seam — fixture writes only via $HOME;
  * host models.json hash unchanged; host sentinel absolute path must not exist.
+ * Write proof rides the child record channel: run-test-all's process-owned
+ * default HOME is deleted on exit (#612), so post-exit FS residue is gone.
  */
 test("test:all child $HOME writes miss host models.json and host sentinel", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-549-test-all-home-"));
@@ -247,30 +271,27 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
       const childHome = result.records[0]!.home!;
       assert.notEqual(childHome, HOST_HOME);
 
-      try {
-        assert.equal(
-          readHostModelsHash(),
-          beforeHash,
-          "host ~/.pi/agent/models.json hash must be unchanged",
-        );
-        assert.equal(
-          existsSync(hostSentinel),
-          false,
-          "host sentinel absolute path must not exist",
-        );
-        assert.equal(
-          readFileSync(join(childHome, sentinelName), "utf8"),
-          "fixture-poison-sentinel",
-        );
-        assert.equal(
-          existsSync(join(childHome, ".pi", "agent", "models.json")),
-          true,
-        );
-      } finally {
-        // One-shot write residue under the runner child HOME — always rm.
-        await rm(join(childHome, sentinelName), { force: true });
-        await rm(join(childHome, ".pi"), { recursive: true, force: true });
-      }
+      assert.equal(
+        readHostModelsHash(),
+        beforeHash,
+        "host ~/.pi/agent/models.json hash must be unchanged",
+      );
+      assert.equal(
+        existsSync(hostSentinel),
+        false,
+        "host sentinel absolute path must not exist",
+      );
+      // Positive write proof from inside the child, before process-owned HOME rm.
+      assert.deepEqual(result.records[0]!.homeProbe, {
+        sentinel: "fixture-poison-sentinel",
+        modelsWritten: true,
+      });
+      // #612: runner default HOME is process-owned — gone after exit.
+      assert.equal(
+        existsSync(childHome),
+        false,
+        "run-test-all default test home must be deleted on exit",
+      );
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });

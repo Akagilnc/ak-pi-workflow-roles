@@ -23,9 +23,13 @@ import {
   resolveEffectiveSeat,
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
@@ -52,6 +56,73 @@ function captureIo() {
     },
   };
 }
+
+test("Inspector public runner preserves typed pass, bounce, and malformed output", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project);
+    execFileSync("git", ["init", "-b", "main"], { cwd: project, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "inspector@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Inspector Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project, stdio: "ignore" });
+    const attachment = join(project, "material.txt");
+    await writeFile(attachment, "frozen review material", "utf8");
+
+    for (const [index, row] of [
+      { status: "pass", exitCode: 0, findings: ["pass-finding"] },
+      { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
+      { status: "malformed", exitCode: 1, details: { status: "unknown", findings: "unaltered" } },
+    ].entries()) {
+      const runId = `inspector-public-${index}`;
+      const details = row.status === "malformed"
+        ? row.details
+        : { status: row.status, findings: row.findings };
+      const result = await runAkRole(
+        [
+          "inspector",
+          "--project", project,
+          "--attach", attachment,
+          "Review this material.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => runId,
+          io: captureIo().io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedTerminatingToolSession({
+              role: "inspector",
+              toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+              details,
+              ...(row.status === "malformed" ? { seal: false } : {}),
+            }),
+          }),
+        },
+      );
+
+      assert.equal(result.exitCode, row.exitCode);
+      assert.ok(result.terminal);
+      const outcome = result.terminal.roleOutcome;
+      if (row.status === "malformed") {
+        assert.equal(outcome.kind, "failure");
+        if (outcome.kind !== "failure") throw new Error("expected malformed output failure");
+        assert.equal(outcome.cause, "output");
+        assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
+          candidate: row.details,
+          acceptedReceipt: false,
+        });
+      } else {
+        assert.equal(outcome.kind, "accepted");
+        if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
+        assert.equal(outcome.status, row.status);
+        assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+      }
+    }
+  });
+});
 
 test("help document capabilities match typed registry without depending on layout", () => {
   const doc = helpDocument();

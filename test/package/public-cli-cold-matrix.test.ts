@@ -466,6 +466,24 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
     }
 
+    // inspector — direct 察院 command; Internal --ak-role inspector, no ambient skills.
+    {
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["inspector", "--project", project, "Review this material."],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("inspector", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "inspector");
+      assert.equal(args.includes("--no-skills"), true);
+      assert.equal(args.includes("-e"), true);
+      const entry = flagValue(args, "-e");
+      assert.ok(entry);
+      assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
+    }
+
     // coder apply — package tdd method forced; home skills excluded.
     {
       const result = await runAkRoleBin(
