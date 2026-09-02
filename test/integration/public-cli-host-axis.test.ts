@@ -11,6 +11,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { callThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
+import { parentInheritedSeats, writeInstitutionalSeatTable } from "../helpers/institutional-seat-table.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
@@ -416,6 +417,8 @@ function sessionRowsWithoutAttemptHistory(raw: string): unknown[] {
  */
 test("public resume Pi→Grok hands prior native once on host transition; same-host does not re-inject", async () => {
   await withHermeticHome({ prefix: "ak-dk4-pi-to-grok-" }, async ({ home }) => {
+    const priorExitCode = process.exitCode;
+    try {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -462,6 +465,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
     let grokResumeCount = 0;
     let boundSessionId: string | undefined;
     let preparedInstance: Awaited<ReturnType<typeof prepareGrokRoleEnvelope>> | undefined;
+    let activeRunDirectory: string | undefined;
 
     const grokHost = createGrokRoleTurnHost({
       sessionIdentity: {
@@ -483,14 +487,31 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
             // Exercise production envelope MCP toolCall/toolResult path (former writeback seam).
             assert.ok(preparedInstance !== undefined);
             const server = preparedInstance.mcpServers[0] as GrokMcpServer;
-            // Prefer a schema-valid continue leaf so the full toolCall→result path runs;
-            // closeRound still returns 429 below (do not seal accepted).
-            await callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
+            // Gatekeeper needs institutional-resolution.json (markRunRunning normally writes it).
+            assert.ok(activeRunDirectory !== undefined);
+            await writeInstitutionalSeatTable(
+              activeRunDirectory,
+              parentInheritedSeats({ provider: "openai-codex", model: "gpt-5.6-sol" }),
+            );
+            const reply = await callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
               judgeStatus: "continue",
               fix: { summary: "dk4-writeback-probe" },
               classes: [{ name: "c", owner: "o", boundary: "b", disposition: "d" }],
               note: "envelope mcp path",
             });
+            // Typed external MCP result: handler ran without RPC error; pending until closeRound.
+            assert.equal(reply.error, undefined, "MCP tools/call must not return JSON-RPC error");
+            assert.equal(typeof reply.result, "object");
+            assert.notEqual(reply.result, null);
+            assert.notEqual(
+              (reply.result as { isError?: unknown }).isError,
+              true,
+              "MCP judge continue must not be an error result",
+            );
+            const disposition = (reply.result as {
+              structuredContent?: { submissionDisposition?: unknown };
+            }).structuredContent?.submissionDisposition;
+            assert.equal(disposition, "pending-round-closure");
             return { stopReason: "end_turn" };
           }
           if (method === "session/close") return {};
@@ -502,6 +523,7 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
       inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
       // Production envelope owns session layout + MCP/custom paths under test for DK-4 writeback ban.
       prepare: async (request) => {
+        activeRunDirectory = request.runDirectory;
         const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
         const prepared = await prepareGrokRoleEnvelope({
           request,
@@ -610,8 +632,9 @@ test("public resume Pi→Grok hands prior native once on host transition; same-h
       sessionRowsWithoutAttemptHistory(beforeSameHost),
       "same-host Grok resume must not write conversation rows into Pi session.jsonl",
     );
-    // Role-runtime print/json mode may arm process.exitCode on tool paths; clear for the test process.
-    process.exitCode = 0;
+    } finally {
+      process.exitCode = priorExitCode;
+    }
   });
 });
 
