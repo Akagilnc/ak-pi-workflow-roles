@@ -61,3 +61,28 @@ test("known pi→grok-build projects priorNativeRecords as exact source bytes in
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("grok-build→pi with multiple updates.jsonl yields empty priorNativeRecords (no unordered join)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-host-transition-multi-grok-"));
+  try {
+    const runDirectory = join(root, "run");
+    const a = join(runDirectory, "grok-home", "sessions", "cwd-a", "s1");
+    const b = join(runDirectory, "grok-home", "sessions", "cwd-b", "s2");
+    await mkdir(a, { recursive: true });
+    await mkdir(b, { recursive: true });
+    await writeFile(join(a, "updates.jsonl"), "{\"a\":1}\n", "utf8");
+    await writeFile(join(b, "updates.jsonl"), "{\"b\":2}\n", "utf8");
+    const transition = await projectHostTransitionPriorNative({
+      previousHost: "grok-build",
+      liveHost: "pi",
+      runDirectory,
+      piSessionFile: join(runDirectory, "session", "session.jsonl"),
+    });
+    assert.deepEqual(transition, {
+      previousHost: "grok-build",
+      priorNativeRecords: "",
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
