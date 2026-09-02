@@ -357,10 +357,10 @@ __export(archivist_record_entry_exports, {
 });
 import { createHash as createHash6 } from "node:crypto";
 import { existsSync as existsSync4, readFileSync as readFileSync2, realpathSync as realpathSync2, writeFileSync } from "node:fs";
-import { dirname as dirname10, resolve as resolve8, join as join11 } from "node:path";
+import { dirname as dirname11, resolve as resolve8, join as join12 } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 function readCurrentSession(sessionDir) {
-  const ledger = join11(sessionDir, CURRENT_SESSION_LEDGER);
+  const ledger = join12(sessionDir, CURRENT_SESSION_LEDGER);
   try {
     const value = JSON.parse(readFileSync2(ledger, "utf8"));
     if (typeof value !== "object" || value === null || typeof value.sessionFile !== "string" || value.sessionFile.length === 0) {
@@ -375,7 +375,7 @@ function readCurrentSession(sessionDir) {
   }
 }
 function writeCurrentSession(sessionDir, sessionFile) {
-  const ledger = join11(sessionDir, CURRENT_SESSION_LEDGER);
+  const ledger = join12(sessionDir, CURRENT_SESSION_LEDGER);
   try {
     writeFileSync(ledger, `${JSON.stringify({ sessionFile })}
 `, { flag: "wx" });
@@ -426,7 +426,7 @@ function createRecordSession(options) {
   let parentSession;
   if (options.subject !== void 0) {
     const digest = createHash6("sha256").update(options.subject).digest("hex").slice(0, 32);
-    sessionDir = join11(
+    sessionDir = join12(
       activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)),
       options.kind,
       digest
@@ -436,7 +436,7 @@ function createRecordSession(options) {
     return SessionManager.inMemory(cwd);
   } else {
     const parentResolved = resolve8(parentFile);
-    sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join11(dirname10(parentResolved), options.kind) : join11(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
+    sessionDir = physicallyContainedIn(ledgerHome, parentResolved) ? join12(dirname11(parentResolved), options.kind) : join12(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
     parentSession = parentFile;
   }
   const nestAlreadyExists = existsSync4(sessionDir);
@@ -556,7 +556,7 @@ __export(in_process_session_exports, {
 });
 import { mkdtemp as mkdtemp2, rm as rm2 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -728,7 +728,7 @@ async function openPiInstitutionalSession(options) {
   let scratchDir;
   let resolvedAgentDir = options.agentDir;
   if (resolvedAgentDir === void 0) {
-    scratchDir = await mkdtemp2(join12(options.credentialScratchParent ?? tmpdir2(), "ak-institutional-"));
+    scratchDir = await mkdtemp2(join13(options.credentialScratchParent ?? tmpdir2(), "ak-institutional-"));
     resolvedAgentDir = scratchDir;
   }
   try {
@@ -3024,20 +3024,50 @@ function createProductionMergerGitState(repositoryRoot = process.cwd()) {
 // src/notary-source-run.ts
 init_activation_ledger_git();
 init_activation_ledger_topology();
-import { dirname as dirname5, isAbsolute as isAbsolute3, join as join5, resolve as resolve5, basename as basename3 } from "node:path";
+import { dirname as dirname6, isAbsolute as isAbsolute3, join as join6, resolve as resolve5, basename as basename3 } from "node:path";
 import { lstat, realpath as realpath3 } from "node:fs/promises";
 
 // src/public-cli/run-lifecycle.ts
 init_activation_ledger_topology();
-import { chmod, open, readdir as readdir2, readFile as readFile6, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { chmod, open, readdir as readdir2, readFile as readFile7, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join5 } from "node:path";
+
+// src/grok/session-identity.ts
+import { mkdir, readFile as readFile3, rename, writeFile } from "node:fs/promises";
+import { dirname as dirname5, join as join2 } from "node:path";
+var GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
+function createGrokSessionIdentityAuthority(authority) {
+  const bindingPath = (principal) => join2(authority.decode(principal).sessionDirectory, GROK_ACP_SESSION_BINDING);
+  return {
+    async load(principal) {
+      try {
+        const value = JSON.parse(await readFile3(bindingPath(principal), "utf8"));
+        if (typeof value !== "object" || value === null || typeof value.sessionId !== "string") {
+          throw new Error("durable Grok ACP session binding is invalid");
+        }
+        return value.sessionId;
+      } catch (error) {
+        if (error.code === "ENOENT") return void 0;
+        throw error;
+      }
+    },
+    async bind(principal, sessionId) {
+      const target = bindingPath(principal);
+      await mkdir(dirname5(target), { recursive: true });
+      const temporary = `${target}.${process.pid}.tmp`;
+      await writeFile(temporary, `${JSON.stringify({ sessionId })}
+`, { encoding: "utf8", mode: 384 });
+      await rename(temporary, target);
+    }
+  };
+}
 
 // src/typed-provider-http.ts
-import { readFile as readFile3, unlink, writeFile } from "node:fs/promises";
-import { join as join2 } from "node:path";
+import { readFile as readFile4, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join3 } from "node:path";
 var TYPED_HTTP_FILE = "typed-provider-http.json";
 function typedProviderHttpPath(runDirectory) {
-  return join2(runDirectory, TYPED_HTTP_FILE);
+  return join3(runDirectory, TYPED_HTTP_FILE);
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
@@ -3058,7 +3088,7 @@ async function recordTypedProviderHttpStatus(runDirectory, observation) {
     httpStatus: observation.httpStatus,
     provider: observation.provider
   };
-  await writeFile(
+  await writeFile2(
     typedProviderHttpPath(runDirectory),
     `${JSON.stringify(body)}
 `,
@@ -3227,7 +3257,7 @@ init_activation_ledger_git();
 
 // src/collector-config.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile4 } from "node:fs/promises";
+import { readFile as readFile5 } from "node:fs/promises";
 var COLLECTOR_HOST = "github.com";
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
@@ -3274,7 +3304,7 @@ function emptyCollectorManifest() {
 async function loadCollectorManifest(path) {
   let bytes;
   try {
-    bytes = await readFile4(path);
+    bytes = await readFile5(path);
   } catch (error) {
     fail3(`Collector request manifest is unreadable at ${path}`, error);
   }
@@ -3765,8 +3795,8 @@ var PUBLIC_COMMAND_HELP = {
 };
 
 // src/institutional-resolution.ts
-import { readFile as readFile5, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join3 } from "node:path";
+import { readFile as readFile6, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join4 } from "node:path";
 var INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json";
 var InstitutionalResolutionError = class extends Error {
   constructor(message, options) {
@@ -3784,10 +3814,10 @@ function cleanSelection(model) {
   };
 }
 async function readInstitutionalSeatSelection(runDirectory, seat) {
-  const filePath = join3(runDirectory, INSTITUTIONAL_RESOLUTION_FILE);
+  const filePath = join4(runDirectory, INSTITUTIONAL_RESOLUTION_FILE);
   let raw;
   try {
-    raw = await readFile5(filePath, "utf8");
+    raw = await readFile6(filePath, "utf8");
   } catch (error) {
     throw new InstitutionalResolutionError(
       `institutional resolution page is missing at ${filePath}`,
@@ -3832,7 +3862,7 @@ function isV1ResumableProvider(provider) {
 async function readRoleRunStateDisk(runDirectory) {
   let raw;
   try {
-    raw = JSON.parse(await readFile6(join4(runDirectory, RUN_STATE_FILE), "utf8"));
+    raw = JSON.parse(await readFile7(join5(runDirectory, RUN_STATE_FILE), "utf8"));
   } catch {
     return void 0;
   }
@@ -3965,12 +3995,12 @@ async function loadNotarySourceRunLocator(path) {
 }
 
 // src/package-resources/method-skill-binding.ts
-import { dirname as dirname6 } from "node:path";
+import { dirname as dirname7 } from "node:path";
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash4 } from "node:crypto";
-import { readFile as readFile7, realpath as realpath4 } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { readFile as readFile8, realpath as realpath4 } from "node:fs/promises";
+import { join as join7 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
   constructor(skillName, path, cause) {
     super(`Canonical ${skillName} Skill is unavailable at ${path}`, { cause });
@@ -4006,10 +4036,10 @@ function packagedMethodSkillRelativeDirectory(name) {
   return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
 }
 function resolvePackagedMethodSkillRoot(packageRoot, name) {
-  return join6(packageRoot, packagedMethodSkillRelativeDirectory(name));
+  return join7(packageRoot, packagedMethodSkillRelativeDirectory(name));
 }
 function resolvePackagedMethodSkillPath(packageRoot, name) {
-  return join6(resolvePackagedMethodSkillRoot(packageRoot, name), "SKILL.md");
+  return join7(resolvePackagedMethodSkillRoot(packageRoot, name), "SKILL.md");
 }
 function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -4103,11 +4133,11 @@ function parseProvenance(raw, expectedName) {
 }
 async function loadPackagedMethodSkillMaterial(packageRoot, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot, name);
-  const skillPathConfigured = join6(rootDirectory, "SKILL.md");
-  const provenancePath = join6(rootDirectory, "provenance.json");
+  const skillPathConfigured = join7(rootDirectory, "SKILL.md");
+  const provenancePath = join7(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile7(provenancePath, "utf8");
+    provenanceRaw = await readFile8(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -4121,10 +4151,10 @@ async function loadPackagedMethodSkillMaterial(packageRoot, name) {
   }
   const provenance = parseProvenance(provenanceJson, name);
   for (const [rel, expected] of Object.entries(provenance.files)) {
-    const absolute = join6(rootDirectory, rel);
+    const absolute = join7(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile7(absolute);
+      bytes = await readFile8(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -4140,7 +4170,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot, name) {
   let raw;
   try {
     skillPath = await realpath4(skillPathConfigured);
-    raw = await readFile7(skillPath, "utf8");
+    raw = await readFile8(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -4176,7 +4206,7 @@ async function loadPackagedCanonicalSkillBinding(packageRoot, name) {
   const snapshot = Object.freeze({
     raw: material.raw,
     path: material.skillPath,
-    baseDir: dirname6(material.skillPath),
+    baseDir: dirname7(material.skillPath),
     body: material.body,
     snapshotIdentity: Object.freeze({ text: material.raw })
   });
@@ -4487,16 +4517,16 @@ function stripGitSuffix(name) {
 
 // src/session-opening-materials.ts
 import { existsSync } from "node:fs";
-import { readFile as readFile8 } from "node:fs/promises";
-import { dirname as dirname7, join as join7 } from "node:path";
+import { readFile as readFile9 } from "node:fs/promises";
+import { dirname as dirname8, join as join8 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 function resolvePackageRootDir(moduleUrl = import.meta.url) {
-  let dir = dirname7(fileURLToPath(moduleUrl));
+  let dir = dirname8(fileURLToPath(moduleUrl));
   for (let i = 0; i < 8; i += 1) {
-    if (existsSync(join7(dir, "package.json")) && existsSync(join7(dir, "souls"))) {
+    if (existsSync(join8(dir, "package.json")) && existsSync(join8(dir, "souls"))) {
       return dir;
     }
-    const parent = dirname7(dir);
+    const parent = dirname8(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -4504,7 +4534,7 @@ function resolvePackageRootDir(moduleUrl = import.meta.url) {
 }
 var packageRootUrl = pathToFileURL(resolvePackageRootDir() + "/").href;
 async function readPackageMaterial(relativePath) {
-  return readFile8(fileURLToPath(new URL(relativePath, packageRootUrl)), "utf8");
+  return readFile9(fileURLToPath(new URL(relativePath, packageRootUrl)), "utf8");
 }
 async function joinPackageMaterials(relativePaths) {
   const chunks = [];
@@ -4543,10 +4573,10 @@ function loadGatekeeperSessionMaterials(role) {
 
 // src/grok/role-envelope.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { mkdir as mkdir3, readFile as readFile10, writeFile as writeFile6 } from "node:fs/promises";
+import { mkdir as mkdir4, readFile as readFile11, writeFile as writeFile7 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { appendFileSync as appendFileSync2 } from "node:fs";
-import { basename as basename7, dirname as dirname14, join as join18 } from "node:path";
+import { basename as basename7, dirname as dirname15, join as join19 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/gatekeeper-role.ts
@@ -4555,19 +4585,19 @@ import { Type as Type11 } from "typebox";
 // src/evidence-child-executor.ts
 import { mkdtemp as mkdtemp3, rm as rm3 } from "node:fs/promises";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 import "@earendil-works/pi-ai";
 
 // src/compliance-transport.ts
 import { Type as Type9 } from "typebox";
 
 // src/auditor-dossier-tool.ts
-import { dirname as dirname8, join as join8, resolve as resolve6 } from "node:path";
+import { dirname as dirname9, join as join9, resolve as resolve6 } from "node:path";
 import { Type as Type8 } from "typebox";
 function auditorRunDirectory(context) {
   const sessionFile = context.sessionManager?.getSessionFile?.();
   if (sessionFile === void 0) return void 0;
-  return resolve6(dirname8(dirname8(sessionFile)));
+  return resolve6(dirname9(dirname9(sessionFile)));
 }
 
 // src/sitian-appender.ts
@@ -4575,7 +4605,7 @@ init_activation_ledger_git();
 init_activation_ledger_topology();
 import { createHash as createHash5, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync as existsSync2, readFileSync } from "node:fs";
-import { basename as basename4, dirname as dirname9, join as join9, resolve as resolve7 } from "node:path";
+import { basename as basename4, dirname as dirname10, join as join10, resolve as resolve7 } from "node:path";
 
 // src/sitian-contracts.ts
 function attachDirectErrnoCode(error, cause) {
@@ -4621,7 +4651,7 @@ function resolveSitianRecordPathInLedger(input, ledgerHome) {
   const category = resolveSitianVolumeCategory(input.kind);
   let sessionDir;
   if (input.sessionParent !== void 0 && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
-    sessionDir = join9(dirname9(input.sessionParent), category);
+    sessionDir = join10(dirname10(input.sessionParent), category);
   } else {
     const bookKey = safeBookKey(cwd);
     const bookDir = activationBookDirectory(ledgerHome, bookKey);
@@ -4635,12 +4665,12 @@ function resolveSitianRecordPathInLedger(input, ledgerHome) {
         subjectStr = JSON.stringify(input.subject);
       }
       const digest = createHash5("sha256").update(subjectStr).digest("hex").slice(0, 32);
-      sessionDir = join9(bookDir, category, digest);
+      sessionDir = join10(bookDir, category, digest);
     } else {
-      sessionDir = join9(bookDir, category);
+      sessionDir = join10(bookDir, category);
     }
   }
-  const recordFile = join9(sessionDir, "records.jsonl");
+  const recordFile = join10(sessionDir, "records.jsonl");
   return { sessionDir, recordFile, ledgerHome };
 }
 function resolveSitianRecordPath(input) {
@@ -4712,7 +4742,7 @@ function appendSitianRecord(input) {
 
 // src/sitian-reader.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { readFile as readFile9 } from "node:fs/promises";
+import { readFile as readFile10 } from "node:fs/promises";
 function isRecord7(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -4720,7 +4750,7 @@ async function readSitianRecords(recordFile) {
   if (!existsSync3(recordFile)) {
     return { records: [], diagnostics: [] };
   }
-  const text = await readFile9(recordFile, "utf8");
+  const text = await readFile10(recordFile, "utf8");
   const lines = text.split("\n");
   const records2 = [];
   const diagnostics = [];
@@ -4781,9 +4811,9 @@ import { Type as Type10 } from "typebox";
 
 // src/engine-detour.ts
 import { spawn as spawn2 } from "node:child_process";
-import { mkdtemp, rm, writeFile as writeFile4 } from "node:fs/promises";
+import { mkdtemp, rm, writeFile as writeFile5 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 var ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour";
 var AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE";
 var ENGINE_DETOUR_STAGED_PROMPT_TOKEN = "<<ak-engine-staged-prompt>>";
@@ -4875,12 +4905,12 @@ async function runEngineDetourOnce(input) {
   if (input.stagedPrompt === void 0) {
     return spawnEngineDetourOnce(input);
   }
-  const stagingDir = await mkdtemp(join10(tmpdir(), "ak-engine-detour-"));
-  const stagedPath = join10(stagingDir, "prompt.txt");
+  const stagingDir = await mkdtemp(join11(tmpdir(), "ak-engine-detour-"));
+  const stagedPath = join11(stagingDir, "prompt.txt");
   let result2;
   let runError;
   try {
-    await writeFile4(stagedPath, input.stagedPrompt, "utf8");
+    await writeFile5(stagedPath, input.stagedPrompt, "utf8");
     const argv = resolveArgvWithStagedPrompt(input.argv, stagedPath);
     result2 = await spawnEngineDetourOnce({
       argv,
@@ -5098,7 +5128,7 @@ var AuditorTurnLimitError = class extends Error {
   lastResponse;
 };
 async function withInProcessScratch(options, run) {
-  const scratch = await mkdtemp3(join13(options.parentDirectory ?? tmpdir3(), options.prefix));
+  const scratch = await mkdtemp3(join14(options.parentDirectory ?? tmpdir3(), options.prefix));
   let failure2;
   try {
     return await run(scratch);
@@ -5816,7 +5846,7 @@ function stringEnum(values, options = {}) {
 
 // src/public-cli/reviewer-dispatch-rejection.ts
 import { writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 
 // src/adr-path-refs.ts
 var ADR_PATH_IN_BODY = /docs\/adr\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md/g;
@@ -6165,7 +6195,7 @@ function createReviewerDispatcher(d) {
 // src/public-cli/reviewer-dispatch-rejection.ts
 var REVIEWER_DISPATCH_REJECTION_FILE = "typed-known-failure.json";
 function reviewerDispatchRejectionPath(runDirectory) {
-  return join14(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
+  return join15(runDirectory, REVIEWER_DISPATCH_REJECTION_FILE);
 }
 function recordReviewerDispatchRejectionSync(runDirectory, rejection) {
   writeFileSync2(
@@ -6183,7 +6213,7 @@ import { Value as Value5 } from "typebox/value";
 init_activation_ledger_topology();
 
 // src/run-terminal-artifacts.ts
-import { basename as basename5, dirname as dirname11, join as join15 } from "node:path";
+import { basename as basename5, dirname as dirname12, join as join16 } from "node:path";
 function runIdFromRunDirectory(runDirectory) {
   const name = basename5(runDirectory);
   const at = name.lastIndexOf("@");
@@ -6438,7 +6468,7 @@ import {
   openSync,
   writeSync
 } from "node:fs";
-import { dirname as dirname12, isAbsolute as isAbsolute5, resolve as resolve10 } from "node:path";
+import { dirname as dirname13, isAbsolute as isAbsolute5, resolve as resolve10 } from "node:path";
 
 // src/activation-ledger-session.ts
 init_activation_ledger_topology();
@@ -6587,7 +6617,7 @@ function appendActivationLedgerLine(ledgerPath, line2, options) {
   }
   const resolvedLedger = resolve10(ledgerPath);
   const resolvedHome = resolve10(options.ledgerHome);
-  const parent = dirname12(resolvedLedger);
+  const parent = dirname13(resolvedLedger);
   ensureRealDirectoryTree(resolvedHome, parent);
   assertLedgerFileInsideHome(resolvedLedger, resolvedHome);
   if (typeof constants.O_NOFOLLOW !== "number") {
@@ -11016,8 +11046,8 @@ function createRoleRuntimeExtension(dependencies) {
 
 // src/grok/role-turn-host.ts
 import { execFile as execFile3, spawn as spawn3 } from "node:child_process";
-import { copyFile, mkdir as mkdir2, open as open2, realpath as realpath6 } from "node:fs/promises";
-import { basename as basename6, dirname as dirname13, isAbsolute as isAbsolute6, join as join17, relative as pathRelative } from "node:path";
+import { copyFile, mkdir as mkdir3, open as open2, realpath as realpath6 } from "node:fs/promises";
+import { basename as basename6, dirname as dirname14, isAbsolute as isAbsolute6, join as join18, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify as promisify3 } from "node:util";
 
@@ -11028,8 +11058,8 @@ function renderAgentStartMaterials(body, materials) {
 }
 
 // src/grok/bash-seatbelt.ts
-import { mkdir, writeFile as writeFile5 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { mkdir as mkdir2, writeFile as writeFile6 } from "node:fs/promises";
+import { join as join17 } from "node:path";
 function renderGrokBashSeatbeltHookScript() {
   const reasons = Object.fromEntries(
     FIXER_BASH_FORBIDDEN_LITERALS.map((literal) => [literal, fixerBashSeatbeltDenyReason(literal)])
@@ -11057,12 +11087,12 @@ process.stdin.on("end", () => {
 `;
 }
 async function installGrokPreToolUseDeny(controlledHome) {
-  const hooksDir = join16(controlledHome, "hooks");
-  await mkdir(hooksDir, { recursive: true });
+  const hooksDir = join17(controlledHome, "hooks");
+  await mkdir2(hooksDir, { recursive: true });
   const scriptName = "ak-bash-seatbelt.mjs";
-  const scriptPath = join16(hooksDir, scriptName);
-  await writeFile5(scriptPath, renderGrokBashSeatbeltHookScript(), { mode: 493 });
-  await writeFile5(join16(hooksDir, "ak-bash-seatbelt.json"), `${JSON.stringify({
+  const scriptPath = join17(hooksDir, scriptName);
+  await writeFile6(scriptPath, renderGrokBashSeatbeltHookScript(), { mode: 493 });
+  await writeFile6(join17(hooksDir, "ak-bash-seatbelt.json"), `${JSON.stringify({
     hooks: {
       PreToolUse: [
         {
@@ -11343,7 +11373,7 @@ async function resolveHeadTreePath(topLevel, relativePath) {
   );
   const exactHits = exactOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
   if (exactHits.includes(relativePath)) return relativePath;
-  const parent = dirname13(relativePath);
+  const parent = dirname14(relativePath);
   const leaf = basename6(relativePath);
   if (parent !== ".") {
     const { stdout: parentOut } = await execFileAsync3(
@@ -11362,7 +11392,7 @@ async function resolveHeadTreePath(topLevel, relativePath) {
     encoding: "utf8"
   });
   const needle = leaf.toLowerCase();
-  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename6(name).toLowerCase() === needle).map((name) => parent === "." ? basename6(name) : join17(parent, basename6(name)));
+  const hits = listing.split("\n").map((name) => name.trim()).filter((name) => name !== "" && basename6(name).toLowerCase() === needle).map((name) => parent === "." ? basename6(name) : join18(parent, basename6(name)));
   return hits.length === 1 ? hits[0] : void 0;
 }
 async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
@@ -11376,18 +11406,18 @@ async function isHeadMatchedProjectInstruction(repositoryCwd, absolutePath) {
     encoding: "utf8"
   });
   const topLevel = await realpath6(topLevelOut.trim());
-  const parent = await realpathIfPresent(dirname13(absolutePath));
+  const parent = await realpathIfPresent(dirname14(absolutePath));
   if (parent === void 0) return false;
   const leaf = basename6(absolutePath);
   if (leaf === "" || leaf === "." || leaf === "..") return false;
-  const candidate = join17(parent, leaf);
+  const candidate = join18(parent, leaf);
   const relative3 = pathRelative(topLevel, candidate);
   if (relative3 === "" || relative3.startsWith("..") || isAbsolute6(relative3) || relative3.includes("\0")) {
     return false;
   }
   const headRel = await resolveHeadTreePath(topLevel, relative3);
   if (headRel === void 0) return false;
-  const headFile = join17(topLevel, headRel);
+  const headFile = join18(topLevel, headRel);
   const { stdout: headBlobOut } = await execFileAsync3(
     "git",
     ["rev-parse", "--verify", `HEAD:${headRel}`],
@@ -11455,8 +11485,8 @@ function classifyGrokInspection(document, packageRoot, options = {}) {
   return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
 }
 async function prepareControlledGrokHome(sourceHome, controlledHome) {
-  await mkdir2(controlledHome, { recursive: true, mode: 448 });
-  await copyFile(join17(sourceHome, ".grok", "auth.json"), join17(controlledHome, "auth.json"));
+  await mkdir3(controlledHome, { recursive: true, mode: 448 });
+  await copyFile(join18(sourceHome, ".grok", "auth.json"), join18(controlledHome, "auth.json"));
 }
 async function inspectControlledGrok(options) {
   const { stdout } = await execFileAsync3(options.binary, ["inspect", "--json"], {
@@ -11503,7 +11533,7 @@ function buildGrokSkillExpansion(methodSkills, prompt) {
   return Object.freeze({
     name: parsed.name,
     location: method.path,
-    content: `References are relative to ${dirname14(method.path)}.
+    content: `References are relative to ${dirname15(method.path)}.
 
 ${method.body}`,
     userMessage: parsed.userMessage
@@ -11571,17 +11601,17 @@ async function prepareGrokRoleEnvelope(options) {
   let preferredTools = [];
   let rejection;
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID2();
-  await mkdir3(request.runDirectory, { recursive: true });
+  await mkdir4(request.runDirectory, { recursive: true });
   for (const method of request.methods) {
     if (method.kind !== "skill") continue;
-    const name = basename7(dirname14(method.path));
-    const raw = await readFile10(method.path, "utf8");
+    const name = basename7(dirname15(method.path));
+    const raw = await readFile11(method.path, "utf8");
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
-  let sessionFile = join18(request.runDirectory, "session", "session.jsonl");
-  await mkdir3(dirname14(sessionFile), { recursive: true });
+  let sessionFile = join19(request.runDirectory, "session", "session.jsonl");
+  await mkdir4(dirname15(sessionFile), { recursive: true });
   try {
-    await writeFile6(
+    await writeFile7(
       sessionFile,
       `${JSON.stringify({
         type: "session",
@@ -11844,7 +11874,7 @@ async function prepareGrokRoleEnvelope(options) {
     if (record4.action === "transform" && typeof record4.text === "string") prompt = record4.text;
   }
   const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
-  const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile10(path, "utf8")))).join("\n\n");
+  const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile11(path, "utf8")))).join("\n\n");
   const promptResults = await emit("before_agent_start", {
     prompt,
     systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
@@ -11875,35 +11905,6 @@ async function prepareGrokRoleEnvelope(options) {
     prompt,
     closeRound,
     dispose
-  };
-}
-
-// src/grok/session-identity.ts
-import { mkdir as mkdir4, readFile as readFile11, rename, writeFile as writeFile7 } from "node:fs/promises";
-import { dirname as dirname15, join as join19 } from "node:path";
-function createGrokSessionIdentityAuthority(authority) {
-  const bindingPath = (principal) => join19(authority.decode(principal).sessionDirectory, "grok-acp-session.json");
-  return {
-    async load(principal) {
-      try {
-        const value = JSON.parse(await readFile11(bindingPath(principal), "utf8"));
-        if (typeof value !== "object" || value === null || typeof value.sessionId !== "string") {
-          throw new Error("durable Grok ACP session binding is invalid");
-        }
-        return value.sessionId;
-      } catch (error) {
-        if (error.code === "ENOENT") return void 0;
-        throw error;
-      }
-    },
-    async bind(principal, sessionId) {
-      const target = bindingPath(principal);
-      await mkdir4(dirname15(target), { recursive: true });
-      const temporary = `${target}.${process.pid}.tmp`;
-      await writeFile7(temporary, `${JSON.stringify({ sessionId })}
-`, { encoding: "utf8", mode: 384 });
-      await rename(temporary, target);
-    }
   };
 }
 
