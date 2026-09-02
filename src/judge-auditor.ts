@@ -1,5 +1,3 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
 import {
   createComplianceDecisionTool,
   runComplianceAudit,
@@ -12,12 +10,13 @@ import {
   requireAuditMaterials,
   resolveAuditDossier,
 } from "./dossier-resolution.ts";
+import type { HostContext } from "./host-contracts.ts";
 
 export const JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
 export const SOUL_AUDIT_TOOL_NAME = JUDGE_AUDIT_TOOL_NAME;
 
 export type JudgeAuditOptions = {
-  context: ExtensionContext;
+  context: HostContext;
   signal?: AbortSignal;
 };
 

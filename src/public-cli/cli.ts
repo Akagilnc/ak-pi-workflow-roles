@@ -181,6 +181,7 @@ export type HostSelectionFailure = {
   readonly host: string;
   readonly seat: PublicCallableRole;
   readonly model: string;
+  readonly registeredHosts: readonly string[];
 };
 
 export type NamedRoleTurnHostAdapter = {
@@ -191,10 +192,7 @@ export type NamedRoleTurnHostAdapter = {
 };
 
 class HostSelectionError extends Error {
-  constructor(
-    readonly failure: HostSelectionFailure,
-    readonly registeredHosts: readonly string[],
-  ) { super(failure.kind); }
+  constructor(readonly failure: HostSelectionFailure) { super(failure.kind); }
 }
 
 export type CliEnv = {
@@ -276,10 +274,7 @@ function resolveRoleTurnHost(
     { name: "pi", create: () => ({ ok: true as const, host: piHost }) },
     {
       name: "grok-build",
-      create: ({ model }) => {
-        // Selection-time model×host rejection is owned by the selected adapter (S7 C2).
-        // S6 executeTurn also guards provider !== "xai"; create mirrors that before turn.
-        if (model !== undefined && model.provider !== "xai") return { ok: false as const };
+      create: () => {
         // Factory loads outside the public bin static graph (ADR 0052 peer-free discovery).
         let hostPromise: Promise<RoleTurnHost> | undefined;
         return {
@@ -305,15 +300,13 @@ function resolveRoleTurnHost(
   const registeredHosts = adapters.map(({ name }) => name);
   if (adapter === undefined) {
     throw new HostSelectionError(
-      { kind: "host-unregistered", host: hostName, seat: options.role, model },
-      registeredHosts,
+      { kind: "host-unregistered", host: hostName, seat: options.role, model, registeredHosts },
     );
   }
   const selected = adapter.create({ role: options.role, model: options.seat.selection });
   if (!selected.ok) {
     throw new HostSelectionError(
-      { kind: "host-model-mismatch", host: hostName, seat: options.role, model },
-      registeredHosts,
+      { kind: "host-model-mismatch", host: hostName, seat: options.role, model, registeredHosts },
     );
   }
   return selected.host;
@@ -720,6 +713,8 @@ function renderHelp(): string {
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
+    "Host resolution: --host → persistent seat host → pi; after set-host the role command face is unchanged",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
@@ -1501,7 +1496,7 @@ export async function runAkRole(
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof HostSelectionError) {
-      const registered = error.registeredHosts.join(", ");
+      const registered = error.failure.registeredHosts.join(", ");
       io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}; registered: ${registered}`));
       return { exitCode: 1, hostFailure: error.failure };
     }
