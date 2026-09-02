@@ -68,6 +68,11 @@ import {
   type GleanerLeftRuntimeDependencies,
 } from "./gleaner-left-role.ts";
 import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_BASE_FLAG } from "./gleaner-left-contracts.ts";
+import {
+  INSPECTOR_TOOL_SPEC,
+  type InspectorRuntimeDependencies,
+} from "./inspector-role.ts";
+import { INSPECTOR_ACCEPTED_TEXT } from "./inspector-contracts.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -435,6 +440,7 @@ type ActivationRuntime = {
   decodeNotaryAdmitted(): import("./notary-role.ts").NotaryAdmittedTicket | undefined;
   countersign: { activate(): Promise<void> };
   gleanerLeft: { activate(): Promise<void> };
+  inspector: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -480,6 +486,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     };
     case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
     case "gleaner-left": return { id: "load-and-install", run: async () => runtime.gleanerLeft.activate() };
+    case "inspector": return { id: "load-and-install", run: async () => runtime.inspector.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -584,6 +591,7 @@ export type RoleRuntimeDependencies = {
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadCountersignSoul?(): Promise<string>;
   loadGleanerLeftSoul?(): Promise<string>;
+  loadInspectorSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -902,6 +910,22 @@ function decodeGleanerLeftBase(getFlag: (name: string) => unknown): string {
     throw new Error("Gleaner-left role requires --ak-gleaner-left-base");
   }
   return baseRevision;
+}
+
+export function createInspectorRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: InspectorRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "inspector",
+      tool: INSPECTOR_TOOL_SPEC,
+      acceptedText: INSPECTOR_ACCEPTED_TEXT,
+      soulTag: "inspector",
+    },
+    dependencies,
+  );
 }
 
 export function createCountersignRoleRuntime(
@@ -1403,6 +1427,12 @@ export function createRoleRuntimeExtension(
         return gleanerLeftRuntime.activate();
       },
     };
+    const inspector = createInspectorRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadInspectorSoul) throw new Error("Inspector runtime dependencies are not configured");
+        return dependencies.loadInspectorSoul();
+      },
+    });
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1551,6 +1581,7 @@ export function createRoleRuntimeExtension(
         notary,
         countersign,
         gleanerLeft,
+        inspector,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);

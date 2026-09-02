@@ -220,6 +220,7 @@ export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRunt
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
+    loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),

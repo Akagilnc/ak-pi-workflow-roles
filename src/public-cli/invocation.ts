@@ -132,6 +132,10 @@ export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
   readonly baseRevision: string;
 };
 
+export type AdmittedInspectorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "inspector";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -212,6 +216,7 @@ export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCountersignInvocation
   | AdmittedGleanerLeftInvocation
+  | AdmittedInspectorInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -526,6 +531,7 @@ export type ParseInstructionArgvResult = {
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
 export type ParseJudgeArgvResult = ParseInstructionArgvResult;
 export type ParseCountersignArgvResult = ParseInstructionArgvResult;
+export type ParseInspectorArgvResult = ParseInstructionArgvResult;
 
 /** Positive ticket number shared by countersign/notary/analyst faces. */
 export function parsePositiveTicketNumber(
@@ -546,7 +552,7 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign",
+  owner: "judge" | "countersign" | "inspector",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -786,6 +792,10 @@ export function parseCountersignArgv(args: readonly string[]): ParseCountersignA
   return parseInstructionArgv(args, "countersign");
 }
 
+export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvResult {
+  return parseInstructionArgv(args, "inspector");
+}
+
 /**
  * Parse Coder-specific argv after the `coder` token.
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
@@ -971,13 +981,22 @@ export type AdmitJudgeInvocationOptions = {
   model?: InvocationEffectiveModel;
 };
 
+export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
+  correlationId?: string;
+};
+
 /**
- * Atomically admit a Judge Role run: freeze Attachments, persist the request,
- * and reserve session placement under the #78 ledger book.
+ * Shared instruction-seat admission for Judge and Inspector: project check,
+ * principal/placement issue, attachment freeze, ticket extract, admitted-request
+ * and invocation ledger write. CorrelationId is projected only when supplied
+ * (Inspector). Countersign keeps its own path for ticket-override specialty.
  */
-export async function admitJudgeInvocation(
-  options: AdmitJudgeInvocationOptions,
-): Promise<AdmittedJudgeInvocation> {
+async function admitStandardMaterialInvocation<
+  R extends "judge" | "inspector",
+>(
+  role: R,
+  options: AdmitJudgeInvocationOptions & { correlationId?: string },
+): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
   // Empty project override must not reach resolve("") → cwd (silent default).
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
@@ -994,7 +1013,7 @@ export async function admitJudgeInvocation(
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
-    role: "judge",
+    role,
     home: options.home,
   });
   const attachmentsDirectory = join(runDirectory, "attachments");
@@ -1006,17 +1025,22 @@ export async function admitJudgeInvocation(
     attachmentsDirectory,
   );
   const ticketFields = ticketAdmissionFields(ticketNumber);
+  const correlationFields =
+    options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId };
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
   const admitted = {
-    role: "judge" as const,
+    role,
     runId,
     bookKey,
     projectRoot,
     runDirectory,
     principal,
     ...ticketFields,
+    ...correlationFields,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -1032,10 +1056,14 @@ export async function admitJudgeInvocation(
     sessionDirectory,
     sessionFile,
   });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+  await writeRoleInvocationLedger(
+    { ...admitted, sessionDirectory, sessionFile },
+    admitted.role,
+    options.model,
+  );
 
   return {
-    role: "judge",
+    role,
     runId,
     bookKey,
     projectRoot,
@@ -1046,10 +1074,31 @@ export async function admitJudgeInvocation(
     principal,
     admittedRequestPath,
     ...ticketFields,
+    ...correlationFields,
   };
 }
 
-/** Shared prompt transport for instruction-seat roles (judge/countersign). */
+/**
+ * Atomically admit a Judge Role run: freeze Attachments, persist the request,
+ * and reserve session placement under the #78 ledger book.
+ */
+export async function admitJudgeInvocation(
+  options: AdmitJudgeInvocationOptions,
+): Promise<AdmittedJudgeInvocation> {
+  return admitStandardMaterialInvocation("judge", options);
+}
+
+/**
+ * Admit a direct Inspector (察院) run: freeze attachments, persist the request,
+ * and reserve session placement. Same instruction-seat face as Judge (#568).
+ */
+export async function admitInspectorInvocation(
+  options: AdmitInspectorInvocationOptions,
+): Promise<AdmittedInspectorInvocation> {
+  return admitStandardMaterialInvocation("inspector", options);
+}
+
+/** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
 function buildInstructionTransportPrompt(
   admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
   engineMaterial?: EngineSessionMaterial,
@@ -1068,6 +1117,13 @@ function buildInstructionTransportPrompt(
 /** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+
+export function buildInspectorTransportPrompt(
+  admitted: AdmittedInspectorInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   return buildInstructionTransportPrompt(admitted, engineMaterial);

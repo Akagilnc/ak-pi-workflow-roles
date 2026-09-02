@@ -84,7 +84,8 @@ export type RoleRunRecord = {
     | "merger"
     | "notary"
     | "countersign"
-    | "gleaner-left";
+    | "gleaner-left"
+    | "inspector";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -243,7 +244,8 @@ async function readRoleRunStateDisk(
     record.role !== "merger" &&
     record.role !== "notary" &&
     record.role !== "countersign" &&
-    record.role !== "gleaner-left"
+    record.role !== "gleaner-left" &&
+    record.role !== "inspector"
   ) {
     return undefined;
   }
@@ -1288,6 +1290,7 @@ export async function peekRoleRunRole(
   | "notary"
   | "countersign"
   | "gleaner-left"
+  | "inspector"
   | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);

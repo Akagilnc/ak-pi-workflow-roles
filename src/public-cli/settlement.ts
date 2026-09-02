@@ -97,6 +97,11 @@ import {
   validateRecordedGleanerLeftOutput,
 } from "../gleaner-left-contracts.ts";
 import {
+  INSPECTOR_OUTPUT_TOOL_NAME,
+  inspectorDecisiveFacts,
+  validateRecordedInspectorOutput,
+} from "../inspector-contracts.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -128,6 +133,7 @@ import {
   type AdmittedMergerInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedGleanerLeftInvocation,
+  type AdmittedInspectorInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -3082,7 +3088,7 @@ export async function trySettleDoctorTerminalResult(
  * Role-specific validator / decisiveFacts / diagnostics stay on the seat.
  */
 type OneShotAcceptedSettlementSpec = {
-  readonly role: "notary" | "countersign" | "gleaner-left";
+  readonly role: "notary" | "countersign" | "gleaner-left" | "inspector";
   readonly toolName: string;
   readonly nonUsableDiagnostic: string;
   readonly projectAccepted: (
@@ -3110,7 +3116,7 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
 }
 
 async function settleLawfulOneShotAcceptedTerminalResult(
-  admitted: AdmittedNotaryInvocation | AdmittedCountersignInvocation | AdmittedGleanerLeftInvocation,
+  admitted: AdmittedNotaryInvocation | AdmittedCountersignInvocation | AdmittedGleanerLeftInvocation | AdmittedInspectorInvocation,
   authority: DurablePrincipalAuthority,
   spec: OneShotAcceptedSettlementSpec,
 ): Promise<TerminalResult | undefined> {
@@ -3342,6 +3348,43 @@ export async function trySettleGleanerLeftTerminalResult(
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulGleanerLeftTerminalResult(admitted, authority);
+}
+
+/** Lawful Inspector accepted outcome (pass/bounce). */
+export type LawfulInspectorRoleOutcome = {
+  kind: "accepted";
+  role: "inspector";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulInspectorTerminalResult(
+  admitted: AdmittedInspectorInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "inspector",
+    toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "察院回执无显式 pass/bounce",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedInspectorOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedInspectorOutput(sealed.decisiveFacts);
+      const accepted: LawfulInspectorRoleOutcome = {
+        kind: "accepted",
+        role: "inspector",
+        status: sealed.status,
+        decisiveFacts: inspectorDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
+}
+
+export async function trySettleInspectorTerminalResult(
+  admitted: AdmittedInspectorInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulInspectorTerminalResult(admitted, authority);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

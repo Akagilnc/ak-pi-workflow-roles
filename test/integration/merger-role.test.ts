@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
@@ -30,10 +30,12 @@ const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
 /** One conflicted-repo template per process; cases clone locally. */
+let conflictedTemplateRoot: string | undefined;
 let conflictedTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
 async function conflictedTemplate() {
   conflictedTemplateMemo ??= (async () => {
     const root = await mkdtemp(resolve(tmpdir(), "ak-merger-conflict-template-"));
+    conflictedTemplateRoot = root;
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
     git(root, "config", "user.email", "merger@test.local");
@@ -52,6 +54,12 @@ async function conflictedTemplate() {
   })();
   return conflictedTemplateMemo;
 }
+
+after(async () => {
+  if (conflictedTemplateRoot === undefined) return;
+  await rm(conflictedTemplateRoot, { recursive: true, force: true });
+  conflictedTemplateRoot = undefined;
+});
 
 async function materializeConflictedRepo() {
   const template = await conflictedTemplate();

@@ -8,11 +8,20 @@ import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 
 /** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/notary.md",
+  "souls/gate-output-guide.md",
+] as const;
+
+/** Shared by public inspector and gatekeeper-province inspector. */
+export const INSPECTOR_SESSION_MATERIALS = [
+  "CLAUDE.md",
+  "souls/inspector.md",
+  "souls/quality-law.md",
   "souls/gate-output-guide.md",
 ] as const;
 
@@ -137,6 +146,15 @@ export const PUBLIC_ROLE_RECORDS = [
       "souls/quality-law.md",
     ],
   },
+  {
+    role: "inspector",
+    phases: [null],
+    outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: INSPECTOR_SESSION_MATERIALS,
+  },
 ] as const;
 
 export type PublicRoleRecord = (typeof PUBLIC_ROLE_RECORDS)[number];
@@ -145,11 +163,13 @@ export type PackagedRole = PublicRoleRecord["role"];
 /**
  * Seats that refuse resume. Collector/doctor/notary remain pending independent
  * authority review; countersign/gleaner-left revoked by #599 (DK-1/2/3).
+ * Inspector is one-shot on the filed-officer envelope (#568 / ADR 0074).
  */
 export const ONE_SHOT_ROLES: readonly PackagedRole[] = [
   "collector",
   "doctor",
   "notary",
+  "inspector",
 ];
 
 /**

@@ -140,6 +140,8 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
         "--ak-gleaner-left-base",
         activation.baseRevision,
       ];
+    case "inspector":
+      return ["--ak-role", "inspector"];
     default: {
       const _exhaustive: never = activation;
       return _exhaustive;
