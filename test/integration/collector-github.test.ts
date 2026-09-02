@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -59,6 +59,7 @@ async function withPathGhStub<T>(
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
+    await rm(binDir, { recursive: true, force: true });
   }
 }
 
@@ -186,21 +187,26 @@ test("final-page HTTP 429 fails pagination loudly", async () => {
 
 test("default createGhApiRunner spawns executable gh on PATH hermetically", async () => {
   // Real spawn once for argv + --include frame parse; scenario matrix lives in-process elsewhere.
-  const logPath = join(await mkdtemp(join(tmpdir(), "ak-gh-log-")), "args.log");
-  const script = `#!/usr/bin/env bash
+  const logRoot = await mkdtemp(join(tmpdir(), "ak-gh-log-"));
+  try {
+    const logPath = join(logRoot, "args.log");
+    const script = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> ${JSON.stringify(logPath)}
 printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"collector-bot"}'
 `;
-  await withPathGhStub(script, async () => {
-    const runner = createGhApiRunner();
-    const transport = createGhCollectorGitHubTransport(runner);
-    const user = await transport.getAuthenticatedUser();
-    assert.equal(user.login, "collector-bot");
-    const log = await (await import("node:fs/promises")).readFile(logPath, "utf8");
-    assert.match(log, /api --hostname github.com --include/);
-    assert.doesNotMatch(log, / \| |&&/);
-  });
+    await withPathGhStub(script, async () => {
+      const runner = createGhApiRunner();
+      const transport = createGhCollectorGitHubTransport(runner);
+      const user = await transport.getAuthenticatedUser();
+      assert.equal(user.login, "collector-bot");
+      const log = await (await import("node:fs/promises")).readFile(logPath, "utf8");
+      assert.match(log, /api --hostname github.com --include/);
+      assert.doesNotMatch(log, / \| |&&/);
+    });
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
 });
 
 test("createGhIssueSoftFetcher softens tracker/gh-unavailable only; post-start failures propagate", async () => {
@@ -877,49 +883,53 @@ exit 1
 
 test("R11 hung gh child aborted through runner settles once and kills child", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "ak-gh-hang-"));
-  const pidFile = join(stateDir, "pid.txt");
-  const script = `#!/usr/bin/env bash
+  try {
+    const pidFile = join(stateDir, "pid.txt");
+    const script = `#!/usr/bin/env bash
 set -euo pipefail
 echo "$$" > ${JSON.stringify(pidFile)}
 # exec so SIGTERM from the runner hits the hung process directly.
 exec sleep 30
 `;
-  await withPathGhStub(script, async () => {
-    const runner = createGhApiRunner();
-    const controller = new AbortController();
-    const pending = runner(
-      ["api", "--hostname", "github.com", "--include", "-X", "GET", "/user"],
-      { signal: controller.signal },
-    );
-    const waitForPid = async (): Promise<number> => {
-      const deadline = Date.now() + 5_000;
-      let delayMs = 5;
-      while (Date.now() < deadline) {
-        try {
-          const pid = Number((await readFile(pidFile, "utf8")).trim());
-          if (Number.isSafeInteger(pid) && pid > 0) return pid;
-        } catch {
-          // The child has not written its readiness marker yet.
+    await withPathGhStub(script, async () => {
+      const runner = createGhApiRunner();
+      const controller = new AbortController();
+      const pending = runner(
+        ["api", "--hostname", "github.com", "--include", "-X", "GET", "/user"],
+        { signal: controller.signal },
+      );
+      const waitForPid = async (): Promise<number> => {
+        const deadline = Date.now() + 5_000;
+        let delayMs = 5;
+        while (Date.now() < deadline) {
+          try {
+            const pid = Number((await readFile(pidFile, "utf8")).trim());
+            if (Number.isSafeInteger(pid) && pid > 0) return pid;
+          } catch {
+            // The child has not written its readiness marker yet.
+          }
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          delayMs = Math.min(delayMs * 2, 100);
         }
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        delayMs = Math.min(delayMs * 2, 100);
+        throw new Error("timed out waiting for hung child readiness marker");
+      };
+      const pid = await waitForPid();
+      controller.abort(new Error("observe canceled"));
+      await assert.rejects(() => pending, /abort|cancel/i);
+      const killDeadline = Date.now() + 5_000;
+      while (Date.now() < killDeadline) {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      throw new Error("timed out waiting for hung child readiness marker");
-    };
-    const pid = await waitForPid();
-    controller.abort(new Error("observe canceled"));
-    await assert.rejects(() => pending, /abort|cancel/i);
-    const killDeadline = Date.now() + 5_000;
-    while (Date.now() < killDeadline) {
-      try {
-        process.kill(pid, 0);
-      } catch {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    assert.fail("hung gh child must be killed");
-  });
+      assert.fail("hung gh child must be killed");
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });
 
 test("R11 observe abort through ledger does not certify a snapshot", async () => {

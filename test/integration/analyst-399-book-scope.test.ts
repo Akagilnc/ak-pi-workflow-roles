@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -200,8 +200,11 @@ async function withBookScopeWorld<T>(
       { cwd: mainRoot },
     );
 
-    worktreeRoot = join(await mkdtemp(join(tmpdir(), "analyst-399-wt1-")), "wt");
-    worktree2Root = join(await mkdtemp(join(tmpdir(), "analyst-399-wt2-")), "wt");
+    // Own the parent temp roots so cleanup removes them (not only the nested wt/).
+    const worktreeParent1 = await mkdtemp(join(tmpdir(), "analyst-399-wt1-"));
+    const worktreeParent2 = await mkdtemp(join(tmpdir(), "analyst-399-wt2-"));
+    worktreeRoot = join(worktreeParent1, "wt");
+    worktree2Root = join(worktreeParent2, "wt");
     execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
     execFileSync("git", ["worktree", "add", worktree2Root, "-b", "wt2"], { cwd: mainRoot });
 
@@ -256,8 +259,9 @@ async function withBookScopeWorld<T>(
     else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
     await rm(mainRoot, { recursive: true, force: true });
-    if (worktreeRoot) await rm(worktreeRoot, { recursive: true, force: true }).catch(() => undefined);
-    if (worktree2Root) await rm(worktree2Root, { recursive: true, force: true }).catch(() => undefined);
+    // Remove the mkdtemp parent (…/analyst-399-wtN-XXXX), not only nested wt/.
+    if (worktreeRoot) await rm(dirname(worktreeRoot), { recursive: true, force: true }).catch(() => undefined);
+    if (worktree2Root) await rm(dirname(worktree2Root), { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
