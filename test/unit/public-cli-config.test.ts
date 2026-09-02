@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -440,6 +440,70 @@ test("persistent bare provider/model stores as-is without inventing thinking", a
       false,
     );
     assert.equal(formatModelSpec(effective.selection!), "kimi-coding/k3-256k");
+  });
+});
+
+// #592: shared public-cli.json may carry seat keys a newer CLI wrote that this
+// build does not know. Read path skips them; known seats still resolve.
+test("load skips unknown seat keys without failing the shared config", async () => {
+  await withTempHome(async (home) => {
+    const path = publicCliConfigPath(home);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      `${JSON.stringify(
+        {
+          seats: {
+            judge: {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+            // Seat key no build of this package ever ships — stands in for a
+            // newer-line row (e.g. countersign before this build knew it).
+            "future-seat-from-newer-cli": {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const loaded = await loadPublicCliConfig(home);
+    assert.deepEqual(loaded.seats.judge, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(loaded.seats, "future-seat-from-newer-cli"),
+      false,
+    );
+
+    const credentials: CredentialProviders = {
+      "openai-codex": true,
+      xai: false,
+    };
+    const effective = resolveEffectiveSeat(loaded, "judge", credentials);
+    assert.equal(effective.source, "persistent");
+    assert.deepEqual(effective.selection, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
+
+    // Unknown key must not appear among effective seats this CLI owns.
+    const all = effectiveSeatConfigurations(loaded, credentials);
+    assert.equal(
+      all.some((entry) => (entry.seat as string) === "future-seat-from-newer-cli"),
+      false,
+    );
+    assert.equal(all.find((entry) => entry.seat === "judge")?.source, "persistent");
   });
 });
 
