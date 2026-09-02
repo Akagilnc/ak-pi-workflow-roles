@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   createGrokRoleTurnHost,
+  openGrokSessionAppendCursor,
   type GrokRebuildHistoryResource,
 } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
@@ -505,7 +506,13 @@ test(
       // 2. Grok resume: production projector → keyed application/json resource from sole JSONL.
       const grokPromptParams: unknown[] = [];
       const grokHost = createGrokRoleTurnHost({
-        sessionIdentity: { async load() { return undefined; }, async bind() {} },
+        sessionIdentity: {
+          async load() { return undefined; },
+          async bind() {},
+          resolveSessionFile(principal) {
+            return piDurablePrincipalAuthority.decode(principal).sessionFile;
+          },
+        },
         recordCapabilities: async () => {},
         connect: async () => ({
           async request(method, params) {
@@ -524,25 +531,29 @@ test(
           async close() {},
         }),
         inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
-        prepare: async (request) => ({
-          mcpServers: [{ name: "ak-role" }],
-          systemPrompt: { body: "law", materials: [] },
-          prompt: request.continuation.prompt,
-          closeRound: async () => {
-            // Typed 429 observation keeps the run on the resume face after Grok.
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "openai-codex",
-            });
-            return {
-              accepted: false as const,
-              failure: {
-                cause: "provider" as const,
-                identity: { name: "rate_limit", code: 429 },
-              },
-            };
-          },
-        }),
+        prepare: async (request) => {
+          const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+          return {
+            mcpServers: [{ name: "ak-role" }],
+            systemPrompt: { body: "law", materials: [] },
+            prompt: request.continuation.prompt,
+            sessionAppend: openGrokSessionAppendCursor(sessionFile),
+            closeRound: async () => {
+              // Typed 429 observation keeps the run on the resume face after Grok.
+              await observeTyped429ViaProductionHandler({
+                runDirectory: request.runDirectory,
+                provider: "openai-codex",
+              });
+              return {
+                accepted: false as const,
+                failure: {
+                  cause: "provider" as const,
+                  identity: { name: "rate_limit", code: 429 },
+                },
+              };
+            },
+          };
+        },
       });
 
       {
@@ -603,9 +614,10 @@ test(
           (turn) =>
             turn.kind === "toolResult"
             && turn.toolCallId === CROSS_HOST_BASH_CALL_ID
-            && turn.toolName === "bash",
+            && turn.toolName === "bash"
+            && turn.content != null,
         ),
-        "Grok rebuild resource must carry keyed bash toolResult from real Pi birth",
+        "Grok rebuild resource must carry keyed bash toolResult content from real Pi birth",
       );
 
       {

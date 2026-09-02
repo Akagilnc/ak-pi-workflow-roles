@@ -48,6 +48,11 @@ export type GrokPreparedTurn = Readonly<{
    * ACP never resolves (#593).
    */
   abortSignal?: AbortSignal;
+  /**
+   * Shared parent cursor for this turn's durable JSONL writes. prepare opens it
+   * once; host user/assistant/builtin and envelope MCP appends must share it (#617).
+   */
+  sessionAppend?: GrokSessionAppendCursor;
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
   closeRound(): Promise<
     | { readonly accepted: true }
@@ -72,7 +77,8 @@ export function grokSessionJsonlPath(runDirectory: string): string {
 
 /**
  * Structured rebuild turns projected from session/session.jsonl (#617 DK-1).
- * Role conclusions live on toolCall.arguments and toolResult.details — text alone is lossy.
+ * Role conclusions live on toolCall.arguments and toolResult content/details —
+ * text alone is lossy; Pi bash results often carry content with details absent.
  */
 export type GrokRebuildTurn =
   | { readonly kind: "user"; readonly text: string }
@@ -87,18 +93,19 @@ export type GrokRebuildTurn =
       readonly kind: "toolResult";
       readonly toolCallId: string;
       readonly toolName: string;
+      readonly content: unknown;
       readonly details: unknown;
       readonly isError: boolean;
     };
 
-/**
- * Authoritative session→rebuild projector. JSONL is the sole history authority:
- * user/assistant text plus toolCall.arguments and toolResult.details survive so
- * cross-host resume keeps role conclusions (Pi-shaped and Grok-shaped pairs).
- * Non-empty unparseable lines fail loudly — never skip-and-continue (#617).
- */
-export function projectGrokRebuildHistory(sessionJsonl: string): readonly GrokRebuildTurn[] {
-  const turns: GrokRebuildTurn[] = [];
+type ParsedSessionEntry = {
+  readonly raw: Record<string, unknown>;
+  readonly id: string | undefined;
+  readonly parentId: string | null | undefined;
+};
+
+function parseSessionJsonlEntries(sessionJsonl: string): ParsedSessionEntry[] {
+  const entries: ParsedSessionEntry[] = [];
   for (const line of sessionJsonl.split("\n")) {
     if (line.trim() === "") continue;
     let entry: Record<string, unknown>;
@@ -110,6 +117,74 @@ export function projectGrokRebuildHistory(sessionJsonl: string): readonly GrokRe
         { code: "session-history-corrupt" as const },
       );
     }
+    const id = typeof entry.id === "string" && entry.id.trim() !== "" ? entry.id : undefined;
+    const parentId =
+      entry.parentId === null || typeof entry.parentId === "string"
+        ? (entry.parentId as string | null)
+        : undefined;
+    entries.push({ raw: entry, id, parentId });
+  }
+  return entries;
+}
+
+/**
+ * Pi SessionManager leaf rule: last tree-linked entry in file order is current leaf.
+ * Walk parentId ancestry root→leaf so abandoned forks never enter rebuild (#617).
+ * Missing parent or cycle fails loud — never wash a broken chain into full-file order.
+ */
+export function selectActiveSessionBranchEntries(
+  sessionJsonl: string,
+): readonly Record<string, unknown>[] {
+  const entries = parseSessionJsonlEntries(sessionJsonl);
+  const byId = new Map<string, ParsedSessionEntry>();
+  let leaf: ParsedSessionEntry | undefined;
+  for (const entry of entries) {
+    if (entry.raw.type === "session") continue;
+    if (entry.id === undefined) continue;
+    byId.set(entry.id, entry);
+    leaf = entry;
+  }
+  if (leaf === undefined) {
+    // No tree links (header-only / legacy unlinked lines): physical order is the only path.
+    return entries.map((entry) => entry.raw);
+  }
+  const path: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  let current: ParsedSessionEntry | undefined = leaf;
+  while (current !== undefined) {
+    if (current.id !== undefined) {
+      if (seen.has(current.id)) {
+        throw Object.assign(
+          new Error("session JSONL parent chain contains a cycle"),
+          { code: "session-history-corrupt" as const },
+        );
+      }
+      seen.add(current.id);
+    }
+    path.push(current.raw);
+    if (current.parentId === null || current.parentId === undefined) break;
+    const parent = byId.get(current.parentId);
+    if (parent === undefined) {
+      throw Object.assign(
+        new Error("session JSONL parent chain references a missing entry"),
+        { code: "session-history-corrupt" as const },
+      );
+    }
+    current = parent;
+  }
+  path.reverse();
+  return path;
+}
+
+/**
+ * Authoritative session→rebuild projector. JSONL is the sole history authority:
+ * active leaf ancestry only; user/assistant text plus toolCall.arguments and
+ * toolResult content+details survive so cross-host resume keeps role conclusions.
+ * Non-empty unparseable lines and broken parent chains fail loudly (#617).
+ */
+export function projectGrokRebuildHistory(sessionJsonl: string): readonly GrokRebuildTurn[] {
+  const turns: GrokRebuildTurn[] = [];
+  for (const entry of selectActiveSessionBranchEntries(sessionJsonl)) {
     if (entry.type !== "message" || typeof entry.message !== "object" || entry.message === null) {
       continue;
     }
@@ -131,6 +206,7 @@ export function projectGrokRebuildHistory(sessionJsonl: string): readonly GrokRe
         kind: "toolResult",
         toolCallId: message.toolCallId,
         toolName,
+        content: message.content ?? null,
         details: message.details ?? null,
         isError: message.isError === true,
       });
@@ -231,38 +307,50 @@ export function appendGrokSessionJsonlEntry(
  * Same leaf walk as settlement attempt-history / Pi custom append (#617 cross-host restore).
  * Read/parse failures stay loud — never wash missing or corrupt truth into parentId=null (#617).
  */
-function lastSessionTreeEntryId(sessionFile: string): string | null {
+export function readLastSessionTreeEntryId(sessionFile: string): string | null {
   let parentId: string | null = null;
   const text = readFileSync(sessionFile, "utf8");
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    let entry: { id?: unknown; type?: unknown };
-    try {
-      entry = JSON.parse(line) as { id?: unknown; type?: unknown };
-    } catch (error) {
-      throw Object.assign(
-        new Error("session JSONL contains an unparseable non-empty line", { cause: error }),
-        { code: "session-history-corrupt" as const },
-      );
-    }
-    if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
+  for (const entry of parseSessionJsonlEntries(text)) {
+    if (entry.id !== undefined && entry.raw.type !== "session") parentId = entry.id;
   }
   return parentId;
 }
 
+/**
+ * One open-scan parent cursor for a turn. Host + envelope share this object so
+ * user/assistant/MCP/builtin appends stay one tree without O(n²) full-file rereads (#617).
+ */
+export type GrokSessionAppendCursor = {
+  readonly sessionFile: string;
+  parentId: string | null;
+  /** toolCallId and `result:${toolCallId}` keys already booked onto JSONL. */
+  readonly recordedToolCallIds: Set<string>;
+};
+
+/** Scan session JSONL once; subsequent appends advance parentId in memory. */
+export function openGrokSessionAppendCursor(sessionFile: string): GrokSessionAppendCursor {
+  return {
+    sessionFile,
+    parentId: readLastSessionTreeEntryId(sessionFile),
+    recordedToolCallIds: new Set(),
+  };
+}
+
 /** Tree-linked envelope shared by every Grok→JSONL message write Pi can restore. */
 function appendPiShapedSessionMessage(
-  sessionFile: string,
+  cursor: GrokSessionAppendCursor,
   message: Readonly<Record<string, unknown>>,
 ): void {
+  const id = randomUUID();
   const timestamp = new Date().toISOString();
-  appendGrokSessionJsonlEntry(sessionFile, {
+  appendGrokSessionJsonlEntry(cursor.sessionFile, {
     type: "message",
-    id: randomUUID(),
-    parentId: lastSessionTreeEntryId(sessionFile),
+    id,
+    parentId: cursor.parentId,
     timestamp,
     message,
   });
+  cursor.parentId = id;
 }
 
 /**
@@ -271,12 +359,12 @@ function appendPiShapedSessionMessage(
  * Must carry id/parentId so Pi `--session` restore walks the entry into LLM context.
  */
 export function appendGrokSessionMessage(
-  sessionFile: string,
+  cursor: GrokSessionAppendCursor,
   role: "user" | "assistant",
   text: string,
 ): void {
   if (text.trim() === "") return;
-  appendPiShapedSessionMessage(sessionFile, {
+  appendPiShapedSessionMessage(cursor, {
     role,
     content: [{ type: "text", text }],
     timestamp: Date.now(),
@@ -285,14 +373,16 @@ export function appendGrokSessionMessage(
 
 /** Append a Pi-shaped assistant toolCall leaf (tree-linked for Pi restore). */
 export function appendGrokSessionToolCall(
-  sessionFile: string,
+  cursor: GrokSessionAppendCursor,
   toolCall: {
     readonly id: string;
     readonly name: string;
     readonly arguments?: unknown;
   },
 ): void {
-  appendPiShapedSessionMessage(sessionFile, {
+  if (cursor.recordedToolCallIds.has(toolCall.id)) return;
+  cursor.recordedToolCallIds.add(toolCall.id);
+  appendPiShapedSessionMessage(cursor, {
     role: "assistant",
     content: [{
       type: "toolCall",
@@ -305,7 +395,7 @@ export function appendGrokSessionToolCall(
 
 /** Append a Pi-shaped toolResult pair leaf so JSONL rebuild keeps role conclusions. */
 export function appendGrokSessionToolResult(
-  sessionFile: string,
+  cursor: GrokSessionAppendCursor,
   toolResult: {
     readonly toolCallId: string;
     readonly toolName: string;
@@ -314,7 +404,10 @@ export function appendGrokSessionToolResult(
     readonly isError: boolean;
   },
 ): void {
-  appendPiShapedSessionMessage(sessionFile, {
+  const resultKey = `result:${toolResult.toolCallId}`;
+  if (cursor.recordedToolCallIds.has(resultKey)) return;
+  cursor.recordedToolCallIds.add(resultKey);
+  appendPiShapedSessionMessage(cursor, {
     role: "toolResult",
     toolCallId: toolResult.toolCallId,
     toolName: toolResult.toolName,
@@ -332,6 +425,8 @@ export type GrokCapabilityDeclaration = Readonly<{
 export type GrokSessionIdentityAuthority = Readonly<{
   load(principal: RoleTurnRequest["principal"]): Promise<string | undefined>;
   bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;
+  /** Durable JSONL coordinate from DurablePrincipalAuthority.decode — never runDirectory join (#617). */
+  resolveSessionFile(principal: RoleTurnRequest["principal"]): string;
 }>;
 
 export type GrokRoleTurnHostConfig = Readonly<{
@@ -492,12 +587,13 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
         // #617 DK-1: sole JSONL authority must be proven before prepare. Production
         // prepare owns layout creation and would mint an empty header on absence —
         // loading history first keeps resume from continuing on a blank rebuild.
+        // Session path comes only from durable principal decode — never runDirectory join.
+        const principalSessionFile = config.sessionIdentity.resolveSessionFile(request.principal);
         let rebuildTurns: readonly GrokRebuildTurn[] = [];
         if (continuation.kind === "resume") {
-          const historyFile = grokSessionJsonlPath(request.runDirectory);
           let raw: string;
           try {
-            raw = await readFile(historyFile, "utf8");
+            raw = await readFile(principalSessionFile, "utf8");
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") {
               return failure("session", "GrokSessionHistoryMissing", "session-history-missing");
@@ -583,21 +679,76 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           let prompt = prepared.prompt;
           const abortSignal = prepared.abortSignal;
           const activeConnection = connection;
-          const sessionFile = grokSessionJsonlPath(request.runDirectory);
+          // Shared cursor: prepare opens once when it owns the file; otherwise open here.
+          const sessionAppend =
+            prepared.sessionAppend
+            ?? openGrokSessionAppendCursor(principalSessionFile);
           // First resume prompt carries JSONL history; retry prompts stay bare.
           let deliverRebuildHistory = continuation.kind === "resume" && rebuildTurns.length > 0;
           // Accumulate assistant text from ACP session/update so JSONL stays the true source.
           let assistantChunks: string[] = [];
+          // Builtin tool names seen on tool_call notifications (paired with tool_call_update).
+          const builtinToolNames = new Map<string, string>();
           activeConnection.onNotification?.((method, params) => {
             if (method !== "session/update") return;
             const update = (params as { update?: unknown }).update;
             if (typeof update !== "object" || update === null) return;
-            const record = update as { sessionUpdate?: unknown; content?: unknown };
-            if (record.sessionUpdate !== "agent_message_chunk") return;
-            const content = record.content;
-            if (typeof content === "object" && content !== null) {
-              const text = (content as { type?: unknown; text?: unknown }).text;
-              if (typeof text === "string") assistantChunks.push(text);
+            const record = update as {
+              sessionUpdate?: unknown;
+              content?: unknown;
+              toolCallId?: unknown;
+              title?: unknown;
+              rawInput?: unknown;
+              rawOutput?: unknown;
+              status?: unknown;
+              _meta?: unknown;
+            };
+            if (record.sessionUpdate === "agent_message_chunk") {
+              const content = record.content;
+              if (typeof content === "object" && content !== null) {
+                const text = (content as { type?: unknown; text?: unknown }).text;
+                if (typeof text === "string") assistantChunks.push(text);
+              }
+              return;
+            }
+            // Grok builtin tools arrive as ACP tool_call / tool_call_update, not MCP relay.
+            // Persist the pair onto the sole JSONL and dedupe by toolCallId (#617).
+            if (record.sessionUpdate === "tool_call") {
+              if (typeof record.toolCallId !== "string" || record.toolCallId.trim() === "") return;
+              const metaTool = (record._meta as { "x.ai/tool"?: { name?: unknown } } | undefined)?.["x.ai/tool"];
+              const nameFromMeta =
+                typeof metaTool?.name === "string" && metaTool.name.trim() !== ""
+                  ? metaTool.name
+                  : undefined;
+              const nameFromTitle =
+                typeof record.title === "string" && record.title.trim() !== ""
+                  ? record.title
+                  : undefined;
+              const name = nameFromMeta ?? nameFromTitle;
+              if (name === undefined) return;
+              builtinToolNames.set(record.toolCallId, name);
+              appendGrokSessionToolCall(sessionAppend, {
+                id: record.toolCallId,
+                name,
+                arguments: record.rawInput ?? {},
+              });
+              return;
+            }
+            if (record.sessionUpdate === "tool_call_update") {
+              if (typeof record.toolCallId !== "string" || record.toolCallId.trim() === "") return;
+              if (record.status !== "completed" && record.status !== "failed") return;
+              const toolName =
+                builtinToolNames.get(record.toolCallId)
+                ?? (typeof record.title === "string" && record.title.trim() !== ""
+                  ? record.title
+                  : "unknown");
+              appendGrokSessionToolResult(sessionAppend, {
+                toolCallId: record.toolCallId,
+                toolName,
+                content: record.content ?? null,
+                details: record.rawOutput ?? null,
+                isError: record.status === "failed",
+              });
             }
           });
           /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
@@ -643,7 +794,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
                 : [{ type: "text", text: prompt }];
               deliverRebuildHistory = false;
               // Book the user turn onto durable JSONL before ACP sees it.
-              appendGrokSessionMessage(sessionFile, "user", prompt);
+              appendGrokSessionMessage(sessionAppend, "user", prompt);
               assistantChunks = [];
               result = await promptOrAbort({
                 sessionId,
@@ -664,7 +815,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               }
               throw error;
             }
-            appendGrokSessionMessage(sessionFile, "assistant", assistantChunks.join(""));
+            appendGrokSessionMessage(sessionAppend, "assistant", assistantChunks.join(""));
             if (result.stopReason === "refusal") {
               return failure("output", "GrokAcpRefusal", "refusal", { sessionId });
             }
