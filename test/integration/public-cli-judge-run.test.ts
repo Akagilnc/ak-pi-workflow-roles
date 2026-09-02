@@ -486,7 +486,8 @@ for (const scenario of [
     childEnv: { AK_GATE_MODE: "gatekeeper-no-dispatch" },
     expectDetails: {
       stage: "gatekeeper",
-      submission: { status: "pass", findings: [] },
+      // Unusable non-pass/non-dispatch; lawful province pass is not failure (#597).
+      submission: { status: "ok-enough" },
     },
   },
   {
