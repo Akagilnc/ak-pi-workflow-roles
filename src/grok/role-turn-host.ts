@@ -92,6 +92,10 @@ function failure(cause: "activation" | "session" | "output", name: string, code:
 
 type RpcReply = { readonly id?: unknown; readonly method?: unknown; readonly params?: unknown; readonly result?: unknown; readonly error?: unknown };
 
+function hostAbortedError(): Error & { readonly code: "host-aborted" } {
+  return Object.assign(new Error("Grok host aborted"), { code: "host-aborted" as const });
+}
+
 function acpError(code: string, message: string, cause?: unknown): Error & { readonly code: string } {
   return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { code });
 }
@@ -292,23 +296,31 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           const promptOrAbort = async (
             params: Readonly<Record<string, unknown>>,
           ): Promise<Readonly<Record<string, unknown>>> => {
+            if (abortSignal?.aborted) {
+              // Prefer closeRound's typed failure over a bare abort race winner.
+              throw hostAbortedError();
+            }
             const promptRequest = activeConnection.request("session/prompt", params);
             if (abortSignal === undefined) return promptRequest;
-            if (abortSignal.aborted) {
-              // Prefer closeRound's typed failure over a bare abort race winner.
-              throw Object.assign(new Error("Grok host aborted"), { code: "host-aborted" });
-            }
             return new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
+              let settled = false;
               const onAbort = (): void => {
-                reject(Object.assign(new Error("Grok host aborted"), { code: "host-aborted" }));
+                if (settled) return;
+                settled = true;
+                promptRequest.catch(() => {});
+                reject(hostAbortedError());
               };
               abortSignal.addEventListener("abort", onAbort, { once: true });
               promptRequest.then(
                 (value) => {
+                  if (settled) return;
+                  settled = true;
                   abortSignal.removeEventListener("abort", onAbort);
                   resolve(value);
                 },
                 (error) => {
+                  if (settled) return;
+                  settled = true;
                   abortSignal.removeEventListener("abort", onAbort);
                   reject(error);
                 },

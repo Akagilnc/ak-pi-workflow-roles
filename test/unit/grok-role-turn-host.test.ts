@@ -417,6 +417,84 @@ test("grok host aborts a hanging session/prompt when prepare abortSignal fires",
   releasePrompt?.();
 });
 
+test("grok host does not send session/prompt when abortSignal is already aborted", async () => {
+  const promptCalls: unknown[] = [];
+  const knownFailure = {
+    cause: "output" as const,
+    identity: { name: "InfrastructureFailure", code: "pre-aborted" },
+    diagnostic: "already aborted",
+  };
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method, params) {
+        if (method === "session/new") return { sessionId: "pre-aborted-session" };
+        if (method === "session/prompt") {
+          promptCalls.push(params);
+          return { stopReason: "end_turn" };
+        }
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(
+      async () => ({ accepted: false, failure: knownFailure }),
+      [{}],
+      [],
+      { abortSignal: AbortSignal.abort() },
+    ),
+  });
+
+  const result = await host.executeTurn(request);
+  assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
+  assert.equal(promptCalls.length, 0, "session/prompt must not be sent when already aborted");
+});
+
+test("grok host drains late in-flight prompt rejection after abort wins race", async () => {
+  const abort = new AbortController();
+  const knownFailure = {
+    cause: "output" as const,
+    identity: { name: "InfrastructureFailure", code: "in-flight-aborted" },
+    diagnostic: "infra failure",
+  };
+  let rejectPrompt: ((err: Error) => void) | undefined;
+  const promptPromise = new Promise<Readonly<Record<string, unknown>>>((_, reject) => {
+    rejectPrompt = reject;
+  });
+  const host = createGrokRoleTurnHost({
+    sessionIdentity,
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method) {
+        if (method === "session/new") return { sessionId: "drain-session" };
+        if (method === "session/prompt") return promptPromise;
+        return {};
+      },
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: async () => prepared(
+      async () => ({ accepted: false, failure: knownFailure }),
+      [{}],
+      [],
+      { abortSignal: abort.signal },
+    ),
+  });
+
+  const turn = host.executeTurn(request);
+  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  abort.abort();
+  const result = await turn;
+  assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
+  // Rejecting late after abort won race must be safely drained without unhandled rejection
+  rejectPrompt?.(new Error("late ACP socket disconnect"));
+});
+
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
   const cancels: unknown[] = [];
   const knownFailure = {
