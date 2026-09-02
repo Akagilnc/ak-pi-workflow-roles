@@ -165,26 +165,29 @@ export async function prepareGrokRoleEnvelope(options: {
   }
 
   // Durable principal layout matches public-cli settlement (session/session.jsonl).
-  // Create the header only when absent; resume must keep every prior byte and append.
+  // prepare is the sole layout owner: initial mints the header when absent; resume
+  // never creates an empty header (host proves JSONL exists first — #617).
   // Session JSONL is the sole durable books true source: hydrate in-memory entries
   // from existing bytes so shared lifecycle getEntries sees unfinished markers/history
   // (#590 grok-resume-session-hydration).
   let sessionFile = join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
-  try {
-    await writeFile(
-      sessionFile,
-      `${JSON.stringify({
-        type: "session",
-        version: 3,
-        id: runId,
-        timestamp: new Date().toISOString(),
-        cwd: request.cwd,
-      })}\n`,
-      { encoding: "utf8", flag: "wx" },
-    );
-  } catch (error) {
-    if ((error as { code?: unknown }).code !== "EEXIST") throw error;
+  if (request.continuation.kind !== "resume") {
+    try {
+      await writeFile(
+        sessionFile,
+        `${JSON.stringify({
+          type: "session",
+          version: 3,
+          id: runId,
+          timestamp: new Date().toISOString(),
+          cwd: request.cwd,
+        })}\n`,
+        { encoding: "utf8", flag: "wx" },
+      );
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== "EEXIST") throw error;
+    }
   }
   {
     const raw = await readFile(sessionFile, "utf8");

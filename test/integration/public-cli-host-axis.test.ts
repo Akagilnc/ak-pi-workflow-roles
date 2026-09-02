@@ -1,24 +1,27 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
   createGrokRoleTurnHost,
+  projectGrokRebuildHistory,
   type GrokRebuildHistoryResource,
-  type GrokRebuildTurn,
 } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
-import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import {
+  argvFlagValue,
+  createMinimalHost,
+  roleTurnHostFromLegacyPiRunner,
+} from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
 const io = { stdout() {}, stderr() {} };
@@ -360,9 +363,10 @@ test("bare resume follows live seat table host when it drifts from birth host", 
 });
 
 /**
- * #617 DK-1 / Scope 2: one public-CLI trunk proves same-runId Pi→Grok→Pi rebuild.
- * Grok resume delivers keyed JSON history (toolCall.arguments + toolResult.details);
- * final Pi resume settles the same run. No free-text resource oracle.
+ * #617 DK-1 / Scope 2: shortest public-CLI trunk through real host seams.
+ * Birth + final resume go through Pi role-turn-host `--session` argv;
+ * middle leg goes through Grok projector. History consumption is proven by
+ * keyed rebuild resource + final Pi session path + accepted settlement.
  */
 test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and settles", async () => {
   await withHermeticHome({ prefix: "ak-cross-host-roundtrip-" }, async ({ home }) => {
@@ -375,56 +379,88 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
       judgeStatus: "escalate",
       note: "cross-host history anchor",
     } as const;
+    const settleDetails = {
+      judgeStatus: "converged",
+      note: "cross-host settled",
+    } as const;
 
-    await seedResumableJudge({
-      home,
-      project,
-      runId,
-      afterTurn: async (_runDirectory, sessionDirectory) => {
-        await writeFile(
-          join(sessionDirectory, "session.jsonl"),
-          [
-            { type: "session", version: 3, id: runId },
-            {
-              type: "message",
-              id: "user-1",
-              message: {
-                role: "user",
-                content: [{ type: "text", text: "seed-cross-host" }],
-              },
-            },
-            {
-              type: "message",
-              id: "assistant-1",
-              message: {
-                role: "assistant",
-                content: [
-                  {
-                    type: "toolCall",
-                    id: toolCallId,
-                    name: JUDGE_OUTPUT_TOOL_NAME,
-                    arguments: escalateDetails,
-                  },
-                ],
-              },
-            },
-            {
-              type: "message",
-              id: "result-1",
-              message: {
-                role: "toolResult",
-                toolCallId,
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                content: [{ type: "text", text: "escalated" }],
-                details: escalateDetails,
-                isError: false,
-              },
-            },
-          ].map((row) => JSON.stringify(row)).join("\n") + "\n",
-          "utf8",
-        );
-      },
-    });
+    // 1. Birth on Pi via real argv seam (`--session` / `--session-dir`).
+    {
+      const { io, stderr } = captureIo();
+      const birth = await runAkRole(["judge", `seed-${runId}`], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        createRunId: () => runId,
+        io,
+        principalAuthority: piDurablePrincipalAuthority,
+        hostAdapters: [
+          {
+            name: "pi",
+            create: () => ({
+              ok: true as const,
+              host: roleTurnHostFromLegacyPiRunner({
+                packageRoot,
+                principalAuthority: piDurablePrincipalAuthority,
+                piRunner: async (args) => {
+                  const sessionFile = argvFlagValue(args, "--session");
+                  assert.ok(sessionFile, "Pi birth must pass --session");
+                  await mkdir(dirname(sessionFile), { recursive: true });
+                  await writeFile(
+                    sessionFile,
+                    [
+                      { type: "session", version: 3, id: runId },
+                      {
+                        type: "message",
+                        id: "user-1",
+                        message: {
+                          role: "user",
+                          content: [{ type: "text", text: "seed-cross-host" }],
+                        },
+                      },
+                      {
+                        type: "message",
+                        id: "assistant-1",
+                        message: {
+                          role: "assistant",
+                          content: [{
+                            type: "toolCall",
+                            id: toolCallId,
+                            name: JUDGE_OUTPUT_TOOL_NAME,
+                            arguments: escalateDetails,
+                          }],
+                        },
+                      },
+                      {
+                        type: "message",
+                        id: "result-1",
+                        message: {
+                          role: "toolResult",
+                          toolCallId,
+                          toolName: JUDGE_OUTPUT_TOOL_NAME,
+                          content: [{ type: "text", text: "escalated" }],
+                          details: escalateDetails,
+                          isError: false,
+                        },
+                      },
+                    ].map((row) => JSON.stringify(row)).join("\n") + "\n",
+                    "utf8",
+                  );
+                  await observeTyped429ViaProductionHandler({
+                    runDirectory: dirname(dirname(sessionFile)),
+                    provider: "openai-codex",
+                  });
+                  return { code: 1, stderr: "quota", timedOut: false };
+                },
+              }),
+            }),
+          },
+        ],
+      });
+      assert.equal(birth.exitCode, 1, stderr.join(""));
+      assert.ok(birth.terminal?.resume, "birth must stay resumable");
+    }
 
     const books = await readdir(join(home, ".ak-roles", "books"));
     const runDirectory = join(
@@ -452,6 +488,7 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
       assert.equal(setHost.exitCode, 0, stderr.join(""));
     }
 
+    // 2. Grok resume projects the sole JSONL authority into keyed ACP resource.
     const grokPromptParams: unknown[] = [];
     const selected: string[] = [];
     const grokHost = createGrokRoleTurnHost({
@@ -482,7 +519,6 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
         systemPrompt: { body: "law", materials: [] },
         prompt: request.continuation.prompt,
         closeRound: async () => {
-          // Keep the run resumable after proving rebuild delivery.
           await observeTyped429ViaProductionHandler({
             runDirectory: request.runDirectory,
             provider: "openai-codex",
@@ -543,12 +579,9 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
       | undefined;
     assert.equal(resourcePart?.resource?.mimeType, "application/json");
     assert.equal(resourcePart?.resource?.uri, "context://ak-role/session-history");
-    assert.equal(typeof resourcePart?.resource?.text, "string");
     const history = JSON.parse(String(resourcePart?.resource?.text)) as GrokRebuildHistoryResource;
     assert.equal(history.version, 1);
-    assert.ok(Array.isArray(history.turns));
-    const turns = history.turns as readonly GrokRebuildTurn[];
-    const rebuildCall = turns.find(
+    const rebuildCall = history.turns.find(
       (turn) =>
         turn.kind === "toolCall"
         && turn.id === toolCallId
@@ -558,7 +591,7 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
         && (turn.arguments as { judgeStatus?: unknown }).judgeStatus === "escalate",
     );
     assert.ok(rebuildCall, "Grok rebuild resource must carry keyed toolCall.arguments");
-    const rebuildResult = turns.find(
+    const rebuildResult = history.turns.find(
       (turn) =>
         turn.kind === "toolResult"
         && turn.toolCallId === toolCallId
@@ -569,49 +602,15 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
     );
     assert.ok(rebuildResult, "Grok rebuild resource must carry keyed toolResult.details");
 
-    function sessionHasEscalatePair(raw: string): boolean {
-      const rows = raw
-        .split("\n")
-        .filter((line) => line.trim() !== "")
-        .map((line) => JSON.parse(line) as {
-          type?: unknown;
-          message?: {
-            role?: unknown;
-            toolCallId?: unknown;
-            toolName?: unknown;
-            details?: unknown;
-            content?: Array<{ type?: unknown; id?: unknown; name?: unknown; arguments?: unknown }>;
-          };
-        });
-      const call = rows.find((row) =>
-        row.type === "message"
-        && row.message?.role === "assistant"
-        && Array.isArray(row.message.content)
-        && row.message.content.some((part) =>
-          part.type === "toolCall"
-          && part.id === toolCallId
-          && part.name === JUDGE_OUTPUT_TOOL_NAME
-          && typeof part.arguments === "object"
-          && part.arguments !== null
-          && (part.arguments as { judgeStatus?: unknown }).judgeStatus === "escalate"
-        ),
-      );
-      const result = rows.find((row) =>
-        row.type === "message"
-        && row.message?.role === "toolResult"
-        && row.message.toolCallId === toolCallId
-        && row.message.toolName === JUDGE_OUTPUT_TOOL_NAME
-        && typeof row.message.details === "object"
-        && row.message.details !== null
-        && (row.message.details as { judgeStatus?: unknown }).judgeStatus === "escalate"
-      );
-      return call !== undefined && result !== undefined;
-    }
-
-    assert.equal(
-      sessionHasEscalatePair(await readFile(sessionPath, "utf8")),
-      true,
-      "JSONL authority must keep prior escalate toolCall/toolResult pair after Grok leg",
+    // Production projector is the sole JSONL reader — no parallel test parser.
+    const afterGrok = projectGrokRebuildHistory(await readFile(sessionPath, "utf8"));
+    assert.ok(
+      afterGrok.some((t) => t.kind === "toolCall" && t.id === toolCallId),
+      "JSONL authority keeps escalate toolCall after Grok leg",
+    );
+    assert.ok(
+      afterGrok.some((t) => t.kind === "toolResult" && t.toolCallId === toolCallId),
+      "JSONL authority keeps escalate toolResult after Grok leg",
     );
 
     {
@@ -623,6 +622,8 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
       assert.equal(setHost.exitCode, 0, stderr.join(""));
     }
 
+    // 3. Pi resume through role-turn-host `--session` restore path; settle accepted.
+    let piResumeSessionFile: string | undefined;
     {
       const { io, stderr } = captureIo();
       const piResume = await runAkRole(["resume", runId], {
@@ -639,20 +640,36 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
               selected.push("pi");
               return {
                 ok: true as const,
-                host: createMinimalHost(async (request) => {
-                  await sealAcceptedSubmission({
-                    cwd: request.cwd,
-                    home: request.home,
-                    runDirectory: request.runDirectory,
-                    runId,
-                    role: "judge",
-                    details: {
-                      judgeStatus: "converged",
-                      note: "cross-host settled",
-                    },
-                    toolCallId: "call_cross_host_settle",
-                  });
-                  return { code: 0, stderr: "", timedOut: false };
+                host: roleTurnHostFromLegacyPiRunner({
+                  packageRoot,
+                  principalAuthority: piDurablePrincipalAuthority,
+                  piRunner: async (args) => {
+                    const sessionFile = argvFlagValue(args, "--session");
+                    assert.ok(sessionFile, "Pi resume must pass --session");
+                    piResumeSessionFile = sessionFile;
+                    // History the prior legs left is the file Pi restores.
+                    const restored = projectGrokRebuildHistory(await readFile(sessionFile, "utf8"));
+                    assert.ok(
+                      restored.some((t) =>
+                        t.kind === "toolResult"
+                        && t.toolCallId === toolCallId
+                        && typeof t.details === "object"
+                        && t.details !== null
+                        && (t.details as { judgeStatus?: unknown }).judgeStatus === "escalate"
+                      ),
+                      "Pi --session restore must see Grok-preserved escalate history",
+                    );
+                    return {
+                      code: 0,
+                      stderr: "",
+                      timedOut: false,
+                      sealedAcceptance: {
+                        role: "judge",
+                        details: settleDetails,
+                        toolCallId: "call_cross_host_settle",
+                      },
+                    };
+                  },
                 }),
               };
             },
@@ -671,13 +688,9 @@ test("cross-host resume rebuilds same runId Pi→Grok→Pi with tool history and
       assert.equal(piResume.terminal?.resume, undefined);
     }
     assert.deepEqual(selected, ["grok-build", "pi"]);
+    assert.equal(piResumeSessionFile, sessionPath);
 
     const inv = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
     assert.equal(inv.host, "pi");
-    assert.equal(
-      sessionHasEscalatePair(await readFile(sessionPath, "utf8")),
-      true,
-      "final settlement must leave the cross-host escalate pair on the same JSONL",
-    );
   });
 });

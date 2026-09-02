@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { copyFile, lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
 import { createInterface } from "node:readline";
@@ -214,12 +214,14 @@ export function buildGrokResumePromptContent(
   return content;
 }
 
-/** Append one durable message entry. Parent layout is created; write failures stay loud. */
+/**
+ * Append one durable message entry. prepare owns session layout
+ * (`session/session.jsonl`); write failures stay loud — never mint directories here.
+ */
 export function appendGrokSessionJsonlEntry(
   sessionFile: string,
   entry: Readonly<Record<string, unknown>>,
 ): void {
-  mkdirSync(dirname(sessionFile), { recursive: true });
   appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
 }
 
@@ -427,6 +429,40 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             privateActive: [...inspected.privateActive],
           });
         }
+        const continuation = request.continuation;
+        // #617 DK-1: sole JSONL authority must be proven before prepare. Production
+        // prepare owns layout creation and would mint an empty header on absence —
+        // loading history first keeps resume from continuing on a blank rebuild.
+        let rebuildTurns: readonly GrokRebuildTurn[] = [];
+        if (continuation.kind === "resume") {
+          const historyFile = grokSessionJsonlPath(request.runDirectory);
+          let raw: string;
+          try {
+            raw = await readFile(historyFile, "utf8");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+              return failure("session", "GrokSessionHistoryMissing", "session-history-missing");
+            }
+            throw error;
+          }
+          try {
+            rebuildTurns = projectGrokRebuildHistory(raw);
+          } catch (error) {
+            const code =
+              typeof error === "object"
+              && error !== null
+              && (error as { code?: unknown }).code === "session-history-corrupt"
+                ? "session-history-corrupt"
+                : "session-history-unreadable";
+            return failure(
+              "session",
+              code === "session-history-corrupt"
+                ? "GrokSessionHistoryCorrupt"
+                : "GrokSessionHistoryUnreadable",
+              code,
+            );
+          }
+        }
         const prepared = await config.prepare(request);
         let connection: GrokAcpConnection | undefined;
         let sessionId: string | undefined;
@@ -469,42 +505,9 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               model: request.model.model,
             });
           }
-          const continuation = request.continuation;
-          // #617 DK-1: session/session.jsonl is the sole history authority. Every
-          // Grok resume rebuilds via session/new + JSONL embeddedContext — never
-          // session/load from a possibly-stale ACP binding. Missing or corrupt JSONL
-          // fails through the existing session knownFailure terminal (no blank rebuild).
-          // Binding is rewritten to the new ACP id after open; it is not a second true source.
-          let rebuildTurns: readonly GrokRebuildTurn[] = [];
-          if (continuation.kind === "resume") {
-            const historyFile = grokSessionJsonlPath(request.runDirectory);
-            let raw: string;
-            try {
-              raw = await readFile(historyFile, "utf8");
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-                return failure("session", "GrokSessionHistoryMissing", "session-history-missing");
-              }
-              throw error;
-            }
-            try {
-              rebuildTurns = projectGrokRebuildHistory(raw);
-            } catch (error) {
-              const code =
-                typeof error === "object"
-                && error !== null
-                && (error as { code?: unknown }).code === "session-history-corrupt"
-                  ? "session-history-corrupt"
-                  : "session-history-unreadable";
-              return failure(
-                "session",
-                code === "session-history-corrupt"
-                  ? "GrokSessionHistoryCorrupt"
-                  : "GrokSessionHistoryUnreadable",
-                code,
-              );
-            }
-          }
+          // Every Grok resume rebuilds via session/new + JSONL embeddedContext — never
+          // session/load from a possibly-stale ACP binding. Binding is rewritten to the
+          // new ACP id after open; it is not a second true source.
           const session = await connection.request(
             "session/new",
             {
