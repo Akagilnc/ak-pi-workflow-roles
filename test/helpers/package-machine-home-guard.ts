@@ -5,12 +5,15 @@
  * public-cli.json and removes test-owned book directories so the host ledger is
  * not left dirty.
  *
- * Crash contract: backup file is the recovery source. On entry under the lock,
- * any leftover backup from a killed prior holder is restored before a new backup
- * is taken — never overwrite a surviving backup with a blanked table.
+ * Crash contract:
+ * - Lock owner metadata is complete before the lock name is visible (temp + link).
+ * - Release and stale recovery verify ownership / unchanged payload (no blind rm).
+ * - Backup and config restore write via temp file + rename — never truncate in place.
+ * - Do not blank the host seat table on entry; callers mutate only the keys they need.
+ * - Leftover backup from a killed prior holder is restored before a new backup is taken.
  */
-import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
-import type { FileHandle } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { access, link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -30,13 +33,24 @@ export type PackageMachineHomeGuard = {
 };
 
 export type PackageMachineHomeGuardOptions = {
-  /** When true (default), blanks seats for cold-surface testing. */
+  /**
+   * When true, blanks seats for an explicit cold-surface scenario.
+   * Default false: do not wipe the host table; mutate only needed keys.
+   */
   readonly blankSeats?: boolean;
 };
 
-function lockHolderAlive(pidText: string): boolean {
-  const pid = Number.parseInt(pidText.trim().split(/\r?\n/, 1)[0] ?? "", 10);
-  if (!Number.isFinite(pid) || pid <= 0) return false;
+function lockPayload(): string {
+  return `${process.pid}\n${Date.now()}\n`;
+}
+
+function parseLockPid(text: string): number | undefined {
+  const pid = Number.parseInt(text.trim().split(/\r?\n/, 1)[0] ?? "", 10);
+  if (!Number.isFinite(pid) || pid <= 0) return undefined;
+  return pid;
+}
+
+function lockHolderAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -45,26 +59,56 @@ function lockHolderAlive(pidText: string): boolean {
   }
 }
 
+async function atomicWriteUtf8(path: string, contents: string): Promise<void> {
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tmp, contents, "utf8");
+  try {
+    await rename(tmp, path);
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function acquireCrossProcessLock(
   lockPath: string,
   timeoutMs = 60_000,
   retryIntervalMs = 50,
 ): Promise<() => Promise<void>> {
+  const myPayload = lockPayload();
   const start = Date.now();
-  let handle: FileHandle | undefined;
   while (true) {
+    const tmp = `${lockPath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    await writeFile(tmp, myPayload, "utf8");
     try {
-      handle = await open(lockPath, "wx");
-      await handle.writeFile(`${process.pid}\n${Date.now()}\n`, "utf8");
-      break;
+      // Lock name becomes visible only after full owner metadata is linked in.
+      await link(tmp, lockPath);
+      await rm(tmp, { force: true });
+      return async () => {
+        try {
+          const current = await readFile(lockPath, "utf8");
+          if (current !== myPayload) return; // not our lock — do not delete
+          await rm(lockPath, { force: true });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      };
     } catch (error) {
+      await rm(tmp, { force: true }).catch(() => undefined);
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      // Dead holder left the lock behind — clear and retry once the pid is gone.
+      // Stale recovery: only remove when payload is unchanged and holder is dead
+      // (or unparseable leftover from a pre-atomic protocol).
       try {
         const holder = await readFile(lockPath, "utf8");
-        if (!lockHolderAlive(holder)) {
-          await rm(lockPath, { force: true });
-          continue;
+        const pid = parseLockPid(holder);
+        const stale =
+          pid === undefined ? true : !lockHolderAlive(pid);
+        if (stale) {
+          const again = await readFile(lockPath, "utf8").catch(() => undefined);
+          if (again === holder) {
+            await rm(lockPath, { force: true });
+            continue;
+          }
         }
       } catch {
         // raced with holder release or unreadable lock; fall through to retry
@@ -75,14 +119,6 @@ async function acquireCrossProcessLock(
       await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
     }
   }
-  return async () => {
-    try {
-      await handle?.close();
-    } catch {
-      // best-effort close before unlinking
-    }
-    await rm(lockPath, { force: true });
-  };
 }
 
 async function readOptionalUtf8(path: string): Promise<string | undefined> {
@@ -123,22 +159,23 @@ export async function withPackageMachineHomeGuard<T>(
 
   try {
     // Crash recovery: leftover backup is the last known-good host table.
-    // Restore it before taking a new backup so a blanked table cannot become "prior".
+    // Restore it before taking a new backup so a blanked/mutated table cannot become "prior".
     const staleBackup = await readOptionalUtf8(backupPath);
     if (staleBackup !== undefined) {
-      await writeFile(configPath, staleBackup, "utf8");
+      await atomicWriteUtf8(configPath, staleBackup);
     }
 
     const priorConfig = await readOptionalUtf8(configPath);
     if (priorConfig !== undefined) {
-      await writeFile(backupPath, priorConfig, "utf8");
+      await atomicWriteUtf8(backupPath, priorConfig);
       restoreFromBackup = true;
     } else {
       await rm(backupPath, { force: true });
     }
 
-    if (options.blankSeats !== false) {
-      await writeFile(configPath, `${JSON.stringify({ seats: {} }, null, 2)}\n`, "utf8");
+    // Default: leave host seats intact. Only blank when a scenario opts in.
+    if (options.blankSeats === true) {
+      await atomicWriteUtf8(configPath, `${JSON.stringify({ seats: {} }, null, 2)}\n`);
     }
 
     const guard: PackageMachineHomeGuard = {
@@ -161,7 +198,7 @@ export async function withPackageMachineHomeGuard<T>(
         if (backupBytes === undefined) {
           // Backup missing mid-flight: leave configPath as-is rather than delete host seats.
         } else {
-          await writeFile(configPath, backupBytes, "utf8");
+          await atomicWriteUtf8(configPath, backupBytes);
           await rm(backupPath, { force: true });
         }
       } else {

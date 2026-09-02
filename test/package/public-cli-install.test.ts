@@ -41,7 +41,8 @@ function seedGitProject(root: string): void {
 
 test("isolated Pi home installs packed artifact and discovers ak-role via private npm bin", async () => {
   await withHermeticHome({ prefix: "ak-public-cli-bin-" }, async ({ home, agentDir }) => {
-  await withPackageMachineHomeGuard(async (guard) => {
+  // Cold install identity must not inherit host seat engine/host rows.
+  await withPackageMachineHomeGuard({ blankSeats: true }, async (guard) => {
     // Use a Pi-shaped agent dir under the hermetic home (not the harness default .pi-agent label).
     // #604: package ledger/config always land on passwd home — Pi install surface stays hermetic.
     const piAgentDir = resolve(home, ".pi", "agent");

@@ -310,7 +310,8 @@ async function installFromTarball(
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
   await withHermeticHome({ prefix: "ak-cold-matrix-" }, async ({ home }) => {
-  await withPackageMachineHomeGuard(async (guard) => {
+  // Cold matrix asserts startup defaults — blank host seats for this scenario only.
+  await withPackageMachineHomeGuard({ blankSeats: true }, async (guard) => {
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
     const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);

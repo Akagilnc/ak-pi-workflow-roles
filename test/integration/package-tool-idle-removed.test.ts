@@ -61,7 +61,10 @@ async function withPackageToolSession<T>(
     });
     return withInProcessPi({
       cwd: home,
+      home,
       agentDir,
+      // #604: nest session under hermetic .ak-roles (sitian/ledger path-derive).
+      activationLedgerSession: true,
       faux,
       modelsPath: null,
       noExtensions: true,

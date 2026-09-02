@@ -148,7 +148,8 @@ test(
     await withHermeticHome(
       { prefix: "ak-public-cli-coder-chain-" },
       async ({ home }) => {
-      await withPackageMachineHomeGuard(async (guard) => {
+      // Cold-installed coder chain: blank host seats so only this run's limit/seats apply.
+      await withPackageMachineHomeGuard({ blankSeats: true }, async (guard) => {
         const piAgentDir = resolve(home, ".pi", "agent");
         await mkdir(piAgentDir, { recursive: true });
         await writeFile(
