@@ -5631,8 +5631,9 @@ var officerDecisionSchema = openToolObject(Type11.Object({
   findings: Type11.Unknown({ description: "string[] findings\uFF0C\u968F pass \u6216 bounce \u7559\u5B58" })
 }));
 var gatekeeperDecisionSchema = openToolObject(Type11.Object({
-  status: Type11.Unknown({ description: "dispatch \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
-  officer: Type11.Unknown({ description: "status \u4E3A dispatch \u65F6\u4E3A inspector | notary" })
+  status: Type11.Unknown({ description: "dispatch | pass \u2014 \u5F62\u72B6\u6307\u5F15\uFF0C\u975E schema \u95F8" }),
+  officer: Type11.Unknown({ description: "status \u4E3A dispatch \u65F6\u4E3A inspector | notary" }),
+  findings: Type11.Unknown({ description: "status \u4E3A pass \u65F6\u53EF\u9009 string[] findings" })
 }));
 function result(content, details) {
   return { content: [{ type: "text", text: content }], details };
@@ -5702,6 +5703,9 @@ function projectProvinceDecision(decision) {
   if (record4 === void 0) return noUsableReleaseFailure("gatekeeper", decision);
   if (record4.status === "dispatch" && (record4.officer === "inspector" || record4.officer === "notary")) {
     return { status: "dispatch", officer: record4.officer };
+  }
+  if (record4.status === "pass") {
+    return { status: "pass", findings: asStringArray2(record4.findings) };
   }
   return noUsableReleaseFailure("gatekeeper", decision);
 }
