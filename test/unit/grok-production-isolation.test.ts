@@ -1,5 +1,5 @@
 /**
- * Production grok isolation binding (#580): bindProductionGrokIsolation is the
+ * Production grok isolation binding (#580 / #594): bindProductionGrokIsolation is the
  * authority createProductionGrokRoleTurnHost consumes for GROK_HOME/HOME, auth
  * root, and binary resolve. S6 seatbelt hang-on-request.home is covered by
  * grok-role-turn-host tests — this file proves the binding and cleanup settlement,
@@ -21,7 +21,7 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const CONTROLLED_HOME_PREFIX = "ak-grok-home-";
-/** Path whose recursive rm fails — cleanup-failure oracle (errno is platform-local). */
+/** Path whose auth.json rm fails — cleanup-failure oracle (errno is platform-local). */
 const UNREMOVABLE_HOME = "/dev/null";
 const TURN_CLEANUP_MESSAGE = "production grok isolation turn and cleanup failed";
 
@@ -42,14 +42,19 @@ async function seedOperatorHome(): Promise<string> {
   return operatorHome;
 }
 
-test("production isolation binding shares one home for GROK_HOME, auth, and binary outside the operator home", async () => {
-  const operatorHome = await seedOperatorHome();
-  let controlledHome: string | undefined;
-  try {
-    const binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
-    controlledHome = binding.controlledHome;
+async function seedRunDirectory(): Promise<string> {
+  return await mkdtemp(join(tmpdir(), "ak-grok-run-"));
+}
 
-    // Single root: auth copy === child GROK_HOME/HOME.
+test("production isolation binding shares one home for GROK_HOME, auth, and binary outside the operator home under runDirectory", async () => {
+  const operatorHome = await seedOperatorHome();
+  const runDirectory = await seedRunDirectory();
+  try {
+    const binding = await bindProductionGrokIsolation(runDirectory, operatorHome, packageRoot);
+
+    // Single root: auth copy === child GROK_HOME/HOME under runDirectory.
+    assert.equal(binding.controlledHome, join(runDirectory, "grok-home"));
+    assert.equal(under(runDirectory, binding.controlledHome), true);
     assert.equal(binding.env.GROK_HOME, binding.controlledHome);
     assert.equal(binding.env.HOME, binding.controlledHome);
     assert.equal(binding.env.AK_PACKAGE_ROOT, packageRoot);
@@ -58,47 +63,61 @@ test("production isolation binding shares one home for GROK_HOME, auth, and bina
       "SECRET-AUTH\n",
     );
 
-    // Ephemeral root is not the operator home; binary still resolves from operator home.
+    // Controlled root is not the operator home; binary still resolves from operator home.
     assert.notEqual(binding.controlledHome, operatorHome);
     assert.equal(binding.operatorHome, operatorHome);
     assert.equal(binding.binary, join(operatorHome, ".grok", "bin", "grok"));
     assert.equal(under(binding.controlledHome, binding.binary), false);
+    assert.equal(under(runDirectory, binding.binary), false);
   } finally {
-    if (controlledHome !== undefined) {
-      await rm(controlledHome, { recursive: true, force: true });
-    }
+    await rm(runDirectory, { recursive: true, force: true });
     await rm(operatorHome, { recursive: true, force: true });
   }
 });
 
-test("withProductionGrokIsolation removes the auth-bearing controlled home after success", async () => {
+test("withProductionGrokIsolation scrubs auth.json after success while preserving the session dossier", async () => {
   const operatorHome = await seedOperatorHome();
+  const runDirectory = await seedRunDirectory();
   let observedHome = "";
   try {
-    await withProductionGrokIsolation(operatorHome, packageRoot, async (binding) => {
+    await withProductionGrokIsolation(runDirectory, operatorHome, packageRoot, async (binding) => {
       observedHome = binding.controlledHome;
       assert.equal(
         await readFile(join(binding.controlledHome, "auth.json"), "utf8"),
         "SECRET-AUTH\n",
       );
+      // Simulate native grok live session dossier written during turn
+      const sessionDir = join(binding.controlledHome, "sessions", "cwd-encoded", "session-123");
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, "updates.jsonl"), '{"type":"message","text":"hello"}\n', "utf8");
       return "ok";
     });
     assert.notEqual(observedHome, "");
-    await assert.rejects(access(observedHome));
+    // Controlled home directory remains under runDirectory
+    await access(observedHome);
+    // auth.json is scrubbed
     await assert.rejects(access(join(observedHome, "auth.json")));
+    // Session dossier survives settlement (#594 acceptance bite)
+    const sessionFile = join(observedHome, "sessions", "cwd-encoded", "session-123", "updates.jsonl");
+    assert.equal(await readFile(sessionFile, "utf8"), '{"type":"message","text":"hello"}\n');
   } finally {
+    await rm(runDirectory, { recursive: true, force: true });
     await rm(operatorHome, { recursive: true, force: true });
   }
 });
 
-test("withProductionGrokIsolation preserves the primary failure and still removes controlled home", async () => {
+test("withProductionGrokIsolation preserves the primary failure, scrubs auth.json, and preserves session dossier", async () => {
   const operatorHome = await seedOperatorHome();
+  const runDirectory = await seedRunDirectory();
   let observedHome = "";
   try {
     await assert.rejects(
       () =>
-        withProductionGrokIsolation(operatorHome, packageRoot, async (binding) => {
+        withProductionGrokIsolation(runDirectory, operatorHome, packageRoot, async (binding) => {
           observedHome = binding.controlledHome;
+          const sessionDir = join(binding.controlledHome, "sessions", "cwd-encoded", "session-456");
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "updates.jsonl"), '{"type":"message","text":"failed-turn"}\n', "utf8");
           throw new Error("turn-primary-failure");
         }),
       (error: unknown) =>
@@ -107,19 +126,24 @@ test("withProductionGrokIsolation preserves the primary failure and still remove
         && !(error instanceof AggregateError),
     );
     assert.notEqual(observedHome, "");
-    await assert.rejects(access(observedHome));
+    await access(observedHome);
+    await assert.rejects(access(join(observedHome, "auth.json")));
+    const sessionFile = join(observedHome, "sessions", "cwd-encoded", "session-456", "updates.jsonl");
+    assert.equal(await readFile(sessionFile, "utf8"), '{"type":"message","text":"failed-turn"}\n');
   } finally {
+    await rm(runDirectory, { recursive: true, force: true });
     await rm(operatorHome, { recursive: true, force: true });
   }
 });
 
-test("withProductionGrokIsolation rethrows undefined primary and still removes controlled home", async () => {
+test("withProductionGrokIsolation rethrows undefined primary, scrubs auth.json, and preserves controlled home", async () => {
   const operatorHome = await seedOperatorHome();
+  const runDirectory = await seedRunDirectory();
   let observedHome = "";
   try {
     let rejected: { settled: false } | { settled: true; value: unknown } = { settled: false };
     try {
-      await withProductionGrokIsolation(operatorHome, packageRoot, async (binding) => {
+      await withProductionGrokIsolation(runDirectory, operatorHome, packageRoot, async (binding) => {
         observedHome = binding.controlledHome;
         return Promise.reject(undefined);
       });
@@ -128,25 +152,31 @@ test("withProductionGrokIsolation rethrows undefined primary and still removes c
     }
     assert.deepEqual(rejected, { settled: true, value: undefined });
     assert.notEqual(observedHome, "");
-    await assert.rejects(access(observedHome));
+    await access(observedHome);
+    await assert.rejects(access(join(observedHome, "auth.json")));
   } finally {
+    await rm(runDirectory, { recursive: true, force: true });
     await rm(operatorHome, { recursive: true, force: true });
   }
 });
 
-test("openProductionGrokHome cleans a partial root when auth copy fails", async () => {
+test("openProductionGrokHome does not leak auth or tmpdir when auth copy fails", async () => {
   const operatorHome = await mkdtemp(join(tmpdir(), "ak-grok-op-noauth-"));
+  const runDirectory = await seedRunDirectory();
   try {
-    // No .grok/auth.json — prepareControlledGrokHome must fail after mkdtemp.
+    // No .grok/auth.json — prepareControlledGrokHome must fail.
     const before = await listControlledHomeTemps();
-    await assert.rejects(() => openProductionGrokHome(operatorHome));
+    await assert.rejects(() => openProductionGrokHome(runDirectory, operatorHome));
     const after = await listControlledHomeTemps();
     // External visible result: no new ak-grok-home-* leaked under tmpdir.
     const leaked = after.filter((name) => !before.includes(name));
     assert.deepEqual(leaked, []);
+    // Controlled home under runDirectory has no leaked auth.json.
+    await assert.rejects(access(join(runDirectory, "grok-home", "auth.json")));
     // Operator home must not absorb auth.json from the failed open (no .grok was seeded).
     await assert.rejects(access(join(operatorHome, "auth.json")));
   } finally {
+    await rm(runDirectory, { recursive: true, force: true });
     await rm(operatorHome, { recursive: true, force: true });
   }
 });

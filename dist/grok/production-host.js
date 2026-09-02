@@ -1161,8 +1161,7 @@ var init_in_process_session = __esm({
 });
 
 // src/grok/production-host.ts
-import { mkdtemp as mkdtemp4, readFile as readFile12, rm as rm4, writeFile as writeFile8 } from "node:fs/promises";
-import { tmpdir as tmpdir4 } from "node:os";
+import { readFile as readFile12, rm as rm4, writeFile as writeFile8 } from "node:fs/promises";
 import { join as join20 } from "node:path";
 
 // src/canonical-skill-binding.ts
@@ -11916,7 +11915,7 @@ var NO_PRODUCTION_GROK_PRIMARY_FAILURE = {
 };
 async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, concurrentMessage) {
   try {
-    await rm4(controlledHome, { recursive: true, force: true });
+    await rm4(join20(controlledHome, "auth.json"), { force: true });
   } catch (cleanupFailure) {
     if (primaryFailure.present) {
       throw new AggregateError([primaryFailure.value, cleanupFailure], concurrentMessage, {
@@ -11929,8 +11928,8 @@ async function settleProductionGrokHomeCleanup(controlledHome, primaryFailure, c
     throw primaryFailure.value;
   }
 }
-async function openProductionGrokHome(operatorHome) {
-  const controlledHome = await mkdtemp4(join20(tmpdir4(), "ak-grok-home-"));
+async function openProductionGrokHome(runDirectory, operatorHome) {
+  const controlledHome = join20(runDirectory, "grok-home");
   try {
     await prepareControlledGrokHome(operatorHome, controlledHome);
     return controlledHome;
@@ -11949,8 +11948,8 @@ function childEnv(controlledHome, packageRoot) {
     AK_PACKAGE_ROOT: packageRoot
   };
 }
-async function bindProductionGrokIsolation(operatorHome, packageRoot) {
-  const controlledHome = await openProductionGrokHome(operatorHome);
+async function bindProductionGrokIsolation(runDirectory, operatorHome, packageRoot) {
+  const controlledHome = await openProductionGrokHome(runDirectory, operatorHome);
   return {
     operatorHome,
     controlledHome,
@@ -11958,12 +11957,12 @@ async function bindProductionGrokIsolation(operatorHome, packageRoot) {
     env: childEnv(controlledHome, packageRoot)
   };
 }
-async function withProductionGrokIsolation(operatorHome, packageRoot, run) {
+async function withProductionGrokIsolation(runDirectory, operatorHome, packageRoot, run) {
   let binding;
   let primaryFailure = NO_PRODUCTION_GROK_PRIMARY_FAILURE;
   let value;
   try {
-    binding = await bindProductionGrokIsolation(operatorHome, packageRoot);
+    binding = await bindProductionGrokIsolation(runDirectory, operatorHome, packageRoot);
     value = await run(binding);
   } catch (error) {
     primaryFailure = { present: true, value: error };
@@ -12060,7 +12059,7 @@ function createProductionGrokRoleTurnHost(options) {
   return {
     executeTurn(request) {
       const execution = serial.then(
-        () => withProductionGrokIsolation(request.home, packageRoot, async (binding) => {
+        () => withProductionGrokIsolation(request.runDirectory, request.home, packageRoot, async (binding) => {
           turn = binding;
           try {
             return await inner.executeTurn({ ...request, home: binding.controlledHome });
