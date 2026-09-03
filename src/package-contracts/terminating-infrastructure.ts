@@ -121,8 +121,7 @@ function infrastructureFailureError(diagnostic: string): Error {
  * declaration first — when the seat can machine-verify a lawful normal
  * completion, it returns a correctable error and the declaration is treated as
  * model misuse (交件契约封驳) instead of a host failure. Returning undefined
- * keeps the shared failure path. An optional onBounce callback lets the caller
- * (submission ledger) record the rejected attempt before the throw.
+ * keeps the shared failure path.
  */
 export function failOnInfrastructureFailureDeclaration<C>(
   parameters: unknown,
@@ -130,16 +129,12 @@ export function failOnInfrastructureFailureDeclaration<C>(
   ctx: C,
   toolCallId: string,
   bounceInfrastructureDeclaration?: (params: unknown, toolCallId: string, ctx: C) => CorrectableSubmissionError | undefined,
-  onBounce?: (bounce: CorrectableSubmissionError) => void,
 ): void {
   const diagnostic = infrastructureFailureDiagnostic(parameters);
   if (diagnostic === undefined) return;
   if (bounceInfrastructureDeclaration !== undefined) {
     const bounce = bounceInfrastructureDeclaration(parameters, toolCallId, ctx);
-    if (bounce !== undefined) {
-      onBounce?.(bounce);
-      throw bounce;
-    }
+    if (bounce !== undefined) throw bounce;
   }
   hostActions.failInfrastructure(
     infrastructureFailureError(diagnostic),

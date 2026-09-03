@@ -284,41 +284,24 @@ export function createSubmissionLedgerHost(
           // #541 / #575: shared infra-declaration fail lives on the ledger seam,
           // before any role execute or sole-final work (one owner for every seat).
           // #641 chain②: seats may opt into bouncing a machine-verified normal
-          // completion misdeclared as infrastructure failure (correctable) first.
-          // A bounced attempt is a rejected terminal submission — record candidate
-          // + typed-bounce outcome on the durable ledger (same correctable-rejection
-          // path as execute-thrown rejections) before the model-visible throw.
-          failOnInfrastructureFailureDeclaration(
-            params,
-            {
-              failInfrastructure(error, ctx) {
-                failInfrastructure(error, ctx);
-              },
-            },
-            context,
-            toolCallId,
-            tool.bounceInfrastructureDeclaration,
-            (bounce) => {
-              append({
-                type: "candidate",
-                attemptId,
-                toolCallId,
-                toolName: tool.name,
-                sequence: ++state.sequence,
-              });
-              append({
-                type: "outcome",
-                attemptId,
-                toolCallId,
-                outcome: "correctable-rejection",
-                code: "typed-bounce",
-                diagnostic: bounce.message,
-              });
-            },
-          );
+          // completion misdeclared as infrastructure failure — the bounce throws a
+          // correctable error from the declaration call, so it lands in the same
+          // correctable-rejection path as execute-thrown rejections below. The
+          // candidate is booked first so the bounced attempt stays observable.
           append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
           let result: HostToolResult<unknown>;
           try {
+            failOnInfrastructureFailureDeclaration(
+              params,
+              {
+                failInfrastructure(error, ctx) {
+                  failInfrastructure(error, ctx);
+                },
+              },
+              context,
+              toolCallId,
+              tool.bounceInfrastructureDeclaration,
+            );
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
             if (isCorrectableExecuteError(error)) {
