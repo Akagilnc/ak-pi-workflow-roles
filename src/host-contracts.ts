@@ -122,7 +122,9 @@ export type RoleTurnActivation =
       /** Required comparison-base revision for the unanchored merge-candidate diff. */
       readonly baseRevision: string;
     }
-  | { readonly role: "inspector" };
+  | { readonly role: "inspector" }
+  | { readonly role: "gatekeeper" }
+  | { readonly role: "navigator" };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }

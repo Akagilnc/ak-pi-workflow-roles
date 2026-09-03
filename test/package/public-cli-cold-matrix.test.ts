@@ -307,7 +307,7 @@ async function installFromTarball(
   };
 }
 
-test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
+test("one cold install exercises all public roles plus Navigator gates", async () => {
   await withHermeticHome({ prefix: "ak-cold-matrix-" }, async ({ home }) => {
     // #604: hermetic home is also the package user profile (test preload).
     // Fresh profile ⇒ blank seats; no real-home snapshot/restore.
@@ -349,7 +349,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       { cwd: project, stdio: "ignore" },
     );
 
-    // Discoverability: packaged callable seats + automatic Navigator; no auditors.
+    // Discoverability: packaged callable seats (all of them, #639); no auditors.
     const roles = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
@@ -360,20 +360,11 @@ test("one cold install exercises all public roles plus automatic Navigator gates
     for (const seat of PUBLIC_CONFIGURABLE_SEATS) {
       assert.match(roles.stdout, new RegExp(`^${seat}\\t`, "m"));
     }
-    assert.match(roles.stdout, /^navigator\tautomatic\t/m);
+    assert.match(roles.stdout, /^navigator\t/m);
     assert.equal(roles.stdout.includes("auditor"), false);
-    // Navigator is never a caller-selected command.
-    const navCmd = await runAkRoleBin(installed.akRoleBin, ["navigator"], {
-      home,
-      agentDir: piAgentDir,
-      cwd: project,
-    });
-    assert.equal(navCmd.code, 2, navCmd.stderr);
-    assertNoDeferredSlice("navigator command", `${navCmd.stdout}\n${navCmd.stderr}`);
 
-    // Help is loud smoke only (exit 0 + non-empty). Capability membership and
-    // navigator-not-callable are typed contracts (listHelpCapabilities /
-    // helpDocument); navigator command refusal is proven above. Do not stare at
+    // Help is loud smoke only (exit 0 + non-empty). Capability membership is a
+    // typed contract (listHelpCapabilities / helpDocument). Do not stare at
     // help free text — court-approved Navigator attendance note is human prose (#125).
     const help = await runAkRoleBin(installed.akRoleBin, ["help"], {
       home,
@@ -398,7 +389,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
     assert.equal(rolesAfter.code, 0, rolesAfter.stderr);
     assert.match(
       rolesAfter.stdout,
-      /^navigator\tautomatic\tpersistent\txai\/grok-4\.5:high$/m,
+      /^navigator\tpersistent\txai\/grok-4\.5:high$/m,
     );
 
     // One Pi argv shim shared across the matrix; each role overwrites the log.
@@ -947,7 +938,7 @@ test("documented Pi package update refreshes CLI and runtime from one private co
       for (const role of PUBLIC_CALLABLE_ROLES) {
         assert.match(roles.stdout, new RegExp(`^${role}\\t`, "m"));
       }
-      assert.match(roles.stdout, /^navigator\tautomatic\t/m);
+      assert.match(roles.stdout, /^navigator\t/m);
     } finally {
       await rm(packDir, { recursive: true, force: true });
     }

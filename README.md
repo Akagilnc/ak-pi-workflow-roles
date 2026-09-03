@@ -38,7 +38,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Global `--model` / `--host` / `--engine` override the table for that resume only. On a real host switch (live seat host differs from the previous invocation host), prior native records of the previous host are delivered once as context to the target host; same-host resume does not re-inject. Each host writes only its native volume (Pi: `session/session.jsonl`, Grok: `runDirectory/grok-home`), with unified ledger entries recorded in 司天台 (Sitian). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, Notary, and Inspector remain one-shot. Countersign and Gleaner-Left accept manual resume (#599).
+`ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Global `--model` / `--host` / `--engine` override the table for that resume only. On a real host switch (live seat host differs from the previous invocation host), prior native records of the previous host are delivered once as context to the target host; same-host resume does not re-inject. Each host writes only its native volume (Pi: `session/session.jsonl`, Grok: `runDirectory/grok-home`), with unified ledger entries recorded in 司天台 (Sitian). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, Notary, and Inspector remain one-shot. Countersign, Gleaner-Left, Gatekeeper, and Navigator accept manual resume (#599, #639).
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
@@ -47,12 +47,12 @@ Seat and Gate-officer configuration:
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# Gate officers (automatic on submission; inspector and notary also have direct commands)
+# Gate officers (automatic on submission; direct commands available)
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
 ak-role config unset gatekeeper
-# persistent labor engine (callable roles; not navigator); one-shot override remains --engine
+# persistent labor engine (callable roles); one-shot override remains --engine
 ak-role config set-engine judge opus
 ak-role config unset-engine judge
 # persistent main-session host (callable roles); one-shot override remains --host
@@ -108,6 +108,12 @@ ak-role notary --source-run <runId@role|path> --ticket 582
 
 # inspector — direct complexity and test-quality check; one-shot
 ak-role inspector --attach ./change.patch "Review this material."
+
+# gatekeeper — direct Gate province review; dispatch an officer or pass; resume continues the exact session
+ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
+
+# navigator — direct route advice (ordered next-role candidates); automatic attendance unchanged; resume continues the exact session
+ak-role navigator "刚完成 coder apply 收敛，下一步？"
 
 # countersign — ticket-court five questions; optional --ticket (diarist pipeline refreshes court diary first)
 ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"

@@ -104,10 +104,27 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
   },
+  {
+    role: "gatekeeper",
+    phases: [null],
+    outputTool: "ak_gatekeeper_output",
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+  },
+  {
+    role: "navigator",
+    phases: [null],
+    outputTool: "ak_navigator_output",
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+  },
 ] as const;
 
-test("public registry exposes callable roles plus automatic configurable seats", () => {
+test("public registry exposes callable roles with no automatic/classifiable distinction", () => {
   // #524 验收 1 / #572: full metadata fields + order for all public roles (external oracle).
+  // #639: automatic-only configurable seats are abolished — roles are roles.
   assert.deepEqual([...PACKAGED_ROLE_REGISTRY], [...EXPECTED_PACKAGED_ROLE_METADATA]);
   assert.deepEqual(
     [...PUBLIC_CALLABLE_ROLES],
@@ -118,24 +135,13 @@ test("public registry exposes callable roles plus automatic configurable seats",
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("countersign"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("gleaner-left"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("inspector"), true);
-  // #453/#568: gatekeeper and navigator remain automatic-only; inspector is callable
-  // and still gate-dispatchable.
+  // #639: gatekeeper and navigator are callable roles like any other.
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("gatekeeper"), true);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("navigator"), true);
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
-    [...PUBLIC_CALLABLE_ROLES, "gatekeeper", "navigator"],
+    [...PUBLIC_CALLABLE_ROLES],
   );
-  for (const automatic of ["gatekeeper", "navigator"] as const) {
-    assert.equal(
-      PUBLIC_CONFIGURABLE_SEATS.includes(automatic as never),
-      true,
-      `must expose automatic seat ${automatic}`,
-    );
-    assert.equal(
-      (PUBLIC_CALLABLE_ROLES as readonly string[]).includes(automatic),
-      false,
-      `${automatic} is automatic, not a callable command`,
-    );
-  }
   for (const forbidden of ["auditor", "soul-audit", "reviewer-cmr", "archivist", "assisted"]) {
     assert.equal(
       (PUBLIC_CONFIGURABLE_SEATS as readonly string[]).includes(forbidden),
@@ -156,8 +162,8 @@ test("help capabilities derive from typed public registry facts", () => {
   }
   assert.equal(
     (names as readonly string[]).includes("navigator"),
-    false,
-    "navigator is automatic, not a callable command",
+    true,
+    "navigator is a callable role with help facts",
   );
   const rolesCap = capabilities.find((cap) => cap.name === "roles");
   assert.equal(rolesCap?.kind, "support");

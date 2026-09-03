@@ -61,12 +61,11 @@ type PublicRoleMaterials = {
   >["sessionMaterials"];
 };
 
-/** Derived projection: public records + navigator name-only materials. */
+/** Derived projection: public records (#639 includes navigator/gatekeeper). */
 export const MAIN_ROLE_SESSION_MATERIALS = {
   ...(Object.fromEntries(
     PUBLIC_ROLE_RECORDS.map((record) => [record.role, record.sessionMaterials]),
   ) as PublicRoleMaterials),
-  navigator: ["CLAUDE.md", "souls/navigator.md"] as const,
 } as const;
 
 export type MainRoleSession = keyof typeof MAIN_ROLE_SESSION_MATERIALS;
@@ -79,12 +78,8 @@ export function loadMainRoleSessionMaterials(
 
 /** Gatekeeper province; notary reuses the public notary materials definition. */
 export const GATEKEEPER_SESSION_MATERIALS = {
-  gatekeeper: [
-    "CLAUDE.md",
-    "souls/gatekeeper.md",
-    "souls/quality-law.md",
-    "souls/gate-output-guide.md",
-  ],
+  // #639: single authority — the public gatekeeper record owns the province list.
+  gatekeeper: PUBLIC_ROLE_RECORDS.find((entry) => entry.role === "gatekeeper")!.sessionMaterials,
   inspector: INSPECTOR_SESSION_MATERIALS,
   notary: NOTARY_SESSION_MATERIALS,
 } as const;
