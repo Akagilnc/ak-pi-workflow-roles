@@ -72,6 +72,19 @@ export type ModelRef = {
 };
 
 /**
+ * Model-axis projection: incomplete seat row → undefined; else provider/model[/thinking].
+ * Single implementation for config, institutional resolution, and display (#620).
+ */
+export function seatModelOnly(
+  seat: { provider?: string; model?: string; thinking?: PublicThinkingLevel } | undefined,
+): ModelRef | undefined {
+  if (seat?.provider === undefined || seat.model === undefined) return undefined;
+  return seat.thinking === undefined
+    ? { provider: seat.provider, model: seat.model }
+    : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
+}
+
+/**
  * Package startup candidates (#11): Codex family first, then Grok 4.5.
  * Selection among candidates is credential-driven at resolve time.
  */
@@ -112,11 +125,9 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ],
-  notary: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  // #453: automatic gate seats have no startup default — unset means inherit parent.
+  // #620: subordinate officers inherit gatekeeper; no package startup model.
+  notary: [],
+  // #453/#620: gatekeeper unset inherits audited session (province path only).
   gatekeeper: [],
   inspector: [],
   navigator: [
