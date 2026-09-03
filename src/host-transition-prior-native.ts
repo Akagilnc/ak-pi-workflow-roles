@@ -2,7 +2,7 @@
  * Single authority for #617 DK-4 cross-host prior-native projection.
  * Closed host discriminators only; unknown previous/live hosts never inject.
  */
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RoleTurnHostTransition } from "./host-contracts.ts";
@@ -18,21 +18,17 @@ function isEnoent(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-/** Read Pi native session file bytes exactly. ENOENT → undefined; empty file → "". */
-async function readPiNativeSessionRecords(sessionFile: string): Promise<string | undefined> {
+/** Present Pi native session path, or empty when ENOENT. */
+async function listPiNativeRecordPaths(sessionFile: string): Promise<string[]> {
   try {
-    return await readFile(sessionFile, "utf8");
+    await access(sessionFile);
+    return [sessionFile];
   } catch (error) {
-    if (isEnoent(error)) return undefined;
+    if (isEnoent(error)) return [];
     throw error;
   }
 }
 
-/**
- * Read Grok native updates.jsonl files under runDirectory/grok-home/sessions.
- * Deterministically delivers all applicable native records sorted by relative path.
- * ENOENT / zero files → undefined.
- */
 /** Native Grok updates.jsonl paths under runDirectory/grok-home/sessions, sorted. */
 export async function listGrokNativeRecordPaths(runDirectory: string): Promise<string[]> {
   const grokSessionsDir = join(runDirectory, "grok-home", "sessions");
@@ -74,7 +70,7 @@ export async function listGrokNativeRecordPaths(runDirectory: string): Promise<s
 /**
  * Project one hostTransition only for a real switch between known hosts.
  * Unknown host names → undefined (no inject). Empty native volume still
- * yields a typed switch (empty records or empty path list).
+ * yields a typed switch (empty path list).
  */
 export async function projectHostTransitionPriorNative(input: {
   readonly previousHost: string;
@@ -87,10 +83,10 @@ export async function projectHostTransitionPriorNative(input: {
     return undefined;
   }
   if (input.previousHost === "pi") {
-    const records = await readPiNativeSessionRecords(input.piSessionFile);
+    const paths = await listPiNativeRecordPaths(input.piSessionFile);
     return {
       previousHost: "pi",
-      priorNativeRecords: records ?? "",
+      priorNativePaths: paths,
     };
   }
   // previousHost === "grok-build": DK-7 path handoff only — do not read bytes.

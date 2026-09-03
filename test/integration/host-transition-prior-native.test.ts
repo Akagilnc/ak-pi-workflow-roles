@@ -12,7 +12,6 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
     const runDirectory = join(root, "run");
     const piSessionFile = join(runDirectory, "session", "session.jsonl");
     await mkdir(join(runDirectory, "session"), { recursive: true });
-    // Trailing newline retained — exact byte projection must keep it.
     await writeFile(piSessionFile, "{\"type\":\"session\",\"id\":\"s\"}\n", "utf8");
 
     assert.equal(
@@ -38,14 +37,13 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
   }
 });
 
-test("pi→grok-build projects exact Pi session bytes as priorNativeRecords", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-host-transition-pi-bytes-"));
+test("pi→grok-build projects the Pi session path without reading bytes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-host-transition-pi-path-"));
   try {
     const runDirectory = join(root, "run");
     const piSessionFile = join(runDirectory, "session", "session.jsonl");
     await mkdir(join(runDirectory, "session"), { recursive: true });
-    const piBytes = "{\"type\":\"session\",\"id\":\"s\"}\n";
-    await writeFile(piSessionFile, piBytes, "utf8");
+    await writeFile(piSessionFile, "{\"type\":\"session\",\"id\":\"s\"}\n", "utf8");
     assert.deepEqual(
       await projectHostTransitionPriorNative({
         previousHost: "pi",
@@ -55,7 +53,7 @@ test("pi→grok-build projects exact Pi session bytes as priorNativeRecords", as
       }),
       {
         previousHost: "pi",
-        priorNativeRecords: piBytes,
+        priorNativePaths: [piSessionFile],
       },
     );
   } finally {
@@ -89,4 +87,3 @@ test("grok-build→pi projects every present updates.jsonl path in sorted order"
     await rm(root, { recursive: true, force: true });
   }
 });
-
