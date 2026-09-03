@@ -22,6 +22,7 @@ import {
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
+  projectEvidenceEntryView,
   type CollectorLedger,
 } from "./collector-ledger.ts";
 import {
@@ -346,21 +347,7 @@ export function createCollectorRoleRuntime(
           ) {
             throw new CollectorUnknownEvidenceError(params.evidenceId);
           }
-          const material = {
-            evidenceId: record.evidenceId,
-            kind: record.kind,
-            authorLogin: record.authorLogin,
-            state: record.state,
-            body: record.body,
-            commitOid: record.commitOid,
-            htmlUrl: record.htmlUrl,
-            path: record.path,
-            line: record.line ?? record.originalLine,
-            side: record.side,
-            authoritativeTime: record.authoritativeTime,
-            windowRelation: record.windowRelation,
-            pullRequestReviewId: record.pullRequestReviewId,
-          };
+          const material = projectEvidenceEntryView(record);
           activation.ledger.completeOperational(toolCallId);
           return {
             content: [{

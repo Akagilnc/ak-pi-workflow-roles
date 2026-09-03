@@ -853,6 +853,29 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
   return ledger;
 }
 
+/**
+ * #641 chain①: single authoritative evidence-record projection shared by the
+ * observe model view and the pointer-open read tool.
+ */
+export function projectEvidenceEntryView(record: CollectorEvidenceRecord): ObserveEvidenceEntry {
+  return {
+    evidenceId: record.evidenceId,
+    kind: record.kind,
+    authorLogin: record.authorLogin,
+    state: record.state,
+    body: record.body,
+    commitOid: record.commitOid,
+    htmlUrl: record.htmlUrl,
+    path: record.path,
+    // Single display fallback: current line, else originalLine.
+    line: record.line ?? record.originalLine,
+    side: record.side,
+    authoritativeTime: record.authoritativeTime,
+    windowRelation: record.windowRelation,
+    pullRequestReviewId: record.pullRequestReviewId,
+  };
+}
+
 function buildObserveModelView(input: {
   snapshot: CollectorSnapshot;
   records: readonly CollectorEvidenceRecord[];
@@ -867,22 +890,7 @@ function buildObserveModelView(input: {
     prState: input.snapshot.prState,
     headOid: input.snapshot.headOid,
     complete: input.snapshot.complete,
-    evidence: relevant.map((record): ObserveEvidenceEntry => ({
-      evidenceId: record.evidenceId,
-      kind: record.kind,
-      authorLogin: record.authorLogin,
-      state: record.state,
-      body: record.body,
-      commitOid: record.commitOid,
-      htmlUrl: record.htmlUrl,
-      path: record.path,
-      // Single display fallback: current line, else originalLine.
-      line: record.line ?? record.originalLine,
-      side: record.side,
-      authoritativeTime: record.authoritativeTime,
-      windowRelation: record.windowRelation,
-      pullRequestReviewId: record.pullRequestReviewId,
-    })),
+    evidence: relevant.map((record): ObserveEvidenceEntry => projectEvidenceEntryView(record)),
     requestAttempts: input.attempts.map((attempt) => ({
       attemptId: attempt.attemptId,
       requestId: attempt.requestId,

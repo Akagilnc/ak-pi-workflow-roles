@@ -249,6 +249,41 @@ test("#641 chain① full bodies stay pointer-openable; receipt drops verbatim bo
   assert.ok(!("body" in finding));
 });
 
+test("#641 chain① read of unknown or non-openable pointers bounces correctable; retry with a stored pointer seals", async () => {
+  const body = beyondHeadFindingBody();
+  const result = await runRealCollectorScript({
+    issueComments: [botIssueComment({ id: 5001, userLogin: "coderabbitai[bot]", userId: 136622811, body })],
+    responses: [
+      observeOnce,
+      readCall("missing0000000000", "read-unknown"),
+      (context: any) => {
+        const views = providerObserveViews(context.messages);
+        const nonOpenable = views[views.length - 1].evidence.find((record: any) => record.kind === "pull_request");
+        return readCall(nonOpenable.evidenceId, "read-non-openable");
+      },
+      (context: any) => {
+        const views = providerObserveViews(context.messages);
+        const target = views[views.length - 1].evidence.find((record: any) => record.kind === "issue_comment");
+        return readCall(target.evidenceId, "read-good");
+      },
+      (context: any) => {
+        const openedViews = providerReadViews(context.messages);
+        const opened = openedViews[openedViews.length - 1];
+        return outputCall({ findings: [{ evidenceId: opened.evidenceId, category: "late-conclusion" }] }, "output");
+      },
+    ],
+  });
+  assert.ok(result.receipt, "retry with a stored pointer seals a receipt");
+
+  const bounced = result.entries.filter((entry: any) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_READ_TOOL && entry.message.isError === true);
+  assert.equal(bounced.length, 2, "unknown and non-openable pointers both reject the read");
+  for (const entry of bounced) {
+    assert.equal(entry.message.isError, true);
+    assert.equal(entry.message.toolName, COLLECTOR_READ_TOOL);
+  }
+  assert.equal(result.receipt.groups.flatMap((group: any) => group.findings).length, 1);
+});
+
 test("#641 chain① zero-finding template stays attendance-only", async () => {
   const result = await runRealCollectorScript({
     issueComments: [
